@@ -1076,7 +1076,7 @@ def atomic_private_write_bytes(
             if raw.mcp_sources.history_operation(state):
                 raw.mcp_sources.check_destination(state, selected)
         try:
-            os.rename(
+            os.replace(
                 temporary_leaf,
                 leaf,
                 src_dir_fd=parent_fd,

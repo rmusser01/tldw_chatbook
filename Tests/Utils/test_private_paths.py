@@ -1205,45 +1205,24 @@ def test_no_residue_when_the_temp_write_side_fails(tmp_path, monkeypatch):
     reason="injects into the POSIX dir_fd path; the Windows/fallback path "
     "has different mechanics (task-2060 Qodo)",
 )
-def test_no_residue_when_the_rename_itself_fails(tmp_path, monkeypatch):
-    """Injection point: the RENAME of the temp sibling onto the destination.
-
-    The temp file is complete and fsynced when this raises; only the rename
-    separates it from becoming the destination. A failure here must unlink
-    the finished temp rather than leave it beside an untouched destination.
-
-    `_atomic_posix_guards_available` is pinned True for the test's duration:
-    it checks `{os.rename, os.unlink} <= os.supports_dir_fd` by FUNCTION
-    IDENTITY, so the wrapper this test installs would otherwise flunk the
-    membership test and the call would bail out (reason
-    `required_posix_guards_unavailable`) before any temp file existed --
-    making every assertion here pass vacuously. The platform's real dir_fd
-    support is untouched (the write-side test above exercises the unpatched
-    check on the same run).
-
-    Args:
-        tmp_path: pytest tmp dir holding the destination file.
-        monkeypatch: installs the selective failing `os.rename` and pins
-            the guards check.
-    """
+def test_no_residue_when_the_replace_itself_fails(tmp_path, monkeypatch):
+    """Failed atomic replacement preserves the destination and removes its temp."""
     destination = tmp_path / "settings.json"
     _seed_private_file(destination, b"original content")
     entries_before = {p.name for p in tmp_path.iterdir()}  # see write-side test
-    monkeypatch.setattr(private_paths, "_atomic_posix_guards_available", lambda: True)
-
-    real_rename = os.rename
+    real_replace = os.replace
     injected: list[tuple] = []
 
-    def failing_rename(*args, **kwargs):
+    def failing_replace(*args, **kwargs):
         if any(str(arg).endswith(".tmp") for arg in args):
             injected.append(args)
             raise OSError(errno.EIO, "injected rename failure (task-2060)")
-        return real_rename(*args, **kwargs)
+        return real_replace(*args, **kwargs)
 
-    monkeypatch.setattr(os, "rename", failing_rename)
+    monkeypatch.setattr(os, "replace", failing_replace)
     with pytest.raises(PrivatePathError):
         private_paths.atomic_private_write_bytes(destination, b"replacement")
-    monkeypatch.setattr(os, "rename", real_rename)
+    monkeypatch.setattr(os, "replace", real_replace)
 
     assert injected, (
         "the rename injection never fired -- the PrivatePathError came from "

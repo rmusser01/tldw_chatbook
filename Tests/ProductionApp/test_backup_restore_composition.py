@@ -96,11 +96,18 @@ async def main():
         screen.query_one('#backup-destination', Input).value = str(destination)
         await pilot.pause()
         await pilot.click('#backup-review')
-        async with asyncio.timeout(30):
-            while screen.query_one('#backup-create', Button).disabled:
-                await asyncio.sleep(.05)
-                message = str(screen.query_one('#backup-message', Static).render())
-                assert 'failed' not in message.lower(), message
+        try:
+            async with asyncio.timeout(30):
+                while screen.query_one('#backup-create', Button).disabled:
+                    await asyncio.sleep(.05)
+                    message = str(screen.query_one('#backup-message', Static).render())
+                    assert 'failed' not in message.lower(), message
+        except TimeoutError:
+            print('BACKUP_REVIEW_TIMEOUT', {
+                'message': str(screen.query_one('#backup-message', Static).render()),
+                'coverage': str(screen.query_one('#backup-coverage', Static).render()),
+            }, flush=True)
+            raise
         assert 'Complete coverage' in str(screen.query_one('#backup-coverage', Static).render())
         print('checkpoint: review complete', flush=True)
         await pilot.click('#backup-create')

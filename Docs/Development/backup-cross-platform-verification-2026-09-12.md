@@ -52,8 +52,33 @@ complete backup/recovery.
   [34707982570](https://github.com/rmusser01/tldw_chatbook/actions/runs/34707982570)
   could not reach test bodies:all39cases hit shared app-fixture setup errors from
   an untrusted ancestor owner in runner temporary storage. No native or product
-  success is claimed from that run. The next run separates native cases from shared
-  app startup and records anonymous ancestor ownership/permission diagnostics.
+  success is claimed from that run.
+- Windows run [34708741479](https://github.com/rmusser01/tldw_chatbook/actions/runs/34708741479)
+  at `065c5344eb8b34337ea68fe1e623456be633ba61` separated native and product phases.
+  Native: 25 passed, one failed because a test omitted required keyword arguments.
+  Actual exclusive rename, namespace flush, rights reopening and locking passed.
+  Product collection still refused the runner's D-drive ancestor owner; no product
+  body ran. All nine receipt hashes were verified.
+  Anonymous security diagnostics showed a trusted C-drive user temporary ancestry.
+  They also exposed CPython's OWNER RIGHTS ACL principal, which the adapter had
+  incorrectly interpreted as public access. The correction resolves that principal
+  only against the owner measured from the same security descriptor.
+- Windows run [34709688754](https://github.com/rmusser01/tldw_chatbook/actions/runs/34709688754)
+  at `df281c240` passed all 32 native cases and 15 of 19 product-phase cases,
+  with no skips. All ten SQLite descriptor cases and five dependency lock cases
+  passed. Four product cases failed: two-profile seeding could not overwrite its
+  config, replacement and later rollback refused incomplete inventory, and mounted
+  backup timed out awaiting review. Installed-wheel receipts were produced for
+  three fixtures. Eleven of twelve manifest-listed artifact files were present
+  and hash-matched; Actions omitted one hidden sanitized log, so the artifact set
+  was incomplete. Its harness runs both phases from a private C-drive copy
+  of the committed tracked source, verifying exact Unicode path sets and recording
+  archive and copied-file hashes. It does not alter D-drive permissions or broaden
+  production owner trust. OWNER RIGHTS regressions passed locally: 22 passed,
+  10 native-only cases skipped on macOS; these skips are not Windows evidence.
+  The next correction uses explicit atomic replacement for ordinary config writes
+  and aligns each child fixture's HOME and USERPROFILE. Safe inventory diagnostics,
+  visible sanitized log names and escaped-path redaction improve failure evidence.
 
 ## Regression and retained failures
 
@@ -85,4 +110,7 @@ is inferred from these process-level and product tests.
 The necessary RAG generation dependency writer now keeps POSIX directory locking
 and uses a stable private regular lock file on Windows. Six focused real-filesystem
 and process-contention cases plus the existing independent-indexer case pass locally;
-native Windows verification is pending. No generation record format changes.
+native Windows verification is pending. The same six focused cases and independent
+indexer case passed on the actual Linux host at `065c5344e` (7 passed, 8.89 seconds),
+after installing their existing optional NumPy and ChromaDB test dependencies in
+the disposable virtual environment. No generation record format changes.

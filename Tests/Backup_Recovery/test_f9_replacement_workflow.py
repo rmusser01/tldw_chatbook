@@ -32,6 +32,15 @@ from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,defau
 from tldw_chatbook.Backup_Recovery.runtime_maintenance import monitor_app
 from tldw_chatbook.Backup_Recovery import archive_writer,archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+def inventory_diagnostic(inventory):
+ blocking=sorted((item.owner,item.logical_id,item.status,item.dependencies,item.metadata.relative_path if item.metadata else None) for item in inventory.items if item.status in {'unsupported','unavailable','missing_required'})
+ observed=[]
+ for item in inventory.items:
+  if item.path is None or item.status in {'unused','intentionally_excluded','intentionally_deleted'}:continue
+  try:observed.append((item,item.path.resolve(strict=True)))
+  except (OSError,RuntimeError):continue
+ ancestor_pairs=sorted((parent.owner,parent.logical_id,child.owner,child.logical_id) for child,child_path in observed for parent,parent_path in observed if parent_path in child_path.parents and parent.owner!=child.owner)
+ return {'issues':inventory.issues,'blocking':blocking,'ancestor_pairs':ancestor_pairs}
 async def main():
  app=TldwCli();home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH'])
  service=RecoveryService(default_control_root())
@@ -52,7 +61,7 @@ async def main():
   details=await asyncio.to_thread(service.preview_backup_details,(selector,),options=options,destination=destination)
   preview=details['inventory']
   assert details['capacity'] and all(row['sufficient'] for row in details['capacity'])
-  assert preview.complete,preview.issues
+  assert preview.complete,inventory_diagnostic(preview)
   operation=service.start_backup((selector,),preview.scope_digest,destination,options=options,password=None)
   async with asyncio.timeout(65):
    while not entered.is_set():
@@ -318,6 +327,7 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
     env = dict(
         os.environ,
         HOME=str(tmp_path / "home"),
+        USERPROFILE=str(tmp_path / "home"),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_DATA_HOME=str(tmp_path / "data"),
         TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),

@@ -298,3 +298,52 @@ def test_stdlib_private_mkdir_and_ordinary_children_are_private(tmp_path):
         assert stat.S_IMODE(win.stat(database).st_mode) == 0o600
     finally:
         connection.close()
+
+
+@native
+def test_native_replace_updates_existing_target_without_changing_noreplace(tmp_path):
+    win = WindowsOS()
+    parent = win.open(tmp_path, win.O_RDONLY | win.O_DIRECTORY)
+    try:
+        for name, payload in (("target", b"old"), ("incoming", b"new")):
+            descriptor = win.open(
+                name, win.O_WRONLY | win.O_CREAT | win.O_EXCL, 0o600, dir_fd=parent
+            )
+            try:
+                win.write(descriptor, payload)
+                win.fsync(descriptor)
+            finally:
+                win.close(descriptor)
+        incoming_identity = win.stat("incoming", dir_fd=parent).st_ino
+        win.replace("incoming", "target", src_dir_fd=parent, dst_dir_fd=parent)
+        win.fsync(parent)
+        assert (tmp_path / "target").read_bytes() == b"new"
+        assert win.stat("target", dir_fd=parent).st_ino == incoming_identity
+        assert not (tmp_path / "incoming").exists()
+        descriptor = win.open(
+            "collision", win.O_WRONLY | win.O_CREAT | win.O_EXCL, 0o600, dir_fd=parent
+        )
+        win.close(descriptor)
+        with pytest.raises(FileExistsError):
+            win.rename("collision", "target", src_dir_fd=parent, dst_dir_fd=parent)
+        assert (tmp_path / "target").read_bytes() == b"new"
+    finally:
+        win.close(parent)
+
+
+@native
+def test_atomic_private_write_replaces_existing_config(tmp_path):
+    from tldw_chatbook.Utils.private_paths import atomic_private_write_bytes
+
+    target = tmp_path / "config.toml"
+    first = atomic_private_write_bytes(
+        target, b"generation = 1\n", application_owned_directory=tmp_path
+    )
+    before = WindowsOS().stat(target).st_ino
+    second = atomic_private_write_bytes(
+        target, b"generation = 2\n", application_owned_directory=tmp_path
+    )
+    assert first.verified_private and second.verified_private
+    assert target.read_bytes() == b"generation = 2\n"
+    assert WindowsOS().stat(target).st_ino != before
+    assert list(tmp_path.glob(".config.toml.*.tmp")) == []

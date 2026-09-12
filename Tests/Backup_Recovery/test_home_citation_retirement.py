@@ -273,6 +273,7 @@ def _run(
     environment = os.environ.copy()
     environment.update(
         HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
         XDG_CONFIG_HOME=str(root / "config"),
         XDG_DATA_HOME=str(root / "data"),
         TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),

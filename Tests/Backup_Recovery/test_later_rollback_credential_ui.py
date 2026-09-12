@@ -215,6 +215,7 @@ def test_f9_later_rollback_requires_explicit_credential_review(
     environment = dict(
         os.environ,
         HOME=str(tmp_path / "home"),
+        USERPROFILE=str(tmp_path / "home"),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_DATA_HOME=str(tmp_path / "data"),
         TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),

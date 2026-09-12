@@ -435,11 +435,13 @@ def _sanitize_file(
     content = _redact(source.read_text(encoding="utf-8", errors="replace"))
     if private_root is not None:
         private_value = str(private_root)
-        for value in {
+        variants = {
             private_value,
             private_value.replace("\\", "/"),
             private_value.replace("/", "\\"),
-        }:
+        }
+        variants.update(value.replace("\\", "\\\\") for value in tuple(variants))
+        for value in sorted(variants, key=len, reverse=True):
             content = content.replace(value, "[PRIVATE_ROOT]")
     destination.write_text(
         content,
@@ -572,9 +574,18 @@ def _collect_safe_logs(private_root: Path, artifacts: Path) -> int:
             if source.is_symlink() or not source.is_file():
                 continue
             relative = source.relative_to(phase_root)
+            visible_relative = Path(
+                *(
+                    f"_dot_{part[1:]}" if part.startswith(".") else part
+                    for part in relative.parts
+                )
+            )
+            destination = artifacts / "test-logs" / phase / visible_relative
+            if destination.exists():
+                raise RuntimeError("safe_log_artifact_name_collision")
             _sanitize_file(
                 source,
-                artifacts / "test-logs" / phase / relative,
+                destination,
                 private_root=private_root,
             )
             count += 1
