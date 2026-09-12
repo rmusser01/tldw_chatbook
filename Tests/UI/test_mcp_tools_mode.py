@@ -1061,3 +1061,37 @@ async def test_a_failed_save_repaints_the_master_switch_from_persisted_truth():
             if isinstance(event, MCPToolsMode.LocalToolsEnabledChanged)
         ]
         assert requested[-1] is False
+
+
+# -- Wave A (2026-09-11 MCP Hub UX program): bounded polish -----------------
+
+
+@pytest.mark.asyncio
+async def test_server_column_truncates_long_labels_with_ellipsis():
+    """A2/F9: the Server column ellipsizes long group labels instead of
+    clipping mid-word with no marker ("Local workspace, web, and" at 160
+    cols read as a different label). Short labels pass through whole."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        long_label_tool = _tool(
+            server_key="local:__local__",
+            name="fs_edit",
+            server_label="Local workspace, web, and Watchlists",
+        )
+        short_label_tool = _tool(
+            server_key="local:docs", name="fs_read", server_label="docs"
+        )
+        await canvas.update_tools([long_label_tool, short_label_tool])
+        await pilot.pause()
+        table = app.query_one("#mcp-tools-table", DataTable)
+
+        long_cell = table.get_cell_at((0, 2))
+        long_text = getattr(long_cell, "plain", str(long_cell))
+        assert long_text.endswith("…")
+        assert "Watchlists" not in long_text
+        assert len(long_text) <= 25
+
+        short_cell = table.get_cell_at((1, 2))
+        short_text = getattr(short_cell, "plain", str(short_cell))
+        assert short_text == "docs"

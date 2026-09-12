@@ -1446,7 +1446,10 @@ def validate_number_range(
 
         log_counter("input_validation_number_range_result", labels={"valid": "true"})
         return True
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
+        # OverflowError (PR #2624 review): float(10**400) is a valid int
+        # whose float conversion overflows -- a several-hundred-digit
+        # limit from a model caller must be "not numeric", not a crash.
         log_counter(
             "input_validation_number_range_invalid", labels={"reason": "not_numeric"}
         )
