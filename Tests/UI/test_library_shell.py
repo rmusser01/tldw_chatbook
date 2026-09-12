@@ -24190,9 +24190,9 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
         str(button.label) for button in strip.query(Button)
     )
     assert "Library notes" in strip_labels, strip_labels
-    assert authority_text.strip(), "the authority line must still say something"
-    if "Loading note" not in authority_text:
-        assert "Next:" in authority_text
+    assert "Loading note" in authority_text or "Next:" in authority_text, (
+        authority_text
+    )
     assert footer.region.height == 1
     assert (
         navigation.region.height

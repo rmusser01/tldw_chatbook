@@ -74,9 +74,32 @@ and "files." was cut off with no ellipsis -- the source strip directly above
 names the authority instead. And task-32063 deliberately gives the loading
 state no "Next:" clause, because a "Next:" names a control the reader can press
 and "wait for loading" names none. The helper now asserts the authority is
-named on the SOURCE STRIP, that the authority line says something, and that
-"Next:" is there whenever the state is not loading. The other two callers of
-that helper still pass.
+named on the SOURCE STRIP and that the authority line is in one of the two
+states it admits (`"Loading note" in text or "Next:" in text` -- task-8 review
+finding 5 dropped the filler `text.strip()` line that preceded it).
+
+Newly reachable reds (task-8 review finding 7). Fourteen nodes reach
+`_assert_task8_compact_chrome` (five test functions, four of them through
+`_assert_task8_rows`); the helper repair took them off the old `'Library
+notes' in authority_text` failure and 9 pass, while 5 now fail one assertion
+deeper, on the compact ROW allocation -- the same kind of number as AC#2:
+
+- `test_library_note_60x20_navigator_state_allocation[normal]` and
+  `[sort-choice]`: `test_library_shell.py:24222` `AssertionError:
+  ('#library-notes-list', Region(...))` -- the list region's height is not
+  the expected row count;
+- `test_library_note_60x20_navigator_state_allocation[filtered-empty]`:
+  `NoMatches: No nodes match '#library-notes-empty'`;
+- `test_library_note_60x20_editor_state_allocation[delete-confirmation]`:
+  `:24222` `('#library-note-title-row', ...)`;
+- `test_library_note_60x20_editor_state_allocation[context]`: `:24222`
+  `('#library-note-context-region', ...)`.
+
+Stable: the same five names on two consecutive runs of all fourteen nodes
+(`wave3-caps/test-health/fixround-60x20-run1.txt` / `-run2.txt`, `5 failed,
+9 passed` both). They belong beside AC#2's allocation question in task-32455
+and are recorded there by reference rather than filed anew (fix round 1
+minted no ids).
 
 AC#2 (`assert 9 == 11` for the navigator owner, `assert 12 == 11` for the
 context owner) and AC#3 (`assert 'browse-notes' == ''` -- ctrl+n now selects
