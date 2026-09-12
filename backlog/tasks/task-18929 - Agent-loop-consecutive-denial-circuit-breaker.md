@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-09-12 16:28'
+updated_date: '2026-09-12 18:16'
 labels:
   - agents
   - tools
@@ -29,6 +29,7 @@ Port of hermes-agent's consecutive-denial circuit breaker (2026-08-19 hermes-rel
 - [ ] #5 The agents denial_circuit_breaker_limit setting defaults to 3; explicit 0 disables it and invalid values use the documented conservative default.
 - [ ] #6 Only authoritative explicit user denial or configured permission Off increments the streak; unanswered, timeout, cancellation, stale authority, legacy refusal text and synthetic restored-pending results do not.
 - [ ] #7 Evaluate the trailing streak after a fully settled tool batch, preserve every tool reply, and stop before another model call; an approved tail resets the streak and the terminal message reports the actual observed count.
+- [ ] #8 Builtin, local, MCP, virtual CLI and raw-shell authoritative invocation decisions reach the run-local counter even when pending review is bypassed; defaulted unanswered stamps and opaque runtime refusals never fabricate denial authority.
 <!-- AC:END -->
 
 ## Implementation Plan
