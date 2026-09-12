@@ -98,8 +98,14 @@ class _RealtimeSettingsDraft:
     turn_detection: str
     vad_threshold: str
     vad_silence_ms: str
+    #: TASK-32496: the pipeline loop's tuning knobs, surfaced in Settings.
+    #: The send delay is an optional number (blank = unset -- the readers'
+    #: own default wins and Save deletes the key); barge-in is an explicit
+    #: on/off Switch, always written.
+    handsfree_send_delay_seconds: str
+    acoustic_barge_in: bool
 
-    def snapshot(self) -> tuple[bool, str, str, str, str, str, str, str, str]:
+    def snapshot(self) -> tuple[bool, str, str, str, str, str, str, str, str, str, bool]:
         return (
             self.enabled,
             self.provider,
@@ -110,6 +116,8 @@ class _RealtimeSettingsDraft:
             self.turn_detection,
             self.vad_threshold,
             self.vad_silence_ms,
+            self.handsfree_send_delay_seconds,
+            self.acoustic_barge_in,
         )
 
 
@@ -147,6 +155,8 @@ def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
         raise TypeError("Realtime Settings draft is invalid")
     if type(value.enabled) is not bool:
         raise TypeError("Realtime Settings draft is invalid")
+    if type(value.acoustic_barge_in) is not bool:
+        raise TypeError("Realtime Settings draft is invalid")
     for field_name in (
         "provider",
         "model",
@@ -156,6 +166,7 @@ def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
         "turn_detection",
         "vad_threshold",
         "vad_silence_ms",
+        "handsfree_send_delay_seconds",
     ):
         text = getattr(value, field_name)
         if type(text) is not str or len(text) > _MAX_DRAFT_TEXT_CHARACTERS:

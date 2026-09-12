@@ -19,15 +19,19 @@ import re
 import threading
 import time
 from collections import deque
+from collections.abc import Awaitable
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
+from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
+    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
@@ -38,6 +42,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import (
+    WorkOrigin,
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     FIND_TOOLS_NAME,
@@ -1889,12 +1894,21 @@ class SubAgentSummary:
             always empty on the inline path, which has no coordinator).
         handle_id: The ``FleetCoordinator`` handle id backing this row.
             Empty on the inline path (no coordinator, no handle).
+        budget_tokens: Persisted run-budget counter for historical rows.
+            None means unavailable; this may include estimates/cache weighting.
+        created_at: Saved run start timestamp, absent on live summaries.
+        updated_at: Saved last-update timestamp; only an approximate end.
+        detail: Bounded saved result or last meaningful step for this child.
     """
 
     text: str
     status: str = "running"
     run_id: str = ""
     handle_id: str = ""
+    budget_tokens: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    detail: str = ""
 
 
 def _subagent_summaries_from_fleet(
@@ -2145,6 +2159,19 @@ class SettledChild:
 
 
 @dataclass(frozen=True)
+class FleetChildSettled:
+    """One durable terminal child, without waiting for its siblings (ADR-135).
+
+    Delivered on the child's thread with its original settlement classification.
+    Consumers read the result from ``child.run_id`` and must tolerate duplicate
+    intake; durable result claims govern automatic admission.
+    """
+
+    conversation_id: str
+    child: SettledChild
+
+
+@dataclass(frozen=True)
 class FleetDrained:
     """This conversation's fleet just drained to zero unsettled children
     (PR3a-2 Task 2).
@@ -2163,7 +2190,42 @@ class FleetDrained:
     drain_id: str = field(default_factory=lambda: str(uuid4()))
 
 
-class FleetDrainFanout:
+_FleetSettlementEvent = TypeVar(
+    "_FleetSettlementEvent", FleetChildSettled, FleetDrained
+)
+
+
+class _FleetSettlementFanout(Generic[_FleetSettlementEvent]):
+    """Named bridge-lifetime consumers, replacing in place and failure-isolated."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._consumers: list[tuple[str, Callable[[_FleetSettlementEvent], None]]] = []
+
+    def register(
+        self, name: str, consumer: Callable[[_FleetSettlementEvent], None]
+    ) -> None:
+        with self._lock:
+            for index, (existing, _) in enumerate(self._consumers):
+                if existing == name:
+                    self._consumers[index] = (name, consumer)
+                    return
+            self._consumers.append((name, consumer))
+
+    def fire(self, event: _FleetSettlementEvent) -> None:
+        with self._lock:
+            consumers = list(self._consumers)
+        for _name, consumer in consumers:
+            try:
+                consumer(event)
+            except Exception as exc:  # noqa: BLE001 -- one consumer never starves the rest
+                logger.warning(
+                    "fleet settlement consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
+
+
+class FleetDrainFanout(_FleetSettlementFanout[FleetDrained]):
     """One signal -- "this conversation's last fleet child has settled
     terminal" -- fanned out to N registered consumers (PR3a-2 Task 2).
 
@@ -2193,11 +2255,9 @@ class FleetDrainFanout:
     every consumer registered here may read what the change window wrote.
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._consumers: list[tuple[str, Callable[[FleetDrained], None]]] = []
-
-    def register(self, name: str, consumer: Callable[[FleetDrained], None]) -> None:
+    def register(
+        self, name: str, consumer: Callable[[FleetDrained], None]
+    ) -> None:
         """Register a consumer for the life of the owning bridge.
 
         Registration is BRIDGE-lifetime, not turn-scoped, because the
@@ -2217,12 +2277,7 @@ class FleetDrainFanout:
             consumer: Called with the ``FleetDrained`` event, on the last
                 child's own thread. Must honour the class contract above.
         """
-        with self._lock:
-            for index, (existing, _) in enumerate(self._consumers):
-                if existing == name:
-                    self._consumers[index] = (name, consumer)
-                    return
-            self._consumers.append((name, consumer))
+        super().register(name, consumer)
 
     def fire(self, event: FleetDrained) -> None:
         """Deliver one drain event to every consumer, in order, isolated.
@@ -2230,16 +2285,7 @@ class FleetDrainFanout:
         Args:
             event: The drain to deliver.
         """
-        with self._lock:
-            consumers = list(self._consumers)
-        for name, consumer in consumers:
-            try:
-                consumer(event)
-            except Exception as exc:  # noqa: BLE001 -- one consumer never starves the rest
-                logger.warning(
-                    "fleet drain consumer raised (exception_type={})",
-                    type(exc).__name__,
-                )
+        super().fire(event)
 
 
 class _ModelCallLifeline:
@@ -2271,39 +2317,102 @@ class _ModelCallLifeline:
     try/finally that owns its ``shutdown``.
     """
 
-    __slots__ = ("loop", "_thread", "_name")
+    __slots__ = (
+        "loop",
+        "_thread",
+        "_name",
+        "_close_current_loop",
+        "_shutdown_lock",
+        "_shutdown_requested",
+        "_operation",
+    )
 
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        close_current_loop: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._name = name
+        self._close_current_loop = close_current_loop
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_requested = False
+        self._operation: OwnedOperation | None = None
         self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self.loop.run_forever, name=name, daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
 
-    def start(self) -> None:
-        """Start the driver thread. Raises only on thread exhaustion."""
-        self._thread.start()
+    def _run(self) -> None:
+        """Keep loop-bound cleanup on its driver, even after a join times out."""
+        try:
+            self.loop.run_forever()
+        finally:
+            try:
+                self.loop.close()
+            finally:
+                if self._operation is not None:
+                    self._operation.finish()
+
+    async def _cleanup(self) -> None:
+        try:
+            pending = [
+                task
+                for task in asyncio.all_tasks()
+                if task is not asyncio.current_task()
+            ]
+            for task in pending:
+                task.cancel()
+            try:
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                await self.loop.shutdown_asyncgens()
+            finally:
+                if self._close_current_loop is not None:
+                    await self._close_current_loop()
+        except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
+            logger.warning("model-call loop cleanup failed")
+        finally:
+            # Keep is_running() true through cleanup: an idle gap would let
+            # app-level gateway teardown detach and schedule this same pool.
+            self.loop.stop()
+
+    def start(self, *, owner: ExecutionOwner | None = None) -> None:
+        """Own the driver before start; failed starts have no physical work."""
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+        with self._shutdown_lock:
+            if self._shutdown_requested or self._thread.ident is not None:
+                raise RuntimeError("model lifeline cannot be restarted")
+            owner = owner or current_execution_owner()
+            self._operation = owner.reserve_model() if owner is not None else None
+            try:
+                self._thread.start()
+            except BaseException:
+                if self._operation is not None:
+                    self._operation.finish()
+                raise
 
     def shutdown(self) -> None:
-        """Stop the driver thread, join it, then close the loop.
+        """Stop submissions, request owner-loop cleanup, and join with a bound.
 
-        ``close()`` on a still-running loop raises, and a loop closed out
-        from under its own thread is undefined -- hence stop, then join,
-        then close. ``ident`` is ``None`` only when ``start()`` itself never
-        succeeded (thread exhaustion): ``join()`` would raise RuntimeError
-        and skip the close below, leaking the loop's fd, and nothing was
-        ever scheduled anyway, so close it directly. A thread still alive
-        after the bounded join keeps its loop OPEN: a leaked loop is
-        survivable, a segfaulting one is not, and the thread is a daemon so
-        it dies with the process either way.
+        The driver closes its loop after cleanup, including when cleanup
+        outlasts this join. A failed start has no driver or client to clean up,
+        so that loop closes here. Repeated calls must not stop cleanup itself.
         """
+        with self._shutdown_lock:
+            if not self._shutdown_requested:
+                self._shutdown_requested = True
+                if self._operation is not None:
+                    self._operation.mark_stopping()
+                if self._thread.ident is None:
+                    self.loop.close()
+                elif not self.loop.is_closed():
+                    self.loop.call_soon_threadsafe(
+                        lambda: self.loop.create_task(self._cleanup())
+                    )
         if self._thread.ident is not None:
-            self.loop.call_soon_threadsafe(self.loop.stop)
             self._thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
         if self._thread.is_alive():
             logger.warning("model-call loop did not stop within its bounded join")
-        else:
-            self.loop.close()
 
 
 _BUDGET_USAGE_COUNT_KEYS = (
@@ -3032,7 +3141,8 @@ class _StreamingModelAdapter:
         # promptly; a wedged one would make every such sweep burn its full
         # timeout. The handle still identifies it.
         lifeline = _ModelCallLifeline(
-            "child-loop-" + threading.current_thread().name.removeprefix("fleet-")
+            "child-loop-" + threading.current_thread().name.removeprefix("fleet-"),
+            close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
         )
         try:
             lifeline.start()
@@ -4131,6 +4241,7 @@ def build_console_first_request_plan(
     personal_context_snapshot: ProfileContextSnapshot | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    progress_inbox_exists: bool = False,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
 
@@ -4315,6 +4426,7 @@ def build_console_first_request_plan(
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
+        progress_available=progress_inbox_exists,
         worktree_merge_enabled=worktree_merge_enabled,
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
@@ -4549,7 +4661,27 @@ class ConsoleAgentBridge:
         change_tracker: Any | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         change_finalization_coordinator: Any | None = None,
+        runtime_capacity: RuntimeCapacity | None = None,
+        runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
+        message_store: MessageStore | None = None,
+        # run-hooks (Task 5): the runtime's engine accessor, supplied by
+        # `ConsoleRuntime.ensure_console_agent_bridge` as its own bound
+        # `ensure_run_hooks`. The bridge holds only the callable -- never the
+        # runtime itself -- and resolves it per `run_reply`, so hook config
+        # presence is re-decided per turn (the runtime's R17 rule). Returns
+        # the app-owned `RunHooksEngine`, or `None` when no ``[hooks]`` are
+        # configured (every fire site then skips entirely). `None` (the
+        # default, and every pre-existing construction site -- i.e. all test
+        # harnesses) means this bridge never wires a hooks engine at all.
+        ensure_run_hooks: Callable[[], Any] | None = None,
     ) -> None:
+        self._message_store = message_store
+        self._progress_closed = False
+        self._message_store_lock = threading.RLock()
+        self._runtime_capacity = runtime_capacity
+        self._runtime_capacity_factory = runtime_capacity_factory
+        self._runtime_capacity_lock = threading.RLock()
+        self._runtime_capacity_closed = False
         self._db = agent_runs_db
         # TASK-1971: optional Agent Change Review turn tracker. None (the
         # default, and every pre-existing construction site) disables
@@ -4558,12 +4690,15 @@ class ConsoleAgentBridge:
         self._buddy_sink = buddy_sink
         self._change_finalization_coordinator = change_finalization_coordinator
         self._store = store
+        if self._store is not None and message_store is not None:
+            self._store.register_progress_message_store(message_store)
         self._gateway = provider_gateway
         self._clock = clock
         self._raw_shell_marker_lock = threading.Lock()
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
+        self._ensure_run_hooks = ensure_run_hooks
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -4711,10 +4846,10 @@ class ConsoleAgentBridge:
         # service can actually stop it -- which is why
         # `AgentService.cancel_subagent` now refuses a handle it does not
         # own rather than reporting a success it cannot deliver. Each
-        # entry is dropped as soon as its last child settles
-        # (`_prune_settled_fleet_survivors`), so this holds at most one
-        # service per turn that left a child running, and live children
-        # are themselves capped by the coordinator above.
+        # Settled entries are dropped on the next turn boundary and on
+        # existing lifecycle/action cleanup paths. Until then, this can
+        # retain one settled service per completed survivor turn in addition
+        # to the live owners bounded by the coordinator above.
         self._fleet_survivor_services: dict[str, list[AgentService]] = {}
         # This lock protects the survivor-service list's read-modify-write
         # operations. The separate admission and activity locks above protect
@@ -4781,6 +4916,7 @@ class ConsoleAgentBridge:
             str,
             list[tuple[asyncio.AbstractEventLoop, asyncio.Future[bool]]],
         ] = {}
+        self._fleet_child_fanout = _FleetSettlementFanout[FleetChildSettled]()
         # PR3a-2 Task 4: the survivor discriminator. Assistant message ids
         # of turns whose `run_reply` is CURRENTLY executing -- added when
         # the turn publishes its fleet service, discarded first thing in
@@ -4922,6 +5058,7 @@ class ConsoleAgentBridge:
             persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
+            progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -5041,6 +5178,9 @@ class ConsoleAgentBridge:
         session_system_prompt: str,
         agent_messages: list[dict],
         should_cancel: Callable[[], bool],
+        expected_progress_owner_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
@@ -5158,6 +5298,18 @@ class ConsoleAgentBridge:
             generation_token = self._store.begin_generation_attempt(
                 assistant_message_id
             )
+        # Capture before setup can yield to native close/state replacement.
+        # Reusing a native ID must not let this delayed run bind its successor.
+        with self._store.progress_owner_scope(
+            session_id, message_store=self.message_store
+        ) as initial_progress_owner_id:
+            if initial_progress_owner_id is None or (
+                expected_progress_owner_id is not None
+                and initial_progress_owner_id != expected_progress_owner_id
+            ):
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
         protocol = getattr(resolution, "continuation_protocol", None)
         if continuation_target is None and isinstance(protocol, str) and protocol:
             provider = getattr(resolution, "execution_key", None)
@@ -5357,6 +5509,7 @@ class ConsoleAgentBridge:
             persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
+            progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
         )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
@@ -5536,6 +5689,13 @@ class ConsoleAgentBridge:
                         ok=False, error="The user declined to install this skill."
                     )
                 try:
+                    from tldw_chatbook.Agents.automatic_work_runtime import (
+                        current_automatic_work,
+                    )
+
+                    automatic_work = current_automatic_work()
+                    if automatic_work is not None:
+                        automatic_work.check()
                     result = asyncio.run(
                         install_skill_from_url(url, scope_service=scope)
                     )
@@ -5642,6 +5802,13 @@ class ConsoleAgentBridge:
                                 "Failed to persist skill script grant"
                             )
                 try:
+                    from tldw_chatbook.Agents.automatic_work_runtime import (
+                        current_automatic_work,
+                    )
+
+                    automatic_work = current_automatic_work()
+                    if automatic_work is not None:
+                        automatic_work.check()
                     if scratch_root is not None and scratch_lease is not None:
                         with scratch_lease():
                             outcome = asyncio.run(
@@ -5729,7 +5896,10 @@ class ConsoleAgentBridge:
         # docstring), because a fleet CHILD now owns one of its own from
         # birth via `adapter.child_lifeline`. This one stays exactly what
         # it always was: the PRIMARY agent's, turn-scoped.
-        turn_lifeline = _ModelCallLifeline("console-agent-loop")
+        turn_lifeline = _ModelCallLifeline(
+            "console-agent-loop",
+            close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
+        )
         thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
         adapter = _StreamingModelAdapter(
             store=self._store,
@@ -6210,6 +6380,22 @@ class ConsoleAgentBridge:
                     "change_review: prior survivor close did not finish "
                     "successfully; successor turn untracked"
                 )
+        # run-hooks (Task 5): resolve the app-owned engine ONCE per turn (its
+        # presence answer re-runs while unconfigured -- the runtime's R17
+        # rule -- so a first-ever [hooks] entry takes effect on the next
+        # turn). `None` (unconfigured, or a bridge built without the runtime
+        # accessor -- every test harness) builds the service exactly as
+        # before: no PostToolUse dep, byte-identical run behavior.
+        run_hooks_engine = (
+            self._ensure_run_hooks() if self._ensure_run_hooks is not None else None
+        )
+        # A restriction-only guard sees every call, including Canvas tools
+        # that intentionally skip interactive approval. The permission chain
+        # remains independent and cannot override a hook refusal.
+        guard_tool_calls = (
+            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)
+            if run_hooks_engine is not None else None
+        )
         baseline_gate = change_reservation or change_handle
         before_tool_dispatch = None
         alias_by_root: dict[str, str] = {}
@@ -6290,6 +6476,15 @@ class ConsoleAgentBridge:
 
         def on_child_settled(run_id: str | None, status: str) -> None:
             try:
+                engine = self._ensure_run_hooks() if self._ensure_run_hooks else None
+                if engine is not None:
+                    engine.notify(
+                        "SubagentStop", session_id=session_id, run_id=run_id,
+                        data={"child_run_id": run_id, "status": status},
+                    )
+            except Exception:  # noqa: BLE001 -- observation cannot prevent settlement
+                logger.warning("SubagentStop observer failed; continuing settlement")
+            try:
                 if not service.live_subagent_handles():
                     with self._change_window_lock:
                         child_change_state.pending_scopes = 0
@@ -6324,10 +6519,29 @@ class ConsoleAgentBridge:
             if on_redirect_ready is not None:
                 on_redirect_ready(redirect_fn)
 
+        with self._store.progress_owner_scope(
+            session_id, message_store=self.message_store
+        ) as progress_owner_id:
+            if progress_owner_id != initial_progress_owner_id:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
+            fleet_coordinator = self._conversation_fleet_coordinator(
+                conversation_id,
+                create=bool(
+                    first_request_plan.schemas.runtime_schemas
+                    or first_request_plan.schemas.active_schemas
+                ),
+                progress_owner_id=progress_owner_id,
+            )
+            message_inbox = self.message_store.get_inbox(progress_owner_id)
         service = AgentService(
             self._db,
             registry,
             chat_call=adapter.chat_call,
+            runtime_capacity=self.runtime_capacity,
+            work_origin=work_origin,
+            work_chain_id=work_chain_id,
             clock=self._clock,
             on_step=on_step,
             # TASK-25903: hands the controller a steer(text) bound to THIS
@@ -6338,12 +6552,18 @@ class ConsoleAgentBridge:
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
+            guard_tool_calls=guard_tool_calls,
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             prepare_managed_skill_promotion_tool=(prepare_managed_skill_promotion_tool),
             run_skill_script_tool=run_skill_script_tool,
             run_log_writer=run_log_writer,
+            post_tool_call=(
+                run_hooks_engine.post_tool_dep(session_id=session_id)
+                if run_hooks_engine is not None
+                else None
+            ),
             run_log_request_plan=first_request_plan.run_log,
             revoke_approvals=revoke_approvals,
             on_tool_terminal=on_tool_terminal,
@@ -6366,6 +6586,7 @@ class ConsoleAgentBridge:
             # closes a survivor's change-review window, and nothing else
             # in the bridge knows it (the coordinator marks a handle
             # terminal only AFTER this scope exits).
+            inline_child_model_scope=adapter.child_lifeline,
             child_model_scope=functools.partial(
                 self._child_run_scope,
                 conversation_id,
@@ -6386,7 +6607,8 @@ class ConsoleAgentBridge:
             # still visible and stoppable through. `None` when the fleet
             # kill switch is on, which leaves `AgentService` to take its
             # own inline path exactly as before.
-            fleet_coordinator=self._conversation_fleet_coordinator(conversation_id),
+            fleet_coordinator=fleet_coordinator,
+            message_inbox=message_inbox,
             startup_instruction_candidate=startup_instruction_candidate,
             confirm_project_instruction_dispatch=(
                 service_confirm_project_instruction_dispatch
@@ -6424,7 +6646,11 @@ class ConsoleAgentBridge:
             else None
         )
         run_messages = list(first_request_plan.messages)
+        execution_owner = None
         try:
+            execution_owner = self.runtime_capacity.begin_execution(
+                origin=work_origin, conversation_id=conversation_id
+            )
             # FIRST statement in the block that owns this thread's
             # shutdown -- see its construction above. Not merely *before*
             # the try: one inserted line there would silently re-open the
@@ -6432,8 +6658,9 @@ class ConsoleAgentBridge:
             # finally still runs and still closes the loop; `is_alive()`
             # is False for a never-started thread, so the close branch is
             # the one taken and no fd leaks.
-            turn_lifeline.start()
+            turn_lifeline.start(owner=execution_owner)
             run_id, outcome = service.run_turn(
+                execution_owner=execution_owner,
                 conversation_id=conversation_id,
                 messages=run_messages,
                 config=config,
@@ -6530,7 +6757,11 @@ class ConsoleAgentBridge:
             # (see `_StreamingModelAdapter.child_lifeline`), so a child
             # still running when this line executes keeps a live transport
             # to the model rather than losing one out from under it.
-            turn_lifeline.shutdown()
+            try:
+                turn_lifeline.shutdown()
+            finally:
+                if execution_owner is not None:
+                    execution_owner.finish_root()
             # TASK-1971: E snapshot on EVERY terminal path -- completed,
             # failed, cancelled, or crashed. A run that died halfway through
             # editing is when review matters most. `run_id` is unbound when
@@ -6892,8 +7123,9 @@ class ConsoleAgentBridge:
         # cancel Event and approval-revoke callback live in THIS service
         # and nowhere else, so dropping the last reference to it is what
         # made a survivor unstoppable. Retained until its last child
-        # settles; `_prune_settled_fleet_survivors` does the dropping,
-        # lazily, off the read paths below. Retained on the identity-miss
+        # settles; `_prune_settled_fleet_survivors` does the dropping at
+        # the next turn boundary or an existing lifecycle/action cleanup
+        # path. Retained on the identity-miss
         # path too (a stale teardown from an overtaken run still owns its
         # own children) -- `service` is this call's own object either way.
         if service.live_subagent_handles():
@@ -7155,6 +7387,22 @@ class ConsoleAgentBridge:
                     retained.remove(waiter)
                 if not retained:
                     self._fleet_terminal_waiters.pop(conversation_id, None)
+    def on_fleet_child_settled(
+        self, name: str, consumer: Callable[[FleetChildSettled], None]
+    ) -> None:
+        """Register a bridge-lifetime individual completion consumer (ADR-135).
+
+        Registration replaces the same name in place. Consumers run in order,
+        outside the bridge lock, on the child's thread after terminal persistence;
+        use only databases and thread-safe callables, as for ``FleetDrained``.
+        Individual completion does not reconcile final usage or close a change
+        window. A notification failure does not suppress another consumer or drain.
+
+        Args:
+            name: Stable consumer identity and replacement key.
+            consumer: Called with each durable ``FleetChildSettled`` event.
+        """
+        self._fleet_child_fanout.register(name, consumer)
 
     def _on_fleet_child_settled(
         self,
@@ -7164,7 +7412,7 @@ class ConsoleAgentBridge:
         run_id: str | None,
         status: str,
     ) -> None:
-        """One fleet child fully settled -- record it; fire on the drain.
+        """Record one settlement, notify individually, then fire any final drain.
 
         The ``on_child_settled`` hook `run_reply` hands `AgentService`,
         with this turn's identity bound by its child-state wrapper (the
@@ -7213,6 +7461,25 @@ class ConsoleAgentBridge:
                 drained_children = tuple(
                     self._settling_children.pop(conversation_id, ())
                 )
+        # The service's last terminal-status write is best-effort. Verify the
+        # committed row independently before allowing individual wake intake;
+        # missing IDs, failed writes and unreadable rows never authorize work.
+        row = None
+        if run_id:
+            try:
+                row = self._db.get_run_fresh(run_id)
+            except Exception as exc:  # noqa: BLE001 -- verification cannot suppress the drain
+                logger.warning(
+                    "could not verify terminal fleet child row (exception_type={})",
+                    type(exc).__name__,
+                )
+        if row is not None and row.get("status") in TERMINAL_RUN_STATUSES:
+            self._fleet_child_fanout.fire(
+                FleetChildSettled(
+                    conversation_id=conversation_id,
+                    child=dataclass_replace(record, status=row["status"]),
+                )
+            )
         if drained_children is not None:
             self._fleet_drain_fanout.fire(
                 FleetDrained(
@@ -7497,14 +7764,12 @@ class ConsoleAgentBridge:
     def _prune_settled_fleet_survivors(self, conversation_id: str) -> None:
         """Forget retained services whose last child has settled.
 
-        PR3a-1 Task 6a. Called off the read paths (`fleet_snapshot`,
-        `cancel_subagent`, `live_snapshot`) rather than from a completion
-        callback ON PURPOSE: the "last child of a turn finished" signal
-        does not exist yet and PR 3a-2 builds it for auto-wake, so
-        inventing a second one here would be built twice and thrown away
-        once. Nothing depends on the pruning being prompt -- a settled
-        service is inert, and every read that could observe it prunes it
-        first.
+        PR3a-1 Task 6a. Cleanup remains on lifecycle and action paths such
+        as `live_snapshot`, cancellation, and fence release rather than a
+        completion callback. A settled service is inert until one of those
+        existing paths releases it. `fleet_snapshot` deliberately does not
+        call this helper: fleet observation, including navigation counts,
+        must not change retained ownership.
 
         Args:
             conversation_id: The conversation to prune.
@@ -7521,8 +7786,174 @@ class ConsoleAgentBridge:
             else:
                 self._fleet_survivor_services.pop(conversation_id, None)
 
+    @property
+    def runtime_capacity(self) -> RuntimeCapacity:
+        """Return shared admission, allocating once on first execution access.
+
+        Returns:
+            Injected, runtime-supplied, or standalone admission capacity.
+
+        Raises:
+            RuntimeError: Closed ownership would require a new allocation.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity is None:
+                if self._runtime_capacity_closed:
+                    raise RuntimeError("bridge capacity is closed")
+                if self._runtime_capacity_factory is None:
+                    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+                    self._runtime_capacity = RuntimeCapacity.from_settings()
+                else:
+                    self._runtime_capacity = self._runtime_capacity_factory()
+            return self._runtime_capacity
+
+    @runtime_capacity.setter
+    def runtime_capacity(self, value: RuntimeCapacity) -> None:
+        """Replace idle admission while preserving explicit capacity injection.
+
+        Args:
+            value: Capacity to use for subsequent execution admission.
+
+        Raises:
+            RuntimeError: This bridge's ownership has closed.
+            ValueError: Replacement would detach active execution ownership.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity is value:
+                return
+            if self._runtime_capacity_closed:
+                raise RuntimeError("bridge capacity is closed")
+            if (
+                self._runtime_capacity is not None
+                and self._runtime_capacity.snapshot().executions
+            ):
+                raise ValueError("cannot replace capacity of an active bridge")
+            self._runtime_capacity = value
+            self._runtime_capacity_factory = None
+
+    def bind_runtime_capacity(
+        self,
+        factory: Callable[[], RuntimeCapacity],
+        *,
+        existing_capacity: RuntimeCapacity | None = None,
+    ) -> None:
+        """Bind shared runtime admission without forcing its first allocation.
+
+        Args:
+            factory: Runtime supplier that returns its locked shared capacity.
+            existing_capacity: Already allocated runtime capacity, if any.
+
+        Raises:
+            RuntimeError: This bridge has permanently closed its ownership.
+            ValueError: Rebinding would detach active execution ownership.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity_closed:
+                raise RuntimeError("bridge capacity is closed")
+            if self._runtime_capacity_factory == factory:
+                return
+            if (
+                self._runtime_capacity is not None
+                and self._runtime_capacity is not existing_capacity
+                and self._runtime_capacity.snapshot().executions
+            ):
+                raise ValueError("cannot replace capacity of an active bridge")
+            self._runtime_capacity = existing_capacity
+            self._runtime_capacity_factory = factory
+
+    @property
+    def message_store(self):
+        """Create the shared progress store only when execution needs it."""
+        with self._message_store_lock:
+            if self._progress_closed:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
+            if self._message_store is None:
+                from tldw_chatbook.Agents.fleet_messages import MessageStore
+
+                self._message_store = MessageStore()
+                if self._store is not None:
+                    self._store.register_progress_message_store(self._message_store)
+            return self._message_store
+
+    def _session_progress_inbox(self, session_id: str) -> MessageInbox | None:
+        """Noncreating lookup of the native session's exact progress owner."""
+        if self._store is None or self._progress_closed or self._message_store is None:
+            return None
+        with self._store.progress_owner_scope(
+            session_id, message_store=self._message_store
+        ) as owner_id:
+            return (
+                self._message_store.get_inbox(owner_id) if owner_id is not None else None
+            )
+
+    def progress_snapshot(self, owner_id: str) -> tuple[ProgressMessage, ...]:
+        """Inspect an opaque owner key from store.progress_owner_id; never allocate."""
+        if self._progress_closed or self._message_store is None:
+            return ()
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        inbox = self._message_store.get_inbox(owner_id)
+        try:
+            return inbox.snapshot() if inbox is not None else ()
+        except MessageError:
+            return ()
+
+    def progress_counts(self) -> dict[str, int]:
+        """Return body-free pending counts keyed by live native session ID."""
+        if self._progress_closed or self._message_store is None:
+            return {}
+        counts = self._message_store.pending_counts()
+        if self._store is None:
+            return counts
+        return {
+            session_id: counts[owner_id]
+            for session_id, owner_id in self._store.progress_owner_ids().items()
+            if owner_id in counts
+        }
+
+    def discard_progress(self, owner_id: str, message_ids: Sequence[str]) -> int:
+        """Discard selected IDs from an opaque owner key, not a native session ID."""
+        if self._progress_closed or self._message_store is None:
+            return 0
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        inbox = self._message_store.get_inbox(owner_id)
+        try:
+            return inbox.discard(message_ids) if inbox is not None else 0
+        except MessageError:
+            return 0
+
+    def close_progress(
+        self, session_id: str, *, conversation_id: str | None = None
+    ) -> None:
+        """Release a native binding before cancellation; last close drops progress."""
+        if self._progress_closed or self._message_store is None:
+            return None
+        with self._store.progress_owner_scope(
+            session_id, release=True, message_store=self._message_store
+        ) as owner_id:
+            if owner_id is not None:
+                self._fleet_coordinators.pop(conversation_id or session_id, None)
+
+    def close_all_progress(self) -> None:
+        """Permanently invalidate progress before worker shutdown."""
+        with self._runtime_capacity_lock:
+            self._runtime_capacity_closed = True
+        with self._message_store_lock:
+            self._progress_closed = True
+            if self._message_store is not None:
+                self._message_store.close()
+            self._fleet_coordinators.clear()
+
     def _conversation_fleet_coordinator(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
+        *,
+        create: bool = True,
+        progress_owner_id: str | None = None,
     ) -> FleetCoordinator | None:
         """The coordinator for this conversation, built on first use.
 
@@ -7561,6 +7992,12 @@ class ConsoleAgentBridge:
             The conversation's coordinator, or ``None`` when the fleet is
             switched off.
         """
+        # TASK-15666: reclaim settled survivor owners at the same next-turn
+        # boundary that prunes terminal coordinator handles below. This must
+        # precede the kill-switch return so headless turns still clean up, and
+        # stay outside the admission lock because the helper owns its separate
+        # survivor-list lock. Live owners remain retained for cancellation.
+        self._prune_settled_fleet_survivors(conversation_id)
         # Read through the MODULE, not a from-import: `agent_service.
         # _setting` is what tests monkeypatch to flip the kill switch
         # (e.g. `test_inline_fleet_off_spawn_still_produces_a_live_
@@ -7594,10 +8031,23 @@ class ConsoleAgentBridge:
         )
         with self._fleet_admission_lock:
             coordinator = self._fleet_coordinators.get(conversation_id)
+            if (
+                coordinator is not None
+                and progress_owner_id is not None
+                and coordinator.message_inbox
+                is not self.message_store.get_inbox(progress_owner_id)
+            ):
+                # Native state replacement closed the previous inbox. A new binding
+                # must not reuse a coordinator carrying that revoked capability.
+                coordinator = None
+                self._fleet_coordinators.pop(conversation_id, None)
             if coordinator is None:
+                if not create:
+                    return None
                 coordinator = FleetCoordinator(
                     max_live=max_live,
                     clock=self._clock,
+                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),
                     retained_transcripts=retained_transcripts,
                     retained_transcript_max_chars=retained_transcript_max_chars,
                     on_reserve=functools.partial(
@@ -7912,8 +8362,11 @@ class ConsoleAgentBridge:
         that seam is the only thing this method (or any other caller
         outside ``agent_service.py``) touches on ``AgentService`` for this
         purpose.
+
+        This observation does not release settled survivor owners. Existing
+        lifecycle and action paths perform that cleanup; terminal coordinator
+        handles remain available until the next turn prunes them.
         """
-        self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
         if service is not None:
             return service.fleet_snapshot()
@@ -8146,8 +8599,29 @@ class ConsoleAgentBridge:
             agent_kind=AGENT_KIND_SUBAGENT,
         )
 
+    def subagent_history_page(
+        self,
+        conversation_id: str,
+        *,
+        before: tuple[str, str] | None = None,
+        limit: int = 51,
+    ) -> list[dict]:
+        """Return one metadata-only page for the conversation's history picker."""
+        return self._db.list_subagent_run_headers(
+            conversation_id, before=before, limit=limit
+        )
+
     def subagent_run(self, run_id: str) -> dict | None:
-        return self._db.get_run(run_id)
+        record = self._db.get_run(run_id)
+        if (
+            record is not None
+            and record["agent_kind"] == AGENT_KIND_SUBAGENT
+            and record.get("resumed_from_run_id")
+        ):
+            record["continuation_budget"] = self._db.continuation_budget(
+                record["conversation_id"], run_id
+            )
+        return record
 
     def latest_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the most recent non-superseded PRIMARY run's id, if any.
@@ -9177,19 +9651,7 @@ class ConsoleAgentBridge:
             for step in (primary.get("steps") or [])[-5:]
         )
         subagents = tuple(
-            SubAgentSummary(
-                text=str(record.get("task") or ""),
-                status=str(record.get("status") or "running"),
-                # PR2b Task 4: the rail's per-row click-through needs a
-                # stable identity to resolve a clicked row back to its own
-                # run (`ConsoleAgentController._console_agent_drilldown_
-                # target_run_id`). Historical rows have no coordinator
-                # handle (there is none, post-restart), but they DO have
-                # their own permanent `AgentRunsDB` id -- populate it here
-                # so a resumed conversation's sub-agent rows are just as
-                # drillable as a live run's.
-                run_id=str(record.get("id") or ""),
-            )
+            self.historical_subagent_summary(record)
             for record in subagent_records
             if record.get("parent_run_id") == primary["id"]
         )
@@ -9198,6 +9660,27 @@ class ConsoleAgentBridge:
             step=len(primary.get("steps") or []),
             steps=steps,
             subagents=subagents,
+        )
+
+    @staticmethod
+    def historical_subagent_summary(record: dict) -> SubAgentSummary:
+        """Project one saved child into bounded rail detail and metadata."""
+        detail = _truncate_step_text(
+            str(record.get("result") or ""), limit=_console_tool_result_display_cap()
+        )
+        if not detail:
+            for step in reversed(record.get("steps") or []):
+                if any(step.get(key) for key in ("summary", "result", "tool_name")):
+                    detail = ConsoleAgentBridge._summarize_persisted_step(step)
+                    break
+        return SubAgentSummary(
+            text=str(record.get("task") or "sub-agent"),
+            status=str(record.get("status") or "running"),
+            run_id=str(record.get("id") or ""),
+            budget_tokens=record.get("budget_tokens"),
+            created_at=record.get("created_at"),
+            updated_at=record.get("updated_at"),
+            detail=detail,
         )
 
     @staticmethod

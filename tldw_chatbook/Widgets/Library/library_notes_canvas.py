@@ -14,7 +14,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.events import Resize
+from textual.events import Focus, Resize
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
@@ -202,6 +202,30 @@ def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -
     return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
 
 
+def render_preview_source(body: str) -> str:
+    """Return the note body as the Markdown Preview should render it.
+
+    ONE home for the order, because Preview renders from two places -- the
+    compose that mounts the widget and the in-place sync that refreshes it --
+    and the sync's staleness check compares against what compose produced. Two
+    call sites spelling the rewrites differently is a re-render on every sync
+    at best and a stale Preview at worst.
+
+    Args:
+        body: The note's stored Markdown source.
+
+    Returns:
+        The source with imported `[[Title]](note://<id>)` links reduced to
+        their display text (task-32263) and Obsidian callout headers turned
+        into plain blockquote headers (task-32249).
+    """
+    # Lazy, like the parser factory below it: this module is on the Library
+    # route's pre-import path (Tests/Performance/test_screen_preimport_payload_budget.py).
+    from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
+
+    return render_obsidian_callouts(render_note_links(body))
+
+
 def compose_note_row_label(
     title: str,
     *,
@@ -363,9 +387,29 @@ _NOTE_FIELD_TAB_BINDINGS = [
     Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
 ]
 
+#: task-32247: the note body's own keys, on top of the shared Tab pair --
+#: see ``NoteEditorTextArea`` for why Textual supplies neither.
+_NOTE_BODY_BINDINGS = [
+    *_NOTE_FIELD_TAB_BINDINGS,
+    Binding("ctrl+end", "cursor_document_end", "End of note", show=False),
+    Binding("ctrl+home", "cursor_document_start", "Start of note", show=False),
+]
+
 
 class NoteEditorInput(Input):
     """A note field whose Tab moves focus BEFORE the next key is forwarded.
+
+    task-32253: it also does NOT select its content on focus, and parks the
+    caret at the end instead. Textual's ``Input`` default is select-on-focus
+    -- browser behaviour, and right for a query box you are about to
+    replace. It is wrong for the one field on this screen whose content must
+    not be destroyed: live at dev 4a14b3f36f, Shift+Tab out of the body into
+    the Title selected "Ideas for study decks" whole, one "!" replaced it,
+    and autosave committed the loss a second later ("Saved 15:23"). Textual's
+    ``Input`` has no undo, so nothing could bring the title back. The keyword
+    boxes share this class and the same rule for the same reason; the path
+    fields that genuinely WANT select-on-focus are a different widget
+    (task-32251).
 
     task-32106 AC#1: ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")``
     is not ``priority=True``, so ``Key(tab)`` is posted to the focused
@@ -389,9 +433,33 @@ class NoteEditorInput(Input):
 
     BINDINGS = _NOTE_FIELD_TAB_BINDINGS
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the field with select-on-focus off unless asked otherwise."""
+        kwargs.setdefault("select_on_focus", False)
+        super().__init__(*args, **kwargs)
+
+    def _on_focus(self, event: Focus) -> None:
+        super()._on_focus(event)
+        if not self.select_on_focus:
+            # Textual leaves the caret wherever it was (position 0 on a
+            # fresh field), which reads as "type here and push the title
+            # along". End-of-text is where a reader arriving by Shift+Tab
+            # means to continue.
+            self.action_end()
+
 
 class NoteEditorTextArea(TextArea):
     """The note body, with the same synchronous Tab as the fields around it.
+
+    task-32247: it also carries the document-end and document-start keys.
+    Textual 8.2.8's ``TextArea`` binds ``home``/``end`` to the LINE ends and
+    defines neither a ``ctrl+end`` binding nor a ``cursor_document_end``
+    action at all -- so on a 35 KB note, Ctrl+End (in every encoding: the
+    named key, ``\\x1b[1;5F``, ``\\x1bOF``-style variants all resolve to the
+    one key name ``ctrl+end``) was not swallowed by anything upstream, as
+    the report inferred; there was simply no key to swallow, and typing
+    after it landed at character 0. Editing near the end of a long note was
+    unreachable by keyboard.
 
     The body has the identical defect one widget over (coordinator addendum
     from a peer session): bursting ``hello`` + Tab + ``world`` into it left
@@ -406,7 +474,15 @@ class NoteEditorTextArea(TextArea):
     trusting the default.
     """
 
-    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
+    BINDINGS = _NOTE_BODY_BINDINGS
+
+    def action_cursor_document_end(self) -> None:
+        """Move the caret to the end of the note body."""
+        self.move_cursor(self.document.end)
+
+    def action_cursor_document_start(self) -> None:
+        """Move the caret to the start of the note body."""
+        self.move_cursor((0, 0))
 
 
 @dataclass(frozen=True)
@@ -858,6 +934,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 next_action = ""
             elif "failed" in f"{status} {state.transfer_status}".lower():
                 next_action = "Review the error, then keep editing."
+            elif state.presentation == "preview":
+                # task-32249: Preview is read-only, so "changes save
+                # automatically" named a behaviour this surface does not
+                # have. Name the control that gets the reader back to the
+                # one that does.
+                next_action = "Press Edit to change this note."
             elif not state.snapshot.body:
                 # Review F4: "Keep editing" presumes editing has started.
                 # The brief's "Start typing" belongs here -- this is the
@@ -1282,12 +1364,30 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # ``library-toolbar-count`` class (css/components/
                 # _agentic_terminal.tcss's ``width: auto``) rather than a
                 # per-canvas one-off.
-                yield Static(
+                in_row_count = Static(
                     f"{list_state.selected_count} selected",
                     id="library-notes-selected-count",
                     classes="library-toolbar-count library-notes-selection-count",
                     markup=False,
                 )
+                # task-32261 AC#1: this counter costs 11 of the 42 columns a
+                # 100x30 terminal gives the list pane, which is what pushed
+                # "Export selected" off the right edge -- the strip painted
+                # "0 selected  Done  All 10  Clear" and the guide's fifth
+                # action was unreachable.
+                #
+                # Hiding it is only safe because task-32272 made the count a
+                # CLASS the patcher writes to (``library-notes-selection-
+                # count``, above): ``_apply_library_row_toggle`` now updates
+                # every renderer wearing it, hidden ones included, so the
+                # line below this strip tracks the selection instead of
+                # keeping the compose-time number. The first round of this
+                # branch hid the only patched widget and shipped a stale
+                # "0 selected" over a checked row -- pinned now by
+                # ``test_the_compact_select_strip_counts_the_row_the_reader_
+                # just_checked``.
+                in_row_count.display = not self.compact
+                yield in_row_count
                 yield Button(
                     "Done",
                     id="library-notes-select-toggle",
@@ -2184,7 +2284,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             yield Markdown(
-                content,
+                render_preview_source(content),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
@@ -2263,6 +2363,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="library-canvas-action library-media-action-danger",
                 compact=True,
             )
+            # task-32268: the prompt belongs to the button above it. It used
+            # to compose as a sibling of every region, below the (hidden)
+            # wide utilities and the conflict callout -- live at dev
+            # 4a14b3f36f it painted five rows under Delete and OUTSIDE the
+            # Info border, which closed above it, so the guide's "renders
+            # where Delete was pressed" was not what the screen showed. It is
+            # the next child of Danger now, which is also the only place it
+            # can be: Delete is reachable from Info alone (task-32132), and
+            # ``apply_session_state`` keeps Info open while confirming.
+            yield from self._compose_delete_confirmation()
         yield Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
@@ -2331,6 +2441,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
 
+    def _compose_delete_confirmation(self) -> ComposeResult:
+        """Mount the delete prompt where task-32268 requires it: in Danger."""
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
                 "Delete this note? Undo will be available in the Notes list.",
@@ -2402,6 +2514,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if database_purpose:
                 database_purpose.first(Static).display = not compact
             rendered_count = len(self.list_state.rows)
+            # task-32261 AC#1: the in-strip counter's compact hide flips on a
+            # breakpoint crossing, like the two labels below -- this method
+            # is the canvas's whole in-place responsive path.
+            in_row_count = self.query("#library-notes-selected-count")
+            if in_row_count:
+                in_row_count.first(Static).display = not compact
             select_all = self.query("#library-notes-select-all")
             if select_all:
                 select_all.first(Button).label = (
@@ -2523,8 +2641,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # "delete this note?" painted 14 rows away, under a body editor the
         # user never opened. Info stays put while confirming; only Preview
         # (which never hosts a Delete button) still yields to Edit.
+        # task-32268: the prompt is now a child of Info's Danger section, so
+        # Info has to be the surface whenever it is up -- otherwise a
+        # confirmation could be raised into a hidden pane. In production this
+        # is what already happened (Delete is Info-only), and task-32132's
+        # own rule was "Info stays put while confirming"; stating it as a
+        # condition makes the invariant the prompt's placement depends on
+        # explicit rather than incidental.
         show_context = (
-            state.region == "context"
+            (state.region == "context" or confirming_delete)
             and not conflict
             and not bulk_read_only
         )
@@ -2589,11 +2714,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # hidden Preview stale while typing, then perform one canonical update
         # when Preview becomes the active surface so edits cannot queue an
         # unbounded hidden-render backlog.
+        #
         # task-32263: an imported body stores its links as
         # `[[Title]](note://<id>)` -- a working Obsidian link this module's own
         # parser reads back. Markdown does not know that spelling, so Preview
         # renders the display text and leaves the identifier behind the link.
-        preview_source = render_note_links(snapshot.body)
+        # task-32249: and an Obsidian callout header renders as a callout
+        # rather than printing its `[!note]` marker. Both rewrites run at
+        # compose time too, so the staleness comparison below has to be
+        # against the SAME rendered source -- comparing the raw body would
+        # re-render every sync on any note carrying a link or a callout.
+        preview_source = render_preview_source(snapshot.body)
         if show_preview and preview_body.source != preview_source:
             preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(

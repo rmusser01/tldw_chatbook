@@ -1,0 +1,9 @@
+import json,subprocess,time
+from pathlib import Path
+root=Path('/home/ml-user/tts-linux-cuda-20260912')
+with (root/'logs/kokoro-cuda-01-routing.jsonl').open('w') as log:
+ for _ in range(3600):
+  rows=json.loads(subprocess.check_output(['pactl','--format=json','list','sink-inputs'],text=True))
+  log.write(json.dumps({'at':time.monotonic(),'inputs':rows})+'\n');log.flush()
+  if (root/'logs/kokoro-cuda-01.exit').exists():break
+  time.sleep(.25)

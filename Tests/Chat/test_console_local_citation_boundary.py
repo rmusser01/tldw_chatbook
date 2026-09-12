@@ -2609,19 +2609,6 @@ async def test_citation_repair_agent_ineligible_outcomes_never_dispatch(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "TASK-22720: the agent bridge's run_reply raises partway and the "
-        "controller swallows it, leaving an empty assistant row. PRE-EXISTING "
-        "-- one of the original 40 failures here, not introduced by the "
-        "durable-session conversion. Measured: the bridge runs (its calls "
-        "list is non-empty) but never reaches its own replacement code. "
-        "Narrowed to AssertionError so only the empty-row symptom is expected; "
-        "an error or a different exception still fails."
-    ),
-    raises=AssertionError,
-)
 async def test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair():
     store = _recording_citation_store()
     gateway = _ScriptedCitationGateway(())

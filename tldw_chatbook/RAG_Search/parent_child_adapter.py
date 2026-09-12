@@ -96,10 +96,11 @@ class StructuredChunk:
     """Enhanced chunk with structural information (legacy attribute names).
 
     Kept attribute-compatible with the retired implementation so consumers
-    such as ``Widgets/chunk_preview_modal.py`` (``chunk_index``,
-    ``word_count``, ``char_count``, ``chunk_type.value``, ``metadata``)
-    and ``Tests/test_enhanced_rag.py`` (``level``, ``start_char``,
-    ``end_char``, ``parent_index``, ``children_indices``) keep working.
+    such as ``Tests/test_enhanced_rag.py`` (``level``, ``start_char``,
+    ``end_char``, ``parent_index``, ``children_indices``) and the
+    seam-level §7.3 pins in ``Tests/Chunking/test_callsite_characterization.py``
+    (``chunk_index``, ``word_count``, ``char_count``, ``chunk_type.value``,
+    ``metadata``) keep working.
     """
 
     text: str

@@ -2,16 +2,17 @@
 # Description: Security utilities for subscription monitoring
 #
 # This module provides security features including:
-# - XXE (XML External Entity) attack prevention
-# - SSRF (Server-Side Request Forgery) protection
 # - Input validation and sanitization
-# - URL validation
 # - Authentication credential encryption
+#
+# URL/SSRF policy (private IPs, cloud metadata, schemes) is owned by
+# ``tldw_chatbook.Utils.egress``; this module no longer carries its own
+# validator (TASK-591 removed the caller-less SecurityValidator/SSRFProtector
+# that only delegated to it).
 #
 # Imports
 import re
 from typing import Optional, List
-from urllib.parse import urlparse, urlunparse
 import hashlib
 import secrets
 from base64 import b64encode, b64decode
@@ -19,20 +20,6 @@ from base64 import b64encode, b64decode
 #
 # Third-Party Imports
 from loguru import logger
-
-try:
-    import defusedxml.ElementTree as ET
-    from defusedxml import DefusedXmlException
-
-    DEFUSEDXML_AVAILABLE = True
-except ImportError:
-    import xml.etree.ElementTree as ET
-
-    DefusedXmlException = Exception  # Fallback to base Exception
-    DEFUSEDXML_AVAILABLE = False
-    logger.warning(
-        "defusedxml not available, using standard xml.etree. Install defusedxml for better security."
-    )
 
 # Optional cryptography import
 CRYPTOGRAPHY_AVAILABLE = False
@@ -58,221 +45,6 @@ class SecurityError(Exception):
     """Base exception for security-related errors."""
 
     pass
-
-
-class SSRFError(SecurityError):
-    """Exception for SSRF attempts."""
-
-    pass
-
-
-class XXEError(SecurityError):
-    """Exception for XXE attempts."""
-
-    pass
-
-
-class SecurityValidator:
-    """Comprehensive security validation for subscriptions."""
-
-    # Allowed URL schemes
-    ALLOWED_SCHEMES = {"http", "https"}
-
-    @classmethod
-    def validate_feed_url(cls, url: str, trusted_origins=frozenset()) -> str:
-        """
-        Validate and sanitize feed URLs.
-
-        Host/IP policy (private IPs, cloud metadata endpoints, DNS failures) is
-        delegated to the shared egress guard (``tldw_chatbook.Utils.egress``) so
-        subscription URLs are validated with the same fail-closed policy as
-        every other outbound fetch in the app.
-
-        Args:
-            url: URL to validate
-            trusted_origins: Hosts the caller already trusts (e.g. a feed's own
-                host, so items whose URL matches it aren't blocked as "private").
-
-        Returns:
-            Sanitized URL
-
-        Raises:
-            SSRFError: If URL is potentially malicious or blocked by policy
-            ValueError: If URL is invalid
-        """
-        if not url:
-            raise ValueError("URL cannot be empty")
-
-        # Parse URL
-        try:
-            parsed = urlparse(url.strip())
-        except Exception as e:
-            raise ValueError(f"Invalid URL format: {e}")
-
-        # Check scheme
-        if not parsed.scheme:
-            raise ValueError("URL must include scheme (http/https)")
-
-        if parsed.scheme not in cls.ALLOWED_SCHEMES:
-            raise SSRFError(f"URL scheme '{parsed.scheme}' not allowed")
-
-        # Check hostname
-        if not parsed.hostname:
-            raise ValueError("URL must include hostname")
-
-        from tldw_chatbook.Utils.egress import evaluate_url_policy
-
-        decision = evaluate_url_policy(url, trusted_origins=trusted_origins)
-        if not decision.allowed and decision.reason != "disabled":
-            raise SSRFError(
-                f"URL blocked by egress policy ({decision.reason}): {parsed.hostname}"
-            )
-
-        # Normalize URL
-        normalized = urlunparse(
-            (
-                parsed.scheme.lower(),
-                parsed.netloc.lower(),
-                parsed.path or "/",
-                parsed.params,
-                parsed.query,
-                "",  # Remove fragment
-            )
-        )
-
-        return normalized
-
-    @staticmethod
-    def validate_xml_content(content: str) -> str:
-        """
-        Validate XML content for XXE attacks.
-
-        Args:
-            content: XML content to validate
-
-        Returns:
-            Validated content
-
-        Raises:
-            XXEError: If potentially malicious XML detected
-        """
-        if not content:
-            raise ValueError("XML content cannot be empty")
-
-        # Check for common XXE patterns
-        xxe_patterns = [
-            r"<!ENTITY",
-            r"<!DOCTYPE[^>]+SYSTEM",
-            r"<!DOCTYPE[^>]+PUBLIC",
-            r'SYSTEM\s+["\']file:',
-            r'SYSTEM\s+["\']http:',
-            r'SYSTEM\s+["\']https:',
-            r"xmlns:xi\s*=",  # XInclude
-        ]
-
-        content_lower = content.lower()
-        for pattern in xxe_patterns:
-            if re.search(pattern, content_lower, re.IGNORECASE):
-                raise XXEError(f"Potentially malicious XML pattern detected: {pattern}")
-
-        # Try parsing with defusedxml
-        try:
-            # This will raise if XXE is detected
-            ET.fromstring(content)
-        except DefusedXmlException as e:
-            raise XXEError(f"XXE attack detected: {e}")
-        except ET.ParseError:
-            # Let parse errors through - they'll be handled elsewhere
-            pass
-
-        return content
-
-    @staticmethod
-    def sanitize_item(item: dict, trusted_origins=frozenset()) -> dict:
-        """
-        Sanitize a feed item for storage.
-
-        Args:
-            item: Item dictionary to sanitize
-            trusted_origins: Hosts to pass through to URL validation (e.g. the
-                owning feed's host), so same-origin item URLs aren't blocked.
-
-        Returns:
-            Sanitized item
-        """
-        # Create a copy to avoid modifying original
-        sanitized = item.copy()
-
-        # Sanitize text fields
-        text_fields = ["title", "content", "author", "url"]
-        for field in text_fields:
-            if field in sanitized and sanitized[field]:
-                # Remove null bytes
-                sanitized[field] = sanitized[field].replace("\x00", "")
-
-                # Limit length
-                max_lengths = {
-                    "title": 1000,
-                    "content": 100000,  # 100KB
-                    "author": 500,
-                    "url": 2000,
-                }
-                max_len = max_lengths.get(field, 10000)
-                if len(sanitized[field]) > max_len:
-                    sanitized[field] = sanitized[field][:max_len]
-
-        # Validate URL if present
-        if "url" in sanitized and sanitized["url"]:
-            try:
-                sanitized["url"] = SecurityValidator.validate_feed_url(
-                    sanitized["url"], trusted_origins=trusted_origins
-                )
-            except (SSRFError, ValueError) as e:
-                logger.warning(f"Invalid item URL, removing: {e}")
-                sanitized["url"] = None
-
-        return sanitized
-
-
-class SSRFProtector:
-    """Advanced SSRF protection with DNS rebinding prevention."""
-
-    def __init__(self):
-        """Initialize SSRF protector."""
-        self.resolved_ips = {}  # Cache of hostname -> IP mappings
-
-    def check_url(self, url: str) -> bool:
-        """
-        Check if URL is safe from SSRF.
-
-        Args:
-            url: URL to check
-
-        Returns:
-            True if safe, False otherwise
-        """
-        try:
-            SecurityValidator.validate_feed_url(url)
-            return True
-        except (SSRFError, ValueError):
-            return False
-
-    def is_ip_allowed(self, ip: str) -> bool:
-        """
-        Check if an IP address is allowed.
-
-        Args:
-            ip: IP address string
-
-        Returns:
-            True if allowed, False otherwise
-        """
-        try:
-            from tldw_chatbook.Utils.egress import _classify_ip
-
-            return _classify_ip(ip) == "public"
-        except ValueError:
-            return False
 
 
 class CredentialEncryptor:

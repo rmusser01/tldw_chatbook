@@ -17,10 +17,11 @@ For lore that is *injected* rather than substituted, see the parent
 ## Getting there
 
 Press **Ctrl+4** to open **Roleplay & Chat Dictionaries**, then click
-**Dictionaries** in the "Modes:" strip — or press **Ctrl+3**, which picks that
-mode while this screen is open (here **Ctrl+1**–**Ctrl+4** select modes, not
-screens). The descriptor above the rail reads "Dictionaries — text find/replace
-rules."
+**Dictionaries** in the "Modes:" strip — or press **d**, which picks that
+mode while this screen is open (the mode keys are the single letters
+**c / p / d / l**; a focused text box types the letter instead, so press
+**Escape** first if a field has focus). The descriptor above the rail reads
+"Dictionaries — text find/replace rules."
 
 The Library rail lists your dictionaries; before you have any it reads "No
 dictionaries yet - use New or Import to add one." Each row shows the name with
@@ -196,7 +197,7 @@ marker, not the rule above), and Console's **Attach dictionary…** /
 
 | Key | Action |
 |---|---|
-| Ctrl+3 | Switch to Dictionaries mode (while this screen is open) |
+| d | Switch to Dictionaries mode (while this screen is open, focus outside a text box) |
 | Ctrl+N | New dictionary |
 | Ctrl+F | Focus the rail's search box |
 | Space | Turn the highlighted dictionary row on/off |

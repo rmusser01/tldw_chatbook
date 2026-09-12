@@ -1,0 +1,10 @@
+kokoro-cuda-02 runtime and full ASR passed
+kokoro-onnx-02 runtime and full ASR passed
+Traceback (most recent call last):
+  File "/home/ml-user/tts-linux-cuda-20260912/qualify-rebased.py", line 35, in <module>
+    run([str(venvs[0]/'bin/python'),'-I','-B',str(r/'guard-asr.py'),str(src/'scripts/verify_live_tts_content.py'),'--evidence',str(r/'runs'/new/'evidence.json'),'--model',str(medium),'--language','en','--output',str(r/'runs'/new/'content-medium.json')],f'{new}-medium-asr.log')
+    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ml-user/tts-linux-cuda-20260912/qualify-rebased.py", line 8, in run
+    if p.returncode:raise RuntimeError(f'{log}: exit {p.returncode}')
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: chatterbox-cuda-04-medium-asr.log: exit 1

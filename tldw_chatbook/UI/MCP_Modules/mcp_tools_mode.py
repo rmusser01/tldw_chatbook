@@ -98,6 +98,31 @@ def _local_tools_toggle_label(enabled: bool) -> str:
     return f"{_LOCAL_TOOLS_TITLE}: {'on' if enabled else 'off'} ▸"
 
 
+# Wave A (F9): rendered-width cap for the Server column. DataTable clips
+# overflowing cell text silently -- a group label like "Local workspace,
+# web, and Watchlists" rendered as "Local workspace, web, and" with no
+# marker, which reads as a DIFFERENT label rather than a truncated one.
+# A fixed budget with an explicit ellipsis keeps the truncation honest;
+# the full label remains visible in the server-filter Select's options.
+_SERVER_CELL_BUDGET = 24
+
+
+def _ellipsize(text: str, budget: int) -> str:
+    """Truncate `text` to `budget` rendered COLUMNS with an explicit "…".
+
+    Qodo #2620 #7: server labels are user-controlled and may contain wide
+    Unicode -- measuring/slicing by Python character count lets a
+    24-character label occupy far more than 24 cells and bypass the
+    budget entirely. Rich's `Text.truncate` measures and cuts by cell
+    width (Rich is already a hard dependency of every Textual app).
+    """
+    rendered = Text(text)
+    # Rich's Text.truncate mutates in place and returns None on this
+    # version -- read .plain back off the object.
+    rendered.truncate(budget, overflow="ellipsis", pad=False)
+    return rendered.plain
+
+
 class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
@@ -571,9 +596,14 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
                 )
             else:
                 state_cell = state_text("—", "muted")
-            server_cell = (
-                f"{tool.server_label} (stale)" if tool.stale else tool.server_label
-            )
+            # Qodo #2620 #6: when the label alone consumes the budget, the
+            # "(stale)" suffix -- the only table-level signal that a
+            # discovered local tool is currently disconnected -- was being
+            # truncated away. Reserve its width up front so the marker
+            # always survives the ellipsis.
+            suffix = " (stale)" if tool.stale else ""
+            budget = _SERVER_CELL_BUDGET - len(suffix)
+            server_cell = _ellipsize(tool.server_label, budget) + suffix
             schema_cell = (
                 "form" if parse_schema(tool.input_schema) is not None else "raw"
             )

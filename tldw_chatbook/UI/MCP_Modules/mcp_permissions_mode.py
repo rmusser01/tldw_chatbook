@@ -55,7 +55,7 @@ _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
     "≡ exact-input allows · "
     "(session) approved until Chatbook exits · "
-    "Space cycles Inherit → Allow → Ask → Off"
+    "Space cycles Inherit → Ask → Allow → Off"
 )
 
 # T8: exact copy pinned by the server-source governance section below --
@@ -65,6 +65,64 @@ _SERVER_PROFILES_POINTER = (
     "Server-side profiles are managed in the tldw_server webui. The matrix "
     "above is chatbook's client-side gate and still applies."
 )
+
+# Wave C (F8): shown under the profile selector whenever a non-default
+# tool-policy profile is selected -- the matrix reads as the whole story
+# otherwise, but Console applies the profile (and persona policy may floor
+# tools on top of it).
+_PROFILE_HINT_TEXT = (
+    "Console agents run with this profile; persona policy may still floor "
+    "some tools to Ask."
+)
+
+# Wave C (F3): cap on how many undiscovered server names the discovery
+# hint names inline before collapsing to "+N more" -- the hint is one dim
+# line under the legend, not a second table.
+_UNDISCOVERED_NAME_CAP = 3
+
+
+def _undiscovered_servers_hint(snapshots: list) -> str | None:
+    """One-line hint naming KNOWN servers with no discovered tools.
+
+    Wave C (F3): a saved-but-unconnected server contributes zero rows to
+    the matrix (registration/discovery precedes permission -- an
+    undiscovered tool has nothing to permit yet), so "where is docs?" had
+    no answer at the point of confusion. Local-source snapshots only (the
+    built-in row is never "connected", and server-source records embed
+    their own tool lists); `tool_count` None or 0 counts as undiscovered.
+    Returns None when every known server has tools (nothing to explain).
+    """
+    from tldw_chatbook.MCP.readiness import ReadinessSnapshot
+
+    disconnected: list[str] = []
+    connected: list[str] = []
+    for snap in snapshots:
+        if not (isinstance(snap, ReadinessSnapshot) and snap.source == "local"):
+            continue
+        if snap.tool_count:
+            continue
+        # Qodo #2620 #5: zero tools on a CONNECTED local profile means a
+        # failed/empty discovery -- readiness maps that to Refresh, not
+        # Connect -- so the two cases name different verbs.
+        (connected if snap.is_connected else disconnected).append(snap.label)
+    if not disconnected and not connected:
+        return None
+    parts = []
+    for names, verb in (
+        (disconnected, "Connect"),
+        (connected, "Refresh the discovery for"),
+    ):
+        if not names:
+            continue
+        shown = names[:_UNDISCOVERED_NAME_CAP]
+        text = ", ".join(shown)
+        if len(names) > len(shown):
+            text += f", +{len(names) - len(shown)} more"
+        parts.append(f"{verb} {text}")
+    return (
+        f"No tools yet — {'; '.join(parts)} in Servers mode to configure "
+        "their permissions."
+    )
 
 
 # Task 1 (MCP Hub Phase 6): concrete Rich styles for `state_text()` -- the
@@ -400,6 +458,14 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         min-height: 0;
         color: $text-muted;
     }
+    /* Wave C (F8): the non-default-profile hint is the same quiet, dimmed
+    one-liner tier as the kill-switch hint below. */
+    #mcp-perm-profile-hint {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
     /* task-2242: the kill-switch scope hint is the same quiet, dimmed
     one-liner tier as the legend below the matrix. */
     #mcp-perm-kill-switch-hint {
@@ -542,6 +608,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
             id="mcp-perm-tool-profile",
             allow_blank=False,
         )
+        # Wave C (F8): populated by `set_profile_hint()` -- hidden while
+        # empty (the default profile needs no Console-context caveat).
+        hint = Static("", id="mcp-perm-profile-hint", markup=False)
+        hint.display = False
+        yield hint
         yield Button(
             _kill_switch_label(self._kill_switch),
             id="mcp-perm-kill-switch",
@@ -601,6 +672,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         preview: str,
         echo: str | None = None,
         gate_breadcrumb: str | None = None,
+        discovery_hint: str | None = None,
         profile_context: PermissionProfileContext | None = None,
     ) -> None:
         """Rebuild the matrix from a fresh `PermRow` list.
@@ -650,6 +722,27 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         never this sentence, and a previously rendered echo simply
         survives any later re-filter untouched (no re-render of this
         Static happens at all until the NEXT `update_matrix()` call).
+
+        Args:
+            rows: The full `PermRow` list, rendered in the exact order
+                given (grouping/sorting is the workbench's job).
+            kill_switch: The current kill-switch state, relabeled onto the
+                toggle Button (the single writer is the workbench).
+            preview: The plain-language policy sentence for the strip
+                below the matrix; always summarizes the FULL unfiltered
+                matrix, never the filter-narrowed subset.
+            echo: Transient mutation-confirmation copy prefixed onto
+                `preview` for this one render; `None` (every full-resync
+                pass) renders `preview` unprefixed -- that is how a
+                previous echo clears.
+            gate_breadcrumb: An extra legend line for off registration
+                gates; `None` shows no extra line.
+            discovery_hint: An extra legend line naming known servers
+                with no discovered tools; same render/clear contract as
+                `gate_breadcrumb` (the lines stack, legend first).
+            profile_context: The immutable authority this render was
+                captured under; round-tripped on every mutation message
+                so a stale render cannot write into another profile.
         """
         deduped: list[PermRow] = []
         seen_keys: set[str] = set()
@@ -681,8 +774,27 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         self._apply_filter()
 
         self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
-        legend_text = f"{_LEGEND_TEXT}\n{gate_breadcrumb}" if gate_breadcrumb else _LEGEND_TEXT
+        legend_text = _LEGEND_TEXT
+        for extra_line in (gate_breadcrumb, discovery_hint):
+            if extra_line:
+                legend_text = f"{legend_text}\n{extra_line}"
         self.query_one("#mcp-perm-legend", Static).update(legend_text)
+
+    def set_profile_hint(self, text: str | None) -> None:
+        """Wave C (F8): render (or clear) the non-default-profile hint line
+        under the profile selector.
+
+        Args:
+            text: The hint sentence. `None` or an empty string HIDES the
+                Static entirely (the default profile renders no caveat);
+                any non-empty string updates and displays it.
+        """
+        hint = self.query_one("#mcp-perm-profile-hint", Static)
+        if text:
+            hint.update(text)
+            hint.display = True
+        else:
+            hint.display = False
 
     def update_tool_policy_profiles(
         self,

@@ -399,3 +399,21 @@ def test_switcher_prefix_renders_placeholder_for_color_only() -> None:
     prefix = _switcher_icon_prefix(color_only)
     assert GLYPH_APPEARANCE_PLACEHOLDER in prefix
     assert prefix.startswith("[#22d3ee]")
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_with_none_without_crashing(_sandbox_emoji_sources) -> None:
+    """Escape must run the one-shot safe cancel and dismiss with None.
+
+    Regression: _perform_safe_cancel passed the SYNCHRONOUS
+    cancel_filter_timer to run_cancel_effect_once, which awaits the effect --
+    every Escape press raised TypeError before dismissing.
+    """
+    harness = PickerHarness(conversation_id="conv-1", conversation_title="Lab chat")
+    async with harness.run_test(size=(80, 30)) as pilot:
+        modal = harness.screen_stack[-1]
+        assert isinstance(modal, ConsoleAppearancePickerModal)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert harness.result is None

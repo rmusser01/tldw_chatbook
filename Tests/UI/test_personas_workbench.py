@@ -718,7 +718,7 @@ class TestWorkbenchShell:
             assert "ctrl+enter send to console draft" in rendered.lower()
             # F-038: the always-on accelerators are advertised, not hidden.
             assert "f6 pane" in rendered.lower()
-            assert "ctrl+1-4 mode" in rendered.lower()
+            assert "c/p/d/l mode" in rendered.lower()
             assert "[ ]" in rendered
             # space toggle is dictionaries-only, so it stays hidden here.
             assert "space" not in rendered.lower()
@@ -766,10 +766,10 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             expected = {
-                "characters": ("Characters — who the AI plays.", "(Ctrl+1)"),
-                "personas": ("Personas — who you play in the chat.", "(Ctrl+2)"),
-                "dictionaries": ("Dictionaries — text find/replace rules.", "(Ctrl+3)"),
-                "lore": ("Lore — world facts injected on keywords.", "(Ctrl+4)"),
+                "characters": ("Characters — who the AI plays.", "(c)"),
+                "personas": ("Personas — who you play in the chat.", "(p)"),
+                "dictionaries": ("Dictionaries — text find/replace rules.", "(d)"),
+                "lore": ("Lore — world facts injected on keywords.", "(l)"),
             }
             for mode, (descriptor, hint) in expected.items():
                 tooltip = screen.query_one(f"#personas-mode-{mode}", Button).tooltip
@@ -844,9 +844,9 @@ class TestWorkbenchShell:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             lore_chip = screen.query_one("#personas-mode-lore", Button)
-            # F-038: chip tooltips carry their Ctrl+N jump key.
+            # F-038: chip tooltips carry their single-letter mode key.
             assert (
-                lore_chip.tooltip == "Lore — world facts injected on keywords. (Ctrl+4)"
+                lore_chip.tooltip == "Lore — world facts injected on keywords. (l)"
             )
             assert "soon" not in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
@@ -12733,7 +12733,14 @@ class TestKeyboardInteraction:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.press("ctrl+2")
+            # Single-letter mode keys (ADR-152): p = Personas. Printable keys
+            # only fire the binding outside text inputs, so make sure focus is
+            # not sitting in the library search field.
+            search = screen.query_one("#personas-library-search")
+            if search.has_focus:
+                await pilot.press("escape")
+                await pilot.pause()
+            await pilot.press("p")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()

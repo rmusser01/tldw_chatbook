@@ -6537,3 +6537,28 @@ async def test_an_arg_rule_without_an_owner_falls_back_to_the_reviewed_profile()
             e for e in app.events if isinstance(e, MCPInspector.RemoveArgRuleRequested)
         ]
         assert events[-1].owner_profile_id is None
+
+
+# -- Wave A (2026-09-11 MCP Hub UX program): bounded polish -----------------
+
+
+def test_render_section_payload_renders_error_payloads_as_one_line_status():
+    """A5/F13: a section payload carrying an "error" key (the
+    `_AdvancedSectionShim` normalization for a failed `load_section()`)
+    renders as ONE plain status line, not a raw JSON dump -- the JSON dump
+    is exactly the noise the review flagged on the server-source
+    no-target state. An empty/absent error still falls through to the
+    JSON rendering (it is a legitimate payload, not a failure)."""
+    payload = {"source": "local", "section": "overview", "error": "connection refused"}
+    result = mcp_inspector_module._render_section_payload("overview", payload)
+    assert result == "Could not load this section: connection refused"
+    assert "{" not in result and '"' not in result
+
+    no_error = mcp_inspector_module._render_section_payload(
+        "overview", {"source": "local", "section": "overview"}
+    )
+    assert "{" in no_error
+    blank_error = mcp_inspector_module._render_section_payload(
+        "overview", {"source": "local", "error": ""}
+    )
+    assert "{" in blank_error

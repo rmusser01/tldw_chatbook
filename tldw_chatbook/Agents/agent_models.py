@@ -12,6 +12,7 @@ import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -22,6 +23,14 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
+
+
+class WorkOrigin(Enum):
+    """Trusted admission origin shared by runtime owners."""
+
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"
@@ -173,6 +182,11 @@ SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
 # per-call daemon-thread timeout wrapper.
 MERGE_AGENT_WORKTREE_TOOL_NAME = "merge_agent_worktree"
 DISCARD_AGENT_WORKTREE_TOOL_NAME = "discard_agent_worktree"
+REPORT_TO_SUPERVISOR_TOOL_NAME = "report_to_supervisor"
+READ_AGENT_MESSAGES_TOOL_NAME = "read_agent_messages"
+MESSAGE_TOOL_NAMES = frozenset(
+    {REPORT_TO_SUPERVISOR_TOOL_NAME, READ_AGENT_MESSAGES_TOOL_NAME}
+)
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -190,6 +204,8 @@ RUNTIME_TOOL_NAMES = frozenset(
         SEND_TO_AGENT_TOOL_NAME,
         MERGE_AGENT_WORKTREE_TOOL_NAME,
         DISCARD_AGENT_WORKTREE_TOOL_NAME,
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
     }
 )
 
@@ -443,6 +459,10 @@ def failed_tool_record_projection(
         ok=result.ok if result is not None else False,
         error_category=category,
     )
+
+
+class SpawnAdmissionRefusal(ToolResult):
+    """A spawn refused before child execution; it consumes no spawn allowance."""
 
 
 @dataclass(frozen=True)

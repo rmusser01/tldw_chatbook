@@ -210,6 +210,24 @@ def console_character_unavailable_reason_copy(
 class ConsoleCharacterContextController:
     """Own bounded Character reads, search state, and typed action routing."""
 
+    def pending_progress_count(self, row: CharacterConversationRow) -> int:
+        """Read metadata only for the currently displayed database authority."""
+        scope = self.state.scope_fingerprint
+        identity = row.target.character if row.target else row.unresolved
+        if (
+            self._progress_counts is None
+            or scope is None
+            or id(self._database_accessor()) != scope.database_identity
+            or identity.data_authority_id != scope.data_authority_id
+        ):
+            return 0
+        conversation_id = (
+            row.target.conversation_id
+            if row.target
+            else row.unresolved.conversation_id
+        )
+        return max(0, int(self._progress_counts().get(conversation_id, 0)))
+
     def __init__(
         self,
         *,
@@ -231,6 +249,7 @@ class ConsoleCharacterContextController:
         start_console: Callable[
             [ResolvedLocalCharacterKey, Any, str, Callable[[], bool]], Any
         ],
+        progress_counts: Callable[[], dict[str, int]] | None = None,
         state_changed: Callable[[ConsoleCharacterContextState], None] | None = None,
         service_factory: Callable[..., CharacterConversationNavigationService] = (
             CharacterConversationNavigationService
@@ -238,6 +257,7 @@ class ConsoleCharacterContextController:
         query_handoff_capability: ConsoleCharacterQueryHandoffCapability | None = None,
         query_handoff: Callable[[ConsoleCharacterQueryHandoff], None] | None = None,
     ) -> None:
+        self._progress_counts = progress_counts
         self._database_accessor = database_accessor
         self._current_character_accessor = current_character_accessor
         self._open_conversation_accessor = open_conversation_accessor

@@ -17,10 +17,10 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.css.query import QueryError
+from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import ContentSwitcher
+from textual.widgets import ContentSwitcher, DataTable
 from textual.worker import Worker
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
@@ -99,6 +99,8 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     PermissionProfileContext,
     PermRow,
     ToolPolicyProfileOption,
+    _PROFILE_HINT_TEXT,
+    _undiscovered_servers_hint,
     format_tool_state_label,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPProfileForm
@@ -611,6 +613,13 @@ class MCPWorkbench(Container):
         # True once the first load has had its chance to pre-select, so a
         # later resync can never re-hijack a selection the user cleared.
         self._did_initial_preselect: bool = False
+        # Wave C (F1): True while the first-load preselection holds the
+        # canvas on the OVERVIEW -- the rail highlights the row and the
+        # inspector explains it, but the detail view stays one explicit
+        # navigation away. Cleared by the first explicit selection
+        # (`_select_server_key`) or a restored view state, either of which
+        # is real user intent.
+        self._hold_canvas_overview: bool = False
         self._scope: str = "personal"
         self._scope_ref: str | None = None
         self._snapshots: list[ReadinessSnapshot] = []
@@ -1112,10 +1121,12 @@ class MCPWorkbench(Container):
         ]
         if len(problems) == 1:
             self._selected_server_key = problems[0].server_key
+            self._hold_canvas_overview = True
         elif len(self._snapshots) == 1:
             # task-2240: the lone rail row (fresh install's off/opt-in
             # built-in) is worth landing on too -- see the docstring.
             self._selected_server_key = self._snapshots[0].server_key
+            self._hold_canvas_overview = True
 
     def _selected_target_id(self) -> str | None:
         """The server-target id implied by `_selected_server_key`.
@@ -2646,7 +2657,13 @@ class MCPWorkbench(Container):
             preview=preview,
             echo=echo,
             gate_breadcrumb=tool_gate_breadcrumb(),
+            discovery_hint=_undiscovered_servers_hint(self._snapshots),
             profile_context=profile_context,
+        )
+        # Wave C (F8): only a non-default profile needs the Console-context
+        # caveat -- the default profile IS the plain story.
+        canvas.set_profile_hint(
+            _PROFILE_HINT_TEXT if self._tool_policy_profile_id != "default" else None
         )
         await self.query_one(MCPPermissionsMode).update_server_profiles(
             await self._server_governance_profiles(service, refresh=refresh_governance)
@@ -3211,7 +3228,16 @@ class MCPWorkbench(Container):
                     severity="warning",
                 )
             else:
-                self.app.notify(_toast("Permission update failed."), severity="error")
+                # Wave A (F10): the typed service methods raise user-ready
+                # messages, so surface the first line instead of a bare
+                # generic sentence -- bounded so a verbose exception can't
+                # turn the toast into a stack dump. `_toast()` escapes the
+                # text (service messages embed store-derived ids).
+                reason = str(exc).strip().splitlines()[0][:140] if str(exc).strip() else type(exc).__name__
+                self.app.notify(
+                    _toast(f"Permission update failed: {reason}"),
+                    severity="error",
+                )
             return
         # Task 3 (MCP Hub Phase 6): the transient mutation echo -- pinned
         # copy shape `"{tool_name} → {ui_label} · "`, TOOL-row cycles only
@@ -3296,6 +3322,15 @@ class MCPWorkbench(Container):
         -- they can change from other clients/sessions, and this only runs
         on an actual selection change, not on every keystroke.
         """
+        if self._hold_canvas_overview:
+            # Wave C (F1): the first-load preselection explains itself in
+            # the rail + inspector while the overview (Add server, callouts)
+            # stays on screen -- `show_detail(None)` keeps the canvas on the
+            # overview AND refreshes its data underneath, exactly like any
+            # other resync with no selection. The hold is cleared by the
+            # first explicit selection (see `_select_server_key`).
+            await canvas.show_detail(None)
+            return
         if (
             selected is not None
             and self._is_external_record_key(selected.server_key)
@@ -3372,6 +3407,46 @@ class MCPWorkbench(Container):
                 group="mcp-tool-clear",
                 exclusive=True,
             )
+            # Wave A (F5a): entering Permissions mode moves the keyboard
+            # onto the matrix -- Space-cycling is the mode's primary
+            # gesture and the binding lives on the canvas, so focus left
+            # over from the previous mode (e.g. a mode chip, where Space
+            # ACTIVATES the chip) made the advertised key do something
+            # else entirely. `call_after_refresh` so the newly-shown canvas
+            # exists before the focus lands; focus already INSIDE the
+            # permissions canvas (the filter Input mid-typing) is respected.
+            if mode == "permissions":
+                self.call_after_refresh(self._focus_permissions_matrix)
+
+    def _focus_permissions_matrix(self) -> None:
+        """F5a: focus `#mcp-perm-table` unless the permissions canvas
+        already owns focus (the filter Input is the one place inside the
+        canvas where the keyboard should stay put).
+
+        Qodo #2620 #8: `call_after_refresh` defers past the caller's turn
+        -- a rapid second mode switch means Permissions may no longer be
+        active when this runs, and focusing its (hidden) table would leave
+        the VISIBLE mode without keyboard focus. Guard on the live mode."""
+        if self._active_mode != "permissions":
+            return
+        try:
+            canvas = self.query_one(MCPPermissionsMode)
+        except NoMatches:
+            return
+        try:
+            focused = self.screen.focused if self.is_mounted else None
+        except Exception:
+            focused = None
+        if focused is not None:
+            try:
+                if canvas in focused.ancestors_with_self:
+                    return
+            except Exception:
+                pass
+        try:
+            canvas.query_one("#mcp-perm-table", DataTable).focus()
+        except NoMatches:
+            pass
 
     async def _clear_tool_view(self) -> None:
         await self.query_one(MCPInspector).show_tool(None)
@@ -3428,6 +3503,9 @@ class MCPWorkbench(Container):
 
     async def _apply_view_state(self, state: dict[str, Any]) -> None:
         # Tolerant restore: unknown keys ignored; legacy panel shape accepted.
+        # Wave C (F1): a restored view state is explicit prior-user intent
+        # and wins over the first-load overview hold.
+        self._hold_canvas_overview = False
         source = state.get("source") or state.get("selected_source")
         if source in ("local", "server") and source != self._source:
             await self._switch_source(str(source))
@@ -3491,6 +3569,11 @@ class MCPWorkbench(Container):
                 )
         self._source = source
         self._selected_server_key = None
+        # Qodo #2620 #9: a source switch is explicit navigation too -- drop
+        # any surviving first-load overview hold, or a later reload that
+        # restores the active server key keeps rendering the overview over
+        # a selection the user is effectively looking at.
+        self._hold_canvas_overview = False
         # T6: switching source invalidates any Tools-mode selection the
         # inspector was showing (the tool belonged to the OTHER source's
         # catalog), and also clears the finding detail pane (same reasoning).
@@ -3528,6 +3611,16 @@ class MCPWorkbench(Container):
         `_switch_source()`'s identical T6 clear.
         """
         self._selected_server_key = server_key
+        # Wave C (F1): an explicit selection (rail row, table row, callout,
+        # breadcrumb) is real navigation intent -- the first-load
+        # overview hold, if any, ends here.
+        self._hold_canvas_overview = False
+        # Qodo #2620 #1: it also retires the preselect GATE -- otherwise an
+        # "All servers" press during the initial async snapshot collection
+        # leaves `_did_initial_preselect` False, and the still-running
+        # `_preselect_single_problem_on_load()` re-selects the problem row
+        # over the user's cleared selection.
+        self._did_initial_preselect = True
         # T6: selecting a different server invalidates any Tools-mode
         # selection the inspector was showing -- "switching modes or
         # servers clears the tool view" -- and (I1 above) the Findings
@@ -4709,6 +4802,17 @@ class MCPWorkbench(Container):
         """
         inspector = self.query_one(MCPInspector)
         status = await inspector.open_test_panel()
+        if status == "no_tool" and self._active_mode == "tools":
+            # Wave A (O5): IN TOOLS MODE the user may have ARROWED onto a
+            # row without selecting it into the inspector -- the visible
+            # cursor row is their evident intent, so drive the same tool
+            # view a selection would and retry before falling back to the
+            # hint. Gated on the active mode: in any OTHER mode the Tools
+            # table's cursor row is not on screen and "resolving" it would
+            # be the same mode hijack F-055 removed (a key advertised in
+            # every mode must not teleport the user based on state they
+            # cannot see).
+            status = await self._open_test_for_tools_cursor_row(inspector)
         if status == "no_tool":
             self.app.notify("Select a tool in Tools mode first.", severity="warning")
             return
@@ -4728,6 +4832,43 @@ class MCPWorkbench(Container):
             )
             return
         self.set_mode("tools")
+
+    async def _open_test_for_tools_cursor_row(self, inspector: MCPInspector) -> str:
+        """Wave A (O5): resolve the Tools table's CURSOR row (arrowed onto,
+        not Enter-selected) into the inspector's tool view and retry the
+        Test Tool open through the exact same path a row selection takes
+        (`on_mcp_tools_mode_tool_selected`'s show_tool call).
+
+        Returns `open_test_panel()`'s status after the retry, or
+        `"no_tool"` when there is no cursor row to resolve (empty table,
+        unmounted canvas, tool dropped from the catalog, or no validated
+        profile context) -- the caller then falls back to its hint.
+        """
+        try:
+            canvas = self.query_one(MCPToolsMode)
+            table = canvas.query_one("#mcp-tools-table", DataTable)
+        except NoMatches:
+            return "no_tool"
+        if table.row_count == 0 or table.cursor_row < 0:
+            return "no_tool"
+        try:
+            row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+        except Exception:
+            return "no_tool"
+        if row_key is None or row_key.value is None:
+            return "no_tool"
+        tool = self._tool_for_row_key(str(row_key.value))
+        if tool is None:
+            return "no_tool"
+        context = self._validate_profile_context(self._tool_policy_profile_context)
+        if context is None:
+            return "no_tool"
+        await inspector.show_tool(
+            tool,
+            effective=self._effective_for_display(tool),
+            profile_context=context,
+        )
+        return await inspector.open_test_panel()
 
     def _tool_profile_lifecycle_authority(self) -> object | None:
         """Resolve the shared lifecycle after deferred app composition."""
@@ -5551,7 +5692,11 @@ class MCPWorkbench(Container):
             return
         self._profile_save_in_flight = True
         self.run_worker(
-            self._save_local_profile(dict(event.payload), warning=event.warning),
+            self._save_local_profile(
+                dict(event.payload),
+                warning=event.warning,
+                connect_after=event.connect_after,
+            ),
             group="mcp-profile-save",
             exclusive=True,
         )
@@ -5563,7 +5708,11 @@ class MCPWorkbench(Container):
             return None
 
     async def _save_local_profile(
-        self, payload: dict[str, Any], warning: str | None = None
+        self,
+        payload: dict[str, Any],
+        warning: str | None = None,
+        *,
+        connect_after: bool = False,
     ) -> None:
         """Run one profile save; on success, also re-surface the form's args
         secret-lint `warning` as a toast (I4 follow-up). The in-form
@@ -5572,6 +5721,13 @@ class MCPWorkbench(Container):
         sub-second after the warning rendered, so without this toast the
         user would never see it on exactly the path where the secret
         actually got persisted into a profile's args.
+
+        Wave C (F7a): `connect_after=True` (the form's "Save and connect")
+        dispatches the connect lifecycle for the just-saved profile once
+        the save and resync land -- the saved->connected journey used to
+        require finding the new row and its inspector Connect action.
+        A connect failure surfaces through the lifecycle's own
+        notification/readiness path (e.g. a missing env placeholder).
         """
         try:
             service = self._service()
@@ -5608,6 +5764,11 @@ class MCPWorkbench(Container):
                 self.app.notify(warning, severity="warning")
             self._snapshots = await self._collect_snapshots()
             await self._sync_children()
+            if connect_after and payload.get("profile_id"):
+                profile_id = str(payload["profile_id"])
+                self._start_lifecycle(
+                    f"local:{profile_id}", profile_id, "connect"
+                )
         finally:
             self._profile_save_in_flight = False
 
