@@ -98,7 +98,7 @@ class _RealtimeSettingsDraft:
     turn_detection: str
     vad_threshold: str
     vad_silence_ms: str
-    #: TASK-32015: the pipeline loop's tuning knobs, surfaced in Settings.
+    #: TASK-32482: the pipeline loop's tuning knobs, surfaced in Settings.
     #: The send delay is an optional number (blank = unset -- the readers'
     #: own default wins and Save deletes the key); barge-in is an explicit
     #: on/off Switch, always written.

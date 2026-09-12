@@ -1878,7 +1878,7 @@ async def test_vad_degraded_entry_warns_instead_of_promising_auto_send(monkeypat
 
 @pytest.mark.asyncio
 async def test_reply_with_only_failed_utterances_escalates_once(monkeypatch):
-    """TASK-32013: when EVERY utterance of a hands-free reply fails to play,
+    """TASK-32480: when EVERY utterance of a hands-free reply fails to play,
     the loop must say so once -- a single synthesis-side failure toast (or
     none at all, when failures are playback-side) previously left a fully
     mute reply with zero user-visible signal."""
@@ -1940,7 +1940,7 @@ async def test_reply_with_only_failed_utterances_escalates_once(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TASK-32014: failure honesty -- dictation-death exit, degraded copy,
+# TASK-32481: failure honesty -- dictation-death exit, degraded copy,
 # entry preflight
 # ---------------------------------------------------------------------------
 
@@ -2075,7 +2075,7 @@ async def test_entry_warns_once_when_no_playback_path_exists(monkeypatch):
 
 
 def test_voice_switch_tooltips_state_relationship_and_interrupts():
-    """TASK-32015: the two voice switches sit side by side -- their
+    """TASK-32482: the two voice switches sit side by side -- their
     tooltips must state the per-conversation scope, the relationship
     between the features, and how to interrupt/exit without opening docs."""
     from tldw_chatbook.Widgets.Console.console_speech_controls import (

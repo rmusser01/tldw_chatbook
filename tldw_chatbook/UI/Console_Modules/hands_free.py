@@ -181,7 +181,7 @@ def _load_default_speculative_voice_factory() -> Callable[..., Any]:
 #: framing (see `console_voice_input.VoiceVadUnavailable`'s docstring):
 #: without it, the silence gate that drives auto-send/barge-in never fires.
 #:
-#: TASK-32014 copy correction: the earlier draft recommended spoken
+#: TASK-32481 copy correction: the earlier draft recommended spoken
 #: "Console, stop." as an exit -- impossible advice in exactly this mode,
 #: where segments only finalize at capture stop so mid-capture spoken
 #: commands can never fire (`VoiceVadUnavailable`'s own docstring). It also
@@ -262,7 +262,7 @@ class ConsoleHandsFreeSession:
     countdown_remaining: float = 0.0
     pending_session_id: str | None = None
     pending_existing_assistant_ids: frozenset[str] = frozenset()
-    #: TASK-32013 whole-reply escalation bookkeeping: utterances this reply
+    #: TASK-32480 whole-reply escalation bookkeeping: utterances this reply
     #: dispatched vs. how many reported failure. A reply in which EVERY
     #: utterance failed is indistinguishable from silence to the user (the
     #: sequencer skips failed utterances and keeps moving), so the terminal
@@ -1226,7 +1226,7 @@ class ConsoleHandsFreeController:
                 self.app_instance.notify(
                     CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE, severity="warning"
                 )
-                # TASK-32014: the Switch gesture flips the widget visually
+                # TASK-32481: the Switch gesture flips the widget visually
                 # before this refusal runs -- repaint it back so the control
                 # never claims a mode that refused to start.
                 self._sync_hands_free_switch(False)
@@ -1257,7 +1257,7 @@ class ConsoleHandsFreeController:
         if existing is not None:
             existing.controller.enter(capture_live=capture_live)
             return
-        # TASK-32014 entry preflight (mic half): refuse BEFORE the session
+        # TASK-32481 entry preflight (mic half): refuse BEFORE the session
         # exists when dictation cannot run at all, with the probe's own
         # reason+remedy -- previously the loop started, the first capture
         # failed asynchronously, and the Switch stayed ON over a dead
@@ -1279,7 +1279,7 @@ class ConsoleHandsFreeController:
             )
             self._sync_hands_free_switch(False)
             return
-        # TASK-32014 entry preflight (playback half): with no way to play
+        # TASK-32481 entry preflight (playback half): with no way to play
         # ANY format, replies will be silent -- warn once per app run but
         # still enter (mic-only dictation-with-spoken-commands use is
         # legitimate, and the adaptive-format/remedy paths in the TTS
@@ -1969,7 +1969,7 @@ class ConsoleHandsFreeController:
     def _maybe_escalate_all_failed_reply(
         self, session: "ConsoleHandsFreeSession"
     ) -> None:
-        """TASK-32013 whole-reply escalation, once per reply.
+        """TASK-32480 whole-reply escalation, once per reply.
 
         Generation SUCCEEDED but every dispatched utterance failed to play
         -- to the user this reply was silent from start to finish, and
