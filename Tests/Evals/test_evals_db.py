@@ -432,7 +432,9 @@ class TestRunOperations:
         target_run_ids = set()
         for i in range(2):
             run_id = in_memory_db.create_run(
-                name=f"Target Run {i}", task_id=task_id, model_id=model_id,
+                name=f"Target Run {i}",
+                task_id=task_id,
+                model_id=model_id,
                 config_overrides={},
             )
             in_memory_db.update_run(run_id, {"run_group_id": target_group})
@@ -444,7 +446,9 @@ class TestRunOperations:
         # way, regardless of how many other rows exist.
         for i in range(3):
             run_id = in_memory_db.create_run(
-                name=f"Other Run {i}", task_id=task_id, model_id=model_id,
+                name=f"Other Run {i}",
+                task_id=task_id,
+                model_id=model_id,
                 config_overrides={},
             )
             in_memory_db.update_run(run_id, {"run_group_id": "other-group"})
@@ -560,8 +564,11 @@ class TestRunGroupCellFailureCounts:
 
     def _task_and_model(self, db):
         task_id = db.create_task(
-            name="test_task", description="Test", task_type="question_answer",
-            config_format="custom", config_data={},
+            name="test_task",
+            description="Test",
+            task_type="question_answer",
+            config_format="custom",
+            config_data={},
         )
         model_id = db.create_model(
             name="Test Model", provider="test", model_id="test-1", config={}
@@ -582,8 +589,12 @@ class TestRunGroupCellFailureCounts:
             else {"schema": "word_bench/1", "top_k": []}
         )
         db.store_result(
-            run_id=run_id, sample_id=sample_id, input_data={}, actual_output=None,
-            logprobs=logprobs, metrics={},
+            run_id=run_id,
+            sample_id=sample_id,
+            input_data={},
+            actual_output=None,
+            logprobs=logprobs,
+            metrics={},
         )
 
     def test_counts_total_and_errored_cells_for_a_single_group(self, in_memory_db):
@@ -627,7 +638,9 @@ class TestRunGroupCellFailureCounts:
     def test_a_run_with_no_run_group_id_contributes_no_entry(self, in_memory_db):
         task_id, model_id = self._task_and_model(in_memory_db)
         run_id = in_memory_db.create_run(
-            name="ungrouped run", task_id=task_id, model_id=model_id,
+            name="ungrouped run",
+            task_id=task_id,
+            model_id=model_id,
             config_overrides={},
         )
         self._store_cell(in_memory_db, run_id, "s1", failed=True)
@@ -872,9 +885,7 @@ class TestProbeAnnotationCascadeBatching:
         """
         import tldw_chatbook.DB.Evals_DB as evals_db_module
 
-        monkeypatch.setattr(
-            evals_db_module, "_PROBE_ANNOTATION_CASCADE_BATCH_SIZE", 3
-        )
+        monkeypatch.setattr(evals_db_module, "_PROBE_ANNOTATION_CASCADE_BATCH_SIZE", 3)
 
         run_group_ids = [f"rg-{i}" for i in range(7)]
         for rg in run_group_ids:
@@ -889,9 +900,7 @@ class TestProbeAnnotationCascadeBatching:
                 note="",
             )
 
-        removed = in_memory_db.delete_probe_annotations_for_run_groups(
-            run_group_ids
-        )
+        removed = in_memory_db.delete_probe_annotations_for_run_groups(run_group_ids)
 
         assert removed == 7
         for rg in run_group_ids:
@@ -933,7 +942,10 @@ class TestProbeAnnotationCascadeBatching:
                 "INSERT INTO eval_runs "
                 "(name, task_id, model_id, config_overrides, run_group_id, client_id) "
                 "VALUES (?, ?, ?, '{}', ?, 'test_client')",
-                [(f"r-{i}", task_id, model_id, rg) for i, rg in enumerate(run_group_ids)],
+                [
+                    (f"r-{i}", task_id, model_id, rg)
+                    for i, rg in enumerate(run_group_ids)
+                ],
             )
             conn.executemany(
                 "INSERT INTO eval_probe_turn_annotations "
@@ -1115,3 +1127,68 @@ class TestPerformance:
         # Search should be fast (less than 1 second)
         assert end_time - start_time < 1.0
         assert len(results) == 50  # All tasks should match
+
+
+class TestNullJsonColumnTolerance:
+    """TASK-21519: rows whose JSON columns are NULL must not crash readers.
+
+    Rows created without config columns (older inserts, direct seeds, live
+    UAT data) carry NULL config_overrides / eval_models.config, and every
+    list_runs consumer -- including the Evals screen -- crashed on
+    json.loads(None) TypeError.
+    """
+
+    def _seed_null_rows(self, db):
+        import sqlite3 as _sqlite3
+        import uuid as _uuid
+
+        conn = db._get_connection()
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO eval_models (id, name, provider, model_id, config, client_id)
+                VALUES (?, 'NullConf Model', 'openai', 'gpt-x', NULL, 'test_client')
+                """,
+                (str(_uuid.uuid4()),),
+            )
+            task_id = str(_uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO eval_tasks (id, name, description, task_type,
+                                        config_format, config_data, client_id)
+                VALUES (?, 'Null-conf task', 'seeded', 'question_answer',
+                        'custom', '{}', 'test_client')
+                """,
+                (task_id,),
+            )
+            model_row = conn.execute(
+                "SELECT id FROM eval_models WHERE name = 'NullConf Model'"
+            ).fetchone()
+            conn.execute(
+                """
+                INSERT INTO eval_runs (id, name, task_id, model_id,
+                                       config_overrides, client_id)
+                VALUES (?, 'Null-conf run', ?, ?, NULL, 'test_client')
+                """,
+                (str(_uuid.uuid4()), task_id, model_row[0]),
+            )
+        return model_row[0]
+
+    def test_get_model_tolerates_null_config(self, in_memory_db):
+        model_id = self._seed_null_rows(in_memory_db)
+        model = in_memory_db.get_model(model_id)
+        assert model is not None
+        assert model["config"] == {}
+
+    def test_list_models_tolerates_null_config(self, in_memory_db):
+        self._seed_null_rows(in_memory_db)
+        models = in_memory_db.list_models()
+        assert any(m["config"] == {} for m in models)
+
+    def test_list_and_get_run_tolerate_null_config_overrides(self, in_memory_db):
+        self._seed_null_rows(in_memory_db)
+        runs = in_memory_db.list_runs()
+        assert runs, "seeded NULL-config run must be listed, not crash"
+        assert all(r["config_overrides"] == {} for r in runs)
+        fetched = in_memory_db.get_run(runs[0]["id"])
+        assert fetched is not None and fetched["config_overrides"] == {}

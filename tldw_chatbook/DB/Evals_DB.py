@@ -1436,6 +1436,21 @@ class EvalsDB:
                 )
             raise EvalsDBError(f"Failed to create model: {e}")
 
+    @staticmethod
+    def _loads_json_or_default(value: Any, default: Any) -> Any:
+        """Parse a JSON column, tolerating NULL (TASK-21519).
+
+        Rows created without their config columns carry NULL, and
+        ``json.loads(None)`` raises TypeError out of lookup APIs whose
+        consumers include the Evals screen; NULL parses to ``default``.
+        """
+        if value is None:
+            return default
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return default
+
     def get_model(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Get model by ID."""
         conn = self._get_connection()
@@ -1450,7 +1465,7 @@ class EvalsDB:
         row = cursor.fetchone()
         if row:
             model = dict(row)
-            model["config"] = json.loads(model["config"])
+            model["config"] = self._loads_json_or_default(model["config"], {})
             return model
         return None
 
@@ -1474,7 +1489,7 @@ class EvalsDB:
         models = []
         for row in cursor.fetchall():
             model = dict(row)
-            model["config"] = json.loads(model["config"])
+            model["config"] = self._loads_json_or_default(model["config"], {})
             models.append(model)
 
         return models
@@ -1674,7 +1689,9 @@ class EvalsDB:
         row = cursor.fetchone()
         if row:
             run = dict(row)
-            run["config_overrides"] = json.loads(run["config_overrides"])
+            run["config_overrides"] = self._loads_json_or_default(
+                run["config_overrides"], {}
+            )
             return run
         return None
 
@@ -1736,7 +1753,9 @@ class EvalsDB:
         runs = []
         for row in cursor.fetchall():
             run = dict(row)
-            run["config_overrides"] = json.loads(run["config_overrides"])
+            run["config_overrides"] = self._loads_json_or_default(
+                run["config_overrides"], {}
+            )
             runs.append(run)
 
         return runs
