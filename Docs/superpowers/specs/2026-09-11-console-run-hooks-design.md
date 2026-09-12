@@ -43,7 +43,7 @@ v1 serves three purposes:
 |---|---|---|---|
 | `UserPromptSubmit` | after submit gates, before turn compose; **manual-origin sends only** | controller submit path, beside the `prompt_history` slot write | yes (exit 2 rejects the send) |
 | `PreToolUse` | per tool-call batch, before permission review | wrapper around `build_tool_review_hook` verdict chain (`Chat/console_chat_controller.py`) | yes (exit 2 denies the batch) |
-| `PostToolUse` | after dispatch, at tool_result capture | bridge `on_step` consumer on `tool_result` records (no AgentService change) | no |
+| `PostToolUse` | after dispatch, at the run-log capture point where the full result exists; **only for calls that actually dispatched** (verdict `proceed` — refusals fire nothing) | new optional `post_tool_call` dep on the runtime deps (same shape as `run_skill_script`), fired from `Agents/agent_runtime.py`'s dispatch loop; the step stream stays out of it — `AgentStep` results are capped to 2 000 chars and carry no args | no |
 | `ApprovalRequested` | when an approval round is armed | `set_pending_approval` / `park_pending_approval` bridge sites | no |
 | `Stop` | a session turn's run reaching terminal state | bridge run terminal-state path (active and non-active sessions) | no |
 | `SubagentStop` | a fleet child run settling | the `on_child_settled` wiring in `Chat/console_agent_bridge.py` | no |
@@ -58,10 +58,24 @@ run outcomes, not user input.
 - **Engine module** `tldw_chatbook/Agents/run_hooks.py`: config parsing +
   validation, payload assembly, subprocess execution, redaction/truncation,
   logging. No UI imports; headless-testable.
-- **Process**: argv list, executed synchronously via `subprocess`
-  (**no shell**) — blocking events run inline in their calling context (submits
-  and run dispatch are already workers, never the UI thread); non-blocking
-  events run on the engine's executor (below).
+- **Process**: argv list, **no shell**. The engine offers two entries over one
+  implementation: `fire()` (synchronous `subprocess`, for thread contexts —
+  the run/review chain executes in threads) and `fire_async()`
+  (`asyncio.to_thread` around `fire()`, for event-loop contexts).
+  **`UserPromptSubmit` must use `fire_async()`**: `submit_draft` is `async`
+  and runs on the event loop (its existing hooks fire synchronously "from
+  deep inside submit_draft"), so a blocking subprocess there would freeze
+  the TUI.
+- **Concurrency**: matching hooks for one firing run **concurrently** on a
+  bounded pool — worst-case wall time is the slowest hook, not the sum.
+  For blocking events the first deny wins and remaining results are
+  discarded. Non-blocking events are scheduled on a single-worker executor
+  and never delay the turn; a full queue drops the firing with a log line
+  (hooks must not stall chat).
+- **Timeout kill**: per-hook `timeout_s`, default 10 s. Hooks are started
+  with `start_new_session=True` and killed as a **process group**
+  (`os.killpg`) so the script's own children cannot survive the timeout;
+  Windows falls back to `taskkill /T`.
 - **cwd**: the session's workspace root when one is bound, else the app cwd
   (mirrors `[console] workspace_root` fallback semantics).
 - **stdin**: one JSON document — common envelope + event-specific `data`:
@@ -95,27 +109,30 @@ call, and merges results into the existing per-call verdict dict. Calls a hook
 does not match are untouched.
 - **stdout/stderr**: captured (truncated to the shared budget) and written to
   the run log (`search_run_log` surfaces it).
-- **Timeout**: per-hook `timeout_s`, default 10 s, hard-killed after.
-- **Concurrency**: blocking events (`UserPromptSubmit`, `PreToolUse`) run
-  sequentially inline in the calling context (already off the UI thread —
-  submits and run dispatch are workers). Non-blocking events are handed to a
-  single-worker executor inside the engine and never delay the turn; a full
-  executor queue drops the firing with a log line (hooks must not stall chat).
 
 ## 5. Verdict semantics
 
-| Event | exit 0 | exit 2 | other non-zero / crash / timeout |
+| Event | clean pass | explicit deny | anything else |
 |---|---|---|---|
-| `UserPromptSubmit` | stdout (≤ budget) is prepended as context for this turn | send rejected; reason surfaced to the user as a refusal | warning logged; send proceeds |
-| `PreToolUse` | no opinion; normal permission flow continues | deny; reason becomes the tool result the model sees | **deny — fail-closed** (repo convention) |
-| all others | stdout logged to run log | same as non-zero | logged, ignored |
+| `UserPromptSubmit` | exit 0, no JSON: stdout (≤ budget) is prepended as turn context | exit 2 or JSON `{"decision":"block"}`: send rejected; reason surfaced to the user as a refusal | other non-zero / crash / timeout: **warning logged, send proceeds** — a broken hook must not brick the composer |
+| `PreToolUse` | exit 0, no JSON: no opinion; normal permission flow continues | exit 2 or JSON `{"decision":"deny","reason":"…"}`: deny; reason becomes the tool result the model sees | **deny — fail-closed**, reason "hook `<name>` failed (exit/timeout)"; the failure is visible to model and run log, never silent |
+| all others | stdout logged to run log | n/a (no verdict semantics) | logged, ignored |
 
-`PreToolUse` also accepts a JSON stdout body `{"decision": "deny", "reason":
-"…"}`. `{"decision": "allow"}` is parsed, ignored, and logged — the deny-only
-stance is enforced in the engine, not by hook authors.
+Precedence rules for blocking events: stdout that parses as a JSON object with
+a `decision` key wins over the exit code (exit 2 is shorthand for the event's
+blocking decision — `deny` for `PreToolUse`, `block` for `UserPromptSubmit`);
+unparseable stdout with exit 0 is a clean pass with a warning;
+`{"decision":"allow"}` on `PreToolUse` is parsed, ignored, and logged — the
+deny-only stance is enforced in the engine, not by hook authors.
+
+Injected `UserPromptSubmit` context is model-visible text, so it is recorded
+in the run log as its own entry (source hook named) — auditable after the
+fact, never silently merged into the prompt.
 
 Matching: optional `matcher` is a glob against the tool name
-(`fs_*`, `mcp__github__*`). No matcher = fires for every call.
+(`fs_*`, `mcp__github__*`). No matcher = fires for every call. `matcher` is
+**only valid on `PreToolUse` / `PostToolUse`**; on any other event it is a
+config validation error (there is no tool name to match).
 
 ## 6. Config surface
 
@@ -133,9 +150,12 @@ command = ["/usr/local/bin/guard.sh", "--strict"]   # argv; required, non-empty
 timeout_s = 10          # optional, default 10
 ```
 
-Validation is fail-loud at load: unknown event names, empty/non-list `command`,
-non-positive timeouts are config errors (logged, that hook disabled) — never
-silent no-ops.
+Validation is fail-loud: unknown event names, `matcher` on a non-tool event,
+empty/non-list `command`, non-positive timeouts are config errors (logged,
+that hook disabled) — never silent no-ops. Config is re-parsed when the
+file's mtime changes (checked per fire, cached between), and the master
+`enabled` switch is read fresh per fire — both follow the kill-switch
+"read fresh per turn" precedent.
 
 ## 7. Payload hygiene
 
@@ -149,49 +169,69 @@ silent no-ops.
 
 ## 8. Wiring (what changes where)
 
-No new `AgentService` constructor surface. All fire points are Console-layer,
-using seams that already exist:
+The engine is a **`ConsoleRuntime`-owned singleton** (like the controller and
+store): one shared executor, survives view detach, reachable from headless
+wake runs. One new `AgentService` surface, mirroring an established dep:
 
-1. `Chat/console_chat_controller.py` — call `engine.fire(UserPromptSubmit)` in
-   the submit path beside the `prompt_history` write; wrap
-   `build_tool_review_hook`'s verdict callable so `PreToolUse` hooks run first
-   and can deny into the existing verdict mechanism.
-2. `Chat/console_agent_bridge.py` — in the `on_step` consumer, fire
-   `PostToolUse` for `tool_result` records; at the run terminal-state path fire
-   `Stop`; keep the `on_child_settled` partial and fire `SubagentStop` beside
-   it.
-3. Approval bridges (`set_pending_approval` / `park_pending_approval` sites) —
-   fire `ApprovalRequested`.
-4. `Agents/run_hooks.py` — new engine module (the only new file).
-5. `config.py` — parse/validate `[hooks]`.
+1. `Chat/console_chat_controller.py` — call `await engine.fire_async(...)`
+   (`UserPromptSubmit`) in the submit path beside the `prompt_history` write,
+   **past the gates, still on the event loop** — `fire_async` keeps the loop
+   free while hooks run; wrap `build_tool_review_hook`'s verdict callable so
+   `PreToolUse` hooks run first and can deny into the existing verdict
+   mechanism (that chain executes in a thread — plain `engine.fire`).
+2. `Agents/agent_runtime.py` + `Agents/agent_service.py` — a new optional
+   `post_tool_call` dep (the `run_skill_script` pattern: optional field,
+   guarded call at the site), fired at the dispatch-loop capture point where
+   the full, uncapped result exists, only when `verdict == "proceed"`.
+3. `Chat/console_agent_bridge.py` — at the run terminal-state path fire
+   `Stop`; keep the `on_child_settled` partial and fire `SubagentStop`
+   beside it; wire `post_tool_call` through to the service constructor.
+4. Approval bridges (`set_pending_approval` / `park_pending_approval` sites) —
+   fire `ApprovalRequested` (these can be UI-thread bridges; the engine's
+   executor keeps the subprocess off the UI thread).
+5. `Agents/run_hooks.py` — new engine module (the only new file).
+6. `config.py` — parse/validate `[hooks]`.
 
 ## 9. Error handling summary
 
-- Config invalid → that hook disabled + loud log at load.
-- PreToolUse crash/timeout → deny (fail-closed), logged.
+The fail direction is **per purpose**, not global: a guardrail failing must
+not open the gate; a convenience failing must not brick the composer.
+
+- Config invalid → that hook disabled + loud log.
+- `PreToolUse`: deny on crash/timeout/non-clean exit (fail-closed), with the
+  failure reason as the visible tool result.
+- `UserPromptSubmit`: crash/timeout/non-clean exit → warning logged, send
+  proceeds (fail-open); only an explicit deny blocks.
 - Non-blocking event crash/timeout → logged, dropped.
 - Engine never raises into the turn path: every firing is wrapped; internal
-  errors degrade to "hook did not run" with the event's failure semantics.
+  errors degrade to "hook did not run" with the event's failure semantics;
+  executor task failures are logged.
 
 ## 10. Testing plan
 
 Unit (`Tests/Agents/test_run_hooks.py`):
-- config parse/validation matrix (unknown event, bad matcher, empty command,
-  timeout bounds, master switch)
-- subprocess execution via stub `python -c` commands: exit 0/2, stdout capture,
-  timeout kill, truncation, redaction
+- config parse/validation matrix (unknown event, matcher on non-tool event,
+  bad glob, empty command, timeout bounds, master switch)
+- subprocess execution via stub `python -c` commands: exit 0/2, JSON-decision
+  precedence over exit code, stdout capture, timeout kill (process group —
+  the stub spawns a surviving child that must die), truncation, redaction
 - deny-only enforcement (`allow` decision ignored)
+- concurrent hooks: first-deny-wins, wall time ≈ slowest hook
 - executor drop semantics for non-blocking events
+- `fire_async` keeps a running event loop responsive while a hook sleeps
 
 Integration (mirroring `Tests/Chat/test_console_local_review_hook.py`
 patterns):
 - PreToolUse deny short-circuits before the permission store; allow does not
   bypass it
-- PreToolUse fail-closed on crash/timeout
-- UserPromptSubmit: exit-2 rejection; stdout injection; wake notice fires
-  nothing
-- PostToolUse/Stop/SubagentStop/ApprovalRequested fire with correct payloads
-  from their seams (viewless wake path included)
+- PreToolUse fail-closed on crash/timeout, reason visible in the tool result
+- UserPromptSubmit: exit-2 rejection; stdout injection (and its run-log
+  record); wake notice fires nothing; loop stays responsive during a slow
+  hook
+- PostToolUse fires with full (engine-truncated) args+result from the
+  runtime dep, and fires nothing for refused calls
+- Stop/SubagentStop/ApprovalRequested fire with correct payloads from their
+  seams (viewless wake path included)
 
 ## 11. Future work (explicitly out of v1)
 
