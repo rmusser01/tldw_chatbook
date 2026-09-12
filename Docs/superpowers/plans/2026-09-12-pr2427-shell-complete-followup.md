@@ -90,7 +90,7 @@ Only implementation file: `Tests/UI/test_library_shell.py`.
   Keep latest-dev integration, separate Console fixture resources, unchanged
   size/preload/CSS limits and final-head PR review/checks open.
 
-## Separate Retry diagnosis (runtime repair not yet approved)
+## Separate Retry diagnosis (design approved; implementation pending)
 
 Observation-only trace `/private/tmp/pr2427-retry-trace-native.apr8fF/trace.jsonl`
 disproves a canvas-readiness-only explanation. At monotonic463517.532482 the
@@ -109,7 +109,10 @@ ordinary-entry continuation, preserving the original anchor, legitimate
 programmatic/row entry and separate semantic Media-return authority. A
 deterministic regression must deliver the captured real timer callback after
 Retry receives focus but before its focus event is consumed. User design
-approval was requested; no runtime change has been implemented for this issue.
+approval was received on 2026-09-12. The exact scope is recorded in
+`Docs/superpowers/specs/2026-09-12-pr2427-entry-live-focus-guard-design.md` for
+independent and written-spec review. No runtime change has been implemented
+for this issue.
 
 ## Task 1 implementation evidence
 
