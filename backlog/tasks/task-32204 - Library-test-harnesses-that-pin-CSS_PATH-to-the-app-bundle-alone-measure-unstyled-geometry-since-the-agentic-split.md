@@ -110,8 +110,12 @@ same-module bases, the three screen-pushing harness bases are named as owners
 (`ConsoleHarness`: all seven module-local ones push `ChatScreen` in
 `on_mount`; `LibraryHarness`; `DestinationHarness`), and an imported
 `OtherHarness.CSS_PATH` is read off the real class. The tightened scan run
-against the pre-flip tree reported 19 more bundle-only harnesses in 16 files
-(`fix2-guard-mutation-b.txt`); all 19 now load `APP_STYLESHEETS`. Two
+against the pre-flip tree reported 18 more bundle-only harnesses in 14 files
+(`fix2-guard-mutation-b.txt`); two more that the earlier rounds had listed,
+`_ConversationCanvasHarness` and `_StyledManagerHost` (both spelled
+`CSS_PATH = LibraryHarness.CSS_PATH`), were missing from that run because the
+owner search matched the pin's own right-hand side -- all 20 (16 files) now
+load `APP_STYLESHEETS`. Two
 assertions that pinned the old spelling were re-pinned to the same set
 (`test_skill_editor_production_geometry_contains_basic_and_advanced_workflows`:
 `app.CSS_PATH == [str(p) for p in APP_STYLESHEETS]`;
@@ -119,7 +123,7 @@ assertions that pinned the old spelling were re-pinned to the same set
 contract also moved from the bundle text to `app_css_text()` -- those rules
 live in the settings split sheet now, and the node was red on the baseline
 for exactly that reason). Name-set comparison of the 79 test functions that
-reach the 19 harnesses (two chunks, branch vs detached HEAD 74db68de77):
+reach the 20 harnesses (two chunks, branch vs detached HEAD 74db68de77):
 chunk A 1 failed / 52 passed vs 11 / 42; chunk B 3 / 80 vs 14 / 69 before
 the tts contract repair, and that node passes after it -- 21 baseline reds
 fixed by the sheets, 0 introduced. The survivors fail identically on the
@@ -130,6 +134,16 @@ Captures `fix2-chunk{A,B}-{branch,base}.txt`.
 
 Files: `Tests/UI/test_consolidated_css_harness.py` (+ the scan and guard), 30
 harness files (one-line pins), `Tests/UI/test_library_adaptive_reader_shell.py`
-(the re-pin); fix round 1: 16 more test files (19 pins) and
+(the re-pin); fix round 1: 16 more test files (20 pins) and
 `Tests/UI/test_settings_speech_tts_panel.py`'s text contract.
+
+Landing (task-8 re-review, new MINOR): the owner search read the whole
+harness class source, so `CSS_PATH = LibraryHarness.CSS_PATH` -- bundle-only,
+no screen pushed -- exempted itself by naming the owner. It now collects the
+names the class (and its same-module bases) references in code, minus the
+`CSS_PATH` pin; docstrings and comments never count. Mutation on the branch:
+`_StyledManagerHost` re-pinned that way passes the old guard
+(`land-guard-mutation-c-old.txt`, `1 passed`) and fails the new one naming
+the harness and `screen_agentic_library.tcss` (`land-guard-mutation-c.txt`,
+`1 failed`); reverted, `6 passed` (`land-guard-green.txt`).
 <!-- SECTION:NOTES:END -->

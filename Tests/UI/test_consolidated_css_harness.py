@@ -272,9 +272,12 @@ _TESTS_ROOT = Path(__file__).resolve().parent.parent
 #: that names one of these pushes the real screen, so Textual (or
 #: `TldwCli._ensure_screen_owned_css`) loads the sheet exactly as production
 #: does and the harness is correct as written.
-# A harness is exempt from a sheet's check when ITS OWN class body (same-module
-# bases included) names the screen that owns the sheet -- pushing that screen
-# loads the sheet through the screen's ``CSS_PATH``. The imported harness bases
+# A harness is exempt from a sheet's check when ITS OWN code (base list or a
+# statement; same-module bases included) names the screen that owns the sheet
+# -- pushing that screen loads the sheet through the screen's ``CSS_PATH``.
+# Its ``CSS_PATH`` pin, docstrings and comments are not evidence (task-8
+# re-review: ``CSS_PATH = LibraryHarness.CSS_PATH`` is bundle-only and must
+# not exempt itself by naming the owner). The imported harness bases
 # that push a screen in ``on_mount`` are named too, because a subclass reaches
 # them only through its base list: ``ConsoleHarness`` (three module-local
 # production Console harnesses), ``LibraryHarness`` (``test_library_shell``) and
@@ -398,10 +401,7 @@ def _expanded_css_path_source(value: ast.AST, tree: ast.AST, text: str) -> str:
                     bindings[target.id] = _unparse_resolved(node.value)
         elif isinstance(node, ast.ClassDef):
             for stmt in node.body:
-                if isinstance(stmt, ast.Assign) and any(
-                    isinstance(t, ast.Name) and t.id == "CSS_PATH"
-                    for t in stmt.targets
-                ):
+                if _pins_css_path(stmt):
                     bindings[f"{node.name}.CSS_PATH"] = _unparse_resolved(stmt.value)
     for name, sequence in _REAL_SHEET_SEQUENCES.items():
         bindings[name] = " ".join(str(entry) for entry in sequence)
@@ -441,25 +441,43 @@ def _expanded_css_path_source(value: ast.AST, tree: ast.AST, text: str) -> str:
     return source
 
 
-def _harness_source_with_bases(node: ast.ClassDef, tree: ast.AST, text: str) -> str:
-    """``node``'s source plus that of every same-module base, transitively."""
+def _pins_css_path(stmt: ast.stmt) -> bool:
+    return isinstance(stmt, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "CSS_PATH" for t in stmt.targets
+    )
+
+
+def _harness_owner_names(node: ast.ClassDef, tree: ast.AST) -> set[str]:
+    """Every name ``node`` references in CODE, same-module bases included.
+
+    The ``CSS_PATH`` pin is left out, and docstrings/comments never appear
+    (they are not ``Name``/``Attribute`` nodes): a pin spelled
+    ``CSS_PATH = LibraryHarness.CSS_PATH`` names an owner without pushing its
+    screen, so only a base list or a statement that reaches the screen can
+    exempt a harness (task-8 re-review).
+    """
     classes = {
         cls.name: cls for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)
     }
     seen: set[str] = set()
     pending = [node]
-    parts: list[str] = []
+    names: set[str] = set()
     while pending:
         cls = pending.pop()
         if cls.name in seen:
             continue
         seen.add(cls.name)
-        parts.append(ast.get_source_segment(text, cls) or "")
+        for sub in (*cls.bases, *(s for s in cls.body if not _pins_css_path(s))):
+            for leaf in ast.walk(sub):
+                if isinstance(leaf, ast.Name):
+                    names.add(leaf.id)
+                elif isinstance(leaf, ast.Attribute):
+                    names.add(leaf.attr)
         for base in cls.bases:
             name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
             if name in classes:
                 pending.append(classes[name])
-    return "\n".join(parts)
+    return names
 
 
 def scan_bundle_only_harnesses() -> list[tuple[str, str, str, tuple[str, ...]]]:
@@ -488,24 +506,20 @@ def scan_bundle_only_harnesses() -> list[tuple[str, str, str, tuple[str, ...]]]:
             if not isinstance(node, ast.ClassDef):
                 continue
             for stmt in node.body:
-                if not isinstance(stmt, ast.Assign) or not any(
-                    isinstance(t, ast.Name) and t.id == "CSS_PATH"
-                    for t in stmt.targets
-                ):
+                if not _pins_css_path(stmt):
                     continue
                 pin = _expanded_css_path_source(stmt.value, tree, text)
-                # Scoped to the HARNESS CLASS and its same-module bases, not
-                # the file (review finding 3): a module that merely imports
+                # Scoped to the HARNESS CLASS's own code and its same-module
+                # bases, not the file (review finding 3) and not the pin or
+                # prose (re-review): a module that merely imports
                 # ``LibraryScreen`` must not exempt every harness in it from
                 # the library-sheet check, while a subclass of a harness that
                 # pushes the screen in ITS ``on_mount`` is still exempt.
-                harness_text = _harness_source_with_bases(node, tree, text)
+                owner_names = _harness_owner_names(node, tree)
                 for sheet, owners in _SPLIT_SHEET_OWNERS.items():
                     if sheet in pin:
                         continue
-                    if any(
-                        re.search(rf"\b{owner}\b", harness_text) for owner in owners
-                    ):
+                    if any(owner in owner_names for owner in owners):
                         continue
                     used = sorted(
                         token
