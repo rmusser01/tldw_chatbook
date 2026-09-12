@@ -3460,7 +3460,12 @@ async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blu
 @pytest.mark.asyncio
 async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
-    async with host.run_test(size=(190, 55)) as pilot:
+    # Tall enough that the actions row is genuinely on-screen: this test
+    # exercises the real hit-tested mouse path from a focused field, so the
+    # buttons must be clickable, not pressed programmatically. (The panel
+    # mounts ~115 rows; at the usual (190, 55) the actions sit below nested
+    # folds and scroll_visible cannot reach them.)
+    async with host.run_test(size=(190, 130)) as pilot:
         screen = await _open_speech_tts(host, pilot)
         panel = screen.query_one(
             "#settings-speech-tts-panel",
@@ -3484,16 +3489,22 @@ async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> 
         )
         panel.request_save = request_save
         panel.revert_to_saved = revert_to_saved
+        # Let the provider-change rebuild's focus restoration finish (it
+        # re-asserts the pre-change focus after the card swap) before the
+        # endpoint takes focus, so the clicks below really start focused.
+        await pilot.pause(0.5)
         endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
 
         endpoint.focus()
-        screen.query_one("#settings-speech-save", Button).press()
         await pilot.pause()
+        assert pilot.app.focused is endpoint
+        await pilot.click("#settings-speech-save")
         request_save.assert_called_once_with()
 
         endpoint.focus()
-        screen.query_one("#settings-speech-revert", Button).press()
         await pilot.pause()
+        assert pilot.app.focused is endpoint
+        await pilot.click("#settings-speech-revert")
         revert_to_saved.assert_awaited_once_with()
 
 
