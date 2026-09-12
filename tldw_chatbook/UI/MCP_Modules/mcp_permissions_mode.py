@@ -94,21 +94,33 @@ def _undiscovered_servers_hint(snapshots: list) -> str | None:
     """
     from tldw_chatbook.MCP.readiness import ReadinessSnapshot
 
-    names = [
-        snap.label
-        for snap in snapshots
-        if isinstance(snap, ReadinessSnapshot)
-        and snap.source == "local"
-        and not snap.tool_count
-    ]
-    if not names:
+    disconnected: list[str] = []
+    connected: list[str] = []
+    for snap in snapshots:
+        if not (isinstance(snap, ReadinessSnapshot) and snap.source == "local"):
+            continue
+        if snap.tool_count:
+            continue
+        # Qodo #2620 #5: zero tools on a CONNECTED local profile means a
+        # failed/empty discovery -- readiness maps that to Refresh, not
+        # Connect -- so the two cases name different verbs.
+        (connected if snap.is_connected else disconnected).append(snap.label)
+    if not disconnected and not connected:
         return None
-    shown = names[:_UNDISCOVERED_NAME_CAP]
-    text = ", ".join(shown)
-    if len(names) > len(shown):
-        text += f", +{len(names) - len(shown)} more"
+    parts = []
+    for names, verb in (
+        (disconnected, "Connect"),
+        (connected, "Refresh the discovery for"),
+    ):
+        if not names:
+            continue
+        shown = names[:_UNDISCOVERED_NAME_CAP]
+        text = ", ".join(shown)
+        if len(names) > len(shown):
+            text += f", +{len(names) - len(shown)} more"
+        parts.append(f"{verb} {text}")
     return (
-        f"No tools yet — {text}. Connect them in Servers mode to configure "
+        f"No tools yet — {'; '.join(parts)} in Servers mode to configure "
         "their permissions."
     )
 
@@ -710,6 +722,27 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
         never this sentence, and a previously rendered echo simply
         survives any later re-filter untouched (no re-render of this
         Static happens at all until the NEXT `update_matrix()` call).
+
+        Args:
+            rows: The full `PermRow` list, rendered in the exact order
+                given (grouping/sorting is the workbench's job).
+            kill_switch: The current kill-switch state, relabeled onto the
+                toggle Button (the single writer is the workbench).
+            preview: The plain-language policy sentence for the strip
+                below the matrix; always summarizes the FULL unfiltered
+                matrix, never the filter-narrowed subset.
+            echo: Transient mutation-confirmation copy prefixed onto
+                `preview` for this one render; `None` (every full-resync
+                pass) renders `preview` unprefixed -- that is how a
+                previous echo clears.
+            gate_breadcrumb: An extra legend line for off registration
+                gates; `None` shows no extra line.
+            discovery_hint: An extra legend line naming known servers
+                with no discovered tools; same render/clear contract as
+                `gate_breadcrumb` (the lines stack, legend first).
+            profile_context: The immutable authority this render was
+                captured under; round-tripped on every mutation message
+                so a stale render cannot write into another profile.
         """
         deduped: list[PermRow] = []
         seen_keys: set[str] = set()
@@ -749,8 +782,13 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
 
     def set_profile_hint(self, text: str | None) -> None:
         """Wave C (F8): render (or clear) the non-default-profile hint line
-        under the profile selector. `None`/empty hides the Static entirely
-        so the default profile renders no caveat."""
+        under the profile selector.
+
+        Args:
+            text: The hint sentence. `None` or an empty string HIDES the
+                Static entirely (the default profile renders no caveat);
+                any non-empty string updates and displays it.
+        """
         hint = self.query_one("#mcp-perm-profile-hint", Static)
         if text:
             hint.update(text)

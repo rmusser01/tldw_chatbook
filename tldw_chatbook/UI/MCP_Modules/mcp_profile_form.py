@@ -48,6 +48,14 @@ class MCPProfileForm(Vertical):
         Wave C (F7a): `connect_after=True` is the "Save and connect"
         button's request -- the host saves and then dispatches the connect
         lifecycle for the saved profile.
+
+        Args:
+            payload: The parsed store payload (`build_payload()` shape:
+                profile_id/command/args/env_placeholders/env_literals).
+            warning: Non-blocking args secret-lint text to re-surface as a
+                toast on the success path, or None when clean.
+            connect_after: Dispatch the connect lifecycle after a
+                successful save (the "Save and connect" button).
         """
 
         def __init__(

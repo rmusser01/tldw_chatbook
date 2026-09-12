@@ -7075,6 +7075,11 @@ async def test_space_cycle_on_builtin_server_tool_row_round_trips_through_store(
         table = app.query_one("#mcp-perm-table", DataTable)
         table.focus()
         table.move_cursor(row=row)
+        # Wave B: two presses to reach "allow" (Inherit -> Ask -> Allow)
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
         await pilot.press("space")
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -7757,8 +7762,11 @@ async def test_preview_counts_recompute_on_every_cycle_not_cached(tmp_path):
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+        # Wave B (2026-09-11 UX program): the first press from Inherit
+        # lands on Ask, never Allow -- the count recompute this test pins
+        # is unchanged; only the rung moved.
         assert str(preview.renderable) == (
-            "tool_00 → Allow · many: 1 allow · 29 ask · 0 off — global default: ask"
+            "tool_00 → Ask · many: 0 allow · 30 ask · 0 off — global default: ask"
         )
 
 
@@ -11445,6 +11453,21 @@ def test_tool_has_arg_rules_marks_an_inherited_rule(tmp_path):
         is False
     )
 
+
+@pytest.mark.asyncio
+async def test_entering_permissions_mode_focuses_the_matrix():
+    """A1/F5a: entering Permissions mode puts the keyboard on the matrix.
+    Space-cycling is the mode's primary gesture, but the binding lives on
+    the canvas -- with focus left wherever the previous mode had it (e.g.
+    a mode chip, where Space ACTIVATES the chip), the advertised key did
+    something else entirely. Focus already inside the permissions canvas
+    (e.g. the filter Input mid-typing) is left alone."""
+    app = WorkbenchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
         table = app.query_one("#mcp-perm-table", DataTable)
         assert app.screen.focused is table
 

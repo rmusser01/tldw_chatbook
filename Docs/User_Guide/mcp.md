@@ -49,8 +49,9 @@ your shell before connecting.
    it immediately; the row's status moves from `○ Needs setup` to `● Ready`
    (or an actionable reason, e.g. a missing `$ENV_VAR`, stays on screen).
 4. **Check permissions.** Press `3` (Permissions). Your server's tools are
-   grouped under a `Server default — <name>` row; every tool starts at
-   **Ask**, meaning each call shows an approval card in Console. Select a
+   grouped under a `Server default — <name>` row; every tool inherits the
+   **global default — Ask out of the box** — meaning each call shows an
+   approval card in Console until you change it. Select a
    row and press **Space** to cycle Inherit → Ask → Allow → Off. The
    `Server default` row sets the fallback for that whole server — one
    change instead of one per tool. (Tools you haven't connected yet don't

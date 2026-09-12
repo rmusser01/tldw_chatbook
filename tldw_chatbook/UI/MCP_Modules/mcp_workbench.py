@@ -3421,7 +3421,14 @@ class MCPWorkbench(Container):
     def _focus_permissions_matrix(self) -> None:
         """F5a: focus `#mcp-perm-table` unless the permissions canvas
         already owns focus (the filter Input is the one place inside the
-        canvas where the keyboard should stay put)."""
+        canvas where the keyboard should stay put).
+
+        Qodo #2620 #8: `call_after_refresh` defers past the caller's turn
+        -- a rapid second mode switch means Permissions may no longer be
+        active when this runs, and focusing its (hidden) table would leave
+        the VISIBLE mode without keyboard focus. Guard on the live mode."""
+        if self._active_mode != "permissions":
+            return
         try:
             canvas = self.query_one(MCPPermissionsMode)
         except NoMatches:
@@ -3562,6 +3569,11 @@ class MCPWorkbench(Container):
                 )
         self._source = source
         self._selected_server_key = None
+        # Qodo #2620 #9: a source switch is explicit navigation too -- drop
+        # any surviving first-load overview hold, or a later reload that
+        # restores the active server key keeps rendering the overview over
+        # a selection the user is effectively looking at.
+        self._hold_canvas_overview = False
         # T6: switching source invalidates any Tools-mode selection the
         # inspector was showing (the tool belonged to the OTHER source's
         # catalog), and also clears the finding detail pane (same reasoning).
@@ -3603,6 +3615,12 @@ class MCPWorkbench(Container):
         # breadcrumb) is real navigation intent -- the first-load
         # overview hold, if any, ends here.
         self._hold_canvas_overview = False
+        # Qodo #2620 #1: it also retires the preselect GATE -- otherwise an
+        # "All servers" press during the initial async snapshot collection
+        # leaves `_did_initial_preselect` False, and the still-running
+        # `_preselect_single_problem_on_load()` re-selects the problem row
+        # over the user's cleared selection.
+        self._did_initial_preselect = True
         # T6: selecting a different server invalidates any Tools-mode
         # selection the inspector was showing -- "switching modes or
         # servers clears the tool view" -- and (I1 above) the Findings
