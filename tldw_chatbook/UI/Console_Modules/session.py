@@ -273,6 +273,7 @@ from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
 )
+from ..character_display_text import sanitize_character_display_label
 from .reaction_preview import ConsoleReactionPreviewCoordinator
 
 if TYPE_CHECKING:
@@ -444,6 +445,54 @@ def _character_session_identity_from_handoff(
     return runtime_backend, character_id, character_name, character_id_text
 
 
+def _persona_session_identity_from_handoff(
+    payload: ChatHandoffPayload,
+) -> tuple[str, str, str, str] | None:
+    """Return persona session identity for Personas Start Chat handoffs.
+
+    Mirrors ``_character_session_identity_from_handoff`` with one deliberate
+    difference: persona IDs are opaque strings (``local-persona-<hex>``
+    locally, server IDs remotely), so no integer coercion or canonical
+    numeric check applies.
+
+    Returns:
+        A tuple of `(runtime_backend, persona_id, persona_name,
+        assistant_id)` when the payload is a source-aware Personas persona
+        Start Chat handoff; otherwise `None`.
+    """
+    metadata = payload.metadata
+    if not isinstance(metadata, Mapping):
+        return None
+    if (
+        payload.source != "personas"
+        or payload.item_type != "persona-card"
+        or metadata.get("intent") != "start_chat"
+        or metadata.get("selected_kind") != "persona"
+    ):
+        return None
+    runtime_backend = payload.runtime_backend
+    if runtime_backend not in {"local", "server"}:
+        return None
+    if (
+        payload.source_owner != runtime_backend
+        or payload.source_selector_state != runtime_backend
+        or metadata.get("backend") != runtime_backend
+    ):
+        return None
+
+    persona_id = str(metadata.get("selected_record_id") or "").strip()
+    if not persona_id:
+        return None
+    if (
+        metadata.get("selected_target_id")
+        != f"{runtime_backend}:persona:{persona_id}"
+    ):
+        return None
+
+    persona_name = str(metadata.get("selected_name") or payload.title or "").strip()
+    return runtime_backend, persona_id, persona_name, persona_id
+
+
 @dataclass(frozen=True, slots=True)
 class CharacterSessionPromptSeed:
     """Trusted character sources and their current safe projections."""
@@ -524,6 +573,39 @@ def _character_session_prompt_seed(
             user_name=user_name,
             character_name=name,
         ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaSessionPromptSeed:
+    """Trusted persona source and its current safe projection."""
+
+    name: str
+    system_template: str
+    system_prompt: str
+
+
+def _persona_session_prompt_seed(
+    profile: Mapping[str, Any], name_hint: str = "", *, user_name: str = "User"
+) -> PersonaSessionPromptSeed:
+    """Return the trusted persona source and its safe projection.
+
+    Unlike character cards there is no multi-field join: a persona profile
+    contributes its ``system_prompt`` field verbatim as the trusted
+    template, and there is no greeting.
+    """
+    raw_name = str(profile.get("name") or "").strip() or str(name_hint or "").strip()
+    name = (
+        sanitize_character_display_label(raw_name, max_characters=180) or "Persona"
+    )
+    template = str(profile.get("system_prompt") or "")
+    system_prompt = (
+        expand_character_template(template, user_name=user_name, character_name=name)
+        if template.strip()
+        else ""
+    )
+    return PersonaSessionPromptSeed(
+        name=name, system_template=template, system_prompt=system_prompt
     )
 
 

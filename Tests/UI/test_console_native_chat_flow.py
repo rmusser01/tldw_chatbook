@@ -114,6 +114,7 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.session import _persona_session_identity_from_handoff, _persona_session_prompt_seed
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -7387,6 +7388,32 @@ def _character_start_handoff(
     )
 
 
+def _persona_start_handoff(
+    *,
+    runtime_backend: str = "local",
+    active_server_profile_id: str | None = None,
+    persona_id: object = "local-persona-abc",
+) -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="personas",
+        item_type="persona-card",
+        title="Archivist",
+        body="Persona summary",
+        runtime_backend=runtime_backend,
+        source_owner=runtime_backend,
+        source_selector_state=runtime_backend,
+        active_server_profile_id=active_server_profile_id,
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": "persona",
+            "selected_record_id": persona_id,
+            "selected_name": "Archivist",
+            "selected_target_id": f"{runtime_backend}:persona:{persona_id}",
+            "backend": runtime_backend,
+        },
+    )
+
+
 def _character_card() -> dict:
     return {
         "id": 7,
@@ -7580,6 +7607,78 @@ def test_character_start_handoff_requires_matching_record_and_target_ids(
     payload.metadata["selected_target_id"] = target_id
 
     assert session_module._character_session_identity_from_handoff(payload) is None
+
+
+def test_persona_handoff_accepts_exact_coherent_payload():
+    payload = _persona_start_handoff()
+    assert _persona_session_identity_from_handoff(payload) == (
+        "local",
+        "local-persona-abc",
+        "Archivist",
+        "local-persona-abc",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        pytest.param("item_type", "character-card", id="character-item-type"),
+        pytest.param("runtime_backend", "LOCAL", id="non-exact-runtime-source"),
+        pytest.param("source_owner", "server", id="contradictory-owner"),
+    ),
+)
+def test_persona_handoff_rejects_incoherent_envelope(field, value):
+    payload = _persona_start_handoff()
+    setattr(payload, field, value)
+
+    assert _persona_session_identity_from_handoff(payload) is None
+
+
+def test_persona_handoff_rejects_character_kind_and_target_mismatch():
+    character_payload = _character_start_handoff()
+    assert _persona_session_identity_from_handoff(character_payload) is None
+    mismatched = _persona_start_handoff()
+    mismatched.metadata["selected_target_id"] = "local:persona:someone-else"
+    assert _persona_session_identity_from_handoff(mismatched) is None
+
+
+def test_persona_handoff_preserves_opaque_string_id():
+    payload = _persona_start_handoff(persona_id="srv-persona-7")
+    payload.metadata["selected_target_id"] = "local:persona:srv-persona-7"
+    identity = _persona_session_identity_from_handoff(payload)
+    assert identity is not None
+    assert identity[1] == "srv-persona-7"  # never int-coerced
+
+
+def test_persona_seed_expands_user_and_persona_macros():
+    seed = _persona_session_prompt_seed(
+        {"id": "local-persona-abc", "name": "Archivist",
+         "system_prompt": "Guide {{user}} as {{persona}} ({{char}})."},
+        user_name="Rowan",
+    )
+    assert seed.name == "Archivist"
+    assert seed.system_template == "Guide {{user}} as {{persona}} ({{char}})."
+    assert seed.system_prompt == "Guide Rowan as Archivist (Archivist)."
+
+
+def test_persona_seed_without_system_prompt_stays_empty():
+    seed = _persona_session_prompt_seed(
+        {"id": "local-persona-abc", "name": "Archivist"}, user_name="Rowan"
+    )
+    assert seed.system_template == ""
+    assert seed.system_prompt == ""
+
+
+def test_persona_seed_uses_name_hint_and_stays_single_pass():
+    seed = _persona_session_prompt_seed(
+        {"id": "p1", "system_prompt": "Hi {{user}}"},
+        name_hint=" {{char}} ",
+        user_name="{{user}}",
+    )
+    # The hint is sanitized but never macro-expanded; the user name is
+    # substituted literally exactly once (ADR-046 single-pass rule).
+    assert seed.name == "{{char}}"
+    assert seed.system_prompt == "Hi {{user}}"
 
 
 @pytest.mark.asyncio
