@@ -13,6 +13,7 @@ import sqlite3
 import stat
 import threading
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -624,6 +625,13 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
     except FileNotFoundError:
         return False
     return (info.st_dev, info.st_ino) == (selected_info.st_dev, selected_info.st_ino)
+
+
+def _contains_capture_path(roots: Iterable[Path], selected: Path) -> bool:
+    """Try likely roots first, retaining native checks and physical alias fallback."""
+    candidates = {selected, *selected.parents}
+    ordered = sorted(roots, key=lambda root: root not in candidates)
+    return any(_contains_owned_path(root, selected) for root in ordered)
 
 
 def _scope(
@@ -1450,7 +1458,7 @@ class MaintenanceSession:
             raise bootstrap.RecoveryRequired("capture_unbound_admission_required")
         selectors = tuple(lexical_path(path) for path in config_paths)
         if any(
-            not any(_contains_owned_path(root, path) for root in self._roots)
+            not _contains_capture_path(self._roots, path)
             for path in selectors
         ):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
@@ -1463,7 +1471,7 @@ class MaintenanceSession:
             if item.status != "included" or item.path is None:
                 continue
             path = lexical_path(item.path)
-            if not any(_contains_owned_path(root, path) for root in self._roots):
+            if not _contains_capture_path(self._roots, path):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
             info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
@@ -1534,14 +1542,13 @@ class MaintenanceSession:
         for source in sources:
             source = lexical_path(source)
             info = os.stat(source)
-            if not stat.S_ISREG(info.st_mode) or not any(
-                _contains_owned_path(root, source) for root in self._roots
+            if not stat.S_ISREG(info.st_mode) or not _contains_capture_path(
+                self._roots, source
             ):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
-            bound = any(
-                _contains_owned_path(Path(owned), source)
-                for binding in bindings
-                for owned in binding["roots"]
+            bound = _contains_capture_path(
+                (Path(owned) for binding in bindings for owned in binding["roots"]),
+                source,
             )
             discovered = (
                 source.resolve(strict=True),
@@ -1675,8 +1682,8 @@ def _acquire_capture_storage(path: Path, *, owner_id: str, read_only: bool):
         ):
             raise bootstrap.RecoveryRequired("discovery_read_only_required")
         selected = lexical_path(path)
-        if type(scope) is _DiscoveryScope and not any(
-            _contains_owned_path(root, selected) for root in scope.session._roots
+        if type(scope) is _DiscoveryScope and not _contains_capture_path(
+            scope.session._roots, selected
         ):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         return _CaptureLease(scope)
@@ -1753,9 +1760,7 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False):
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("capture_file_not_regular")
     if type(scope) is _DiscoveryScope:
-        if not any(
-            _contains_owned_path(root, selected) for root in scope.session._roots
-        ):
+        if not _contains_capture_path(scope.session._roots, selected):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         return
     if type(scope) is _PreviewScope:

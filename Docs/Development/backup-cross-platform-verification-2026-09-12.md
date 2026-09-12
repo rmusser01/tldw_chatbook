@@ -4,6 +4,33 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Windows matrix [34722216765](https://github.com/rmusser01/tldw_chatbook/actions/runs/34722216765)
+at `85d614822d4e6a7dbcebe1533cb2e4a1b3ce9206` passed all three F9
+create/restore/open modes, installed-wheel two-profile restore/open, support43,
+and native42 in each of seven jobs. Replacement and rollback still failed their
+300-second seed observers, after successful maintenance admission. Stacks show
+repeated native containment walks over 21 roots during discovery and capture.
+Capture now tries lexical owner candidates first, then retains every other root
+for physical-alias fallback. The original native containment function remains
+the authority; ordinary admission and deadlines are unchanged. Eight regressions
+cover the reduced walks, alias fallback, path boundaries and native refusals.
+Root-order/materialization tests pass 52 cases (17.84 seconds). Capture/core tests
+pass 77, with one pure-import assertion reproduced using unchanged HEAD code in
+the child. Independent review found no issues; production Bandit has zero findings
+and Ruff adds none to its 12 existing findings. Actual installed-wheel macOS
+combined replacement/later rollback passes with this change (187.14 seconds).
+
+Linux `85d614822` passed 59 reader/admission cases (15.46 seconds), three F9 modes
+(113.31 seconds), installed-wheel two-profile (68.24 seconds), and combined
+replacement/later rollback (277.04 seconds). Public source SHA256:
+`b7e71443beb46f6d443a0d4b22c6b065301d17830a962015495ea4ebf12ff7c2`.
+macOS on that revision passed three F9 modes (169.28 seconds) and installed-wheel
+two-profile (110.82 seconds), but its combined test expired during the second
+replacement operation; the root-order result above is a subsequent changed-code
+run. The Linux `35dfcab31` fresh-fixture reproduction also passed combined
+replacement/rollback (284.60 seconds); its original observer failure remains
+recorded below.
+
 Windows matrix [34721454240](https://github.com/rmusser01/tldw_chatbook/actions/runs/34721454240)
 at `35dfcab316edf945be3add4db1525d2725a462d3` passed installed-wheel two-profile
 restore/open, support36, and all native42 suites. Other five product jobs failed.
@@ -30,8 +57,8 @@ Linux `35dfcab31` passed 54 reader/admission checks (14.80 seconds), three F9 mo
 (124.41 seconds), and installed-wheel two-profile (75.36 seconds). Combined
 replacement reached successful replacement and later explicit credential review,
 then timed out waiting 65 seconds for the final rollback operation. Its same-
-revision fresh-fixture reproduction is running; this revision is not counted as
-a full Linux pass. Public source SHA256:
+revision fresh-fixture reproduction subsequently passed (284.60 seconds), without
+changing production code or deadlines. Public source SHA256:
 `01f48698290d8f3b3e9b58ce2e2d648c040e5138afafda82cea049e316db3204`.
 
 Windows matrix [34720655217](https://github.com/rmusser01/tldw_chatbook/actions/runs/34720655217)
