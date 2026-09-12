@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import tomllib
 from contextlib import contextmanager
 from threading import Event
 
@@ -26,7 +27,7 @@ from tldw_chatbook.Backup_Recovery.staging import stage_restore
 
 
 @contextmanager
-def installed(tmp_path, *, unbound_guard=True):
+def installed(tmp_path, *, unbound_guard=True, root_id="root"):
     def config_with_state(doc):
         doc["owners"][0]["owner_id"] = "config"
         doc["owners"].append(
@@ -50,6 +51,10 @@ def installed(tmp_path, *, unbound_guard=True):
             "profile:profile:config",
             "profile:profile:ui.state",
         ]
+        for row in (*doc["directories"], *doc["files"]):
+            for key in ("logical_id", "root_id", "parent_id"):
+                if row.get(key) == "root":
+                    row[key] = root_id
 
     archive = sealed(
         tmp_path, mutate=config_with_state, data=b'[general]\nusers_name="original"\n'
@@ -64,7 +69,7 @@ def installed(tmp_path, *, unbound_guard=True):
         archive,
         mode="isolated",
         destinations={
-            "root": destination,
+            root_id: destination,
             "profile:profile:paths.data_dir": parent / "data",
         },
         target=None,
@@ -110,6 +115,29 @@ def events(journal):
         json.loads(path.read_bytes())
         for path in sorted(journal.root.glob("[0-9]*.json"))
     ]
+
+
+def test_finalization_uses_portable_scratch_paths_for_logical_root_ids(
+    tmp_path, monkeypatch
+):
+    validate = publication._validate_installed_copies
+    observed = []
+
+    def check_paths(items, candidates, *args):
+        for path in candidates.values():
+            scratch = next(
+                parent for parent in path.parents
+                if parent.name.startswith("installed-check-")
+            )
+            assert ":" not in path.relative_to(scratch).parts[0]
+            observed.append(path)
+        return validate(items, candidates, *args)
+
+    monkeypatch.setattr(publication, "_validate_installed_copies", check_paths)
+    with installed(tmp_path, root_id="profile:profile:paths.config_dir") as case:
+        assert finalize(case) == "g"
+        assert observed
+        assert tomllib.loads(case[5].read_text())["general"]["users_name"] == "recovered"
 
 
 def test_native_finalization_commits_then_clears_only_matching_fence(tmp_path):

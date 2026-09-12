@@ -1925,7 +1925,13 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                 if physical_key in physical_candidates:
                     candidates[record.logical_id] = physical_candidates[physical_key]
                     continue
-                destination = work / record.root_id / record.relative_path
+                # Logical root IDs contain colons; use the same portable physical
+                # key as staging while retaining IDs in the validation topology.
+                destination = (
+                    work
+                    / hashlib.sha256(record.root_id.encode()).hexdigest()
+                    / record.relative_path
+                )
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 if kind == "directory":
                     destination.mkdir(mode=0o700, exist_ok=True)

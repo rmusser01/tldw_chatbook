@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-12 19:37
+updated_date: 2026-09-12 19:53
 ---
 
 ## Description
@@ -53,6 +53,8 @@ Latest shared directory correction ebe86139753b56b7af9b363ea8e3b274723ed868: ful
 Actual Linux full latest ebe861397 verification complete:49native1.97s,3F9modes129.70s,two-profile1case66.65s,combinedreplacement/laterrollback1case284.56s;0failures/errors/skips. FullmacOSsamecode5passed335.28s. TASK32494 now Done with corrected full-product summary/plan. Windows34713157016 remains running; cross-platform completion is still In Progress.
 Windows full34713157016/ebe861397 completed:42nativePASS including actual nested directory publication+metadata; product15/22PASS,7fail,0skip;22/22 artifactSHA matched. Full product did not reach restore, so no product-level restore clearance claimed. F9threecases time out backup/rejection65s while native containment progresses; teardown thenfile_notes_shutdown. Mounted outer120timeout. Replacement terminalcapture backup_operation_failed needs original errorobserver. Two-profile and later seeds exit0xC0000005 exactly mid timed faulthandler dump; impossible sampled filename/line also seen. PrimaryCPython140815/140921 documents concurrent frame-walk race; replacing test-only timed C watchdog with bounded GIL-held Python frame observer while keeping genuine crash failures. No speculative native memory fix or application-deadline expansion.
 Test observer correction reviewed: Python-owned sys._current_frames snapshots bounded4x32x64, no source/locals/error text; real fatal handler retained in separate log. Original error mapper observed in3flows with same delegation. Windows F9 test waits3x (backup65→195), nativeconsoleparent900s, mounted225/360s, harness testcase1200s; application admission60s and all production deadlines unchanged. Mounted timeout now retains partialchild output then reraises. Local observer3tests+actualplaintextF9+mountedbackup all5passed51.92s; all6embedded scripts compile; scopedRuff/Bandit0newfindings. Next fixed restore-diagnostic before another fullWindowsrun.
+Windows focused run 34714728661 at d00547813: native 42/42 pass; actual plain F9 backup succeeds, restore fails OSError errno22/winerror123 at publication._validate_installed destination.parent.mkdir. Safe thread sampler produced complete JSON and fatal log empty. Investigating logical root IDs used as native scratch directory names; application deadlines unchanged.
+Scratch-root correction: use existing staging SHA256(root_id) physical naming in installed validation instead of logical colon-containing IDs. Independent review accepted topology/bytes/alias checks unchanged. Regression RED on colon path; assertion adapted to expected existing config relocation to recovered profile. Actual macOS plain F9 passed36.09s. Broader maintenance checks30pass+2 unrelated study alias publication_selector_mismatch failures reproduced using unchanged HEAD publication module in both held modes; logs retained. Bandit0; only unchanged existing unused fcntl Ruff finding. Windows correction verification pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

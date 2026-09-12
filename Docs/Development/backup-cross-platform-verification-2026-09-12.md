@@ -4,6 +4,19 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Focused Windows run
+[34714728661](https://github.com/rmusser01/tldw_chatbook/actions/runs/34714728661)
+at `d0054781362b2a0a70301ef2587162a2f0aba908` passed all 42 native tests and
+created the actual plaintext F9 backup, then failed restore validation with
+`OSError(errno=22, winerror=123)`. All 14 artifact hashes matched. The safe Python
+stack sampler completed and the separate fatal log was empty. The original error
+identified logical root IDs containing colons used as temporary directory names
+in `_validate_installed`. That one physical path now uses the same SHA256 root key
+as staging; logical topology and archive identities are unchanged. A regression
+reproduced the colon path before correction. Actual macOS plain F9 creation,
+restore and open passed after correction (36.09 seconds). Windows verification
+of this correction is pending.
+
 ## Source and boundaries
 
 Integrated source: `7d101919099780c6f4236c05845e8d86513a87d9`.
