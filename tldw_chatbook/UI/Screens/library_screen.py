@@ -29084,8 +29084,6 @@ class LibraryScreen(BaseAppScreen):
             )
         self._notes_state.row_selection.select_all(note_ids)
         _sync_library_canvas(self, "notes")
-        # task-32185 AC#5: an open note's work pane keeps its own bulk line.
-        self._apply_library_note_presentation_state()
 
     @on(Button.Pressed, '#library-notes-select-clear')
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:

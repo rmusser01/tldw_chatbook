@@ -57,11 +57,42 @@ work pane's presentation state. Traced by wrapping
 with `bulk_read_only=False`, and never again -- only `_apply_library_row_toggle`
 did that re-apply. So the editor stayed fully editable (Save, Delete, "Use in
 Console", Copy, exports all live; no "Read-only preview" banner) while the list
-was in bulk mode. The three select-mode handlers (toggle, select-all,
-select-clear -- all three change what the open note's banner says) now call
-`_apply_library_note_presentation_state()` after their canvas sync.
+was in bulk mode. Mechanism: `LibraryNoteWorkPane.sync_state` STORES the
+fresh presentation state but skips its rebuild while the reader owns a field
+(task-32062), so a same-surface sync that changes only that state was never
+painted. The re-apply now lives at the one place every notes sync passes,
+`_sync_library_canvas`'s notes branch (`canvas_sync.py`), right after the
+work pane's `sync_state` and gated on exactly the skipped rebuild
+(`notes_editor_owned`: same surface AND the reader's focus in a field). Every
+other sync recomposes, and `_apply_post_compose_state` paints the stored
+state itself; re-applying there too would run `apply_session_state` against
+children a pending mode-change recompose has not mounted yet (the
+`NoMatches` shape task-32467 owns). So every handler that flips the flag
+(toggle, select-all, clear, Escape, the filter submit/clear, a sort choice)
+gets it, and the first round's three per-handler calls are gone (task-8
+review finding 2).
 RED `assert bulk_status.display is True` -> GREEN
-(`test_bulk_mode_keeps_last_note_as_labelled_read_only_preview`).
+(`test_bulk_mode_keeps_last_note_as_labelled_read_only_preview`; re-proven
+for the consolidation: with the per-handler calls removed and no choke-point
+call, that node plus the `escape` and `filter-submit` params below fail at
+the ENTRY assertion, 3 failed / 1 passed; with it, 4 passed).
+Collateral, fix round 1: `test_library_notes_reader.py` whole file 37 passed;
+the 67-node shell regression set (every test the branch touched or that
+reaches its changed helpers) 65 passed / 2 failed, both intermittent and
+reproduced on the HEAD baseline without this change --
+`test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`
+(task-15741; fails with the re-apply disabled too) and
+`test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_db`
+(the late-backlinks worker race, task-32467).
+
+The review's "3 of 6 sites" was measured before consolidating: the three
+select-mode EXITS reachable from the UI (Escape, filter submit, filter clear)
+were already green with NO product change -- select mode hides the editor
+fields, so no field owns focus and `sync_state` recomposes with the stored
+state -- and the sort choice cannot be pressed from select mode at all (the
+sort control and its strip compose only in browse mode). Pinned anyway so
+the exits cannot regress to the entry's bug:
+`test_leaving_select_mode_beside_an_open_note_restores_its_editor[escape|filter-submit|filter-clear]`.
 Verified live in a tmux app on a scratch profile: with a note open, pressing
 Select repaints the pane as "Read-only preview · Not included in bulk
 selection" over "Read-only — this note cannot be changed; your draft is
@@ -110,7 +141,8 @@ NOT DONE, handed off:
   investigated: it names no node id, the tests that met it worked around it,
   and it is the same rail/tree reload surface as AC#3.
 
-Files: `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`,
+Files: `tldw_chatbook/UI/Library_Modules/canvas_sync.py`,
+`tldw_chatbook/UI/Library_Modules/library_notes_controller.py`,
 `tldw_chatbook/UI/Screens/library_screen.py`,
 `Tests/UI/test_library_shell.py`, `Tests/UI/test_destination_shells.py`,
 `Tests/UI/test_library_notes_reader.py`,

@@ -1609,3 +1609,68 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
 
         assert screen._notes_state.select_mode is False
         assert screen._notes_state.view == "editor"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_route", ["escape", "filter-submit", "filter-clear"])
+async def test_leaving_select_mode_beside_an_open_note_restores_its_editor(
+    exit_route: str,
+) -> None:
+    """task-32185 AC#5 (fix round 1): every select-mode EXIT repaints the pane.
+
+    Entering select mode is one handler; leaving it from the UI is three more
+    -- Escape, a filter submit, a filter clear -- each of which flips the flag
+    and syncs the list canvas with no re-apply of its own. They repaint all
+    the same: select mode hides the editor fields, so the reader no longer
+    owns one and ``LibraryNoteWorkPane.sync_state`` recomposes with the
+    stored state (measured: all three green before any product change). This
+    pins that, so the exit path cannot regress to the entry path's bug. The
+    fourth flag-clearing site, ``handle_library_notes_sort_choice``, is not
+    reachable from select mode at all: the sort control and its choice strip
+    compose only in browse mode.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async def _submit_filter(value: str) -> None:
+        filter_input = screen.query_one("#library-notes-filter", Input)
+        filter_input.value = value
+        filter_input.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-notes-filter-clear")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        if exit_route == "filter-clear":
+            await _submit_filter("alpha")
+
+        screen.query_one("#library-notes-select-toggle", Button).press()
+        await pilot.pause()
+        assert screen._notes_state.select_mode is True
+        assert screen.query_one("#library-note-bulk-status", Static).display is True
+        assert screen.query_one("#library-note-save", Button).disabled is True
+
+        if exit_route == "escape":
+            await screen.action_library_notes_escape()
+        elif exit_route == "filter-submit":
+            await _submit_filter("alpha")
+        else:
+            screen.query_one("#library-notes-filter-clear", Button).press()
+            await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.select_mode is False,
+            message=f"{exit_route} never left select mode",
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._notes_state.view == "editor"
+        assert screen.query_one("#library-note-bulk-status", Static).display is False
+        assert screen.query_one("#library-note-preview-region").display is False
+        assert screen.query_one("#library-note-editor-region").display is True
+        assert screen.query_one("#library-note-save", Button).disabled is False
+        assert screen.check_action("library_notes_save", ()) is True

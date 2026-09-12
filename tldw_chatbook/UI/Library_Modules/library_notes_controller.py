@@ -5183,12 +5183,6 @@ class LibraryNotesController:
         self._library_notes_select_mode = not self._library_notes_select_mode
         self._library_notes_row_selection.clear()
         _sync_library_canvas(self, "notes")
-        # task-32185 AC#5: an open note's work pane is NOT part of the list
-        # canvas this sync rebuilds, and only ``_apply_library_row_toggle``
-        # re-applied its presentation state -- so entering select mode beside
-        # an open editor left it fully editable (Save/Delete live, no
-        # "Read-only preview" banner) while the list was in bulk mode.
-        self._apply_library_note_presentation_state()
     @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
         """Clear the current notes selection without leaving select mode.
@@ -5200,9 +5194,6 @@ class LibraryNotesController:
             return
         self._library_notes_row_selection.clear()
         _sync_library_canvas(self, "notes")
-        # task-32185 AC#5: same re-apply -- clearing the selection changes the
-        # open note's "Included / Not included" line.
-        self._apply_library_note_presentation_state()
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         """Return the Library notes canvas from the editor to its list view.

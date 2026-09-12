@@ -653,6 +653,21 @@ def _sync_library_canvas(
                     not note_work_surface_changed and note_work.editor_has_focus()
                 )
                 note_work.sync_state(**note_work_kwargs)
+                if notes_editor_owned:
+                    # task-32185 AC#5: that skipped rebuild is the ONE case
+                    # ``sync_state`` stores a fresh presentation state and
+                    # paints nothing -- so entering select mode beside an
+                    # open editor (``bulk_read_only`` flipped, the reader's
+                    # focus still in the title) left the pane fully editable
+                    # with no "Read-only preview" banner. Every select-mode
+                    # handler (toggle, select-all, clear, Escape, filter,
+                    # sort) lands here, so the one re-apply lives here rather
+                    # than at each of them. Gated on exactly the skip: every
+                    # other sync recomposes, and ``_apply_post_compose_state``
+                    # applies the stored state to the children it mounts --
+                    # re-applying there too would run against children a
+                    # pending mode-change recompose has not mounted yet.
+                    screen._apply_library_note_presentation_state()
         elif kind == "prompts":
             canvas = screen.query_one(
                 "#library-prompts-canvas", LibraryPromptsListCanvas

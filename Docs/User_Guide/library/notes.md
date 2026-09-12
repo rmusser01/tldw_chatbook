@@ -435,7 +435,7 @@ Trash browser, so the receipt was the only in-Library recovery action —
 superseded by task-32144: see "Recently deleted" below, which recovers a note
 whose receipt was dismissed.)*
 
-*Verified against fix/library-notes-w3-test-health — 2026-09-11 (task-32185 AC#5: entering select mode beside an open note now re-applies that note's work-pane state, so the read-only preview and its disabled actions appear as described above; before this they never did).*
+*Verified against fix/library-notes-w3-test-health — 2026-09-12 (task-32185 AC#5: entering select mode beside an open note now re-applies that note's work-pane state, so the read-only preview and its disabled actions appear as described above — before this they never did — and leaving it by any route (Done, Escape, a filter submit or clear) hands the editor back).*
 
 *Verified against fix/library-notes-list — 2026-09-09 (task-32123: the
 receipt's actions are no longer composed off the pane; task-32124: Undo
