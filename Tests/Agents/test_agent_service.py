@@ -4,6 +4,7 @@
 import asyncio
 import dataclasses
 import hashlib
+import contextlib
 import json
 import threading
 import time
@@ -4378,3 +4379,179 @@ def test_make_invoke_tool_pauses_deadline_during_human_input_wait(db, monkeypatc
 
     assert result.ok is True
     assert result.content == "approved then ran"
+
+
+def test_run_model_scope_wraps_primary_loop_with_exact_identity(monkeypatch, db):
+    events = []
+
+    @contextlib.contextmanager
+    def model_scope(run_id, agent_kind):
+        events.append(("enter", run_id, agent_kind))
+        try:
+            yield
+        finally:
+            events.append(("exit", run_id, agent_kind))
+
+    def fake_loop(*_args, **_kwargs):
+        assert events[-1][0] == "enter"
+        return agent_service.RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", fake_loop)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=ScriptedChat(["unused"]),
+        run_model_scope=model_scope,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="model-scope",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+    assert outcome.status == RUN_DONE, outcome.steps
+    assert events == [
+        ("enter", run_id, "primary"),
+        ("exit", run_id, "primary"),
+    ]
+
+
+def test_run_model_scope_nests_inline_child_lifo(monkeypatch, db):
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    events = []
+
+    @contextlib.contextmanager
+    def model_scope(run_id, agent_kind):
+        events.append(("enter", run_id, agent_kind))
+        try:
+            yield
+        finally:
+            events.append(("exit", run_id, agent_kind))
+
+    chat = FleetChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call("spawn_subagent", {"task": "child"}, "s")],
+            },
+            "parent done",
+        ],
+        {"child": ["child done"]},
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db, registry=registry, chat_call=chat, run_model_scope=model_scope
+    )
+
+    primary_run, outcome = service.run_turn(
+        conversation_id="inline-scope",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="groq",
+    )
+
+    assert outcome.status == RUN_DONE, outcome.steps
+    assert events[0] == ("enter", primary_run, "primary")
+    assert events[-1] == ("exit", primary_run, "primary")
+    child_entries = [event for event in events if event[2] != "primary"]
+    assert [event[0] for event in child_entries] == ["enter", "exit"]
+    assert child_entries[0][1] == child_entries[1][1]
+
+
+@pytest.mark.parametrize("terminal", ["error", "cancelled"])
+def test_run_model_scope_exits_on_error_and_cancel(monkeypatch, db, terminal):
+    events = []
+
+    @contextlib.contextmanager
+    def model_scope(run_id, agent_kind):
+        events.append(("enter", run_id, agent_kind))
+        try:
+            yield
+        finally:
+            events.append(("exit", run_id, agent_kind))
+
+    def fake_loop(*_args, **_kwargs):
+        if terminal == "error":
+            raise RuntimeError("model failed")
+        return agent_service.RunOutcome(status=agent_service.RUN_CANCELLED, steps=[])
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", fake_loop)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=ScriptedChat(["unused"]),
+        run_model_scope=model_scope,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id=f"model-scope-{terminal}",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == terminal
+    assert events == [
+        ("enter", run_id, "primary"),
+        ("exit", run_id, "primary"),
+    ]
+
+
+def test_run_model_scope_attributes_fleet_child_on_its_thread(db):
+    events = []
+    lock = threading.Lock()
+
+    @contextlib.contextmanager
+    def model_scope(run_id, agent_kind):
+        with lock:
+            events.append(("enter", run_id, agent_kind))
+        try:
+            yield
+        finally:
+            with lock:
+                events.append(("exit", run_id, agent_kind))
+
+    chat = FleetChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call("spawn_subagent", {"task": "fleet"}, "s")],
+            },
+            "parent done",
+        ],
+        {"fleet": ["child done"]},
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        run_model_scope=model_scope,
+        fleet_coordinator=agent_service.FleetCoordinator(
+            max_live=2, clock=time.monotonic
+        ),
+    )
+    primary_run, outcome = service.run_turn(
+        conversation_id="fleet-scope",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="groq",
+    )
+    join_fleet_children(service)
+
+    assert outcome.status == RUN_DONE, outcome.steps
+    assert ("enter", primary_run, "primary") in events
+    children = [event for event in events if event[2] != "primary"]
+    assert [event[0] for event in children] == ["enter", "exit"]
+    assert children[0][1] == children[1][1]
