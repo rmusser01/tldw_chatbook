@@ -27280,6 +27280,54 @@ class ConsoleChatController:
             wake = getattr(self, "_fleet_wake", None)
             if wake is not None:
                 wake.retry_soon()
+        # run-hooks (Task 8): Stop fires ONCE per run reaching a terminal
+        # outcome -- the same once-guard (previous status was NOT already
+        # terminal) and the same `terminal_notification_eligible` gate the
+        # toast branches just below use, but for the ACTIVE session's
+        # COMPLETED transitions too (those grow no toast by design -- the
+        # viewed transcript IS the signal -- yet Stop reports run
+        # outcomes, and spec §3 pins "active and non-active sessions").
+        # The eligibility gate is also what keeps queue-chained runs
+        # exactly-once: a chained entry's terminal stamp is suppressed
+        # here while its chain still owns the generation, and the
+        # chain-end publication (`_publish_queue_chain_terminal`) fires
+        # that transition's Stop instead -- the mutual exclusion the
+        # toast slots already rely on. STOPPED maps to the spec's
+        # "cancelled"; BLOCKED (a refused send, never a run) fires
+        # nothing. `run_id` is genuinely not in scope at this seam: the
+        # per-session run-state map carries no run identity and the plain
+        # streaming path has no run row at all.
+        if (
+            run_state.status
+            in {
+                ConsoleRunStatus.COMPLETED,
+                ConsoleRunStatus.FAILED,
+                ConsoleRunStatus.STOPPED,
+            }
+            and previous_status
+            not in {
+                ConsoleRunStatus.BLOCKED,
+                ConsoleRunStatus.COMPLETED,
+                ConsoleRunStatus.FAILED,
+                ConsoleRunStatus.STOPPED,
+            }
+            and terminal_notification_eligible
+        ):
+            _hooks_engine = self._run_hooks_engine()
+            if _hooks_engine is not None:
+                _hooks_engine.notify(
+                    "Stop",
+                    session_id=target,
+                    data={
+                        "status": (
+                            "error"
+                            if run_state.status is ConsoleRunStatus.FAILED
+                            else "cancelled"
+                            if run_state.status is ConsoleRunStatus.STOPPED
+                            else "completed"
+                        )
+                    },
+                )
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible
@@ -27393,6 +27441,27 @@ class ConsoleChatController:
             return
         if not self.activity_for(session_id).terminal_notification_eligible:
             return
+        # run-hooks (Task 8): the queue-chain twin of `_set_run_state`'s
+        # Stop fire. A chained entry's terminal stamp was suppressed there
+        # by its chain's live generation (eligibility), so THIS deferred
+        # publication is where that transition's Stop fires -- same
+        # mutual exclusion the toast slots below already rely on, exactly
+        # one Stop per terminal transition across the two sites. Covers
+        # the active session's COMPLETED chain end too, for the same
+        # reason as `_set_run_state`'s fire.
+        _hooks_engine = self._run_hooks_engine()
+        if _hooks_engine is not None:
+            _hooks_engine.notify(
+                "Stop",
+                session_id=session_id,
+                data={
+                    "status": (
+                        "error"
+                        if status is ConsoleRunStatus.FAILED
+                        else "completed"
+                    )
+                },
+            )
         active_id = self.store.active_session_id or ""
         if (
             session_id != active_id or self._interrupt_host.view_visible is False

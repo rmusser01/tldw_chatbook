@@ -6486,6 +6486,12 @@ class ConsoleAgentBridge:
             )
 
         def on_child_settled(run_id: str | None, status: str) -> None:
+            engine = self._ensure_run_hooks() if self._ensure_run_hooks else None
+            if engine is not None:
+                engine.notify(
+                    "SubagentStop", session_id=session_id, run_id=run_id,
+                    data={"child_run_id": run_id, "status": status},
+                )
             try:
                 if not service.live_subagent_handles():
                     with self._change_window_lock:

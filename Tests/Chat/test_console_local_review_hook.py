@@ -1771,3 +1771,83 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
     }
     assert results["fs_read"].startswith("hook: ")
     assert "git_status" in results  # ran the normal chain and dispatched
+
+
+# -- ApprovalRequested at the approval-round registration (run hooks Task 8) --
+
+
+class _RecordingHooksEngine:
+    """Test double for the run-hooks engine: records every ``notify`` fire.
+
+    The Task 8 events (ApprovalRequested / Stop / SubagentStop) are all
+    non-blocking ``notify`` fires -- a recorder is the whole contract the
+    fire sites consume. Runs nothing, unlike the real engine.
+    """
+
+    def __init__(self):
+        self.notifications: list[tuple[str, dict]] = []
+
+    def notify(self, event, **kwargs):
+        self.notifications.append((event, kwargs))
+
+
+class _InlineCallFromThreadApp:
+    """``call_from_thread`` stand-in: run the marshalled callback inline."""
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+
+def test_approval_requested_fires_with_round_payload():
+    """One ask-state call through ``request_mcp_approvals`` fires
+    ApprovalRequested exactly once, the moment the round is registered --
+    before any bridge slot (mount/park) is consulted -- carrying the
+    call's name and ``session_active=True`` for the viewed session."""
+    import threading
+    import time
+
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    engine = _RecordingHooksEngine()
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=object(),
+        ensure_run_hooks=lambda: engine,
+    )
+    mounted: list[dict | None] = []
+    controller.app = _InlineCallFromThreadApp()
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    pending = MCPPendingCall(
+        llm_name="local:__local__:fs_write",
+        server_key="local:__local__",
+        tool_name="fs_write",
+        server_label="Local tools",
+        arguments={"path": "notes.txt"},
+        reason="ask",
+    )
+
+    def _resolve_soon() -> None:
+        time.sleep(0.05)
+        assert mounted and mounted[-1] is not None
+        controller.resolve_pending_approval(
+            {"local:__local__:fs_write": "approve_once"},
+            round_id=mounted[-1]["round_id"],
+        )
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals([pending], session_id=session.id)
+
+    assert decisions == {"local:__local__:fs_write": "approve_once"}
+    # Exactly ONE notify for the round: the event name, the round's owning
+    # session, the call's name, and the active-session flag.
+    assert [event for event, _ in engine.notifications] == ["ApprovalRequested"]
+    _event, kwargs = engine.notifications[0]
+    assert kwargs["session_id"] == session.id
+    assert kwargs["data"] == {
+        "calls": [{"name": "local:__local__:fs_write"}],
+        "session_active": True,
+    }

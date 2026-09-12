@@ -11724,8 +11724,10 @@ class TestUserPromptSubmitHooks:
         from tldw_chatbook.Chat import console_fleet_wake
         from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 
-        # A hook that WOULD block every send: if the wake path ever
-        # consulted the engine, this wake turn would come back refused.
+        # A UserPromptSubmit hook that WOULD block every send: if the wake
+        # path ever fired THAT event, this wake turn would come back
+        # refused. (Task 8: the terminal Stop fire consults the engine
+        # once -- non-blocking, and no Stop hook is configured here.)
         engine = self._engine(tmp_path, "raise SystemExit(2)")
         accessor_calls = []
 
@@ -11760,7 +11762,14 @@ class TestUserPromptSubmitHooks:
             wake._delivering_session = None
 
         assert result.accepted is True
-        assert accessor_calls == []
+        # Task 8 (run hooks): the wake EXEMPTION is UserPromptSubmit-only.
+        # The blocking UserPromptSubmit hook never ran -- the turn was not
+        # refused, and no hook-origin row exists below -- but the run's
+        # terminal Stop stamp now consults the engine too (spec §3: "Stop/
+        # SubagentStop fire for wake turns too -- they report run
+        # outcomes, not user input"), which is exactly one accessor call:
+        # the non-blocking Stop fire at the COMPLETED transition.
+        assert accessor_calls == ["called"]
         messages = store.messages_for_session(session.id)
         assert [message.role for message in messages] == [
             ConsoleMessageRole.SYSTEM,
