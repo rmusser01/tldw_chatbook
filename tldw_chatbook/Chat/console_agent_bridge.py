@@ -25,7 +25,7 @@ from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Literal, Sequence, cast
 from typing import Generic, TypeVar
 from uuid import uuid4
 
@@ -2083,6 +2083,39 @@ class AgentLiveSnapshot:
     steps: tuple[AgentLiveStep, ...] = ()
     subagents: tuple[SubAgentSummary, ...] = ()
     setup_started_at: float | None = None
+    turn_usage: AgentLiveTurnUsage | None = None
+
+
+LiveUsageSource = Literal["provider", "local"]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLiveTurnUsage:
+    output_tokens: int
+    source: LiveUsageSource
+    started_at: float
+    sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class AgentLiveUsageEvent:
+    kind: Literal["started", "text", "provider_usage", "finished"]
+    run_id: str
+    agent_kind: str
+    sequence: int
+    observed_at: float
+    text: str = ""
+    provider_output_tokens: int | None = None
+
+
+@dataclass(slots=True)
+class _LiveTurnUsageAccumulator:
+    sequence: int
+    started_at: float
+    received_utf8_bytes: int = 0
+    provider_output_tokens: int | None = None
+    last_published_at: float | None = None
+    published: AgentLiveTurnUsage | None = None
 
 
 @dataclass
@@ -3045,6 +3078,7 @@ class _StreamingModelAdapter:
         generation_token: int | None = None,
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
         trace_request: PreparedConsoleRequest | None = None,
+        live_usage_sink: Callable[[AgentLiveUsageEvent], None] | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -3091,6 +3125,43 @@ class _StreamingModelAdapter:
         # sniff answers a different question -- what to do with the
         # STREAMED TEXT -- and would be the wrong authority for lifetime).
         self._thread_loop = threading.local()
+        self._live_usage_sink = live_usage_sink
+        self._live_usage_sequence = 0
+        self._live_usage_sequence_lock = threading.Lock()
+        self._failed_live_usage_sequences: set[int] = set()
+
+    @contextlib.contextmanager
+    def run_scope(self, run_id: str, agent_kind: str):
+        """Attribute model calls on this agent thread to an exact run."""
+        previous = getattr(self._thread_loop, "run_scope", None)
+        marker = (run_id, agent_kind)
+        self._thread_loop.run_scope = marker
+        try:
+            yield
+        finally:
+            if getattr(self._thread_loop, "run_scope", None) == marker:
+                self._thread_loop.run_scope = previous
+
+    def _next_live_usage_sequence(self) -> int:
+        with self._live_usage_sequence_lock:
+            self._live_usage_sequence += 1
+            return self._live_usage_sequence
+
+    def _emit_live_usage(self, event: AgentLiveUsageEvent) -> None:
+        with self._live_usage_sequence_lock:
+            if event.sequence in self._failed_live_usage_sequences:
+                if event.kind == "finished":
+                    self._failed_live_usage_sequences.discard(event.sequence)
+                return
+        sink = self._live_usage_sink
+        if sink is None:
+            return
+        try:
+            sink(event)
+        except BaseException:  # noqa: BLE001 - telemetry cannot affect execution
+            with self._live_usage_sequence_lock:
+                self._failed_live_usage_sequences.add(event.sequence)
+            logger.warning("live usage callback failed; telemetry disabled for event")
 
     @property
     def _submit_loop(self) -> asyncio.AbstractEventLoop:
@@ -3189,6 +3260,61 @@ class _StreamingModelAdapter:
         continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
         **_ignored,
     ) -> dict:
+        attributed = getattr(self._thread_loop, "run_scope", None)
+        usage_sequence = self._next_live_usage_sequence() if attributed else None
+        if attributed is not None and usage_sequence is not None:
+            usage_run_id, usage_agent_kind = attributed
+            self._thread_loop.live_usage_sequence = usage_sequence
+            self._emit_live_usage(
+                AgentLiveUsageEvent(
+                    "started",
+                    usage_run_id,
+                    usage_agent_kind,
+                    usage_sequence,
+                    time.monotonic(),
+                )
+            )
+        try:
+            return self._chat_call_impl(
+                messages_payload=messages_payload,
+                model=model,
+                api_endpoint=api_endpoint,
+                streaming=streaming,
+                tools=tools,
+                continuation_groups=continuation_groups,
+                **_ignored,
+            )
+        finally:
+            if attributed is not None and usage_sequence is not None:
+                try:
+                    self._emit_live_usage(
+                        AgentLiveUsageEvent(
+                            "finished",
+                            usage_run_id,
+                            usage_agent_kind,
+                            usage_sequence,
+                            time.monotonic(),
+                        )
+                    )
+                finally:
+                    with self._live_usage_sequence_lock:
+                        self._failed_live_usage_sequences.discard(usage_sequence)
+
+    def _chat_call_impl(
+        self,
+        *,
+        messages_payload,
+        model=None,
+        api_endpoint=None,
+        streaming=False,
+        tools=None,
+        continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
+        **_ignored,
+    ) -> dict:
+        attributed = getattr(self._thread_loop, "run_scope", None)
+        usage_sequence = getattr(self._thread_loop, "live_usage_sequence", None)
+        if attributed is not None:
+            usage_run_id, usage_agent_kind = attributed
         transport_messages = _serialize_project_instruction_rows_for_transport(
             messages_payload, native_tools=self._native_tools
         )
@@ -3427,6 +3553,22 @@ class _StreamingModelAdapter:
                     chunk,
                     (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
                 ):
+                    if (
+                        isinstance(chunk, ProviderThinkingDelta)
+                        and attributed is not None
+                    ):
+                        thinking_text = getattr(chunk, "text", None)
+                        if isinstance(thinking_text, str) and thinking_text:
+                            self._emit_live_usage(
+                                AgentLiveUsageEvent(
+                                    "text",
+                                    usage_run_id,
+                                    usage_agent_kind,
+                                    usage_sequence,
+                                    time.monotonic(),
+                                    text=thinking_text,
+                                )
+                            )
                     call_capture.observe(chunk)
                     if not is_subagent:
                         update = self._thinking_capture.observe(chunk)
@@ -3454,6 +3596,31 @@ class _StreamingModelAdapter:
                         break
                     continue
                 visible = gate.feed(chunk)
+                if isinstance(chunk, str) and chunk and attributed is not None:
+                    self._emit_live_usage(
+                        AgentLiveUsageEvent(
+                            "text",
+                            usage_run_id,
+                            usage_agent_kind,
+                            usage_sequence,
+                            time.monotonic(),
+                            text=chunk,
+                        )
+                    )
+                if call_signals is not None and attributed is not None:
+                    partial_usage = call_signals.usage_snapshot()
+                    partial_count = self._provider_output_count(partial_usage)
+                    if partial_count is not None:
+                        self._emit_live_usage(
+                            AgentLiveUsageEvent(
+                                "provider_usage",
+                                usage_run_id,
+                                usage_agent_kind,
+                                usage_sequence,
+                                time.monotonic(),
+                                provider_output_tokens=partial_count,
+                            )
+                        )
                 if visible and not is_subagent:
                     self._thinking_capture.observe_answer(visible)
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
@@ -3585,10 +3752,34 @@ class _StreamingModelAdapter:
             )
         if usage is not None:
             response["usage"] = usage
+            if attributed is not None:
+                provider_count = self._provider_output_count(usage)
+                if provider_count is not None:
+                    self._emit_live_usage(
+                        AgentLiveUsageEvent(
+                            "provider_usage",
+                            usage_run_id,
+                            usage_agent_kind,
+                            usage_sequence,
+                            time.monotonic(),
+                            provider_output_tokens=provider_count,
+                        )
+                    )
         call_envelope = call_capture.settle(
             "stopped" if stream_cut() else "complete"
         ).envelope
-        return _StreamingProviderResponse(response, terminal_metadata, call_envelope)
+        result = _StreamingProviderResponse(response, terminal_metadata, call_envelope)
+        return result
+
+    @staticmethod
+    def _provider_output_count(usage: object) -> int | None:
+        if not isinstance(usage, Mapping):
+            return None
+        for key in ("output_tokens", "completion_tokens"):
+            value = usage.get(key)
+            if type(value) is int and value >= 0:
+                return value
+        return None
 
     @staticmethod
     def _is_subagent(messages_payload) -> bool:
@@ -4703,6 +4894,9 @@ class ConsoleAgentBridge:
             self._store.register_progress_message_store(message_store)
         self._gateway = provider_gateway
         self._clock = clock
+        self._live_usage_lock = threading.Lock()
+        self._live_turn_usage: dict[str, _LiveTurnUsageAccumulator] = {}
+        self._live_usage_owners: dict[str, tuple[str, str, str]] = {}
         self._raw_shell_marker_lock = threading.Lock()
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
@@ -5945,6 +6139,10 @@ class ConsoleAgentBridge:
         # one key, so an earlier turn's surviving child -- which writes
         # under its OWN run id -- can never land in it.
         primary_live_key = uuid4().hex
+        adapter._live_usage_sink = functools.partial(
+            self._observe_live_usage,
+            conversation_id=conversation_id,
+        )
         child_change_state = _ChildChangeState(
             owner_key=primary_live_key,
             survivor_key=assistant_message_id,
@@ -6547,7 +6745,15 @@ class ConsoleAgentBridge:
             revoke_approvals=revoke_approvals,
             on_tool_terminal=on_tool_terminal,
             on_tool_result_terminal=on_tool_result_terminal,
-            on_run_terminal=on_run_terminal,
+            on_run_terminal=lambda run_id: self._on_live_run_terminal(
+                run_id, on_run_terminal
+            ),
+            run_model_scope=functools.partial(
+                self._live_usage_run_scope,
+                adapter,
+                conversation_id,
+                primary_live_key,
+            ),
             persist_provider_continuation=(
                 self._store.persist_provider_continuation_event
             ),
@@ -7926,6 +8132,9 @@ class ConsoleAgentBridge:
             if self._message_store is not None:
                 self._message_store.close()
             self._fleet_coordinators.clear()
+        with self._live_usage_lock:
+            self._live_turn_usage.clear()
+            self._live_usage_owners.clear()
 
     def _conversation_fleet_coordinator(
         self,
@@ -8181,6 +8390,14 @@ class ConsoleAgentBridge:
             self._live_primary_keys.get(conversation_id, ""),
             AgentLiveSnapshot(),
         )
+        primary_run_id = self._live_primary_runs.get(conversation_id)
+        if primary_run_id is not None:
+            snapshot = dataclass_replace(
+                snapshot,
+                turn_usage=self._live_usage_snapshot(
+                    primary_run_id, conversation_id=conversation_id
+                ),
+            )
         handles = self._conversation_fleet_handles(conversation_id)
         if not handles:
             return snapshot
@@ -8247,7 +8464,125 @@ class ConsoleAgentBridge:
             bridge has never seen a step for it (never ran here, ran in a
             previous process, or its slot has since been pruned).
         """
-        return (self._live.get(conversation_id) or {}).get(run_id)
+        snapshot = (self._live.get(conversation_id) or {}).get(run_id)
+        usage = self._live_usage_snapshot(run_id, conversation_id=conversation_id)
+        if snapshot is None:
+            return (
+                AgentLiveSnapshot(status="running", turn_usage=usage)
+                if usage is not None
+                else None
+            )
+        return dataclass_replace(snapshot, turn_usage=usage)
+
+    def _live_usage_snapshot(
+        self, run_id: str, *, conversation_id: str | None = None
+    ) -> AgentLiveTurnUsage | None:
+        with self._live_usage_lock:
+            owner = self._live_usage_owners.get(run_id)
+            if conversation_id is not None and (
+                owner is None or owner[0] != conversation_id
+            ):
+                return None
+            accumulator = self._live_turn_usage.get(run_id)
+            return accumulator.published if accumulator is not None else None
+
+    @contextlib.contextmanager
+    def _live_usage_run_scope(
+        self,
+        adapter: _StreamingModelAdapter,
+        conversation_id: str,
+        primary_live_key: str,
+        run_id: str,
+        agent_kind: str,
+    ):
+        owner = (conversation_id, agent_kind, primary_live_key)
+        with self._live_usage_lock:
+            self._live_usage_owners[run_id] = owner
+        try:
+            with adapter.run_scope(run_id, agent_kind):
+                yield
+        finally:
+            with self._live_usage_lock:
+                if self._live_usage_owners.get(run_id) == owner:
+                    self._live_usage_owners.pop(run_id, None)
+                    self._live_turn_usage.pop(run_id, None)
+
+    def _on_live_run_terminal(
+        self,
+        run_id: str,
+        callback: Callable[[str], object] | None,
+    ) -> None:
+        with self._live_usage_lock:
+            self._live_usage_owners.pop(run_id, None)
+            self._live_turn_usage.pop(run_id, None)
+        if callback is not None:
+            callback(run_id)
+
+    def _clear_live_usage(self, run_id: str) -> None:
+        with self._live_usage_lock:
+            self._live_turn_usage.pop(run_id, None)
+
+    def _observe_live_usage(
+        self,
+        event: AgentLiveUsageEvent,
+        *,
+        conversation_id: str | None = None,
+    ) -> None:
+        """Fold a content-bearing event into bounded scalar active-run state."""
+        with self._live_usage_lock:
+            owner = self._live_usage_owners.get(event.run_id)
+            if (
+                owner is None
+                or owner[0] != conversation_id
+                or owner[1] != event.agent_kind
+            ):
+                return
+            current = self._live_turn_usage.get(event.run_id)
+            if event.kind == "started":
+                if current is not None and event.sequence <= current.sequence:
+                    return
+                self._live_turn_usage[event.run_id] = _LiveTurnUsageAccumulator(
+                    sequence=event.sequence, started_at=event.observed_at
+                )
+                current = self._live_turn_usage[event.run_id]
+            elif current is None or current.sequence != event.sequence:
+                return
+            if event.kind == "finished":
+                self._live_turn_usage.pop(event.run_id, None)
+                return
+            if event.kind == "text":
+                current.received_utf8_bytes += len(event.text.encode("utf-8"))
+            elif event.kind == "provider_usage":
+                value = event.provider_output_tokens
+                if type(value) is int and value >= 0:
+                    current.provider_output_tokens = value
+            value: int | None
+            source: LiveUsageSource
+            if current.provider_output_tokens is not None:
+                value = current.provider_output_tokens
+                source = "provider"
+            elif current.received_utf8_bytes:
+                value = (current.received_utf8_bytes + 3) // 4
+                source = "local"
+            else:
+                value = None
+                source = "local"
+            if value is None:
+                return
+            if (
+                current.last_published_at is None
+                or event.observed_at - current.last_published_at >= 1.0
+            ):
+                current.published = AgentLiveTurnUsage(
+                    value, source, current.started_at, current.sequence
+                )
+                current.last_published_at = event.observed_at
+            if (
+                conversation_id is not None
+                and event.agent_kind == AGENT_KIND_PRIMARY
+                and self._live_primary_keys.get(conversation_id) == owner[2]
+            ):
+                self._live_primary_runs[conversation_id] = event.run_id
 
     def _publish_live(
         self,
@@ -8311,6 +8646,7 @@ class ConsoleAgentBridge:
             keep.add(primary_key)
         for key in [k for k in slots if k not in keep]:
             slots.pop(key, None)
+            self._clear_live_usage(key)
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         """Read-only view of the REAL, live fleet for one conversation.

@@ -1914,6 +1914,9 @@ class _OwnerSeqAllocator:
             self._next_value = max(self._next_value, next_value)
 
 
+RunModelScope = Callable[[str, str], contextlib.AbstractContextManager[None]]
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -1996,6 +1999,7 @@ class AgentService:
         wall_clock: Callable[[], datetime] = _utc_now,
         inline_child_model_scope: Callable[[], contextlib.AbstractContextManager]
         | None = None,
+        run_model_scope: RunModelScope | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
@@ -2209,6 +2213,7 @@ class AgentService:
         self._inline_child_model_scope = (
             inline_child_model_scope or contextlib.nullcontext
         )
+        self._run_model_scope = run_model_scope
         # PR3a-2 Task 2 -- THE TERMINAL-ON-BOTH-PATHS SETTLE SIGNAL.
         #
         # Called with ``(child_run_id, status)`` as the LAST act of a fleet
@@ -7783,13 +7788,19 @@ class AgentService:
                     try:
                         if agent_kind == AGENT_KIND_PRIMARY:
                             self._register_primary_mailbox(run_id)
-                        outcome = run_agent_loop(
-                            config,
-                            run_messages,
-                            active,
-                            deps,
-                            **continuation_kwargs,
+                        model_scope = (
+                            self._run_model_scope(run_id, agent_kind)
+                            if self._run_model_scope is not None
+                            else contextlib.nullcontext()
                         )
+                        with model_scope:
+                            outcome = run_agent_loop(
+                                config,
+                                run_messages,
+                                active,
+                                deps,
+                                **continuation_kwargs,
+                            )
                     finally:
                         # TASK-25903: after this, steer_primary refuses with
                         # "not running" -- the honest-refusal contract for a
