@@ -9802,11 +9802,11 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
         row for row in db.list_runs("conv-survivor") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == "cancelled", child["status"]
-    # Settled: the conversation's live fleet is empty again and the
-    # retained owner has been dropped.
+    # Settled: the conversation's live fleet is empty again. The existing
+    # live-snapshot cleanup path then drops the retained owner.
     assert bridge.fleet_snapshot("conv-survivor") == []
-    assert bridge._fleet_survivor_services.get("conv-survivor") is None
     assert bridge.live_snapshot("conv-survivor").subagents[0].status == "cancelled"
+    assert bridge._fleet_survivor_services.get("conv-survivor") is None
 
 
 def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
@@ -10294,17 +10294,31 @@ def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
         assert controller.in_flight_run_count() == 0
         assert bridge.fleet_snapshot(session.id), "precondition: a live survivor"
 
+        owners_before = bridge._retained_fleet_owners(session.id)
+        handles_before = bridge._conversation_fleet_handles(session.id)
+        assert owners_before
         assert controller.busy_fleet_session_count() == 1, (
             "the confirm dialog would tell the user 0 runs will be killed, "
             "and then kill one"
         )
+        assert bridge._retained_fleet_owners(session.id) == owners_before
+        assert bridge._conversation_fleet_handles(session.id) == handles_before
     finally:
         gate.set()
     _join_fleet_threads()
 
     # ... and it goes back to 0 once the survivor settles, so an idle
     # Console still navigates away with no dialog at all.
+    owners_before = bridge._retained_fleet_owners(session.id)
+    handles_before = bridge._conversation_fleet_handles(session.id)
+    assert owners_before
     assert controller.busy_fleet_session_count() == 0
+    assert bridge._retained_fleet_owners(session.id) == owners_before
+    assert bridge._conversation_fleet_handles(session.id) == handles_before
+
+    assert bridge.live_snapshot(session.id).subagents[0].status == "done"
+    assert bridge._retained_fleet_owners(session.id) == []
+    assert bridge._conversation_fleet_handles(session.id) == handles_before
 
 
 def test_busy_fleet_session_count_ignores_a_terminal_child():

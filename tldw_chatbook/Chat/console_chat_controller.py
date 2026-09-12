@@ -6037,13 +6037,11 @@ class ConsoleChatController:
         tick (task-15664). Reads the bridge's drain-paired unsettled
         counter (``has_unsettled_children``, Task 3) per live session --
         cheap dict reads under one lock, safe on a UI timer, unlike
-        ``_fleet_survivor_session_ids``'s coordinator sweep (which
-        ``busy_fleet_session_count`` documents as navigation-only and
-        which task-15666 records as prune-on-read). True exactly while at
-        least one fleet child of a live session has entered its run scope
-        and not yet reached its settle hook -- so the tick keeps painting
-        through the scope-exit->settle window and stops on the same edge
-        the drain (and the badge it stamps) fires on.
+        ``_fleet_survivor_session_ids``'s coordinator sweep. True exactly
+        while at least one fleet child of a live session has entered its
+        run scope and not yet reached its settle hook -- so the tick keeps
+        painting through the scope-exit->settle window and stops on the
+        same edge the drain (and the badge it stamps) fires on.
 
         Returns:
             True while any live session's fleet still owes a drain.

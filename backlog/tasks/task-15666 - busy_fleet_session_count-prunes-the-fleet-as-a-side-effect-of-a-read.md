@@ -39,3 +39,12 @@ Reason: restore the documented read-only fleet snapshot without changing ownersh
 3. Remove cleanup from fleet_snapshot and keep existing live_snapshot/cancellation/lifecycle cleanup; update comments and the affected cleanup regression.
 4. Run targeted survivor, count, and between-turn pruning tests plus changed-line lint/format checks and independent review; record evidence before Done.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Made `ConsoleAgentBridge.fleet_snapshot()` observational by removing its retained-owner cleanup call while preserving the existing service lookup and live survivor filtering.
+- Extended the real bridge/controller regression to prove both live and terminal busy-count reads preserve retained owners and coordinator handles. The established `live_snapshot()` path still releases settled owners, and terminal coordinator handles remain until next-turn pruning.
+- Updated lifecycle documentation and removed the controller's stale prune-on-read comment. No ADR was added; ADR-129 already defines the lifecycle contract.
+- Targeted verification passes (10 tests). Ruff reports only existing large-file debt: 235 findings versus 237 at `HEAD`, zero findings on changed lines, and the same three files requiring whole-file formatting. `git diff --check` passes. Independent review and final task completion remain with the root task owner.
+<!-- SECTION:NOTES:END -->

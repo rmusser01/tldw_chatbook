@@ -7721,14 +7721,12 @@ class ConsoleAgentBridge:
     def _prune_settled_fleet_survivors(self, conversation_id: str) -> None:
         """Forget retained services whose last child has settled.
 
-        PR3a-1 Task 6a. Called off the read paths (`fleet_snapshot`,
-        `cancel_subagent`, `live_snapshot`) rather than from a completion
-        callback ON PURPOSE: the "last child of a turn finished" signal
-        does not exist yet and PR 3a-2 builds it for auto-wake, so
-        inventing a second one here would be built twice and thrown away
-        once. Nothing depends on the pruning being prompt -- a settled
-        service is inert, and every read that could observe it prunes it
-        first.
+        PR3a-1 Task 6a. Cleanup remains on lifecycle and action paths such
+        as `live_snapshot`, cancellation, and fence release rather than a
+        completion callback. A settled service is inert until one of those
+        existing paths releases it. `fleet_snapshot` deliberately does not
+        call this helper: fleet observation, including navigation counts,
+        must not change retained ownership.
 
         Args:
             conversation_id: The conversation to prune.
@@ -8315,8 +8313,11 @@ class ConsoleAgentBridge:
         that seam is the only thing this method (or any other caller
         outside ``agent_service.py``) touches on ``AgentService`` for this
         purpose.
+
+        This observation does not release settled survivor owners. Existing
+        lifecycle and action paths perform that cleanup; terminal coordinator
+        handles remain available until the next turn prunes them.
         """
-        self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
         if service is not None:
             return service.fleet_snapshot()
