@@ -17,6 +17,9 @@ Commit f043db12b77 on dev made `console_agent_bridge` pass `reasoning_replay=` t
 
 Source: approval-card / MCP-permissions fix wave 2026-09-10/11 (plan `Docs/superpowers/plans/2026-09-10-approval-card-fix-wave.md`, review snapshot `.impeccable/critique/2026-09-10T17-31-53Z__hatbook-widgets-chat-widgets-chat-approval-card-py.md`); rider recorded in the lane ledger, not fixed in the wave.
 
+
+Also red at the same untouched baseline in `Tests/Chat/test_console_agent_bridge.py` (found while stacking lane A on dev 0e62de41d4): `test_successful_tool_payload_collisions_stay_success_live_and_resumed[tool call denied…]` and `test_run_reply_forwards_review_tool_calls_hook_to_agent_service`.
+
 ## Acceptance Criteria
 
 - [ ] The test passes on dev without changing the source under test
