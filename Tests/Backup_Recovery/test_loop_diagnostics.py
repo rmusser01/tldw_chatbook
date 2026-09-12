@@ -4,10 +4,46 @@ import asyncio
 import json
 import sys
 import threading
+import time
+from types import FunctionType
 
 import pytest
 
 from Tests.Backup_Recovery.loop_diagnostics import observe_loop_profile
+
+
+@pytest.mark.asyncio
+async def test_profile_excludes_concurrent_worker_and_has_plausible_cpu_totals(
+    tmp_path,
+):
+    path = tmp_path / "thread-only.json"
+    stop_worker = threading.Event()
+
+    def worker_only():
+        while not stop_worker.is_set():
+            sum(range(1000))
+
+    def loop_only():
+        until = time.thread_time() + 0.01
+        while time.thread_time() < until:
+            sum(range(100))
+
+    stop = observe_loop_profile(path, delay=0, duration=0.1)
+    await asyncio.sleep(0.001)
+    worker = threading.Thread(target=worker_only)
+    worker.start()
+    try:
+        loop_only()
+        await asyncio.sleep(0.15)
+    finally:
+        stop_worker.set()
+        worker.join(timeout=5)
+        stop()
+    data = json.loads(path.read_text())
+    assert all(row["function"] != "worker_only" for row in data["calls"])
+    observed = next(row for row in data["calls"] if row["function"] == "loop_only")
+    assert 0 < observed["total_s"] <= data["thread_cpu_s"] + 0.001
+    assert all(row["total_s"] >= 0 and row["inline_s"] >= 0 for row in data["calls"])
 
 
 @pytest.mark.asyncio
@@ -83,3 +119,31 @@ async def test_stop_finalizes_active_profile_once_and_preserves_exception(tmp_pa
     assert path.read_bytes() == original
     assert sys.getprofile() is None
     assert b"synthetic-exception-value" not in original
+
+
+@pytest.mark.asyncio
+async def test_profile_bounds_recursive_stack_and_distinct_call_metadata(tmp_path):
+    path = tmp_path / "bounded.json"
+    stop = observe_loop_profile(path, delay=0, duration=60)
+    await asyncio.sleep(0.001)
+
+    def nested(depth):
+        return nested(depth - 1) if depth else "unchanged result"
+
+    def observed():
+        return 1
+
+    try:
+        assert nested(180) == "unchanged result"
+        for index in range(300):
+            function = FunctionType(
+                observed.__code__.replace(co_filename=f"call_{index}.py"), {}
+            )
+            assert function() == 1
+    finally:
+        stop()
+    data = json.loads(path.read_text())
+    assert data["dropped_calls"] > 0
+    assert len(data["calls"]) <= 32
+    assert data["thread_id"] == threading.get_native_id()
+    assert all(row["inline_s"] >= 0 for row in data["calls"])

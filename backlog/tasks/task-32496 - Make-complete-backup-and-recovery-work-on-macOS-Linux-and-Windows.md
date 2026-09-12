@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-12 23:40
+updated_date: 2026-09-12 23:48
 ---
 
 ## Description
@@ -90,6 +90,9 @@ Reviewedtest-onlyCPUdiagnostic committed/pushed135fd148186443e535ae5c724540b1488
 135fd1481 actualLinuxreader/admission/CPUdiagnostic suite passes72 tests16.11s, no skips. PubliccodeloadSHA999173a1c296247e41cee1557ab379fe00e4b092bdc5601b5d45beb3499171a5. SingleWindowsdiagnostic34725309476 ongoing; no additional productionedits.
 Windows single-case diagnostic34725309476 exact135fd: native42 pass; seed300s observer expired before packaging, no product AdmissionTimeout recorded. Verified12 artifact hashes, installed receipt2030files, clean source9848. CPU: main50.109/59.844 process seconds over54.687wall; backup7.844. Important correction: last pause_requested groups occur at cleanup (774s), not during capture. During capture all4 sparse main stacks are windows_events._poll GetQueuedCompletionStatus; no busy caller yet proven. Next bounded5s same-main-thread cProfile diagnostic during backup to distinguish ready callback churn from completion-port churn. No production/deadline change; existing native review agent owns isolated diagnostic helper/tests.
 Bounded main-loop profile helper implemented by existing native review agent; root reviewed and integrated only into seed and support checks. Three tests first RED then GREEN; combined13 diagnostic tests pass0.86s. Ruff/helperBandit0/testsBandit0(excluding assert B101), embedded-child compilation and diffcheck pass. Five-second timer may run longer if loop blocks; receipt records actual elapsed/threadCPU. No production changes, no deadline changes. Dispatch next exact-SHA replacement-diagnostic after commit.
+Diagnostic limitation discovered by actual macOS combined run b8cbf: seed-loop-profile.log elapsed5.124s main-threadCPU0.356s but cProfile reports sqlite execute497s and backup-thread-only catalog/native_open calls. These timings are INVALID for thread attribution; do not infer production cause. Existing agent adding concurrent-worker regression and replacing cProfile with explicit current-thread sys.setprofile observation. Current Windows run remains product-evidence only; CPU profile must not be treated valid. No production edits.
+cProfile correction verified: concurrent worker test RED leaked worker_only; sys.setprofile currentloopthread+get_ident guard GREEN. State bounded128 frames/256codekeys/top32output; Cmetadata names only. Combined15diagnostic tests pass0.88s; independent root review, Ruff/Bandit0. Prior Windows34726047676 exactb8cbf reproduced real AdmissionTimeout; native42 pass, product1fail177.60s;14hashesverified. Its mixed-thread cProfile timing/callcounts are not accepted attribution. New actual macOS seed-only observer check running before corrected Windows dispatch.
+Corrected observer actual installed macOS seed passes17.39s. Receipt reports same-loop native thread148568557, elapsed3.692s (early stop after successful seed), threadCPU1.592s, bounded aggregation explicitly dropped166566 calls; no backup-only _catalog/_native_open/capture rows. Main loop/resume hooks visible, unlike invalid cProfile. All14 prior Windows hashes independently reverified by root. Ready for corrected exact-SHA Windows diagnostic.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

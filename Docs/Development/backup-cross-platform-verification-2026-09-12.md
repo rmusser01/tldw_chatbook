@@ -41,6 +41,22 @@ Actual Linux diagnostic/admission scope at this revision passes 72 cases in
 16.11 seconds; public source SHA256 is
 `999173a1c296247e41cee1557ab379fe00e4b092bdc5601b5d45beb3499171a5`.
 
+The first bounded profile, `b8cbf6268`, is invalid for thread attribution:
+actual macOS seed output includes backup-worker calls and impossible thread-clock
+totals (497 seconds inside a 5.124-second window). Its product combined
+replacement/rollback case still passes (186.05 seconds). The current Python 3.12
+cProfile measurement must not justify any production change. A concurrent-worker
+regression and explicitly current-thread observation are required before reuse.
+Windows [34726047676](https://github.com/rmusser01/tldw_chatbook/actions/runs/34726047676)
+at that revision passes native 42 and reproduces real `AdmissionTimeout` during
+seed capture (one product failure, 177.60 seconds). All 14 artifact hashes and the
+installed receipt verify; its mixed-thread profiler data is not accepted evidence
+of a CPU cause. The concurrent-worker regression reproduces contamination before
+replacing cProfile with `sys.setprofile` on the loop thread plus an explicit thread
+guard. Call state is bounded to 128 stack frames and 256 code keys, exporting only
+32 metadata/timing rows. Fifteen diagnostic tests pass (0.88 seconds), including
+exclusion of a busy worker and plausible main-thread CPU totals; Ruff/Bandit pass.
+
 Observer-free Windows [34723928412](https://github.com/rmusser01/tldw_chatbook/actions/runs/34723928412)
 at `4810bfddaedaf7e29f68ee9f5d707418f6bf3ec6` passes native 294/294 and
 product 55/57, with no skips. The same five groups pass, but replacement/rollback
