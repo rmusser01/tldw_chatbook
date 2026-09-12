@@ -596,14 +596,37 @@ def isolated_runtime_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
     isolated_site_packages = Path(site_query.stdout.strip())
     dependency_paths = [
         Path(value).resolve()
-        for value in site.getsitepackages()
-        if Path(value).is_dir()
+        for value in dict.fromkeys((*site.getsitepackages(), *sys.path))
+        if value
+        and Path(value).is_absolute()
+        and Path(value).name in {"site-packages", "dist-packages"}
+        and Path(value).is_dir()
     ]
     (isolated_site_packages / "task2-worktree.pth").write_text(
         "\n".join(str(path) for path in (repository_root, *dependency_paths)) + "\n",
         encoding="utf-8",
     )
     return runtime_python
+
+
+def _isolated_harness_environment() -> dict[str, str]:
+    """Keep pytest isolation in the outer harness; workers retain their own policy."""
+    environment = {"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+    for name in (
+        "HOME",
+        "USERPROFILE",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "TLDW_CONFIG_PATH",
+        "PYTHON_KEYRING_BACKEND",
+        "HF_HUB_OFFLINE",
+        "TIKTOKEN_CACHE_DIR",
+        "TLDW_TEST_CONFIG_ROOT",
+        "TLDW_TEST_CONFIG_ROOT_OWNER",
+    ):
+        if name in os.environ:
+            environment[name] = os.environ[name]
+    return environment
 
 
 def test_real_isolated_subprocess_executes_this_worktree_vertical_slice(
@@ -615,6 +638,8 @@ def test_real_isolated_subprocess_executes_this_worktree_vertical_slice(
     workspace.mkdir()
     (workspace / "note.txt").write_text("hello", encoding="utf-8")
     harness = """
+from Tests import network_guard
+network_guard.install()
 import json
 import sys
 from pathlib import Path
@@ -639,7 +664,7 @@ print(json.dumps({"worker_source": str(worker_source), "result": result}))
             str(repository_root),
             str(workspace),
         ],
-        env={"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        env=_isolated_harness_environment(),
         capture_output=True,
         text=True,
         timeout=30,
@@ -744,6 +769,8 @@ def test_real_executor_surfaces_an_ordinary_edit_failure_frame(
     workspace.mkdir()
     (workspace / "note.txt").write_text("before", encoding="utf-8")
     harness = """
+from Tests import network_guard
+network_guard.install()
 import json
 import sys
 from pathlib import Path
@@ -768,7 +795,7 @@ except WorkspaceToolExecutionError as error:
 
     completed = subprocess.run(
         [str(isolated_runtime_python), "-I", "-c", harness, str(workspace)],
-        env={"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        env=_isolated_harness_environment(),
         capture_output=True,
         text=True,
         timeout=30,
@@ -791,7 +818,9 @@ def test_real_executor_surfaces_a_patch_target_mismatch_refusal(
     note = workspace / "note.txt"
     note.write_bytes(b"before\n")
 
-    harness = '''
+    harness = """
+from Tests import network_guard
+network_guard.install()
 import json
 import sys
 from pathlib import Path
@@ -818,11 +847,11 @@ except WorkspaceToolExecutionError as error:
         "message": str(error),
         "cause": error.__cause__ is None,
     }))
-'''
+"""
 
     completed = subprocess.run(
         [str(isolated_runtime_python), "-I", "-c", harness, str(workspace)],
-        env={"PATH": os.defpath, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+        env=_isolated_harness_environment(),
         capture_output=True,
         text=True,
         timeout=30,
