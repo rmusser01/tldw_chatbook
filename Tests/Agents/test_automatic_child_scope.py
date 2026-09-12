@@ -11,7 +11,14 @@ from Tests.Agents.conftest import join_fleet_children, pin_agent_settings
 from Tests.Agents.test_agent_service import FleetChat, fence
 from Tests.Agents.test_fleet_runtime import RunIdProbeProvider
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
-from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget, ToolResult
+from tldw_chatbook.Agents.agent_models import (
+    AgentConfig,
+    AgentDefinition,
+    RunBudget,
+    ToolCatalogEntry,
+    ToolResult,
+    ToolSchema,
+)
 from tldw_chatbook.Agents.agent_service import AgentService, _call_with_timeout
 from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticWorkLimits,
@@ -23,7 +30,14 @@ from tldw_chatbook.Agents.automatic_work_runtime import (
 )
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, LocalToolSpec, LocalToolExposure, LocalApprovalEffect
+from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+from tldw_chatbook.Agents.run_context import current_run_id
+from tldw_chatbook.Agents.local_tool_provider import (
+    LocalToolProvider,
+    LocalToolSpec,
+    LocalToolExposure,
+    LocalApprovalEffect,
+)
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -105,6 +119,45 @@ class ContextProbe(RunIdProbeProvider):
         self.contexts.append(current_automatic_work())
         self.threads.append(threading.current_thread().name)
         return ToolResult(ok=True, content="observed")
+
+
+class PausedChildToolProvider:
+    def __init__(self):
+        self.entered = threading.Event()
+        self.human_release = threading.Event()
+        self.after_human = threading.Event()
+        self.release = threading.Event()
+        self.sibling_entered = threading.Event()
+        self.sibling_release = threading.Event()
+        self.workers = []
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry("paused:tool", "paused_tool", "wait", "test"),
+            ToolCatalogEntry("paused:sibling", "sibling_tool", "wait", "test"),
+        ]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(
+            id=tool_id,
+            name="paused_tool" if tool_id == "paused:tool" else "sibling_tool",
+            description="Wait for a human decision.",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    def invoke(self, tool_id, args):
+        del args
+        self.workers.append(threading.current_thread())
+        if tool_id == "paused:sibling":
+            self.sibling_entered.set()
+            assert self.sibling_release.wait(5)
+            return ToolResult(ok=True, content="late sibling")
+        with use_human_input_wait(current_run_id()):
+            self.entered.set()
+            assert self.human_release.wait(5)
+        self.after_human.set()
+        assert self.release.wait(5)
+        return ToolResult(ok=True, content="released")
 
 
 def test_captured_context_reaches_raw_child_and_tool_threads(db):
@@ -368,6 +421,188 @@ def test_survivor_still_honors_its_chain_deadline_after_parent_returns(db, monke
         join_fleet_children(service)
 
 
+@pytest.mark.parametrize("stop_mode", ["elapsed_deadline", "explicit_cancel"])
+def test_real_paused_capped_child_releases_logically_before_physical_worker(
+    db, monkeypatch, stop_mode
+):
+    import tldw_chatbook.Agents.agent_service as service_module
+
+    monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+    wall, monotonic = [1000.0], [10.0]
+    monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
+    monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
+    context = accepted_context(db, wall_seconds=2)
+    provider = PausedChildToolProvider()
+    capacity = RuntimeCapacity()
+    fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+    db.create_agent_definition(
+        AgentDefinition(
+            name="bounded",
+            description="Bounded child.",
+            instructions="Call the paused tool.",
+            tool_allowlist=("paused_tool",),
+            max_wall_seconds=0.2,
+        )
+    )
+    service, _chat = make_service(
+        db,
+        context,
+        [fence("spawn_subagent", {"task": "paused", "agent": "bounded"}), "done"],
+        {"paused": [fence("paused_tool", {}), "must not continue"]},
+        provider=provider,
+        runtime_capacity=capacity,
+        fleet_coordinator=fleet,
+    )
+    result = []
+
+    def run_parent():
+        result.append(
+            service.run_turn(
+                conversation_id="conversation",
+                messages=[{"role": "user", "content": "go"}],
+                config=AgentConfig(
+                    model="test",
+                    system_prompt="Test",
+                    allowed_tools=("spawn_subagent", "paused_tool"),
+                    budget=RunBudget(
+                        max_subagents=1,
+                        max_steps=60,
+                        max_model_turns=30,
+                        max_tool_call_seconds=5,
+                    ),
+                ),
+                api_endpoint="llama_cpp",
+            )
+        )
+
+    parent = threading.Thread(target=run_parent)
+    parent.start()
+    try:
+        assert provider.entered.wait(5)
+        handle = fleet.snapshot()[0]
+        child = child_rows(db)[0]
+        assert child["budget"]["max_wall_seconds"] == 0.2
+        assert handle.definition_wall_seconds == 0.2
+        if stop_mode == "elapsed_deadline":
+            wall[0], monotonic[0] = 1003.0, 13.0
+        else:
+            assert service.cancel_subagent(handle.handle_id)
+        deadline = time.monotonic() + 2
+        while capacity.snapshot().stopping_tool_workers != 1:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        while fleet.get(handle.handle_id).status == "running":
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        persisted = db.get_run(child["id"])
+        assert fleet.get(handle.handle_id).status == "cancelled"
+        assert persisted["status"] == "cancelled"
+        assert capacity.snapshot().tool_workers == 1
+        assert all(worker.is_alive() for worker in provider.workers)
+    finally:
+        provider.human_release.set()
+        provider.release.set()
+        provider.sibling_release.set()
+        parent.join(5)
+        for worker in provider.workers:
+            worker.join(5)
+        join_fleet_children(service)
+    assert not parent.is_alive()
+    assert result and result[0][1].status == "done"
+    assert capacity.snapshot().executions == ()
+
+
+def test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it(
+    db, monkeypatch
+):
+    import tldw_chatbook.Agents.agent_service as service_module
+
+    monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+    provider = PausedChildToolProvider()
+    capacity = RuntimeCapacity(max_tool_workers=2, reserved_manual_tool_workers=0)
+    fleet = FleetCoordinator(max_live=2, clock=time.monotonic)
+    db.create_agent_definition(
+        AgentDefinition(
+            name="bounded",
+            description="Bounded child.",
+            instructions="Call the paused tool.",
+            tool_allowlist=("paused_tool",),
+            max_wall_seconds=0.15,
+        )
+    )
+    service, _chat = make_service(
+        db,
+        None,
+        [
+            fence("spawn_subagent", {"task": "paused", "agent": "bounded"}),
+            fence("spawn_subagent", {"task": "sibling"}),
+            "done",
+        ],
+        {
+            "paused": [fence("paused_tool", {}), "must not continue"],
+            "sibling": [fence("sibling_tool", {}), "sibling done"],
+        },
+        provider=provider,
+        runtime_capacity=capacity,
+        fleet_coordinator=fleet,
+    )
+    result = []
+
+    def run_parent():
+        result.append(
+            service.run_turn(
+                conversation_id="conversation",
+                messages=[{"role": "user", "content": "go"}],
+                config=AgentConfig(
+                    model="test",
+                    system_prompt="Test",
+                    allowed_tools=(
+                        "spawn_subagent",
+                        "paused_tool",
+                        "sibling_tool",
+                    ),
+                    budget=RunBudget(
+                        max_subagents=2,
+                        max_steps=60,
+                        max_model_turns=30,
+                        max_tool_call_seconds=0.08,
+                    ),
+                ),
+                api_endpoint="llama_cpp",
+            )
+        )
+
+    parent = threading.Thread(target=run_parent)
+    parent.start()
+    try:
+        assert provider.entered.wait(5)
+        assert provider.sibling_entered.wait(5)
+        time.sleep(0.12)
+        assert provider.workers[0].is_alive()
+        assert capacity.snapshot().stopping_tool_workers == 1
+        provider.human_release.set()
+        assert provider.after_human.wait(5)
+        time.sleep(0.03)
+        provider.release.set()
+        join_fleet_children(service)
+        rows = {row["task"]: row for row in child_rows(db)}
+        assert rows["paused"]["budget"]["max_wall_seconds"] == 0.15
+        assert rows["paused"]["status"] == "stuck"
+        assert rows["sibling"]["status"] == "done"
+        assert any(worker.is_alive() for worker in provider.workers)
+    finally:
+        provider.human_release.set()
+        provider.release.set()
+        provider.sibling_release.set()
+        parent.join(5)
+        for worker in provider.workers:
+            worker.join(5)
+        join_fleet_children(service)
+    assert not parent.is_alive()
+    assert result and result[0][1].status == "done"
+    assert capacity.snapshot().executions == ()
+
+
 def test_deep_search_is_refused_in_automatic_tool_thread_but_manual_is_unchanged(
     db, tmp_path
 ):
@@ -379,7 +614,10 @@ def test_deep_search_is_refused_in_automatic_tool_thread_but_manual_is_unchanged
             LocalToolSpec(
                 name="web_deep_search",
                 exposure=LocalToolExposure.CONSOLE_ONLY,
-                approval_effects=(LocalApprovalEffect.NETWORK, LocalApprovalEffect.LLM_SPEND),
+                approval_effects=(
+                    LocalApprovalEffect.NETWORK,
+                    LocalApprovalEffect.LLM_SPEND,
+                ),
                 description="deep search",
                 parameters={},
                 handler=lambda args: (calls.append(args), "manual result")[1],

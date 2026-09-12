@@ -978,18 +978,12 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
     ``max_subagents`` is zeroed — depth-1 sub-agents never spawn.
     Steps are per-run and stay at the child's own default.
     """
-    return RunBudget(
-        max_steps=child.max_steps,
+    return replace(
+        child,
         max_wall_seconds=min(
             child.max_wall_seconds, max(parent_remaining_seconds, 1.0)
         ),
         max_subagents=0,
-        max_subagent_result_chars=child.max_subagent_result_chars,
-        max_tool_result_chars=child.max_tool_result_chars,
-        max_model_turns=child.max_model_turns,
-        max_total_tokens=child.max_total_tokens,
-        max_tool_call_seconds=child.max_tool_call_seconds,
-        denial_circuit_breaker_limit=child.denial_circuit_breaker_limit,
     )
 
 
@@ -1107,14 +1101,8 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
     """
     if not math.isfinite(max_wall_seconds):
         max_wall_seconds = 1.0
-    return RunBudget(
-        max_steps=child.max_steps,
+    return replace(
+        child,
         max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
-        max_subagent_result_chars=child.max_subagent_result_chars,
-        max_tool_result_chars=child.max_tool_result_chars,
-        max_model_turns=child.max_model_turns,
-        max_total_tokens=child.max_total_tokens,
-        max_tool_call_seconds=child.max_tool_call_seconds,
-        denial_circuit_breaker_limit=child.denial_circuit_breaker_limit,
     )

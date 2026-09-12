@@ -542,3 +542,29 @@ def test_definition_from_row_reads_optional_wall_cap():
         }
     )
     assert defn.max_wall_seconds == 0.25
+
+
+def test_child_budget_helpers_preserve_every_other_dimension():
+    budget = RunBudget(
+        max_steps=7,
+        max_wall_seconds=91.0,
+        max_subagents=2,
+        max_subagent_result_chars=123,
+        max_tool_result_chars=456,
+        max_model_turns=8,
+        max_total_tokens=789,
+        max_tool_call_seconds=4.5,
+        max_model_retries=6,
+        budget_warning_fraction=0.37,
+        denial_circuit_breaker_limit=9,
+    )
+
+    for bounded in (
+        clamp_child_budget(budget, parent_remaining_seconds=3.0),
+        contain_child_budget(budget, max_wall_seconds=5.0),
+    ):
+        assert bounded == dataclasses.replace(
+            budget,
+            max_wall_seconds=bounded.max_wall_seconds,
+            max_subagents=0,
+        )
