@@ -1576,11 +1576,16 @@ async def test_folder_files_and_session_git_use_supported_40x20_navigator(
             # that much is real and is what this test guards. What it cannot
             # claim here is PAINT: Session Git renders inside the work pane,
             # which this width collapses off-screen (see the comment above),
-            # so `#file-notes-git-back` is displayed and focusable but never
-            # composited. Asserting the route rather than the pixels keeps
-            # the coverage honest; making the work pane claim the screen at
-            # this width is the product half, filed separately.
-            assert workspace.query_one("#file-notes-git-back", Button).display
+            # so nothing it paints is on screen. Assert the state the press
+            # actually changed -- the navigator's mode (measured: "files"
+            # without the press) and the focus hand-off below -- rather than
+            # `#file-notes-git-back.display`, which is a Button's default
+            # True and would survive any regression here. (The git panel's
+            # own `display` stays False at this point too: `_sync_navigator_
+            # mode` shows it only in the work pane's manage mode.) Making
+            # the work pane claim the screen at this width is the product
+            # half, filed separately.
+            assert workspace._navigator_mode == "git"
             assert getattr(pilot.app.focused, "id", None) in {
                 "file-notes-git-back",
                 "file-notes-git-rows",
