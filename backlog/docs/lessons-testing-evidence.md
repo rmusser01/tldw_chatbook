@@ -9,6 +9,17 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Fail-closed assertions need a successful control on the real scheduler path
+
+During PR #2645 review, a disposal test called synchronous `RunHooksEngine.fire`
+inside an async test and asserted that a guard was blocked. It passed because
+the nested event-loop error failed closed, even when runtime disposal did not
+close the engine. The test also assumed `/bin/true` existed on macOS. Using
+`sys.executable`, awaiting `fire_async`, and first proving that the same hook
+succeeds before disposal exposed the missing cleanup. For fail-closed behavior,
+establish a successful control and exercise the production sync/async entry;
+an unrelated exception can otherwise satisfy the failure assertion.
+
 ## Cancellation waiters cannot own terminal acknowledgements
 
 **TASK-32115, Buddy/TTS integration, 2026-09-09.** Replacing a Buddy utterance

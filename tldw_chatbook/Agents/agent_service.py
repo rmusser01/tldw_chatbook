@@ -1926,6 +1926,7 @@ class AgentService:
         skill_file_bindings: SkillFileBindings | None = None,
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
+        guard_tool_calls: Callable[[list[ToolCall], str], dict[str, str]] | None = None,
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
@@ -1958,6 +1959,8 @@ class AgentService:
         prepare_managed_skill_promotion_tool: Callable[[dict], ToolResult]
         | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
+        | None = None,
+        post_tool_call: Callable[[str, str, dict, str, bool, str], None]
         | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         run_log_request_plan: RunLogRequestPlan | None = None,
@@ -2046,6 +2049,7 @@ class AgentService:
         # and this is where a run's identity reaches the review hook that
         # writes them.
         self.review_tool_calls = review_tool_calls
+        self.guard_tool_calls = guard_tool_calls
         #: TASK-26010: observational post-completion seam -- (call, result,
         #: duration_seconds, run_id) after EVERY tool call completes, whatever
         #: the outcome. Strictly observational: a raising hook costs nothing
@@ -2114,6 +2118,18 @@ class AgentService:
         # see the schema-pin comment in _run_one for the rationale. `None`
         # (the default) means the run is not wired for it.
         self._run_skill_script_tool = run_skill_script_tool
+        # run-hooks PostToolUse (Task 5): the bridge supplies
+        # `engine.post_tool_dep(session_id=...)` -- ONLY when a run-hooks
+        # engine exists -- and every LoopDeps this service builds (primary
+        # and sub-agent alike) fires it at the dispatch capture point for
+        # calls that actually dispatched. The 6th parameter (R20) is the
+        # FIRING run's id, bound per run in `_run_one` exactly the way the
+        # review hook's run id is bound, so the engine's envelope can
+        # attribute a fleet child's tool use to the child's own run.
+        # `None` (the default, and every pre-hooks caller) means the loop
+        # never fires PostToolUse: behavior is byte-identical to before
+        # this seam existed.
+        self._post_tool_call = post_tool_call
         # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
         # per service instance -- `bind()` latches permanently (see its own
         # docstring), so a writer built here in __init__ and reused across
@@ -7603,6 +7619,10 @@ class AgentService:
                 else None,
                 run_id,
             ),
+            guard_tool_calls=(
+                (lambda calls: self.guard_tool_calls(calls, run_id))
+                if self.guard_tool_calls is not None else None
+            ),
             is_tool_call_preauthorized=(
                 lambda call: self.registry.is_canvas_reversible_conversation_local_mutation(
                     call.name
@@ -7638,6 +7658,22 @@ class AgentService:
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,
+            # R20: bind THIS run's id into the dep, mirroring the review
+            # lambda above -- the engine's notify carries it as the
+            # PostToolUse envelope's run_id, so each firing names the run
+            # that dispatched it (a fleet child's own run, not the
+            # session's primary). `None` (the default) stays a true no-op.
+            post_tool_call=(
+                (
+                    lambda name, call_id, tool_args, content, ok: (
+                        self._post_tool_call(
+                            name, call_id, tool_args, content, ok, run_id
+                        )
+                    )
+                )
+                if self._post_tool_call is not None
+                else None
+            ),
             search_run_log=(
                 search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
             ),

@@ -4664,6 +4664,16 @@ class ConsoleAgentBridge:
         runtime_capacity: RuntimeCapacity | None = None,
         runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
         message_store: MessageStore | None = None,
+        # run-hooks (Task 5): the runtime's engine accessor, supplied by
+        # `ConsoleRuntime.ensure_console_agent_bridge` as its own bound
+        # `ensure_run_hooks`. The bridge holds only the callable -- never the
+        # runtime itself -- and resolves it per `run_reply`, so hook config
+        # presence is re-decided per turn (the runtime's R17 rule). Returns
+        # the app-owned `RunHooksEngine`, or `None` when no ``[hooks]`` are
+        # configured (every fire site then skips entirely). `None` (the
+        # default, and every pre-existing construction site -- i.e. all test
+        # harnesses) means this bridge never wires a hooks engine at all.
+        ensure_run_hooks: Callable[[], Any] | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
@@ -4688,6 +4698,7 @@ class ConsoleAgentBridge:
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
+        self._ensure_run_hooks = ensure_run_hooks
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -6369,6 +6380,22 @@ class ConsoleAgentBridge:
                     "change_review: prior survivor close did not finish "
                     "successfully; successor turn untracked"
                 )
+        # run-hooks (Task 5): resolve the app-owned engine ONCE per turn (its
+        # presence answer re-runs while unconfigured -- the runtime's R17
+        # rule -- so a first-ever [hooks] entry takes effect on the next
+        # turn). `None` (unconfigured, or a bridge built without the runtime
+        # accessor -- every test harness) builds the service exactly as
+        # before: no PostToolUse dep, byte-identical run behavior.
+        run_hooks_engine = (
+            self._ensure_run_hooks() if self._ensure_run_hooks is not None else None
+        )
+        # A restriction-only guard sees every call, including Canvas tools
+        # that intentionally skip interactive approval. The permission chain
+        # remains independent and cannot override a hook refusal.
+        guard_tool_calls = (
+            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)
+            if run_hooks_engine is not None else None
+        )
         baseline_gate = change_reservation or change_handle
         before_tool_dispatch = None
         alias_by_root: dict[str, str] = {}
@@ -6449,6 +6476,15 @@ class ConsoleAgentBridge:
 
         def on_child_settled(run_id: str | None, status: str) -> None:
             try:
+                engine = self._ensure_run_hooks() if self._ensure_run_hooks else None
+                if engine is not None:
+                    engine.notify(
+                        "SubagentStop", session_id=session_id, run_id=run_id,
+                        data={"child_run_id": run_id, "status": status},
+                    )
+            except Exception:  # noqa: BLE001 -- observation cannot prevent settlement
+                logger.warning("SubagentStop observer failed; continuing settlement")
+            try:
                 if not service.live_subagent_handles():
                     with self._change_window_lock:
                         child_change_state.pending_scopes = 0
@@ -6516,12 +6552,18 @@ class ConsoleAgentBridge:
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
+            guard_tool_calls=guard_tool_calls,
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             prepare_managed_skill_promotion_tool=(prepare_managed_skill_promotion_tool),
             run_skill_script_tool=run_skill_script_tool,
             run_log_writer=run_log_writer,
+            post_tool_call=(
+                run_hooks_engine.post_tool_dep(session_id=session_id)
+                if run_hooks_engine is not None
+                else None
+            ),
             run_log_request_plan=first_request_plan.run_log,
             revoke_approvals=revoke_approvals,
             on_tool_terminal=on_tool_terminal,

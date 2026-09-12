@@ -440,6 +440,8 @@ class LoopDeps:
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Restriction-only guard runs before approval exemptions; exceptions deny.
+    guard_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
     # Optional owner-authenticated exception to the review batch. A True
     # result omits only that exact call from review and approval Trace rows;
     # exceptions fail closed by keeping the call on the ordinary review path.
@@ -483,6 +485,15 @@ class LoopDeps:
     # `None` (the default) means the run is not wired for it and a call by
     # that name falls through to the generic deps.invoke_tool path.
     run_skill_script: Callable[[str, str, list[str]], ToolResult] | None = None
+    # post_tool_call: run-hooks PostToolUse (the `run_skill_script` dep
+    # pattern). Fired at the dispatch capture point -- immediately after the
+    # run-log tool_result record, BEFORE budget truncation -- ONLY for calls
+    # that actually dispatched (verdict == "proceed"); review refusals fire
+    # nothing. Receives (tool_name, call_id, args, content, ok) with the
+    # still-UNCAPPED content; the engine-side dep truncates to its own
+    # payload budget, so this layer never knows the budget. `None` (the
+    # default) is a no-op: behavior is byte-identical to pre-hooks runs.
+    post_tool_call: Callable[[str, str, dict, str, bool], None] | None = None
     # search_run_log: the seventh runtime tool (run-log query). Wired ONLY
     # for the top-level agent (agent_kind == primary), like install_skill:
     # a depth-1 child has max_subagents clamped to 0, so its "subtree" is
@@ -2242,6 +2253,23 @@ def run_agent_loop(
                 else call
             )
 
+        guard_refusals: dict[str, str] = {}
+        if deps.guard_tool_calls is not None:
+            try:
+                guarded = deps.guard_tool_calls(review_calls)
+                for call in review_calls:
+                    verdict = _effective_review_verdict(call, guarded)
+                    if not isinstance(verdict, str):
+                        raise ValueError("invalid guard verdict")
+                    if verdict != "proceed":
+                        guard_refusals[call.call_id] = verdict
+            except Exception:  # noqa: BLE001 -- a broken restriction must deny
+                logger.warning("tool guard failed; refusing batch")
+                guard_refusals = {
+                    call.call_id: "hook: tool guard failed; failing closed"
+                    for call in review_calls
+                }
+
         preauthorized_call_ids: set[int] = set()
         if deps.is_tool_call_preauthorized is not None:
             for call in calls:
@@ -2256,13 +2284,14 @@ def run_agent_loop(
             review_call
             for call, review_call in zip(calls, review_calls)
             if id(call) not in preauthorized_call_ids
+            and review_call.call_id not in guard_refusals
         ]
 
         verdicts: dict[str, str] = {}
         review_hook_failed = False
         if deps.review_tool_calls is not None and review_required_calls:
             for call in calls:
-                if id(call) in preauthorized_call_ids:
+                if id(call) in preauthorized_call_ids or str(call_trace[id(call)]["correlation"]) in guard_refusals:
                     continue
                 trace_state = call_trace[id(call)]
                 proposal_step = trace_state["proposal"]
@@ -2296,7 +2325,7 @@ def run_agent_loop(
 
             if not (review_hook_failed and continuation_checkpoint is not None):
                 for call in calls:
-                    if id(call) in preauthorized_call_ids:
+                    if id(call) in preauthorized_call_ids or str(call_trace[id(call)]["correlation"]) in guard_refusals:
                         continue
                     trace_state = call_trace[id(call)]
                     proposal_step = trace_state["proposal"]
@@ -2327,6 +2356,8 @@ def run_agent_loop(
                         source_step_index=proposal_step.index,
                     )
                     trace_state["decision"] = decision_step
+
+        verdicts.update(guard_refusals)
 
         if review_hook_failed and continuation_checkpoint is not None:
             return continuation_error()
@@ -2922,6 +2953,7 @@ def run_agent_loop(
                 record_status = "ok" if result.ok else "error"
             else:
                 record_status = "refused"
+            full_content = content
             if continuation_checkpoint is not None:
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)
@@ -2966,6 +2998,21 @@ def run_agent_loop(
                     status=record_status,
                     call_id=call.call_id,
                 )
+                # run-hooks PostToolUse (same capture point as the record
+                # above): ONLY dispatched calls fire -- the verdict guard
+                # also keeps `result` safe to read (assigned this iteration
+                # only on the proceed path). `full_content` is pre-truncation.
+                if deps.post_tool_call is not None and verdict == "proceed":
+                    try:
+                        deps.post_tool_call(
+                            call.name, call.call_id, call.args,
+                            full_content, result.ok,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - dep must never break a run
+                        logger.warning(
+                            "post_tool_call consumer raised (exception_type={})",
+                            type(exc).__name__,
+                        )
             else:
                 record_number = _emit_record(
                     deps,
@@ -2975,6 +3022,21 @@ def run_agent_loop(
                     status=record_status,
                     call_id=call.call_id,
                 )
+                # Same fire point on the non-continuation path: `content` is
+                # still FULL here (the truncation reassignment below is what
+                # caps it), and the verdict guard both excludes refusals and
+                # makes `result` safe to read.
+                if deps.post_tool_call is not None and verdict == "proceed":
+                    try:
+                        deps.post_tool_call(
+                            call.name, call.call_id, call.args,
+                            content, result.ok,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - dep must never break a run
+                        logger.warning(
+                            "post_tool_call consumer raised (exception_type={})",
+                            type(exc).__name__,
+                        )
                 content = _truncate_tool_result(
                     content,
                     budget.max_tool_result_chars,

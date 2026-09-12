@@ -342,6 +342,7 @@ from tldw_chatbook.Chat.console_fleet_wake import (
 )
 from tldw_chatbook.Chat.message_metadata import (
     MESSAGE_ORIGIN_AGENT_WAKE,
+    MESSAGE_ORIGIN_HOOK,
     MessageMetadata,
 )
 from tldw_chatbook.Chat.console_skill_resolver import (
@@ -3059,6 +3060,7 @@ class _DurablePostcommitContinuation:
     #: publish site passed a hard-coded None -- so no durable Console turn
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
+    hook_context: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3580,6 +3582,7 @@ class ConsoleChatController:
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
+        ensure_run_hooks: "Callable[[], Any] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -3704,6 +3707,15 @@ class ConsoleChatController:
             confirm_project_instruction_dispatch
         )
         self._select_project_instruction_binding = select_project_instruction_binding
+        #: Run hooks (spec 2026-09-11, Task 7): the runtime-owned engine
+        #: accessor (`ConsoleRuntime.ensure_run_hooks`), threaded exactly
+        #: the Task 5 way the bridge takes it -- the controller holds only
+        #: the callable, never the runtime, and ``None`` (the default, and
+        #: every controller-only construction) means the submit path never
+        #: consults hooks. Resolved per send via ``_run_hooks_engine`` so a
+        #: mid-session config edit (first-ever ``[hooks]`` entry) is picked
+        #: up without rebuilding the controller.
+        self._ensure_run_hooks = ensure_run_hooks
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
         ] = {}
@@ -3772,6 +3784,7 @@ class ConsoleChatController:
         self._pending_round_kinds: dict[str, dict[str, str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         self._ordinary_outcome_ids: dict[str, str] = {}
+        self._run_hooks_stop_pending: set[str] = set()
         self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
         #: F2b fix (Qodo wave): guards every mutation of `_pending_
         #: approvals`, `_parked_approval_payloads`, and `_pending_
@@ -9560,6 +9573,60 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
+        # This await remains before acceptance. A refusal or cancellation must
+        # release the exact optimistic echo and preparation, preserving custody.
+        hook_context = ""
+        if origin is ConsoleSubmissionOrigin.MANUAL:
+            try:
+                from tldw_chatbook.Agents.run_hooks import truncate_hook_text
+
+                hooks_engine = self._run_hooks_engine()
+                outcome = (
+                    await hooks_engine.fire_async(
+                        "UserPromptSubmit",
+                        session_id=session.id,
+                        data={"prompt": truncate_hook_text(clean_draft)},
+                    )
+                    if hooks_engine is not None else None
+                )
+            except BaseException:
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                self._set_run_state(
+                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."),
+                    session_id=session.id,
+                )
+                raise
+            if outcome is not None and outcome.blocked:
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                self._set_run_state(
+                    ConsoleRunState.blocked(f"Blocked by hook: {outcome.reason}"),
+                    session_id=session.id,
+                )
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=f"Send blocked by hook: {outcome.reason}",
+                    persist=self.store.persistence is not None,
+                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                )
+                return ConsoleSubmitResult(
+                    False, False, f"Blocked by hook: {outcome.reason}",
+                    session_id=session.id, origin=origin, queue_entry_id=queue_entry_id,
+                )
+            hook_context = outcome.context if outcome is not None else ""
+        if hook_context:
+            # Freeze the model-visible half before either acceptance path seals
+            # its request. The SYSTEM audit row is excluded from future history.
+            provider_messages = [
+                *provider_messages,
+                {"role": ConsoleMessageRole.USER.value, "content": hook_context},
+            ]
         if preparation is not None:
             current_preparation = self._preparation_by_id(preparation.preparation_id)
             if current_preparation is None or (
@@ -9603,6 +9670,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 committed_context_epoch=committed_context_epoch,
                 custody_acceptance_hook=custody_acceptance_hook,
+                hook_context=hook_context,
             )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
@@ -9660,6 +9728,20 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
+            if hook_context:
+                # Run hooks (spec 2026-09-11, Task 7): a UserPromptSubmit
+                # hook's captured stdout is recorded as its own hook-origin
+                # SYSTEM row -- appended only once the user echo is
+                # confirmed proceeding (same placement rule as the wake
+                # notice above) and BEFORE the assistant row, persisted
+                # like it, and never merged into the user's message.
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=hook_context,
+                    persist=self.store.persistence is not None,
+                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                )
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -10548,6 +10630,7 @@ class ConsoleChatController:
         queue_entry_id: str | None,
         committed_context_epoch: int,
         custody_acceptance_hook: Callable[[], None] | None,
+        hook_context: str = "",
     ) -> ConsoleSubmitResult:
         """Commit one durable owner, then enter its idempotent effect chain."""
 
@@ -10610,7 +10693,7 @@ class ConsoleChatController:
             resolved_destination=turn_context.resolved_destination,
             reconstructability=ConsoleDispatchReconstructability(
                 attachments_reconstructable=True,
-                evidence_reconstructable=not bool(
+                evidence_reconstructable=not hook_context and not bool(
                     prepared_continuation is not None
                     and (
                         prepared_continuation.staged_evidence_frozen
@@ -10657,6 +10740,9 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 preparation_id=preparation.preparation_id,
             )
+        # The durable turn now exists even if later publication needs recovery.
+        # Arm once here; replaying postcommit effects must not rearm a settled turn.
+        self._arm_run_hooks_stop(session.id)
         if custody_acceptance_hook is not None:
             custody_acceptance_hook()
         record_send_stage("durable_commit", "succeeded")
@@ -10711,6 +10797,7 @@ class ConsoleChatController:
                 ),
             ),
             terminal_citation_finalizer=terminal_citation_finalizer,
+            hook_context=hook_context,
         )
         with self.store.durable_preparation_lock:
             self.store.validate_durable_acceptance_fingerprint(fingerprint)
@@ -10910,6 +10997,20 @@ class ConsoleChatController:
                 ),
             )
             assistant_holder["assistant"] = assistant
+            if continuation.hook_context:
+                # Keep publication idempotent even when persistence fails after
+                # inserting the live row and this postcommit effect is retried.
+                audit_id = f"hook:{preparation_id}"
+                try:
+                    self.store.get_message(audit_id)
+                except KeyError:
+                    self.store.append_message(
+                        session_id, role=ConsoleMessageRole.SYSTEM,
+                        content=continuation.hook_context,
+                        metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                        message_id=audit_id,
+                    )
+                self.store.persist_message_if_needed(audit_id)
 
         def clear_staged_input() -> None:
             self._release_prepared_evidence(continuation.prepared)
@@ -15839,6 +15940,7 @@ class ConsoleChatController:
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
@@ -15861,6 +15963,7 @@ class ConsoleChatController:
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "deadline_monotonic": deadline,
         }
         is_parked = session_id is not None and session_id != (
@@ -21187,6 +21290,7 @@ class ConsoleChatController:
             preparation_id=preparation_id,
             defer_queued_settlement=defer_queued_settlement,
         )
+        self._arm_run_hooks_stop(session_id)
         if preparation_id:
             self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
             self._ordinary_outcome_assistant_ids[session_id] = assistant_message_id
@@ -21242,6 +21346,68 @@ class ConsoleChatController:
             accepted_attachments=(),
             staged_evidence_launch=request.staged_evidence_launch,
         )
+
+    def _notify_run_hook_approval(
+        self, kind: str, payload: dict[str, Any], state: dict[str, Any]
+    ) -> None:
+        """Publish one successfully admitted permission round, including headless runs."""
+        engine = self._run_hooks_engine()
+        if engine is None:
+            return
+        from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments
+
+        session_id = payload.get("session_id") or state.get("session_id")
+        if kind == "approval":
+            calls = [
+                {
+                    "name": row.get("llm_name") or row.get("tool_name") or "",
+                    "args_summary": summarize_hook_arguments(row.get("arguments") or {}),
+                }
+                for row in payload.get("calls", ())
+            ]
+        else:
+            arguments = (
+                {"url": payload.get("url", "")}
+                if kind == "skill_install"
+                else {
+                    key: payload[key]
+                    for key in ("skill_name", "script_path", "mechanism", "args")
+                    if key in payload
+                }
+            )
+            calls = [{
+                "name": "install_skill" if kind == "skill_install" else "run_skill_script",
+                "args_summary": summarize_hook_arguments(arguments),
+            }]
+        engine.notify(
+            "ApprovalRequested", session_id=session_id,
+            run_id=payload.get("run_id") or state.get("run_id"),
+            data={
+                "calls": calls,
+                "session_active": bool(
+                    session_id == self.store.active_session_id
+                    and self._interrupt_host.view_visible is not False
+                    and (
+                        self.set_pending_decision is not None
+                        or self._interrupt_host._setter(kind) is not None
+                    )
+                ),
+            },
+        )
+
+    def _run_hooks_engine(self):
+        """Resolve the app-owned run-hooks engine for this send, or ``None``.
+
+        Spec 2026-09-11 (Task 7): the submit path reaches the engine through
+        the optional ``ensure_run_hooks`` accessor (the Task 5 bridge seam --
+        a bound ``ConsoleRuntime.ensure_run_hooks``, or a test double).
+        ``None`` -- no accessor wired, or no ``[hooks]`` configured -- means
+        the fire site skips entirely; the accessor is consulted per send, so
+        an engine built after the first-ever ``[hooks]`` entry appears is
+        picked up without rebuilding this controller.
+        """
+        accessor = self._ensure_run_hooks
+        return accessor() if accessor is not None else None
 
     async def _record_prompt_history(self, text: str) -> None:
         """Append an accepted send's draft to the shared prompt history.
@@ -27047,6 +27213,10 @@ class ConsoleChatController:
                 )
         return stopped
 
+    def _arm_run_hooks_stop(self, session_id: str) -> None:
+        """Register one accepted turn for a single terminal hook notification."""
+        self._run_hooks_stop_pending.add(session_id)
+
     def _set_run_state(
         self, run_state: ConsoleRunState, *, session_id: str | None = None
     ) -> None:
@@ -27173,6 +27343,29 @@ class ConsoleChatController:
             wake = getattr(self, "_fleet_wake", None)
             if wake is not None:
                 wake.retry_soon()
+        # Hook lifecycle belongs to an accepted turn, independently of the
+        # queue's coalesced notification policy. Pop before invoking callbacks.
+        if (
+            target in self._run_hooks_stop_pending
+            and run_state.status in {
+                ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED,
+                ConsoleRunStatus.STOPPED,
+            }
+        ):
+            self._run_hooks_stop_pending.discard(target)
+            try:
+                engine = self._run_hooks_engine()
+                if engine is not None:
+                    engine.notify(
+                        "Stop", session_id=target,
+                        data={"status": {
+                            ConsoleRunStatus.COMPLETED: "completed",
+                            ConsoleRunStatus.FAILED: "error",
+                            ConsoleRunStatus.STOPPED: "cancelled",
+                        }[run_state.status]},
+                    )
+            except Exception:  # noqa: BLE001 -- observers cannot break settlement
+                logger.warning("Stop observer failed; continuing terminal publication")
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible
