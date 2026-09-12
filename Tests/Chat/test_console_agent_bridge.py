@@ -9903,6 +9903,19 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
     assert child["status"] == "cancelled", child["status"]
 
 
+def _release_gates_and_assert_fleet_stopped(*gates, timeout: float = 5.0) -> None:
+    """Release local gated workers and fail if their bounded drain times out."""
+    for gate in gates:
+        gate.set()
+    deadline = time.monotonic() + timeout
+    fleet_threads = [
+        thread for thread in threading.enumerate() if thread.name.startswith("fleet-")
+    ]
+    for thread in fleet_threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    assert not [thread.name for thread in fleet_threads if thread.is_alive()]
+
+
 def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path):
     first_gate = threading.Event()
     first_gateway = _FleetTwoChildGateway(
@@ -9916,10 +9929,11 @@ def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path)
     )
     bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, first_gateway)
 
-    _run(bridge, store, session, aid, conversation_id=session.id)
-    assert first_gateway.entered_event.wait(5), "the first child never started"
-    first_gate.set()
-    _join_fleet_threads()
+    try:
+        _run(bridge, store, session, aid, conversation_id=session.id)
+        assert first_gateway.entered_event.wait(5), "the first child never started"
+    finally:
+        _release_gates_and_assert_fleet_stopped(first_gate)
     first_owner = bridge._retained_fleet_owners(session.id)
     assert len(first_owner) == 1
 
@@ -9947,8 +9961,7 @@ def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path)
         assert live[0].task == "second job"
         assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
     finally:
-        second_gate.set()
-    _join_fleet_threads()
+        _release_gates_and_assert_fleet_stopped(second_gate)
 
     bridge._gateway = _ChunkGateway([["turn 3 final"]])
     third = _second_turn_message(store, session)
@@ -9957,22 +9970,44 @@ def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path)
 
 
 def test_fleet_disabled_next_turn_keeps_a_live_survivor_owner(tmp_path, monkeypatch):
-    gate = threading.Event()
-    gateway = _FleetTwoChildGateway(
+    settled_gate = threading.Event()
+    settled_gateway = _FleetTwoChildGateway(
         parent_script=[
-            [_fence("spawn_subagent", {"task": "long job"})],
+            [_fence("spawn_subagent", {"task": "settling job"})],
             ["turn 1 final"],
         ],
-        child_result=["child answer"],
-        gate=gate,
+        child_result=["settled child answer"],
+        gate=settled_gate,
         needed=1,
     )
-    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, settled_gateway)
+    live_gate = threading.Event()
     try:
         _run(bridge, store, session, aid, conversation_id=session.id)
-        assert gateway.entered_event.wait(5), "the child never started"
+        assert settled_gateway.entered_event.wait(5), "the first child never started"
+
+        live_gateway = _FleetTwoChildGateway(
+            parent_script=[
+                [_fence("spawn_subagent", {"task": "live job"})],
+                ["turn 2 final"],
+            ],
+            child_result=["live child answer"],
+            gate=live_gate,
+            needed=1,
+        )
+        bridge._gateway = live_gateway
+        second = _second_turn_message(store, session)
+        _run(bridge, store, session, second, conversation_id=session.id)
+        assert live_gateway.entered_event.wait(5), "the second child never started"
         owners_before = bridge._retained_fleet_owners(session.id)
-        assert len(owners_before) == 1
+        assert len(owners_before) == 2
+
+        settled_gate.set()
+        deadline = time.monotonic() + 5
+        while owners_before[0].live_subagent_handles() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert owners_before[0].live_subagent_handles() == []
+        assert owners_before[1].live_subagent_handles()
 
         monkeypatch.setattr(
             agent_service,
@@ -9981,17 +10016,17 @@ def test_fleet_disabled_next_turn_keeps_a_live_survivor_owner(tmp_path, monkeypa
                 1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
             ),
         )
-        bridge._gateway = _ChunkGateway([["turn 2 final"]])
-        second = _second_turn_message(store, session)
-        _run(bridge, store, session, second, conversation_id=session.id)
+        bridge._gateway = _ChunkGateway([["turn 3 final"]])
+        third = _second_turn_message(store, session)
+        _run(bridge, store, session, third, conversation_id=session.id)
 
-        assert bridge._retained_fleet_owners(session.id) == owners_before
+        assert bridge._retained_fleet_owners(session.id) == [owners_before[1]]
         live = bridge.fleet_snapshot(session.id)
         assert len(live) == 1
+        assert live[0].task == "live job"
         assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
     finally:
-        gate.set()
-    _join_fleet_threads()
+        _release_gates_and_assert_fleet_stopped(settled_gate, live_gate)
 
 
 def test_a_finished_childs_row_does_not_follow_the_conversation_forever(

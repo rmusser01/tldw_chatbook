@@ -58,7 +58,7 @@ Result: exit 0 with no output.
 - The helper filters owners by `live_subagent_handles()`, so live cancellation ownership survives. The test cancels through the retained owner to verify the capability, rather than checking membership alone.
 - The helper uses the existing survivor lock and is called before the separate admission lock, preserving lock separation.
 - No settlement callback, new lock, dependency, setting, runtime abstraction, cap, snapshot behavior, or coordinator-handle timing changed.
-- Mutation check: removing the new call reproduces the two-owner red failure; moving it after the kill-switch return would leave the fleet-disabled control unable to cover cleanup placement; changing it to unconditional clearing would break both live-owner controls.
+- The original pre-production red run proves removing the cleanup reproduces the two-owner failure. The executed placement mutation below proves moving cleanup after the kill-switch return fails the disabled-path settled-owner assertion. Unconditional clearing was assessed by inspection only and was not executed as a mutation.
 
 ## Commit
 
@@ -68,3 +68,23 @@ Task-scoped commit; its hash is reported in the final handoff.
 
 - Independent scoped review has not yet run, so TASK-15666 remains In Progress and AC #5 remains unchecked.
 - Whole-file Ruff/format failures are existing large-file debt; the Ruff count matches baseline and changed-line filtering is clean.
+
+## Review corrections and executed placement mutation
+
+- Added local failure-safe cleanup for every gated stage. Each `finally` releases all relevant gates, performs bounded joins, and asserts that the observed fleet threads terminated.
+- Strengthened the fleet-disabled test to create one settled retained owner beside one live retained owner. The disabled third turn must release only the settled owner, retain the live owner, and cancel its real child through that owner.
+
+Temporary mutation applied for verification: moved
+`self._prune_settled_fleet_survivors(conversation_id)` from method entry to
+immediately after the `if max_live <= 1: return None` branch. Production source
+was restored immediately after the focused run.
+
+Command:
+
+```sh
+.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python -m pytest Tests/Chat/test_console_agent_bridge.py -q -k 'fleet_disabled_next_turn_keeps_a_live_survivor_owner'
+```
+
+Mutation result: exit 1; 1 failed, 294 deselected, 1 warning in 0.82s. The intended assertion failed because retained owners were `[settled_owner, live_owner]` instead of `[live_owner]`. The test's `finally` released both gates and its bounded termination assertion completed without masking the intended failure.
+
+After restoring production placement, the final fresh 12-case targeted selection exited 0 with 12 passed, 283 deselected, 1 warning in 2.94s. Changed-line Ruff again reported zero findings and `git diff --check` passed.
