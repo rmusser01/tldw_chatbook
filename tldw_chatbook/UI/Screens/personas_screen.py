@@ -15388,40 +15388,19 @@ class PersonasScreen(BaseAppScreen):
             )
         except QueryError:
             pass
-        # The character dictionaries panel (Roleplay P1f) is chrome shown
-        # alongside the character card/editor, not one of the exclusive
-        # _CENTER_VIEW_IDS pages - it must still be hidden outside a
-        # character context so it doesn't dock space away from (or overlap)
-        # the dictionary/persona/lore views. This gate must run before the
-        # conversation-actions early-return below (and not depend on it
-        # succeeding) - otherwise a failed actions lookup would skip setting
-        # `.display` here, and the panel (which has no `display: none` of its
-        # own in BUNDLED_CSS) would default visible in every mode.
-        try:
-            dict_panel = self.query_one(PersonasCharacterDictionariesWidget)
-        except Exception:
-            dict_panel = None
-        if dict_panel is not None:
-            dict_panel.display = (
-                visible_id
-                in (
-                    "#ccp-character-card-view",
-                    "#ccp-character-editor-view",
-                )
-                and self.state.runtime_source == "local"
-            )
         # The wrapper that holds BOTH character-attachment sections
         # (Roleplay P2f Task 6 added the world-books panel alongside the
         # P1f dictionaries panel inside #personas-character-attachments)
-        # is the single source of truth for the same characters-only
-        # condition as dict_panel above - gating the wrapper hides both
-        # children in one step. This has to be re-derived here (not left to
-        # a mode-level toggle alone) because _show_center also runs *within*
-        # Characters mode when swapping to the conversation transcript view
-        # (see personas_conversations_controller.open_conversation), which
-        # must hide the wrapper too so it doesn't stay visible with
-        # stale data over the transcript, or empty at initial mount before
-        # any character is selected.
+        # is the single source of truth for character-attachment
+        # visibility; neither child carries its own gate (TASK-411
+        # removed the P1f-era dict_panel.display line that duplicated
+        # this condition verbatim). This has to be re-derived here (not
+        # left to a mode-level toggle alone) because _show_center also
+        # runs *within* Characters mode when swapping to the conversation
+        # transcript view (see personas_conversations_controller.
+        # open_conversation), which must hide the wrapper too so it
+        # doesn't stay visible with stale data over the transcript, or
+        # empty at initial mount before any character is selected.
         try:
             attachments_wrapper = self.query_one("#personas-character-attachments")
         except QueryError:
