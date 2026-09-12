@@ -27,7 +27,12 @@ supersedes its pending-integration and remaining-work labels.
   connections and explains filtered runtime tools after Save (`97c3bce2e0`,
   `1b9cff9776`). Independent review, real held-connection tests and wide/narrow
   painted checks passed.
-- **In progress:** TASK-13154.6/.7 starter presets and definition wall caps. Parent TASK-13154
+- **Starter presets done:** TASK-13154.6 adds researcher, critic and ingest runner
+  beside bulk reader through unsaved editable forms (`6f05d7399a`). Independent
+  review approved; actual child tool containment and complete wide/narrow form
+  checks passed. The task notes disclose the earlier probe isolation error and
+  the final isolated verification.
+- **In progress:** TASK-13154.7 definition wall caps. Parent TASK-13154
   reconciliation and the combined branch review remain open.
 - **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
   and prior-turn recovery. A real temporary-repository race demonstrated that
