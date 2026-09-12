@@ -8,7 +8,8 @@ normal use — the app appears to ignore you.
 
 All five dialogs declared `BINDINGS = []`, so no Escape binding existed on any of
 them. The rest of the app uses `BINDINGS = [("escape", "cancel", "Cancel")]` with
-an `action_cancel` (see `Widgets/embedding_template_selector.py`).
+an `action_cancel` (the class was first seen in the since-retired
+`Widgets/embedding_template_selector.py`, TASK-16472).
 
 **Escape must dismiss with the same value the Cancel button uses**, which is not
 `None` everywhere: `ConfirmDeleteDialog` cancels with `False`, and a caller
