@@ -12,6 +12,16 @@ ADR required: yes
 ADR path: backlog/decisions/155-agent-worktree-recovery.md
 Reason: durable ownership and recovery lifetime, closed mutating Git authority, physical drain and explicit discard retention.
 
+## Execution qualification checkpoint
+
+Task1 is incomplete. Commit `32557b80f2` repairs and independently verifies the
+nested-interpreter prerequisite (four affected tests passed). Actual temporary
+Git races show the proposed nested source/child pins do not retain linked
+administrative metadata: a replaced parent receives the child commit. The
+mutation implementation is held while that boundary is redesigned; later card
+and recovery tasks must not enable it based on the fixture success. See
+`backlog/docs/agent-orchestration-followups-2026-09-12.md`.
+
 ## Global Constraints
 
 - Work only in /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/agent-orchestration-pr, branch codex/agent-orchestration-remaining. Root owns allgit and Backlog status; workers leave changes unstaged and dispatch no subagents.

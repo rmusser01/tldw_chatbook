@@ -13444,3 +13444,10 @@ Six approval-card tests still reached a blocking provider-setup modal after the 
 ## Verify retries through the runtime that failed (TASK-18929)
 
 During denial-breaker verification, a Console test initially used a real store and controller but disabled the agent runtime for its next submit. That passed while proving only ordinary-chat retry acceptance. Root review corrected the harness to use the real ConsoleAgentBridge with temporary AgentRunsDB, assert the failed state and unchanged partial answer, then observe completion of the next agent submit. The final six-case selection passed. A post-failure retry test must cross the same runtime/admission path whose recovery it claims to verify; a shared controller alone does not establish that boundary.
+
+
+## A pinned worktree cwd does not pin Git's shared metadata
+
+**TASK-31210/31211 qualification, 2026-09-12.** A real spawned worker held both source and linked-child directory pins, then waited on an owned Pipe. After the source was renamed and a temporary replacement received copied Git metadata, a commit from the still-pinned original child advanced the replacement repository's agent branch; the original repository stayed at its base. A separate CREATE probe similarly reopened a replacement through an absolute Git-dir argument. The races reproduced against actual Git2.39.5 on macOS, before any new product implementation.
+
+**What to do.** Verify bytes, index and refs in both original and replacement repositories, not just the worker cwd or command exit. Trace every administrative path Git follows. Treat top-level replacement through a linked worktree's metadata as part of the admitted-root boundary, not as the excluded hostile-descendant case. A source-local CREATE control only qualifies creation; it cannot establish later apply/merge/discard safety. Keep unsupported mutation paths closed until the complete boundary has evidence.
