@@ -38,11 +38,14 @@ split must keep honest:
 | `agent:builtin` (`BUILTIN_TOOL_SERVER_KEY`, permission_store.py:1618) | In-process agent built-ins (`read_file`, `list_directory`, …) | Permissions-only extra section (`_builtin_permission_matrix_rows`); **never in `_last_hub_tools`** |
 
 **Additionally discovered during this verification pass:** the same tool
-names (e.g. `fs_edit`) render as rows under BOTH `local:__local__` and
-`builtin:tldw_chatbook` — two separate store entries, so an Allow on one
-does not affect the other — and nothing in the matrix distinguishes the
-two surfaces. The split below fixes the labels; exact row overlap is
-confirmed and pinned by a test at implementation time.
+NAMES can render under BOTH `local:__local__` and `builtin:tldw_chatbook`
+(whether they do depends on the local-tools master switch and the
+inventory projection). They are two separate store entries, so an Allow
+on one does not affect the other, and nothing in the matrix distinguishes
+the surfaces. [Qodo #2622 #7: the literal `fs_edit` example overstated
+the guaranteed overlap — the shipped labels cover the general case, and
+the pinned two-row test constructs the overlap explicitly.] The split
+below fixes the labels.
 
 ## Goals
 
@@ -136,6 +139,12 @@ built-in *server* row exactly as today. No migration, no ambiguity.
 
 **Readiness model** (`MCP/readiness.py`): new snapshot builder mirrors
 `builtin_readiness()`'s shape; no new `ReadinessState` values.
+
+## Verification notes (Qodo #2622 #8)
+
+The built-in row REMAINS the lone rail row the fresh-install preselect
+lands on — the Agent tools snapshot is deliberately not in `_snapshots`,
+so task-2240's heuristic is unchanged by design.
 
 ## Testing
 
