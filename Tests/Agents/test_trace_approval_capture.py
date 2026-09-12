@@ -602,3 +602,137 @@ def test_agent_service_post_response_cancel_persists_causal_observation(tmp_path
         assert kinds.index("model_response_completed") < kinds.index("model_cancelled")
     finally:
         db.close()
+
+
+@pytest.mark.parametrize(
+    "raw,unanswered,expected",
+    [
+        ("deny", False, "denied"),
+        ("deny", True, None),
+        ("approve_once", False, "approved"),
+        ("approve_session", False, "approved"),
+        ("timeout", False, None),
+        (None, False, None),
+    ],
+)
+def test_review_metadata_comes_from_answered_decision(raw, unanswered, expected):
+    from tldw_chatbook.Chat.console_chat_controller import _approval_decision_fact
+
+    assert _approval_decision_fact(raw, unanswered=unanswered) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,unanswered,expected",
+    [
+        ("deny", False, "denied"),
+        ("deny", True, None),
+        ("approve_once", False, "approved"),
+        ("approve_session", False, "approved"),
+        ("timeout", False, None),
+        (None, False, None),
+    ],
+)
+def test_real_builtin_review_preserves_answer_authority(raw, unanswered, expected):
+    from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["read_file"] = ReadFileTool()
+    decisions = ApprovalDecisions({"call-1": raw})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"call-1"})
+    review = build_tool_review_hook(gate, provider, None, lambda rows: decisions)
+    call = ToolCall("read_file", {"file_path": "evidence.txt"}, "call-1")
+    values = review([call], "run")
+    value = normalize_tool_review(values.get(call.call_id, values.get(call.name)))
+    assert value.approval_decision == expected
+    assert (value.verdict == "proceed") == (raw != "deny")
+
+
+@pytest.mark.parametrize(
+    "decisions_map,unresolved,expected",
+    [
+        ({"read_file": "deny"}, {"read_file"}, None),
+        ({"call-1": "deny", "read_file": "deny"}, {"read_file"}, "denied"),
+        ({"call-1": "deny", "read_file": "approve_once"}, {"call-1"}, None),
+    ],
+)
+def test_builtin_review_uses_unanswered_state_of_selected_key(
+    decisions_map, unresolved, expected
+):
+    from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["read_file"] = ReadFileTool()
+    decisions = ApprovalDecisions(decisions_map)
+    decisions.unresolved_keys = frozenset(unresolved)
+    review = build_tool_review_hook(gate, provider, None, lambda rows: decisions)
+    values = review(
+        [ToolCall("read_file", {"file_path": "evidence.txt"}, "call-1")], "run"
+    )
+    assert normalize_tool_review(values["call-1"]).approval_decision == expected
+    assert (
+        gate.check_detailed(provider.tool_for("read_file"), "run").approval_decision
+        == expected
+    )
+    assert (
+        gate.check_detailed(provider.tool_for("read_file"), "sibling").approval_decision
+        is None
+    )
+
+
+def test_builtin_name_stamp_keeps_unresolved_sibling_and_restores_with_scope():
+    from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["read_file"] = ReadFileTool()
+    decisions = ApprovalDecisions({"c1": "deny", "c2": "deny"})
+    decisions.unresolved_keys = frozenset({"c2"})
+    review = build_tool_review_hook(gate, provider, None, lambda rows: decisions)
+    calls = [
+        ToolCall("read_file", {"file_path": "evidence.txt"}, key)
+        for key in ("c1", "c2")
+    ]
+    values = review(calls, "run")
+    assert normalize_tool_review(values["c1"]).approval_decision == "denied"
+    assert normalize_tool_review(values["c2"]).approval_decision is None
+    assert gate.stamped("run", "read_file") == "deny"
+    assert (
+        gate.check_detailed(provider.tool_for("read_file"), "run").approval_decision
+        is None
+    )
+    with gate.stamp_scope("run"):
+        gate.stamp("run", "read_file", "approve_once")
+    assert (
+        gate.check_detailed(provider.tool_for("read_file"), "run").approval_decision
+        is None
+    )
+    review([], "run")
+    assert gate.stamped("run", "read_file") is None
+
+
+def test_metadata_does_not_override_idless_same_name_refusal():
+    from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
+
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["read_file"] = ReadFileTool()
+    review = build_tool_review_hook(
+        gate, provider, None, lambda rows: {"read_file": "deny", "c1": "approve_once"}
+    )
+    values = review(
+        [
+            ToolCall("read_file", {"file_path": "one"}, ""),
+            ToolCall("read_file", {"file_path": "two"}, "c1"),
+        ],
+        "run",
+    )
+    value = normalize_tool_review(values.get("c1", values["read_file"]))
+    assert value.verdict != "proceed"
+    assert value.approval_decision == "denied"
+    assert gate.stamped("run", "read_file") == "approve_once"

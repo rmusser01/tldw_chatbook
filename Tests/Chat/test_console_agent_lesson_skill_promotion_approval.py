@@ -10,6 +10,7 @@ from tldw_chatbook.Agents.agent_lesson_promotion import (
 from tldw_chatbook.Agents.agent_models import (
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     ToolCall,
+    normalize_tool_review,
 )
 from tldw_chatbook.Agents.run_context import (
     CurrentRunActor,
@@ -74,7 +75,9 @@ def test_hook_uses_exact_call_id_and_approve_once_card() -> None:
         with use_tool_call_id(call.call_id):
             result = gate.invoke(args)
 
-    assert verdicts == {"skill-proposal-call": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"skill-proposal-call": "proceed"}
     assert len(cards) == 1
     assert cards[0].call_id == "skill-proposal-call"
     assert cards[0].options == ("approve_once", "deny")
@@ -99,5 +102,5 @@ def test_hook_denial_cannot_be_reused_by_same_named_call() -> None:
         with use_tool_call_id(call.call_id):
             result = gate.invoke(args)
 
-    assert "denied" in verdicts["denied-call"]
+    assert "denied" in normalize_tool_review(verdicts["denied-call"]).verdict
     assert result.error == MANAGED_SKILL_PROMOTION_APPROVAL_REQUIRED

@@ -37,6 +37,11 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Agents.approval_provenance import (
+    ApprovalStamp,
+    approval_key_unanswered,
+    approval_stamp,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.MCP.execution_log import (
     KILL_SWITCH_DENIED_DECISION,
@@ -52,7 +57,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 )
 
 from ..config import coerce_bool_setting, get_cli_setting
-from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
+from .agent_models import ApprovalDecision, ToolCatalogEntry, ToolResult, ToolSchema
 from .builtin_tool_gate import DENIAL_POLICY
 from .mcp_tool_provider import MCPPendingCall
 from .project_instruction_resolver import InstructionPromotionSnapshot
@@ -291,6 +296,7 @@ class _LocalGateDecision:
     verdict: str
     approval_consumed: bool
     refusal_reason: LocalToolInvocationReason | None = None
+    approval_decision: ApprovalDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -802,7 +808,7 @@ class LocalToolProvider:
         # overwrite verdicts another run had been granted and not yet
         # consumed. Same treatment, same reasons, as MCPToolProvider's
         # `_stamped_decisions` and BuiltinToolGate's `_stamps`.
-        self._stamps: dict[tuple[str, str], str] = {}
+        self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         # Lock (not RLock): flat, self-contained critical sections over one
         # dict; no locked method calls another, and `stamp_scope` never
         # holds it across its `yield`.
@@ -1234,10 +1240,16 @@ class LocalToolProvider:
                 key: value for key, value in self._stamps.items() if key[0] != run_id
             }
             for name, verdict in (decisions or {}).items():
-                self._stamps[(run_id, name)] = verdict
+                self._stamps[(run_id, name)] = approval_stamp(
+                    verdict, unanswered=approval_key_unanswered(decisions, name)
+                )
 
     def stamped(self, run_id: str, name: str) -> str | None:
         """Peek at ``run_id``'s stamped verdict for ``name``, if any."""
+        stamp = self._stamp_detail(run_id, name)
+        return stamp.decision if stamp is not None else None
+
+    def _stamp_detail(self, run_id: str, name: str) -> ApprovalStamp | None:
         with self._stamps_lock:
             return self._stamps.get((run_id, name))
 
@@ -1870,7 +1882,9 @@ class LocalToolProvider:
                         )
                     provider_terminal = LocalProviderTerminal.RETURNED
                     return LocalToolInvocationResult(
-                        result=result,
+                        result=replace(result, approval_decision=gate.approval_decision)
+                        if result.outcome != "blocked"
+                        else result,
                         final_gate=gate.verdict,
                         approval_consumed=gate.approval_consumed,
                         reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
@@ -1902,7 +1916,9 @@ class LocalToolProvider:
                         redaction_root=redaction_root,
                     )
                     return LocalToolInvocationResult(
-                        result=result,
+                        result=replace(result, approval_decision=gate.approval_decision)
+                        if result.outcome != "blocked"
+                        else result,
                         final_gate=gate.verdict,
                         approval_consumed=gate.approval_consumed,
                         reason_code=_workspace_execution_error_reason(exc),
@@ -1919,6 +1935,7 @@ class LocalToolProvider:
                         result=ToolResult(
                             ok=False,
                             error=error[:_MAX_ERROR_CHARS],
+                            approval_decision=gate.approval_decision,
                         ),
                         final_gate=gate.verdict,
                         approval_consumed=gate.approval_consumed,
@@ -1997,7 +2014,7 @@ class LocalToolProvider:
                 else LOCAL_USER_DENY_REFUSAL
             )
         return LocalToolInvocationResult(
-            result=result,
+            result=replace(result, approval_decision=gate.approval_decision),
             final_gate=gate.verdict,
             approval_consumed=gate.approval_consumed,
             reason_code=(
@@ -2483,22 +2500,26 @@ class LocalToolProvider:
                 verdict="deny",
                 approval_consumed=False,
                 refusal_reason=LocalToolInvocationReason.PERMISSION_OFF,
+                approval_decision="denied",
             )
         # ask: per-turn stamp wins; then a live session approval; then the
         # single-call fallback; then fail closed.
-        stamp = self.stamped(run_id, name)
+        detail = self._stamp_detail(run_id, name)
+        stamp = detail.decision if detail is not None else None
         if stamp in ("approve_once", "approve_session", "always_allow"):
             if stamp != "approve_once":
                 self._persist_approval_safe(hub, stamp)
             return _LocalGateDecision(
                 verdict="allow",
                 approval_consumed=stamp == "approve_once",
+                approval_decision=detail.approval_decision,
             )
         if stamp == "deny":
             return _LocalGateDecision(
                 verdict="deny",
                 approval_consumed=False,
                 refusal_reason=LocalToolInvocationReason.APPROVAL_REFUSED,
+                approval_decision=detail.approval_decision,
             )
         if stamp == "timeout":
             return _LocalGateDecision(
@@ -2507,7 +2528,9 @@ class LocalToolProvider:
                 refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
             )
         if self._is_session_approved_safe(hub):
-            return _LocalGateDecision(verdict="allow", approval_consumed=False)
+            return _LocalGateDecision(
+                verdict="allow", approval_consumed=False, approval_decision="approved"
+            )
         if self._approval_callback is not None:
             # Fix Round H, Item 1 (checked, not fixed -- reported) / Fix
             # Round I, Item 5 (fixed): this is a SECOND, narrower resolve_
@@ -2559,10 +2582,16 @@ class LocalToolProvider:
                 return _LocalGateDecision(
                     verdict="allow",
                     approval_consumed=decision == "approve_once",
+                    approval_decision=approval_stamp(
+                        decision, unanswered=approval_key_unanswered(decisions, name)
+                    ).approval_decision,
                 )
             final_verdict = decision if isinstance(decision, str) else "deny"
             return _LocalGateDecision(
                 verdict=final_verdict,
+                approval_decision=approval_stamp(
+                    decision, unanswered=approval_key_unanswered(decisions or {}, name)
+                ).approval_decision,
                 approval_consumed=False,
                 refusal_reason=(
                     LocalToolInvocationReason.APPROVAL_TIMEOUT
