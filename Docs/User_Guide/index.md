@@ -84,12 +84,10 @@ toggle and **F2** for rename). Bare digit keys are not
 navigation shortcuts (typing `2` in the composer just types "2"). Clicking
 the nav label and **Ctrl+P** work everywhere too.
 
-One screen claims some of these digits for itself: on
-[Roleplay](roleplay-chat-dictionaries.md), **Ctrl+1 –
-Ctrl+4 switch that screen's four modes** instead of changing screens
-(Ctrl+4 would otherwise be Roleplay's own nav key — but you are already
-there, so it switches modes). Ctrl+5 … Ctrl+0 still navigate from there,
-as do the nav bar and **Ctrl+P**.
+No screen borrows these keys for itself: the Ctrl+digit chords and the
+F2–F5 / F7 tail navigate from everywhere, including
+[Roleplay](roleplay-chat-dictionaries.md) (whose four modes use the single
+letters **c / p / d / l**).
 
 ## Global keyboard shortcuts
 
@@ -98,7 +96,7 @@ as do the nav bar and **Ctrl+P**.
 | F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
 | Ctrl+Q | Quit the app |
-| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
+| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
 | F2 / F3 / F4 / F5 / F7 | Switch to Lab / Logs / Settings / Research / Meetings — the five destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
 | Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay](roleplay-chat-dictionaries.md); elsewhere it does nothing |

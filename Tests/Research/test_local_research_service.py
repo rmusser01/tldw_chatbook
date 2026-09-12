@@ -140,6 +140,7 @@ def test_local_research_service_dispatches_terminal_run_notifications(tmp_path):
 
 # --- update_run_progress (task-16322 engine seam) ------------------------------
 
+
 def test_update_run_progress_sets_fields_records_event_and_bumps_version(tmp_path):
     service = LocalResearchService(tmp_path / "research.db")
     run = service.launch_run(query="How do persistent agents checkpoint?")
@@ -188,6 +189,7 @@ def test_update_run_progress_missing_run_raises(tmp_path):
 
 
 # --- checkpoints (task-16482) -----------------------------------------------------
+
 
 def _launch_checkpoint_run(service, **kwargs):
     return service.launch_run(query="Checkpoint question", **kwargs)
@@ -270,6 +272,7 @@ def test_approve_requires_pending_checkpoint(tmp_path):
 
 # --- external-DB transaction (task-16814) ------------------------------------------
 
+
 class FakeExternalResearchDB:
     """Minimal external-DB double: transaction() yields a real sqlite conn
     (delete_run's precedent interface)."""
@@ -323,8 +326,11 @@ def test_update_run_progress_external_db_wraps_in_transaction():
     service = LocalResearchService(external)  # db object -> external mode
 
     updated = service.update_run_progress(
-        "ext-run", phase="collecting", progress_percent=45.0,
-        event="progress", data={"phase": "collecting"},
+        "ext-run",
+        phase="collecting",
+        progress_percent=45.0,
+        event="progress",
+        data={"phase": "collecting"},
     )
 
     assert updated["phase"] == "collecting"
@@ -469,9 +475,12 @@ def test_a_fresh_database_is_stamped_with_the_schema_version(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
-        assert {"lease_owner", "lease_id", "leased_until", "lease_attempts"} <= _columns(
-            conn, "research_runs"
-        )
+        assert {
+            "lease_owner",
+            "lease_id",
+            "leased_until",
+            "lease_attempts",
+        } <= _columns(conn, "research_runs")
     finally:
         conn.close()
 
@@ -808,3 +817,31 @@ def test_transaction_error_is_not_masked_by_a_failing_rollback(tmp_path):
     # The connection is left mid-transaction; _begin's heal path clears it.
     assert service.get_run("nope") is None
     service.close()
+
+
+# --- TASK-18811: external-db get_run must honor the dict-or-None contract ---
+
+
+def test_get_run_external_db_returns_none_for_missing_run():
+    """TASK-18811: an injected db whose get_run returns None for a missing
+    run made _as_local_run(None) raise dict(None) TypeError out of a
+    lookup API that promises dict-or-None. The path-backed branch already
+    returned None; only the external-db branch lacked the guard."""
+    external = FakeExternalResearchDB()
+    service = LocalResearchService(external)
+    try:
+        assert service.get_run("missing-run") is None
+    finally:
+        external.close()
+
+
+def test_claim_run_external_db_missing_run_raises_documented_not_found():
+    """The external-mode claim path (claim_run -> get_run) resolves a
+    missing run to its documented not-found ValueError, not a TypeError."""
+    external = FakeExternalResearchDB()
+    service = LocalResearchService(external)
+    try:
+        with pytest.raises(ValueError, match="research run not found"):
+            service.claim_run("missing-run", worker_id="w", lease_seconds=60)
+    finally:
+        external.close()

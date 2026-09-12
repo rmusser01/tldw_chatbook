@@ -1,0 +1,13 @@
+#!/bin/bash
+set -eu
+root=/home/ml-user/tts-linux-cuda-20260912
+export UV_CACHE_DIR="$root/cache/uv"
+export UV_PYTHON_INSTALL_DIR="$root/python"
+uv=/home/ml-user/.local/bin/uv
+"$uv" build --wheel --python "$root/venv-kokoro-py312/bin/python" --out-dir "$root/wheels" "$root/source"
+"$uv" pip install --python "$root/venv-kokoro-py312/bin/python" "$root"/wheels/*.whl 'torch==2.6.0' 'torchaudio==2.6.0' 'kokoro==0.9.4' 'numpy==2.2.6' 'transformers==5.2.0' 'setuptools<82' 'kokoro-onnx==0.6.1' 'onnxruntime==1.29.0' 'sounddevice==0.5.6' soundfile pydub av faster-whisper 'misaki[en]==0.9.4'
+"$uv" pip install --python "$root/venv-kokoro-py312/bin/python" 'https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl'
+"$uv" pip install --python "$root/venv-chatterbox-py312/bin/python" 'torch==2.6.0' 'torchaudio==2.6.0' --index-url https://download.pytorch.org/whl/cu124
+"$uv" pip install --python "$root/venv-chatterbox-py312/bin/python" "$root"/wheels/*.whl 'chatterbox-tts==0.1.7' 'torch==2.6.0' 'torchaudio==2.6.0' 'setuptools<82' 'sounddevice==0.5.6' soundfile pydub av
+"$uv" pip freeze --python "$root/venv-kokoro-py312/bin/python" > "$root/logs/kokoro-freeze.txt"
+"$uv" pip freeze --python "$root/venv-chatterbox-py312/bin/python" > "$root/logs/chatterbox-freeze.txt"

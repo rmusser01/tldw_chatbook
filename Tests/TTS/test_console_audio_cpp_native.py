@@ -486,8 +486,10 @@ class _DefaultService:
         *,
         text: str,
         voice_override: str | None = None,
+        response_format_override: str | None = None,
         progress_sink: object = None,
     ) -> _Response:
+        del response_format_override  # TASK-32013 seam; unused by this fake
         self.calls.append((text, voice_override, progress_sink))
         return self.response
 

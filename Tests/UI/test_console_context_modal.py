@@ -149,7 +149,7 @@ async def test_context_modal_renders_tabs():
         modal = app.screen
         header = modal.query_one("#console-inspector-next-send-header", Static)
         header_text = str(header.renderable)
-        assert "Chat Context" in header_text
+        assert "Current Context" in header_text
         assert "42 tokens" in header_text
 
         current_container = modal.query_one(

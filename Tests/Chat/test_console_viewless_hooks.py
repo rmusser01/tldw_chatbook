@@ -660,3 +660,167 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
         assert getattr(targets[slot.target], slot.name) == slot.viewless_default, (
             slot.name
         )
+
+
+# ---------------------------------------------------------------------------
+# Run-hooks engine ownership (spec 2026-09-11, Task 4): one app-owned
+# engine, reachable headless -- nothing below needs a view attached.
+# ---------------------------------------------------------------------------
+
+
+class _HooksApp:
+    """The whole app surface `ensure_run_hooks` reads: the config mapping.
+
+    `TldwCli.app_config` is a plain attribute the app REASSIGNS on a
+    settings reload (it does not mutate the old dict), so a settable
+    attribute is the faithful double: the engine's config provider must
+    see the new mapping, never a dict captured at build time.
+    """
+
+    def __init__(self, hooks_section: dict | None) -> None:
+        self.app_config: dict = {}
+        if hooks_section is not None:
+            self.app_config["hooks"] = hooks_section
+
+
+def _pre_tool_use_hook() -> dict:
+    import sys
+
+    return {"event": "PreToolUse", "command": [sys.executable, "-c", "pass"]}
+
+
+def test_ensure_run_hooks_is_none_without_config_until_hooks_appear():
+    """No ``[hooks]`` configured -> ``None``, and that answer is LIVE.
+
+    ``None`` is the contract every later fire site skips on -- but it is
+    NOT latched (Ruling R17): while unconfigured, every call re-runs the
+    same cheap parse the engine itself runs per fire, so the first-ever
+    ``[hooks]`` entry a mid-session settings reload delivers takes effect
+    without an app restart. Once an ENGINE is built it latches for the
+    app lifetime (spec section 4 singleton) -- that half lives in the
+    next test.
+    """
+    runtime = ConsoleRuntime(app=None)
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None  # still no config to find
+
+    app = _HooksApp(hooks_section=None)
+    runtime = ConsoleRuntime(app=app)
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None
+
+    app.app_config["hooks"] = {"enabled": True, "hook": [_pre_tool_use_hook()]}
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None, (
+        "the first-ever [hooks] entry arrived mid-session and stayed "
+        "inert -- presence must re-detect while unconfigured (R17)"
+    )
+    assert runtime.ensure_run_hooks() is engine  # built now: identity latches
+
+
+@pytest.mark.asyncio
+async def test_ensure_run_hooks_builds_nothing_after_dispose():
+    """The dispose path is unchanged by R17: quit latches, builds nothing.
+
+    Even a configured app double must get `None` (never a fresh engine,
+    never the sentinel) once the runtime is disposed -- the same
+    build-nothing contract every other ensure_* here keeps at app exit.
+    """
+    runtime = ConsoleRuntime(
+        app=_HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    )
+    await runtime.dispose()
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None
+
+
+def test_ensure_run_hooks_builds_one_engine_when_hooks_are_configured():
+    """A parsable hook configured -> exactly ONE engine, forever.
+
+    Idempotence is identity: the second call returns the first engine
+    even after the config that justified building it is gone (one engine
+    per app lifetime, spec section 4) -- config changes travel through
+    the engine's live config provider (next test), never a rebuild.
+    """
+    from tldw_chatbook.Agents.run_hooks import RunHooksEngine
+
+    app = _HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    runtime = ConsoleRuntime(app=app)
+    assert runtime.run_hooks_engine is None, "the peek must not build an engine"
+
+    engine = runtime.ensure_run_hooks()
+    assert isinstance(engine, RunHooksEngine)
+    assert runtime.ensure_run_hooks() is engine
+    assert runtime.run_hooks_engine is engine
+
+    app.app_config = {}  # a settings reload that drops [hooks]
+    assert runtime.ensure_run_hooks() is engine, (
+        "the engine was rebuilt after a config change -- one engine per "
+        "app lifetime means the existing instance must keep coming back"
+    )
+
+
+def test_the_engine_reads_the_app_config_live_on_every_fire():
+    """The same running guard sees hook removal on a settings reload."""
+    import sys
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    app = _HooksApp({"hook": [{
+        "event": "PreToolUse", "command": [sys.executable, "-c", "raise SystemExit(2)"],
+    }]})
+    runtime = ConsoleRuntime(app=app)
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None
+    wrapped = engine.wrap_review(lambda calls, run_id: {}, session_id="s")
+    call = ToolCall("calculator", {}, "c1")
+    assert wrapped([call], "run")["c1"].startswith("hook: ")
+    app.app_config = {}
+    assert wrapped([call], "run") == {}
+    engine.close()
+
+
+def test_concurrent_first_hook_access_shares_one_engine(monkeypatch):
+    """Worker and event-loop startup must not publish two executor owners."""
+    from concurrent.futures import ThreadPoolExecutor
+    from tldw_chatbook.Agents import run_hooks
+
+    real_engine = run_hooks.RunHooksEngine
+    entered = threading.Event()
+    release = threading.Event()
+    engines = []
+
+    def slow_constructor(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        engine = real_engine(*args, **kwargs)
+        engines.append(engine)
+        return engine
+
+    monkeypatch.setattr(run_hooks, "RunHooksEngine", slow_constructor)
+    runtime = ConsoleRuntime(app=_HooksApp({"hook": [_pre_tool_use_hook()]}))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(runtime.ensure_run_hooks)
+        assert entered.wait(3)
+        second_started = threading.Event()
+
+        def second_access():
+            second_started.set()
+            return runtime.ensure_run_hooks()
+
+        second = pool.submit(second_access)
+        assert second_started.wait(3)
+        release.set()
+        assert first.result() is second.result()
+
+
+@pytest.mark.asyncio
+async def test_dispose_closes_previously_built_hooks():
+    """An existing engine must stop accepting commands when its app exits."""
+    runtime = ConsoleRuntime(app=_HooksApp({"hook": [_pre_tool_use_hook()]}))
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None
+    assert not (await engine.fire_async("PreToolUse", session_id="s")).blocked
+    await runtime.dispose()
+    assert runtime.ensure_run_hooks() is None
+    # Existing per-run closures can retain the engine after runtime disposal.
+    assert (await engine.fire_async("PreToolUse", session_id="s")).blocked

@@ -22,7 +22,18 @@ from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 from tldw_chatbook.Utils.input_validation import validate_tool_arguments
 
 
-LocalHubDecision = Literal["allowed", "approved", "denied"]
+# task-32280 fix round: "denied" is now specifically "a person pressed
+# Deny"; a local-Hub test that never started because nothing resolved says
+# so with its own token. See `execution_log.py` for the whole vocabulary.
+LocalHubDecision = Literal[
+    "allowed",
+    "approved",
+    "denied",
+    "denied-policy",
+    "denied-killswitch",
+    "denied-timeout",
+    "denied-unresolved",
+]
 LocalHubStatus = Literal["success", "blocked", "error", "timeout", "cancelled"]
 LocalHubFinalGate = Literal[
     "allow",

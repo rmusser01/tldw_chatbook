@@ -24,6 +24,10 @@ CANVAS_GATEWAY_PATHS = frozenset(
     {
         "tldw_chatbook/Canvas/capabilities.py",
         "tldw_chatbook/Canvas/gateway.py",
+        "tldw_chatbook/Canvas/guide.py",
+        "tldw_chatbook/Canvas/guides/basics.md",
+        "tldw_chatbook/Canvas/guides/controls.md",
+        "tldw_chatbook/Canvas/guides/repair.md",
         "tldw_chatbook/Canvas/native_authority.py",
         "tldw_chatbook/Canvas/static/THIRD_PARTY_LICENSES.txt",
         "tldw_chatbook/Canvas/static/canvas_renderer.js",
@@ -53,11 +57,15 @@ CANVAS_GATEWAY_PATHS = frozenset(
 
 _WHEEL_PROBE = r"""
 import sys
+import json
 
 wheel = sys.argv[1]
 sys.path.insert(0, wheel)
 
 from tldw_chatbook.Canvas.gateway import CanvasGateway
+from tldw_chatbook.Canvas.guide import (
+    CANVAS_GUIDE_PATHS, MAX_CANVAS_GUIDE_RESULT_BYTES, read_canvas_guide,
+)
 from tldw_chatbook.Canvas.runtime_assets import load_canvas_runtime_assets
 from tldw_chatbook.Canvas.profiles import load_profile_snapshot, runtime_assets_for
 from importlib.resources import files
@@ -65,6 +73,12 @@ from importlib.resources import files
 gateway = CanvasGateway(authority=object())
 assets = load_canvas_runtime_assets()
 assert ".whl/" in sys.modules[CanvasGateway.__module__].__file__
+assert ".whl/" in sys.modules[read_canvas_guide.__module__].__file__
+for topic in CANVAS_GUIDE_PATHS:
+    body = read_canvas_guide(topic)
+    assert body.strip()
+    content = json.dumps({"status": "ok", "topic": topic, "guide": body})
+    assert len(content.encode("utf-8")) <= MAX_CANVAS_GUIDE_RESULT_BYTES
 assert gateway.started is False
 assert assets.enabled
 assert assets.renderer_javascript

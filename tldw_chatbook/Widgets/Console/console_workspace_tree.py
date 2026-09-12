@@ -360,7 +360,12 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         if conversation.run_marker:
             parts.append(resolve_glyph(conversation.run_marker))
         prefix = f"{' '.join(parts)} " if parts else ""
-        return Text(f"{prefix}{_single_physical_row(conversation.title)}")
+        progress = (
+            f"Progress: {conversation.progress_count} · "
+            if conversation.progress_count
+            else ""
+        )
+        return Text(f"{prefix}{progress}{_single_physical_row(conversation.title)}")
 
     @staticmethod
     def _status_specs(

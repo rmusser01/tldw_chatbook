@@ -1,0 +1,12 @@
+from pathlib import Path
+import os,json,hashlib
+r=Path('/home/ml-user/tts-linux-cuda-20260912');os.environ['HF_HOME']=str(r/'cache/huggingface');os.environ['HF_HUB_DISABLE_XET']='1'
+from huggingface_hub import snapshot_download
+rev='08e178d48790749d25932bbc082711ddcfdfbc4f';repo='Systran/faster-whisper-medium'
+p=Path(snapshot_download(repo,revision=rev,allow_patterns=['config.json','model.bin','tokenizer.json','vocabulary.*'],max_workers=3))
+files=[]
+for f in p.iterdir():
+ if f.is_file():
+  with f.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+  files.append({'path':str(f),'name':f.name,'sha256':digest,'bytes':f.stat().st_size})
+(r/'logs/whisper-medium-assets.json').write_text(json.dumps({'repo':repo,'revision':rev,'path':str(p),'files':files},indent=2)+'\n');print(p)

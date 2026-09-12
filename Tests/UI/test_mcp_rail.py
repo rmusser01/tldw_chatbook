@@ -811,3 +811,38 @@ async def test_scope_a_b_a_dispatches_three_changes_and_mount_echo_zero():
         await pilot.pause()
         changes = [e.scope for e in app.events if isinstance(e, MCPRail.ScopeChanged)]
         assert changes == ["team", "personal", "team"]
+
+
+# -- Wave A (2026-09-11 MCP Hub UX program): bounded polish -----------------
+
+
+def test_present_states_legend_abbreviates_when_short():
+    """A6/F15: below the width budget the in-rail legend swaps in the short
+    state words ("setup", "off") so the line stops wrapping to 2-3 rows at
+    narrow rail widths. The long forms stay untouched at wide budgets."""
+    from tldw_chatbook.UI.MCP_Modules.mcp_rail import _present_states_legend
+
+    snapshots = [
+        _snap("local:docs", "docs", ReadinessState.NEEDS_SETUP),
+        _snap("builtin:tldw_chatbook", "tldw_chatbook (built-in)", ReadinessState.OFF_OPT_IN),
+    ]
+    short = _present_states_legend(snapshots, short=True)
+    assert "setup" in short
+    assert "Needs setup" not in short
+    assert "off" in short
+    assert "opt-in" not in short
+    assert "⌂ built-in" in short
+
+    long = _present_states_legend(snapshots)
+    assert "needs setup" in long
+    assert "off (opt-in)" in long
+
+
+def test_short_state_legend_words_cover_every_state():
+    """Completeness pin: every STATE_LABELS word has a short form, so a new
+    ReadinessState can't silently fall out of the abbreviated legend."""
+    from tldw_chatbook.MCP.readiness import STATE_LABELS
+    from tldw_chatbook.UI.MCP_Modules.mcp_rail import _SHORT_STATE_LABELS
+
+    for label in STATE_LABELS.values():
+        assert label.lower() in _SHORT_STATE_LABELS

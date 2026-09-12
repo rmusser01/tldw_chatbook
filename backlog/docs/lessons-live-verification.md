@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## A process's No route to host can be an app privacy denial
+
+**TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
+llama.cpp endpoint failed immediately, including outside the execution sandbox.
+The initial report incorrectly called the server unreachable from the Mac.
+The user could load its UI in Firefox. A route lookup found the target on en0;
+macOS nehelper logs explicitly said
+`Local network denied by preference for ChatGPT (com.openai.codex)`.
+
+Attribute connection evidence to the process that produced it. Check the
+route and app-specific network permission diagnostics before asking the user to
+repair a working server. Sandbox escalation does not grant macOS Local Network
+permission. Obtain approval to change that privacy setting; do not route around
+the denial through another app.
+
+The same sample initially constructed provider resolution manually, skipping
+native-tool capability discovery, and attempted an edit before confirming the
+temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
+committed, reachable source resolved those harness defects. Keep that headless
+bridge evidence separate from the full Console UI and durable persistence.
+
 ## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured
@@ -2427,6 +2448,15 @@ test suite's profile fixtures; a missing-dependency guard can itself initialize
 configuration before model loading begins. Receipts are retained in
 `Docs/QA/tts-macos-burndown-2026-09-09/review/`.
 
+**PR #2648, 2026-09-12 follow-up.** A stronger final check rejected nine
+installed profile-core files that were missing from the source census: their
+sources live under `packages/tldw_profile_core/src/`, not alongside the app.
+The wheel was correct; the observer's package-root assumption was not. Retaining
+the failed prerequisite, mapping both declared source roots and comparing complete
+sets produced a 2,350-file match in both environments before the final playback
+run. Read packaging source-root mappings before claiming whole-install identity;
+a matching subset of application hashes does not cover separately rooted packages.
+
 ## Discard recovery must survive a completed uncaptured turn
 
 PR #2561 review (2026-09-09) reproduced a missing combination after the
@@ -2636,3 +2666,78 @@ Put helper scripts in a per-task subdirectory (`scratchpad/wave3/tools-<group>/`
 and import them by that absolute path. A `NameError` for a symbol you know you
 defined means you are reading a different file, the same way an
 `AttributeError` for a symbol your feature defines means the wrong tree.
+
+## A provider can satisfy the response envelope and still ignore the task (2026-09-11)
+
+**What happened.** Live-verifying a new default "Improve My Prompt" optimizer
+template (four-section Situation/Task/Objective/Knowledge structure), the
+end-to-end flow looked green: real DeepSeek call, valid `prompt_rewrite` JSON,
+draft replaced, modal closed, Undo armed. But the rewritten prompt was a lazy
+near-copy ("write a short poem about tea" -> "Write a short poem about tea.").
+The suite was green; the strict-JSON envelope parse was green; the improvement
+was useless. `console_auxiliary_attempts` was empty, so the DB could not
+confirm the call — only replaying the EXACT app-built payload via curl
+reproduced it. Both deepseek-chat and deepseek-reasoner returned the near-copy.
+The same model given the template as a plain user message produced the full
+four sections, so the packaging (system role + untrusted-JSON payload +
+envelope instruction LAST) was the cause: the terminal "JSON object only"
+instruction is what the model recency-anchors on. Appending a final
+task-re-anchor line ("Now apply the full transformation defined above... never
+a minor edit, summary, or near-copy") restored full compliance on both models.
+
+**What to do.** For structured-output optimizer prompts, verify content
+quality, not just envelope validity: a schema-conformant response can still
+be a no-op. Put the output-contract instruction BEFORE the final task
+directive, and end the system prompt with a recency anchor that names the
+required output shape and forbids near-copies. When the DB has no attempt
+row, replay the exact request payload against the provider before believing
+any UI state.
+
+## A plain-text tmux capture cannot tell a focused control from an unfocused one — two reports were "focus is missing" when it was only invisible (task-32246, task-32252, 2026-09-11)
+
+**What happened.** Two wave-3 tasks were filed from `capture-pane -p` evidence
+that focus had gone somewhere it had not.
+
+- task-32246 reported "no focused control anywhere in the visible pane" after
+  Tab out of the note body, reproduced twice. Focus was on
+  `#library-notes-source-database` the whole time. `capture-pane -e` on that
+  one row decoded `1;4` bold+underline on `48;2;16;49;75` — identical to what
+  the button already wears for its own `-selected` class. Invisible, not
+  absent.
+- task-32252 reported `/` typing itself into the Notes filter "from a state
+  where no control on the canvas is focused", three clean repros. Rebuilt live
+  and in the harness from a genuinely unfocused canvas (`set_focus(None)`),
+  the behaviour is correct. A Textual `Input` renders its placeholder whenever
+  its value is empty, focused or not, and a plain-text capture shows no focus
+  border colour — so an already-focused empty filter is pixel-identical to an
+  unfocused one, and `/` typing literally into it (the task-32131 ruling, kept
+  deliberately so `Work/Q3` stays typeable) reads as a leak.
+
+**What to do.** Before filing or fixing "nothing is focused" / "focus went
+nowhere", get the focus identity from something other than the glyphs:
+`capture-pane -e` and decode the SGR on the candidate row, or reproduce in a
+harness and read `screen.focused`. And when a control's focus treatment is a
+colour swap that its own selected/active state also uses, that is itself the
+bug worth filing — a reader cannot see focus there either.
+
+## "The key is being swallowed" — check the framework binds it at all before hunting the swallower (task-32247, 2026-09-11)
+
+**What happened.** The task recorded, as an inferred cause, "Textual's
+`TextArea` binds `ctrl+end` to `cursor_document_end`, so something upstream is
+swallowing it", and pointed at this repo's several layers of priority
+bindings, `on_key` handlers and screen-level grabs. Textual 8.2.8 binds no
+such key and defines no `action_cursor_document_end`: its only end binding is
+`"end,ctrl+e" -> cursor_line_end`. Nothing was swallowing anything. Two
+one-minute checks settled it — `grep -n "ctrl+end" textual/widgets/_text_area.py`
+(no hits) and a harness probe asserting
+`"ctrl+end" in body._bindings.key_to_bindings` (False).
+
+**What to do.** An inert key has two very different causes — consumed
+upstream, or never bound — and the cheap check distinguishes them before any
+tracing: grep the third-party widget's `BINDINGS` and `action_*` for the key
+and the action, and assert the key's presence in the live widget's
+`_bindings.key_to_bindings`. Only if it IS bound is the swallower hunt worth
+starting. Note also that every encoding a terminal might send for one key
+usually normalises to a single Textual name (`\x1b[1;5F`, `\x1b[1;5H` →
+`ctrl+end`/`ctrl+home` in `_ansi_sequences.py`), so "it failed in three
+encodings" is one failure, not three.

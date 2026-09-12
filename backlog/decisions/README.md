@@ -112,6 +112,9 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-145](145-reviewed-petdex-import-and-pinned-https.md) | Accepted; destination partially superseded by ADR-146 | Import reviewed Petdex artwork with pinned HTTPS and preserved native notices. |
 | [ADR-146](146-independent-buddy-petdex-publication-and-character-creation.md) | Accepted | Publish reviewed Petdex artwork to an independent Buddy and create durable characters through guarded management entry points. |
 | [ADR-147](147-conversation-archive-and-exact-resume.md) | Accepted | Preserve saved chat identity through reversible archive, scoped search, transcript review and exact Console resume. |
+| [ADR-148](148-mcp-hub-rail-ia-and-responsive-triad.md) | Accepted | Split the agent tool catalog out of the built-in server rail row into its own Agent tools section, and stack the inspector as a bounded band below 120 columns. |
+| [ADR-150](150-mcp-hub-bulk-permission-actions.md) | Accepted | Add filter-scoped shift+space/C bulk permission actions executed as N ordinary profile-scoped set_tool_state writes. |
+| [ADR-149](149-offer-first-canvas-guide-and-inline-skill.md) | Accepted | Offer Canvas before proactive authoring; load bounded packaged guidance in the owning Console run and provide an optional trusted inline skill. |
 
 ## Historical Decision Material
 

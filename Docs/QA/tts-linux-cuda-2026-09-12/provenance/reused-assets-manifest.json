@@ -1,0 +1,38 @@
+[
+  {
+    "origin_path": "/private/tmp/kokoro-playback-validation/models/kokoro-v1.0.onnx",
+    "archive_path": "onnx/kokoro-v1.0.onnx",
+    "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "bytes": 325532387
+  },
+  {
+    "origin_path": "/private/tmp/kokoro-playback-validation/models/voices-v1.0.bin",
+    "archive_path": "onnx/voices-v1.0.bin",
+    "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+    "bytes": 28214398
+  },
+  {
+    "origin_path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+    "archive_path": "whisper-small/model.bin",
+    "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "bytes": 483546902
+  },
+  {
+    "origin_path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/config.json",
+    "archive_path": "whisper-small/config.json",
+    "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "bytes": 2370
+  },
+  {
+    "origin_path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+    "archive_path": "whisper-small/tokenizer.json",
+    "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "bytes": 2203239
+  },
+  {
+    "origin_path": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt",
+    "archive_path": "whisper-small/vocabulary.txt",
+    "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+    "bytes": 459861
+  }
+]
