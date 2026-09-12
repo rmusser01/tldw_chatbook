@@ -306,6 +306,57 @@ duplicates, enter a nonblank model and an absolute HTTP(S) base without
 credentials in the URL, then correct timeout/retry/streaming types in
 **Advanced Config**. Test the draft again before saving.
 
+#### Custom endpoints
+
+A **custom endpoint** is a named endpoint entry you can template off any
+provider — a localhost llama.cpp, a GPU box on the LAN, a rented
+OpenAI-compatible server — saved in `config.toml` under
+`[custom_endpoints.<slug>]`. Each entry runs as one of three families and
+behaves exactly like that built-in provider pointed at another origin:
+
+| Family | Behavior |
+|---|---|
+| **llama.cpp** | The direct llama.cpp path, with llama-style base-URL normalization. |
+| **OpenAI-compatible** | The generic OpenAI-compatible path the built-in `custom` slot uses. |
+| **Ollama** | The Ollama path, including its model-discovery fallback. |
+
+Entries show in the Console provider list under their display name (their
+provider id is `custom-ep:<slug>`), each with its own cached model list.
+Sampling and generation settings are never copied from a template — they
+stay governed by the per-provider defaults chain. Credentials follow the
+usual precedence — `api_key_env` (a variable name; the safer form) wins over
+a stored `api_key` — and endpoint displays never show the key.
+
+**Creating one.** In the Console settings modal, the **New endpoint…**
+button sits with **Base URL** (it appears for providers that take a base
+URL, and whenever named endpoints exist). It opens "New endpoint from
+template": pick a template — the "OpenAI-compatible (blank)" starter, any
+provider, or an existing named entry (as a duplicate) — adjust the prefilled
+**Family**, **Base URL**, and **Models**, give it a **Display name** (the
+slug is derived from the name), and press **Create**. The entry is written
+to `config.toml` immediately, the modal switches to the new provider, and
+model discovery runs against the new URL; **Cancel** leaves config
+untouched. Because entries are durable config, selecting one never trips
+the "Endpoint not saved" block, and conversations using them survive
+restart.
+
+This page's **Custom endpoints** section manages them. Each row reads
+*name · family · safe URL · model count*, with three actions:
+
+| Action | What it does |
+|---|---|
+| **Rename** | Changes the display name only — the slug (the id conversations reference) never changes. |
+| **Edit** | Rewrites **Base URL**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
+| **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. |
+
+The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are
+listed below the entries once they have a configured endpoint, each with a
+one-way **Convert to named endpoint** action: it creates a registry entry
+from the slot's URL and models and leaves the slot untouched. Converting
+carries an env-var reference but **not** the slot's stored API key — set an
+env-var reference via **Edit ▸ Env var** (and export that variable), or the
+converted endpoint will fail authentication.
+
 ### Core — Speech & TTS
 
 Application-wide speech and text-to-speech defaults — which TTS provider

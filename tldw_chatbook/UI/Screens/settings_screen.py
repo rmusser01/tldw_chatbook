@@ -7,8 +7,8 @@ legacy Chat window are deprecated parallels; new settings belong here.
 
 import asyncio
 import copy
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
 import logging
 import os
 from pathlib import Path
@@ -86,9 +86,16 @@ from ...Chat.local_reasoning import (
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
+    first_configured_endpoint,
     generic_endpoint_differs,
     safe_endpoint_display,
     unsaved_endpoint_copy,
+)
+from ...Chat.custom_endpoint_registry import (
+    CUSTOM_ENDPOINT_ID_PREFIX,
+    build_entry_mutation,
+    load_custom_endpoints,
+    validate_entry,
 )
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.provider_setup_persistence import (
@@ -150,6 +157,7 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_CUSTOM,
     PROVIDER_GROUP_LOCAL,
     PROVIDER_GROUP_ORDER,
+    provider_display_name,
 )
 from ...config import (
     ConfigMutationResult,
@@ -255,10 +263,16 @@ from ...model_capabilities import (
     zai_model_supports_reasoning_effort,
 )
 from .settings_provider_view_model import (
+    CustomEndpointReferenceStore,
     ProviderPickerGroup,
     SettingsOverviewPresentation,
+    build_entry_edit_mutation,
     build_provider_picker_groups,
     build_settings_overview,
+    conversations_referencing_endpoint,
+    convert_slot_to_named_endpoint,
+    custom_endpoint_rows,
+    detach_and_delete_entry,
 )
 from .settings_config_models import (
     SettingsCategoryId,
@@ -2856,6 +2870,15 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
+        # ADR-146 task-7 custom endpoints panel: the entry slug (if any)
+        # whose inline Rename/Edit form is open, the slug whose delete is
+        # blocked awaiting the Detach-references confirmation, and the
+        # section's single status line. Everything is inline controls (no
+        # new ModalScreen), so no launch-inventory declarations apply.
+        self._custom_endpoint_rename_slug: str | None = None
+        self._custom_endpoint_edit_slug: str | None = None
+        self._custom_endpoint_detach_slug: str | None = None
+        self._custom_endpoints_status = ""
         self._syncing_provider_endpoint = False
         self._syncing_provider_api_mode = False
         # Input.Changed is delivered after a programmatic value assignment
@@ -16022,6 +16045,11 @@ class SettingsScreen(BaseAppScreen):
                                 "models after a first baseline."
                             ),
                         )
+            # ADR-146 task-7: named-endpoint management (rename / edit /
+            # delete-with-reference-guard / slot conversion). Instant-apply
+            # like the catalog block above: threaded config writes, one
+            # shared status line, no partial-apply states.
+            yield from self._render_custom_endpoints_section()
             # task-189: sampling and provider-specific tuning live below the
             # Connect block in a collapsed-by-default disclosure.
             with Collapsible(
@@ -16259,6 +16287,494 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 identifier="settings-provider-endpoint-key",
             )
+
+    # ------------------------------------------------------------------
+    # Custom endpoints (ADR-146 task-7): rename / edit / guarded delete /
+    # built-in slot conversion. Panel logic lives in
+    # settings_provider_view_model; this block is composition + threaded
+    # config writes with one shared status line.
+
+    def _custom_endpoints_view_config(self) -> Mapping[str, object]:
+        """Return the freshest full config for registry reads.
+
+        The config module cache is reloaded by every save/delete mutation,
+        so ``load_settings()`` is both cheap and current -- the same
+        re-sourcing contract as ``_provider_readiness_app_config``.
+        """
+        try:
+            fresh = load_settings()
+        except Exception:
+            logger.warning(
+                "Custom endpoints read via load_settings() failed; using "
+                "the boot snapshot."
+            )
+            return self._app_config_mapping()
+        return fresh if isinstance(fresh, Mapping) and fresh else {}
+
+    def _custom_endpoints_store(self) -> object | None:
+        """Return the live Console store, or None when no Console runtime."""
+        store = getattr(self.app_instance, "console_chat_store", None)
+        if store is None:
+            runtime = getattr(self.app_instance, "console_runtime", None)
+            store = getattr(runtime, "chat_store", None)
+        return store
+
+    def _render_custom_endpoints_section(self) -> ComposeResult:
+        """Compose the Custom endpoints section (ADR-146 management)."""
+        yield Static("Custom endpoints", classes="destination-section")
+        # SettingsRegion (task-15475): a plain Vertical yielded inline has no
+        # compose() of its own, so a region-scoped refresh(recompose=True)
+        # would wipe it instead of rebuilding it.
+        yield SettingsRegion(
+            self._compose_custom_endpoints_children,
+            id="settings-custom-endpoints",
+            classes="settings-instant-apply-group",
+        )
+
+    def _compose_custom_endpoints_children(self) -> ComposeResult:
+        """Yield the Custom endpoints region children (rebuilt per refresh)."""
+        config = self._custom_endpoints_view_config()
+        entries = load_custom_endpoints(config)
+        rows = custom_endpoint_rows(config)
+        if not rows:
+            yield Static(
+                "No named endpoints yet. Create one from a template in "
+                "Console conversation settings (New endpoint…), or "
+                "convert a built-in custom slot below.",
+                id="settings-custom-endpoints-empty",
+                classes="settings-status-row",
+                markup=False,
+            )
+        for row in rows:
+            slug = row.key[len(CUSTOM_ENDPOINT_ID_PREFIX) :]
+            entry = entries.get(slug)
+            if entry is None:
+                continue
+            yield Static(
+                f"{row.label}: {_fold_long_tokens(row.value)}",
+                id=f"settings-cep-row-{slug}",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Rename",
+                    id=f"settings-cep-rename-{slug}",
+                    tooltip=(
+                        "Rename this endpoint. The slug (its provider "
+                        "id) never changes."
+                    ),
+                )
+                yield Button(
+                    "Edit",
+                    id=f"settings-cep-edit-{slug}",
+                    tooltip=(
+                        "Edit the endpoint URL, credential variable, or "
+                        "model list. Existing conversations re-resolve "
+                        "on their next send."
+                    ),
+                )
+                yield Button(
+                    "Detach references",
+                    id=f"settings-cep-detach-{slug}",
+                    classes=(
+                        ""
+                        if self._custom_endpoint_detach_slug == slug
+                        else "settings-gated-profile-hidden"
+                    ),
+                    tooltip=(
+                        "Keep each referencing conversation's current "
+                        "endpoint as conversation-only, then delete the "
+                        "entry."
+                    ),
+                )
+                yield Button(
+                    "Delete",
+                    id=f"settings-cep-delete-{slug}",
+                    tooltip=(
+                        "Delete this endpoint. Blocked while any "
+                        "conversation still references it."
+                    ),
+                )
+            if self._custom_endpoint_rename_slug == slug:
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Name", classes="settings-input-label")
+                    yield Input(
+                        value=entry.display_name,
+                        id="settings-cep-rename-value",
+                        classes="settings-compact-input",
+                        placeholder="Display name",
+                    )
+                with Horizontal(classes="settings-action-row"):
+                    yield Button("Save name", id="settings-cep-rename-save")
+                    yield Button("Cancel", id="settings-cep-rename-cancel")
+            if self._custom_endpoint_edit_slug == slug:
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Base URL", classes="settings-input-label")
+                    yield Input(
+                        value=entry.base_url,
+                        id="settings-cep-edit-url",
+                        classes="settings-compact-input",
+                        placeholder="http://127.0.0.1:8080",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Env var", classes="settings-input-label")
+                    yield Input(
+                        value=entry.api_key_env or "",
+                        id="settings-cep-edit-key-env",
+                        classes="settings-compact-input",
+                        placeholder="API key environment variable (optional)",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Models", classes="settings-input-label")
+                    yield Input(
+                        value=", ".join(entry.models),
+                        id="settings-cep-edit-models",
+                        classes="settings-compact-input",
+                        placeholder="comma-separated model ids",
+                    )
+                yield Static(
+                    "",
+                    id="settings-cep-edit-error",
+                    classes="settings-status-row",
+                    markup=False,
+                )
+                with Horizontal(classes="settings-action-row"):
+                    yield Button("Save endpoint", id="settings-cep-edit-save")
+                    yield Button("Cancel", id="settings-cep-edit-cancel")
+        for slot_id in ("custom", "custom_2"):
+            app_config = self._app_config_mapping()
+            api_settings = app_config.get("api_settings")
+            slot_endpoint = first_configured_endpoint(
+                provider_settings_for_key(
+                    api_settings if isinstance(api_settings, Mapping) else {},
+                    slot_id,
+                )
+            )
+            if not slot_endpoint:
+                continue
+            yield Static(
+                f"{provider_display_name(slot_id)}: "
+                f"{safe_endpoint_display(slot_endpoint)} (built-in slot)",
+                id=f"settings-cep-slot-{slot_id}",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Convert to named endpoint",
+                    id=f"settings-cep-convert-{slot_id}",
+                    tooltip=(
+                        "Create a named endpoint from this slot's "
+                        "configured URL and models. The slot itself is "
+                        "left untouched."
+                    ),
+                )
+        yield Static(
+            self._custom_endpoints_status,
+            id="settings-custom-endpoints-status",
+            classes="settings-status-row",
+            markup=False,
+        )
+
+    def _refresh_custom_endpoints_section(self) -> None:
+        """Rebuild the Custom endpoints section in place."""
+        try:
+            region = self.query_one("#settings-custom-endpoints")
+        except QueryError:
+            return
+        region.refresh(recompose=True)
+
+    def _custom_endpoints_status_update(self, message: str) -> None:
+        """Set the shared status line without closing any open form."""
+        self._custom_endpoints_status = message
+        self._set_static_text("#settings-custom-endpoints-status", message)
+
+    def _custom_endpoints_report(self, message: str) -> None:
+        """Report a completed mutation: reset forms, refresh, poke app config."""
+        self._custom_endpoint_rename_slug = None
+        self._custom_endpoint_edit_slug = None
+        self._custom_endpoint_detach_slug = None
+        self._custom_endpoints_status = message
+        self._poke_custom_endpoints_into_app_config()
+        self._refresh_custom_endpoints_section()
+
+    def _poke_custom_endpoints_into_app_config(self) -> None:
+        """Mirror the on-disk registry section into the shared app mapping.
+
+        The disk file is the source of truth; the shared in-memory
+        ``app_config`` snapshot would otherwise stay stale until restart
+        (the same mirror contract as the endpoint template modal's
+        create flow). Read-only configs simply skip the mirror.
+        """
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, MutableMapping):
+            return
+        fresh = self._custom_endpoints_view_config()
+        section = fresh.get("custom_endpoints")
+        if not isinstance(section, Mapping):
+            raw = fresh.get("COMPREHENSIVE_CONFIG_RAW")
+            section = (
+                raw.get("custom_endpoints")
+                if isinstance(raw, Mapping)
+                else section
+            )
+        if isinstance(section, Mapping):
+            app_config["custom_endpoints"] = copy.deepcopy(dict(section))
+
+    def _custom_endpoint_reference_labels(
+        self, store: CustomEndpointReferenceStore, session_ids: Sequence[str]
+    ) -> list[str]:
+        """Return display labels (title, else id) for the referencing sessions."""
+        wanted = set(session_ids)
+        labels: list[str] = []
+        for session in store.sessions():
+            if str(getattr(session, "id", "")) not in wanted:
+                continue
+            title = str(getattr(session, "title", "") or "").strip()
+            labels.append(title or str(getattr(session, "id", "")))
+        return labels
+
+    def _custom_endpoint_delete_requested(self, slug: str) -> None:
+        """Guard delete: block while conversations reference the entry."""
+        provider_id = f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}"
+        store = self._custom_endpoints_store()
+        references = (
+            conversations_referencing_endpoint(store, provider_id)
+            if store is not None
+            else []
+        )
+        if not references:
+            self._custom_endpoints_delete_worker(slug)
+            return
+        labels = self._custom_endpoint_reference_labels(store, references)
+        self._custom_endpoint_detach_slug = slug
+        self._custom_endpoints_status_update(
+            f"Delete blocked: {len(references)} conversation(s) still use "
+            f"this endpoint ({', '.join(labels)}). Detach references to "
+            "keep each conversation's current endpoint as "
+            "conversation-only, then delete -- or switch those "
+            "conversations' provider first."
+        )
+        self._refresh_custom_endpoints_section()
+
+    def _custom_endpoint_rename_save(self) -> None:
+        slug = self._custom_endpoint_rename_slug
+        if slug is None:
+            return
+        entry = load_custom_endpoints(self._custom_endpoints_view_config()).get(slug)
+        if entry is None:
+            self._custom_endpoints_report(f"Endpoint '{slug}' is no longer available.")
+            return
+        try:
+            name = self.query_one("#settings-cep-rename-value", Input).value.strip()
+        except QueryError:
+            return
+        errors = validate_entry(name, entry.family, entry.base_url)
+        if errors:
+            # The loaded entry already passed validation, so any error here
+            # is the display name itself.
+            self._custom_endpoints_status_update(errors[0])
+            return
+        self._custom_endpoints_persist_worker(
+            f"Renamed endpoint to '{name}' (slug '{slug}' unchanged).",
+            build_entry_mutation(replace(entry, display_name=name)),
+        )
+
+    def _custom_endpoint_edit_save(self) -> None:
+        slug = self._custom_endpoint_edit_slug
+        if slug is None:
+            return
+        entry = load_custom_endpoints(self._custom_endpoints_view_config()).get(slug)
+        if entry is None:
+            self._custom_endpoints_report(f"Endpoint '{slug}' is no longer available.")
+            return
+        try:
+            base_url = self.query_one("#settings-cep-edit-url", Input).value.strip()
+            env_var = (
+                self.query_one("#settings-cep-edit-key-env", Input).value.strip()
+            )
+            models_raw = self.query_one("#settings-cep-edit-models", Input).value
+        except QueryError:
+            return
+        errors = validate_entry(entry.display_name, entry.family, base_url)
+        if errors:
+            self._set_static_text("#settings-cep-edit-error", errors[0])
+            return
+        try:
+            # The shared seam validates the credential reference through
+            # input_validation, family-normalizes the URL, and requests
+            # removal of a cleared ``api_key_env`` key (config saves merge,
+            # so an omitted key would silently keep the old reference).
+            mutation, delete_keys = build_entry_edit_mutation(
+                entry, base_url, env_var, models_raw
+            )
+        except ValueError as error:
+            self._set_static_text("#settings-cep-edit-error", str(error))
+            return
+        self._set_static_text("#settings-cep-edit-error", "")
+        self._custom_endpoints_persist_worker(
+            f"Saved endpoint '{slug}'; existing conversations re-resolve on "
+            "their next send.",
+            mutation,
+            delete_keys,
+        )
+
+    @on(Button.Pressed)
+    def handle_custom_endpoints_button_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch the Custom endpoints panel actions (image-gen pattern).
+
+        Args:
+            event: The button press; only ids starting with
+                ``settings-cep-`` are consumed, every other press is left
+                untouched for the screen's other handlers.
+        """
+        button_id = str(getattr(event.button, "id", "") or "")
+        if not button_id.startswith("settings-cep-"):
+            return
+        event.stop()
+        action = button_id[len("settings-cep-") :]
+        if action == "rename-save":
+            self._custom_endpoint_rename_save()
+            return
+        if action == "rename-cancel":
+            self._custom_endpoint_rename_slug = None
+            self._refresh_custom_endpoints_section()
+            return
+        if action == "edit-save":
+            self._custom_endpoint_edit_save()
+            return
+        if action == "edit-cancel":
+            self._custom_endpoint_edit_slug = None
+            self._refresh_custom_endpoints_section()
+            return
+        for prefix, handler in (
+            ("rename-", self._custom_endpoint_open_rename),
+            ("edit-", self._custom_endpoint_open_edit),
+            ("delete-", self._custom_endpoint_delete_requested),
+            ("detach-", self._custom_endpoint_detach_requested),
+            ("convert-", self._custom_endpoint_convert_requested),
+        ):
+            if action.startswith(prefix):
+                # "rename-save"/"edit-save" were handled above; any other
+                # suffixed id carries the slug/slot id as its remainder.
+                remainder = action[len(prefix) :]
+                if remainder:
+                    handler(remainder)
+                return
+
+    def _custom_endpoint_open_rename(self, slug: str) -> None:
+        self._custom_endpoint_rename_slug = slug
+        self._custom_endpoint_edit_slug = None
+        self._refresh_custom_endpoints_section()
+
+    def _custom_endpoint_open_edit(self, slug: str) -> None:
+        self._custom_endpoint_edit_slug = slug
+        self._custom_endpoint_rename_slug = None
+        self._refresh_custom_endpoints_section()
+
+    def _custom_endpoint_detach_requested(self, slug: str) -> None:
+        self._custom_endpoints_detach_worker(slug)
+
+    def _custom_endpoint_convert_requested(self, slot_id: str) -> None:
+        self._custom_endpoints_convert_worker(slot_id)
+
+    # The four mutation workers share one exclusive group (the
+    # settings-save-image-gen pattern): repeated clicks cannot overlap
+    # endpoint creation, deletion, detachment, or persistence.
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
+    def _custom_endpoints_persist_worker(
+        self,
+        caption: str,
+        mutation: dict,
+        delete_keys: dict[str, tuple[str, ...]] | None = None,
+    ) -> None:
+        """Write one entry mutation off the event loop (task-15470 shape).
+
+        Args:
+            caption: Success status reported through
+                ``_custom_endpoints_report``.
+            mutation: Section values from ``build_entry_mutation`` /
+                ``build_entry_edit_mutation``.
+            delete_keys: Optional per-section key removals applied in the
+                same atomic mutation (e.g. a cleared ``api_key_env``).
+        """
+        try:
+            saved = save_settings_to_cli_config(mutation, delete_keys=delete_keys)
+        except Exception:
+            logger.warning("Failed to persist a custom endpoint mutation.")
+            saved = False
+        if saved:
+            self.app.call_from_thread(self._custom_endpoints_report, caption)
+        else:
+            self.app.call_from_thread(
+                self._custom_endpoints_status_update,
+                "Could not save the endpoint; it was left unchanged.",
+            )
+
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
+    def _custom_endpoints_delete_worker(self, slug: str) -> None:
+        """Delete an unreferenced entry off the event loop."""
+        try:
+            detach_and_delete_entry(
+                load_settings(),
+                self._custom_endpoints_store(),
+                f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}",
+            )
+        except Exception:
+            logger.warning("Failed to delete custom endpoint '%s'.", slug)
+            self.app.call_from_thread(
+                self._custom_endpoints_status_update,
+                f"Could not delete '{slug}'; it was left unchanged.",
+            )
+            return
+        self.app.call_from_thread(
+            self._custom_endpoints_report, f"Deleted endpoint '{slug}'."
+        )
+
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
+    def _custom_endpoints_detach_worker(self, slug: str) -> None:
+        """Detach referencing conversations, then delete, off the event loop."""
+        try:
+            detach_and_delete_entry(
+                load_settings(),
+                self._custom_endpoints_store(),
+                f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}",
+            )
+        except Exception:
+            logger.warning("Failed to detach and delete '%s'.", slug)
+            self.app.call_from_thread(
+                self._custom_endpoints_status_update,
+                f"Could not finish detaching '{slug}'; press Detach "
+                "references again to complete it.",
+            )
+            return
+        self.app.call_from_thread(
+            self._custom_endpoints_report,
+            f"Detached the referencing conversation(s) -- their endpoints "
+            f"are now conversation-only -- and deleted '{slug}'.",
+        )
+
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
+    def _custom_endpoints_convert_worker(self, slot_id: str) -> None:
+        """Create a named endpoint from a built-in slot off the event loop."""
+        try:
+            provider_id = convert_slot_to_named_endpoint(load_settings(), slot_id)
+        except ValueError as error:
+            self.app.call_from_thread(self._custom_endpoints_status_update, str(error))
+            return
+        except Exception:
+            logger.warning("Failed to convert slot '%s' to a named endpoint.", slot_id)
+            self.app.call_from_thread(
+                self._custom_endpoints_status_update,
+                f"Could not convert slot '{slot_id}'.",
+            )
+            return
+        self.app.call_from_thread(
+            self._custom_endpoints_report,
+            f"Created '{provider_id}' from slot '{slot_id}'; the slot itself "
+            "is unchanged.",
+        )
 
     def _render_console_behavior_card(self, *, compact: bool = False) -> ComposeResult:
         with Vertical(
