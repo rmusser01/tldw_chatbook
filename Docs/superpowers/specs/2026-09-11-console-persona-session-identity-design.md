@@ -361,4 +361,4 @@ re-materialization of a persona session on user-display-name change.
 
 - [ADR-037: Persona/User Profile separation and authority-scoped assistant identity](../../backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
 - [ADR-046: Human chat display identity and template provenance](../../backlog/decisions/046-roleplay-chat-display-identity-and-template-provenance.md)
-- ADR-149: Console persona session identity (to be created before implementation)
+- [ADR-149: Console persona sessions bind a kind-generic assistant display identity](../../backlog/decisions/149-console-persona-session-identity.md)
