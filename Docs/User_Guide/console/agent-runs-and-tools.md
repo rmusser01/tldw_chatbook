@@ -384,7 +384,11 @@ sends you typed do. `Stop` and `SubagentStop` fire for wake turns too; they
 report run outcomes, not user input. One envelope quirk in v1: `Stop`
 carries `run_id` null — the run-state seam it fires from has no run
 identity — so correlate a `Stop` with its run through the same session's
-earlier `PostToolUse`/`SubagentStop` firings.
+earlier `PostToolUse`/`SubagentStop` firings. Another: the envelope's
+`cwd` — and the working directory the hook process itself runs in — is
+always the global `[console] workspace_root` (or the app's working
+directory when unset); the per-session cwd override arrives with the
+settings sub-screen PR.
 
 **Configuring hooks** in `config.toml`:
 

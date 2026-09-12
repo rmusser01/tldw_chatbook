@@ -1,4 +1,3 @@
-# tldw_chatbook/Agents/run_hooks.py
 """Console run hooks: user-configured external commands on session/run lifecycle events.
 
 Spec: Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md (ADR-148).
@@ -33,6 +32,10 @@ HOOK_EVENTS: frozenset[str] = frozenset(
 TOOL_NAME_EVENTS: frozenset[str] = frozenset({"PreToolUse", "PostToolUse"})
 HOOK_IO_BUDGET_CHARS: int = 4000
 HOOK_DEFAULT_TIMEOUT_S: float = 10.0
+# Ruling R32: ceiling for reaping a killed hook's pipes. A group-escaped
+# descendant holding the stdout write-end can block EOF indefinitely; past
+# this bound the reap is abandoned so a pool worker can never wedge.
+HOOK_POST_KILL_REAP_TIMEOUT_S: float = 5.0
 BLOCKING_EVENTS: frozenset[str] = frozenset({"UserPromptSubmit", "PreToolUse"})
 
 
@@ -141,6 +144,10 @@ def _decide(event: str, proc: subprocess.CompletedProcess) -> _Decision:
     exits (non-zero, non-2) still fail closed on PreToolUse regardless of
     parsed stdout.
 
+    Ruling R31: UserPromptSubmit stdout injection is gated to exactly
+    "exit 0, no parsed decision key" (spec §5). Block decisions, exit 2,
+    crashes, timeouts, and ignored decision keys all inject nothing.
+
     Only UserPromptSubmit (fail-open, stdout-as-context) and PreToolUse
     (fail-closed) have decision semantics; every other event is pass-through.
     """
@@ -162,13 +169,15 @@ def _decide(event: str, proc: subprocess.CompletedProcess) -> _Decision:
                 return _Decision(denied=True, reason=_truncate(reason))
             logger.warning("run-hooks: UserPromptSubmit hook decision {!r} ignored; "
                            "exit code {} suppressed", decision_value, proc.returncode)
-            return _Decision(context=_truncate(stdout.strip()))
+            return _Decision()
         if proc.returncode == 2:
             reason = str((parsed or {}).get("reason") or stderr or "blocked by hook")
             return _Decision(denied=True, reason=_truncate(reason))
         if proc.returncode != 0:
             logger.warning("run-hooks: UserPromptSubmit hook exited {} — failing open",
                            proc.returncode)
+            return _Decision()
+        # Ruling R31: the ONLY injection path — exit 0, no decision key.
         return _Decision(context=_truncate(stdout.strip()))
     if event == "PreToolUse":
         if has_decision and decision_value == "deny":
@@ -256,8 +265,14 @@ def _run_hook(spec: HookSpec, payload: dict[str, Any]) -> tuple[HookSpec, _Decis
         timed_out = True
         _kill_process_group(proc)
         try:
-            stdout, stderr = proc.communicate()
-        except Exception:  # noqa: BLE001 - post-kill reaping must never mask the timeout
+            stdout, stderr = proc.communicate(timeout=HOOK_POST_KILL_REAP_TIMEOUT_S)
+        except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
+            # Ruling R32: a group-escaped descendant holding the pipe
+            # write-end can block EOF forever. Abandon the reap — the group
+            # is already dead, so do NOT re-kill; log and move on so the
+            # pool worker is never wedged.
+            logger.warning("run-hooks: abandoned post-kill reap of {} after {}s: {}",
+                           cmd0, HOOK_POST_KILL_REAP_TIMEOUT_S, exc)
             stdout, stderr = "", ""
         stdout, stderr = stdout or "", stderr or ""
         if spec.event == "PreToolUse":

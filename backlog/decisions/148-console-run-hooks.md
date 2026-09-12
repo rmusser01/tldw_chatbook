@@ -1,6 +1,6 @@
 # ADR-148: Console run hooks — user-scope external command hooks on session lifecycle events
 
-Status: Proposed
+Status: Accepted (2026-09-12)
 Date: 2026-09-11
 Related Spec: [Console run hooks design](../../Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md)
 Related: [ADR-069](069-console-project-instruction-local-state-and-preflight.md) (untrusted project context never grants execution)
@@ -12,7 +12,7 @@ The Console had no Claude Code–style hook system: no user-configurable command
 ## Decision
 
 - **Six v1 events**, Claude Code names where semantics match: `UserPromptSubmit` (manual-origin sends only — the wake invariant), `PreToolUse` (blocking), `PostToolUse`, `ApprovalRequested`, `Stop`, `SubagentStop` (all fire-and-forget).
-- **External commands, argv-only, no shell.** A new pure engine module `Agents/run_hooks.py` parses `[hooks]` config, builds JSON payloads, executes via subprocess with per-hook timeouts, truncates output, and logs every execution to the run log.
+- **External commands, argv-only, no shell.** A new pure engine module `Agents/run_hooks.py` parses `[hooks]` config, builds JSON payloads, executes via subprocess with per-hook timeouts, truncates output, and logs every execution as structured loguru records carrying session/run ids (Rulings R13/R27: non-blocking fires also log truncated stdout/stderr; blocking fires log ids + exit — recorded in spec §12).
 - **Deny-only guardrails, failing per purpose.** `PreToolUse` hooks can deny a call (which then flows through the existing verdict mechanism as the tool result); they can never allow-bypass the MCP permission store or the builtin gate. `PreToolUse` denies on crash/timeout/unclean exit (fail-closed — a broken guardrail must not open the gate), while `UserPromptSubmit` fails open (a broken hook must not brick the composer); only an explicit deny blocks a send. stdout JSON decisions take precedence over exit-code shorthand.
 - **User-scope config only** (`config.toml [hooks]` + `[[hooks.hook]]`). Project-shipped hook files are rejected for v1: ADR-069's rule that project context never grants execution applies squarely to repo-shipped commands that would run on clone.
 - **Minimal runtime surface.** One new optional dep `post_tool_call` on the agent runtime deps (the established `run_skill_script` pattern), fired at the dispatch-loop capture point where the uncapped result exists — the step stream cannot serve `PostToolUse` because `AgentStep` results are capped to 2 000 chars and carry no args. Everything else fires from Console-layer seams (controller submit path and review-hook wrapper, bridge terminal-state/`on_child_settled` consumers, approval bridges). The engine is a `ConsoleRuntime`-owned singleton so headless wake runs share it.
@@ -27,7 +27,7 @@ The Console had no Claude Code–style hook system: no user-configurable command
 
 ## Consequences
 
-- Hooks run with the user's privileges by design; the mitigations are scope (user config only), deny-only verdicts, timeouts with process-group kill, payload redaction/truncation, and full run-log visibility of every execution and every injected context block.
+- Hooks run with the user's privileges by design; the mitigations are scope (user config only), deny-only verdicts, timeouts with process-group kill, payload truncation — tool args pass through verbatim per Ruling R28, already recorded in spec §12 — and full run-log visibility of every execution and every injected context block.
 - Invalid hook config fails loud at load (that hook disabled + logged), never a silent no-op.
 - Non-blocking events run on a single-worker executor inside the engine and are dropped (logged) under pressure — chat latency is never hostage to hook scripts.
 - `UserPromptSubmit` stdout injection gives hooks a turn-scoped context channel; the send can be rejected with exit 2, surfaced as a refusal.

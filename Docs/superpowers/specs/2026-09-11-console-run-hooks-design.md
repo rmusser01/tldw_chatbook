@@ -276,3 +276,10 @@ Recorded at implementation close-out (2026-09-12):
   untruncated. Args come from the model's own tool-call JSON and a guard
   hook needs the real body (e.g. an `fs_write` content check); the hook
   is user-configured and trusted with it.
+- **`cwd` is always the global fallback root (Ruling R30).** §4's "the
+  session's workspace root when one is bound" did not ship: no production
+  fire site passes the engine's per-fire `cwd=` override, so the payload
+  `cwd` and the hook process's working directory are always the engine's
+  global `[console] workspace_root`-or-app-cwd answer. The `cwd=`
+  parameter remains a forward contract for the follow-up settings
+  sub-screen PR (§11).

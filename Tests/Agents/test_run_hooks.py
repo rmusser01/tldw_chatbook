@@ -3,12 +3,14 @@
 import asyncio
 import json
 import os
+import signal
 import sys
 import time
 
 import pytest
 from loguru import logger as _loguru_logger
 
+from tldw_chatbook.Agents import run_hooks
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.run_hooks import (
     HOOK_DEFAULT_TIMEOUT_S,
@@ -167,6 +169,25 @@ class TestFire:
         out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
         assert out.blocked is False and out.context == "extra ctx"
 
+    def test_userpromptsubmit_crash_stdout_not_injected(self):
+        # Ruling R31: injection requires exit 0 AND no parsed decision key
+        # (spec §5: "exit 0, no JSON: stdout is prepended as context"). A
+        # crashed hook's parting words are not context — fail open, inject
+        # nothing.
+        eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c",
+                                                   "import sys; print('boom'); sys.exit(1)")))
+        out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
+        assert out == HookOutcome(blocked=False, reason="", context="")
+
+    def test_userpromptsubmit_ignored_decision_json_not_injected(self):
+        # Ruling R31: an ignored decision key means the hook spoke the
+        # protocol and offered no opinion — its raw JSON must not leak in as
+        # context. Injection is exit-0-and-no-decision only.
+        code = "import json; print(json.dumps({'decision': 'allow'}))"
+        eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c", code)))
+        out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
+        assert out == HookOutcome(blocked=False, reason="", context="")
+
     def test_userpromptsubmit_block(self):
         eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c",
             "print(__import__('json').dumps({'decision': 'block', 'reason': 'no'}))")))
@@ -316,6 +337,52 @@ class TestTimeoutKill:
             time.sleep(0.05)
         else:
             pytest.fail("hook's grandchild survived the process-group kill (pid %d alive)" % pid)
+
+    def test_timeout_reap_abandoned_when_escaped_descendant_holds_pipe(
+            self, tmp_path, monkeypatch, caplog):
+        # Ruling R32: a grandchild that setsid's out of the hook's process
+        # group survives the group kill while holding the stdout pipe's
+        # write-end, so EOF never comes. The post-kill reap must give up
+        # after HOOK_POST_KILL_REAP_TIMEOUT_S (shrunk here to keep the test
+        # fast) instead of wedging the pool worker until the escaper exits.
+        if sys.platform == "win32":
+            pytest.skip("POSIX process-group test")
+        monkeypatch.setattr(run_hooks, "HOOK_POST_KILL_REAP_TIMEOUT_S", 0.5)
+        pid_file = tmp_path / "escaper_pid.txt"
+        ready_file = tmp_path / "escaper_ready.txt"
+        grandchild_code = ("import os, time; "
+                           "open(%r, 'w').write(str(os.getpid())); "
+                           "os.setsid(); "
+                           "open(%r, 'w').write('ready'); "
+                           "time.sleep(20)"
+                           % (str(pid_file), str(ready_file)))
+        parent_code = ("import os, subprocess, sys, time\n"
+                       "subprocess.Popen([sys.executable, '-c', %r])\n"
+                       "while not os.path.exists(%r):\n"
+                       "    time.sleep(0.01)\n"
+                       "time.sleep(20)"
+                       % (grandchild_code, str(ready_file)))
+        eng = _engine(HookSpec("PreToolUse", (sys.executable, "-c", parent_code), timeout_s=1.0))
+        start = time.monotonic()
+        out = eng.fire("PreToolUse", session_id="s", data={})
+        elapsed = time.monotonic() - start
+        assert out.blocked is True  # fail-closed verdict still delivered
+        # 1s hook timeout + 0.5s reap ceiling + slack; without the bounded
+        # reap this fire waits out the escaper's full 20s pipe hold.
+        assert elapsed < 5.0, f"fire wedged {elapsed:.1f}s on the escaped pipe-holder"
+        assert any(r.levelname == "WARNING" and "reap" in r.getMessage()
+                   for r in caplog.records), (
+            f"expected WARNING for the abandoned reap, got: "
+            f"{[(r.levelname, r.getMessage()) for r in caplog.records]}")
+        # The abandoned escaper was deliberately left alive — clean it up.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not pid_file.exists():
+            time.sleep(0.05)
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text().strip()), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
 
 
 class TestFireAsync:
