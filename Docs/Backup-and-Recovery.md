@@ -239,23 +239,26 @@ Unsupported formats may permit selected inert extraction without permitting an
 installation restore. Keep a compatible application release with important archives;
 do not use protocol-unaware older launchers against an interrupted recovery.
 
-The currently enabled platform is macOS Darwin 25.5.0, arm64, Python 3.12.11, with
-native protocol 2 and the qualified APFS configurations recorded in the
-[release evidence](../backlog/docs/backup-recovery-release-evidence.md) and
-[Python backend verification](Development/backup-python-verification-2026-09-12.md). Complete
-capture uses the host configuration (filesystem flags 76583040). Replacement also
-supports publication on the tested APFS image configuration (flags 76583448), while
-its recovery authority remains on qualified host storage. The image is not qualified
-for Complete capture or cooperative storage admission.
+The implementation checks native protocol 2 capabilities on writable local APFS
+on macOS, ext4 on Linux, and NTFS on Windows. Private ownership, containment,
+exclusive publication, locking and persistence checks still apply to the actual
+storage used by each operation. Missing capabilities produce a refusal.
 
-Linux, Windows, other platform/filesystem combinations, and upgrade pairs remain
-unqualified. Source, editable, wheel and source-distribution installs include the
-Python encryption worker, which uses the existing PyCryptodome dependency. No Go
-installation or separate encryption executable is required. Filesystem qualification
-is still required for backup and replacement; missing capabilities produce a refusal.
+The full installed backup, restore, replacement and retained-copy rollback flows
+have passed on macOS and Linux. Native Windows filesystem tests and actual backup
+creation have passed; full Windows recovery verification is still in progress.
+See the [cross-platform verification record](Development/backup-cross-platform-verification-2026-09-12.md)
+for exact revisions, environments and results. Other filesystems and application
+upgrade pairs have not been qualified.
+
+Source, editable, wheel and source-distribution installs include the Python
+encryption worker, which uses the existing PyCryptodome dependency. No Go
+installation or separate encryption executable is required.
 The evidence does not establish physical power-loss or device-detachment
 recovery; retain recovery copies and operation records when resolving an interruption.
 
 The controlling contracts are the [approved design](superpowers/specs/2026-09-07-complete-local-backup-restore-design.md),
 the [Python encryption correction](superpowers/specs/2026-09-12-python-backup-encryption-design.md),
 and [release qualification plan](superpowers/plans/2026-09-07-backup-recovery-06-release-evidence.md).
+The [cross-platform correction](superpowers/specs/2026-09-12-cross-platform-backup-correction.md)
+updates the platform operations without changing those recovery workflows.

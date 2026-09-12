@@ -42,6 +42,8 @@ name=selector.parent.name
 _SEED = (
     _PRIVATE
     + r"""
+from Tests.Backup_Recovery.thread_diagnostics import observe_recovery_failures
+stop_failures=observe_recovery_failures(fixture/(name+'-recovery-failures.log'))
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chatbooks.database_paths import get_private_chatbooks_dir
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
@@ -272,6 +274,7 @@ async def main():
   await app._shutdown_app_owned_lifecycles()
   await app.tts_service.close();await app.tts_service.wait_closed()
 asyncio.run(main())
+stop_failures()
 """  # nosec B608
 )
 
@@ -567,8 +570,13 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
     # while still creating records. Retain a stack at the previous observer bound.
     if sys.platform == "win32" and name.startswith("seed-"):
         script = (
-            "import faulthandler\n"
-            "faulthandler.dump_traceback_later(55, repeat=False)\n" + script
+            "from pathlib import Path\n"
+            "from Tests.Backup_Recovery.thread_diagnostics import observe_threads\n"
+            + "stop_diagnostics=observe_threads(Path("
+            + repr(str(root / (name + "-stacks.log")))
+            + "),interval=55)\n"
+            + script
+            + "\nstop_diagnostics()\n"
         )
         timeout = 120
     program = root / (name + ".py")
@@ -609,7 +617,9 @@ _CHILD_ENVIRONMENT_KEYS = (
 def _base_child_environment():
     """Retain only toolchain and native Windows interpreter requirements."""
     return {
-        **{key: os.environ[key] for key in _CHILD_ENVIRONMENT_KEYS if key in os.environ},
+        **{
+            key: os.environ[key] for key in _CHILD_ENVIRONMENT_KEYS if key in os.environ
+        },
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8",
     }

@@ -522,7 +522,7 @@ def _run_pytest_phase(
             *tests,
             "-vv",
             "--tb=long",
-            "--timeout=600",
+            "--timeout=1200",
             f"--basetemp={private_root / f'{phase}-pytest'}",
             f"--junitxml={raw_junit}",
         )

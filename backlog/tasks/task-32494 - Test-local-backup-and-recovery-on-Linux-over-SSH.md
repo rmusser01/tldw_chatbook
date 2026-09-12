@@ -1,7 +1,7 @@
 ---
 id: TASK-32494
 title: Test local backup and recovery on Linux over SSH
-status: In Progress
+status: Done
 created_date: 2026-09-12 14:57
 labels:
 - backup-recovery
@@ -10,7 +10,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md
 - backlog/decisions/126-complete-local-backup-and-recovery.md
-updated_date: 2026-09-12 16:36
+updated_date: 2026-09-12 19:16
 ---
 
 ## Description
@@ -29,10 +29,10 @@ User requested Linux SSH testing after opening PR2642 against dev. Exercise the 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Stage 1 — Private Linux host/tool/runtime inspection: Complete.
-Stage 2 — Targeted original helper/filesystem/archive baseline: Complete, with concrete failures preserved.
-Stage 3 — Final Python worker/transport/package tests and PR evidence: Complete. Full native recovery unavailable under existing Linux capability checks.
-ADR required: no new ADR. Existing backlog/decisions/126-complete-local-backup-and-recovery.md applies; no native platform contract changed.
+Stage 1 — Record the authorized Linux host, Python runtime, filesystem and exact public source: Complete.
+Stage 2 — Preserve original component and native failures; correct platform operations under TASK32496: Complete.
+Stage 3 — Run the full installed backup/restore/open/replacement/retained-copy rollback sequence on the actual SSH host: Complete at ebe86139753b56b7af9b363ea8e3b274723ed868.
+ADR: existing backlog/decisions/126-complete-local-backup-and-recovery.md amended by the approved cross-platform correction. Windows verification remains tracked separately in TASK32496.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -46,11 +46,13 @@ Prepared remote run-tests-python.py by adapting the existing private driver. It 
 Python firstattempt98b5d0b24 source: worker63/crypto42/packaging11 allSETUPERROR, zero executedassertions/skips; artifacts-python-20260912-091533 retained. Rootprivatepaths guard refusedshared_writable_parent. statproved newlycreatedruns-python andtimestampgroup were0775, whereas case/tmpwere0700 (remoteumask0002 plus pathlibparents defaults). Correcteddrivercreates/chmods onlyownrunsroot0700 andnewtimestampgroup0700 beforecases; olddriverretained asrun-tests-python-before-private-parents.py. No applicationcode/qualificationoverride. Prerequisiteworkerbatch rerun next.
 Final public revision 98b5d0b24c44def024f87ab54af61cb6b01b1511: worker 63, crypto 42, packaging 11 passed, no skips. Linux 6.12.107+deb13-amd64, x86_64, Python 3.12.8, Cryptodome 3.23.0, ext4; Go absent from PATH. Remote receipts artifacts-python-20260912-091812 and -091853 copied to /private/tmp/task32495-linux-success. Original Linux failures and first Python harness setup failure are retained. Only harness-owned parent permissions changed to 0700. PR2642 updated with final evidence and Linux limitations. See Docs/Development/backup-python-verification-2026-09-12.md and the linked baseline; lessons-testing-evidence.md records the private-parent incident.
 Reopened after user correctly rejected component-only Linux completion. User requires actual full backup/restore and verification on Linux, macOS and Windows. Native Linux work and Windows Actions tests are now explicitly authorized. Previous 116-pass result covers only encryption/package components.
+Latest actual SSH regression uses exact public ebe86139753b56b7af9b363ea8e3b274723ed868, codeloadSHA2563d4fad9d513510ddba9f81cc8577fc0aa9f4d02dc8ff06841bba8cdc6dd9e161. Linux Python3.12.8/ext4, private synthetic data, network guard/NullKeyring, Go absent PATH. Native49passed1.97s; three F9 modes passed129.70s; two-profile roundtrip passed66.65s. Combined replacement/later rollback still running. Artifacts retained under artifacts-platform-private-ebe86139753b56b7af9b363ea8e3b274723ed868-20260912-120739.
+Latest combined replacement/retained-copy rollback completed successfully:1passed284.56s. All latest Linux batches completed with0failures/errors/skips:49native1.97s;3F9modes129.70s;two-profile1case66.65s;combinedrollback1case284.56s. Source ebe86139753b56b7af9b363ea8e3b274723ed868; existing private artifacts retained on host. Linux full product verification is now complete, while cross-platform TASK32496 remains In Progress for Windows.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Completed requested SSH testing and updated PR2642. All 116 final Python component/package tests passed. Linux native backup/recovery remains unavailable due to existing Darwin-only filesystem operations and qualification; no platform support was added.
+Completed actual Linux SSH testing of full backup and recovery at ebe86139753b56b7af9b363ea8e3b274723ed868: 49 native tests, all three installed F9 create/restore/open modes, two-profile capture/restore/fresh application open, and combined replacement/retained-copy rollback all passed without skips or failures. Runtime: Python3.12.8, Linux6.12.107+deb13-amd64 x86_64, local ext4, Go absent from PATH. Private synthetic fixtures and raw logs remain on the authorized host. Exact source and results are in Docs/Development/backup-cross-platform-verification-2026-09-12.md and PR2642. This result supersedes the withdrawn component-only completion; Windows completion remains in TASK32496.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->

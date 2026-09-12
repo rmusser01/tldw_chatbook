@@ -14,7 +14,7 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 # The seed uses real native stores and proves public Complete capture, captured
 # note bytes, and resumed ordinary writes before archive packaging.
 _SEED = r"""
-import asyncio,faulthandler,json,os,sqlite3,sys,threading
+import asyncio,json,os,sqlite3,sys,threading
 from contextlib import closing
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
@@ -41,10 +41,12 @@ def inventory_diagnostic(inventory):
   except (OSError,RuntimeError):continue
  ancestor_pairs=sorted((parent.owner,parent.logical_id,child.owner,child.logical_id) for child,child_path in observed for parent,parent_path in observed if parent_path in child_path.parents and parent.owner!=child.owner)
  return {'issues':inventory.issues,'blocking':blocking,'ancestor_pairs':ancestor_pairs}
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures
 async def main():
- app=TldwCli();home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH'])
- diagnostics=(home/'seed-stacks.log').open('w',encoding='utf-8')
- faulthandler.dump_traceback_later(60,repeat=True,file=diagnostics)
+ home=Path.home()
+ stop_diagnostics=observe_threads(home/'seed-stacks.log',interval=60)
+ stop_failures=observe_recovery_failures(home/'recovery-failures.log')
+ app=TldwCli();selector=Path(os.environ['TLDW_CONFIG_PATH'])
  service=RecoveryService(default_control_root())
  from Tests.Backup_Recovery.test_restore_plan import sealed
  warm=sealed(home)
@@ -95,7 +97,7 @@ async def main():
   await asyncio.to_thread(service.close)
   monitoring.cancel();await asyncio.gather(monitoring,return_exceptions=True)
   await app._shutdown_app_owned_lifecycles();await app.tts_service.close();await app.tts_service.wait_closed()
-  faulthandler.cancel_dump_traceback_later();diagnostics.close()
+  stop_diagnostics();stop_failures()
 asyncio.run(main())
 print('retired and reopened')
 """

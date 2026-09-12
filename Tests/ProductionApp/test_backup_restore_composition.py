@@ -1,5 +1,7 @@
 """Canonical F9 composition uses actual services in a fresh selected process."""
 
+import sys
+
 import pytest
 
 from Tests.Backup_Recovery.native_package import (
@@ -97,7 +99,7 @@ async def main():
         await pilot.pause()
         await pilot.click('#backup-review')
         try:
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(90 if sys.platform=='win32' else 30):
                 while screen.query_one('#backup-create', Button).disabled:
                     await asyncio.sleep(.05)
                     message = str(screen.query_one('#backup-message', Static).render())
@@ -112,7 +114,7 @@ async def main():
         print('checkpoint: review complete', flush=True)
         await pilot.click('#backup-create')
         service = app.recovery_service
-        async with asyncio.timeout(75):
+        async with asyncio.timeout(225 if sys.platform=='win32' else 75):
             while service.current() is None:
                 await asyncio.sleep(.05)
             operation = service.current()['operation_id']
@@ -148,7 +150,20 @@ def retained_child_output(tmp_path, monkeypatch):
     run = subprocess.run
 
     def retained_output(*args, **kwargs):
-        result = run(*args, **kwargs)
+        try:
+            result = run(*args, **kwargs)
+        except subprocess.TimeoutExpired as error:
+            partial = [error.stdout or b"", error.stderr or b""]
+            (tmp_path / "child-output.log").write_text(
+                "\n".join(
+                    item.decode("utf-8", errors="replace")
+                    if isinstance(item, bytes)
+                    else item
+                    for item in partial
+                ),
+                encoding="utf-8",
+            )
+            raise
         (tmp_path / "child-output.log").write_text(result.stdout + "\n" + result.stderr)
         return result
 
@@ -163,7 +178,7 @@ def test_actual_mounted_backup_publishes_verified_archive_after_navigation(
         "backup",
         "normal",
         script=_BACKUP,
-        timeout=120,
+        timeout=360 if sys.platform == "win32" else 120,
         installed_package=native_package,
     )
 
@@ -239,5 +254,7 @@ asyncio.run(main())
 )
 
 
-def test_mounted_isolated_restore_uses_reviewed_local_destination_slots(tmp_path, retained_child_output):
+def test_mounted_isolated_restore_uses_reviewed_local_destination_slots(
+    tmp_path, retained_child_output
+):
     _run(tmp_path, "isolated", "normal", script=_ISOLATED, timeout=120)

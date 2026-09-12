@@ -12,6 +12,30 @@ Public codeload archive SHA256:
 Python worker SHA256 remains:
 `451a3dc158c3c1e8ee599f384a23046eb9d446ca94e8c5e04b8ffe9c6e068c05`.
 
+Latest directory-correction source:
+`ebe86139753b56b7af9b363ea8e3b274723ed868`.
+Public codeload archive SHA256:
+`3d4fad9d513510ddba9f81cc8577fc0aa9f4d02dc8ff06841bba8cdc6dd9e161`.
+Its full macOS product sequence passed all five cases in 335.28 seconds: three
+F9 create/restore/open modes, two-profile capture/restore/open, and combined
+replacement/later rollback. Linux passed all 49 native cases (1.97 seconds),
+three F9 modes (129.70 seconds), the two-profile roundtrip (66.65 seconds), and
+combined replacement/later rollback (284.56 seconds), with no failures or skips.
+Windows full run
+[34713157016](https://github.com/rmusser01/tldw_chatbook/actions/runs/34713157016)
+passed all 42 native tests, including nested directory publication and installed
+metadata, but passed only 15 of 22 product cases (seven failures, no skips).
+All 22 artifact hashes matched. Three console cases exceeded their 65-second
+backup observers before restore; mounted backup exceeded its outer observer.
+Replacement reported a terminal capture failure. Two seed processes exited with
+Windows access violation while their timed stack dumps were printing, consistent
+with the [CPython timed-dump race](https://github.com/python/cpython/issues/140815).
+That is a diagnostic hypothesis, not proof of the crash cause. The next test
+correction uses a bounded Python stack observer and retains genuine crash detection
+and original operation errors. Application deadlines remain unchanged.
+Full Windows recovery is still unverified. Earlier results below remain distinct
+historical evidence.
+
 The local filesystem interface leaves POSIX's standard-library os unchanged.
 Linux uses renameat2 no-replace, fsync and flock; macOS retains native exclusive
 rename and full-sync; Windows uses Python ctypes native handles, ACL checks,

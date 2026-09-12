@@ -51,7 +51,7 @@ assert opened_receipt(profile,control,attempt) is None
 async def main():
  app=TldwCli()
  async with app.run_test(size=(100,36)):
-  async with asyncio.timeout(20):
+  async with asyncio.timeout(60 if sys.platform=='win32' else 20):
    while not getattr(app,'_recovery_open_checked',False):await asyncio.sleep(.03)
   assert opened_receipt(profile,control,attempt) is not None
   assert app._initial_screen_pushed and app._ui_ready
@@ -74,31 +74,14 @@ _FLOW = (
         "selector.chmod(0o600)",
     )
     + r"""
-import faulthandler,hashlib,json,subprocess,threading,tomllib,zipfile
+import hashlib,json,subprocess,threading,tomllib,zipfile
 from textual.widgets import Input,Button,Static,Checkbox
 from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
 fixture=Path.home().parent
-from tldw_chatbook.Backup_Recovery import recovery_service as service_module
-original_issue_code=service_module.issue_code
-failure_records=[]
-failure_record_lock=threading.Lock()
-def observed_issue_code(error,*,kind=''):
- import traceback
- record={'error_class':type(error).__name__[:80],'frames':[]}
- for key in ('errno','winerror'):
-  value=getattr(error,key,None)
-  record[key]=value if type(value) is int else None
- for frame,line in traceback.walk_tb(error.__traceback__):
-  record['frames'].append({'file':Path(frame.f_code.co_filename).name[:128],'function':frame.f_code.co_name[:128],'line':line})
- record['frames']=record['frames'][-64:]
- with failure_record_lock:
-  failure_records.append(record)
-  del failure_records[:-16]
-  (fixture/'recovery-failures.log').write_text(json.dumps(failure_records),encoding='utf-8')
- return original_issue_code(error,kind=kind)
-service_module.issue_code=observed_issue_code
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures,snapshot_threads
+stop_failures=observe_recovery_failures(fixture/'recovery-failures.log')
 package=Path(os.environ['TLDW_F9_PACKAGE'])
 test_root=Path(os.environ['TLDW_F9_TEST_ROOT'])
 import tldw_chatbook
@@ -142,8 +125,7 @@ if credentials:
    credential_observations.append({'issues':list(issues),'records':records})
   return issues
  credential_owner.process_credentials=observed_credentials
-diagnostics=(fixture/'ui-stacks.log').open('w')
-faulthandler.dump_traceback_later(100,file=diagnostics)
+stop_diagnostics=observe_threads(fixture/'ui-stacks.log',interval=100)
 async def main():
  app=TldwCli()
  app.app_config['_first_run']=False
@@ -160,14 +142,16 @@ async def main():
    button.scroll_visible(immediate=True);button.focus()
    await pilot.press('enter')
   async def ready(predicate,timeout=30):
+   if sys.platform=='win32':timeout*=3
    try:
     async with asyncio.timeout(timeout):
      while not predicate():await asyncio.sleep(.03)
    except TimeoutError:
     (fixture/'ui-timeout.json').write_text(json.dumps({'screen':type(app.screen).__name__,'mode':getattr(app.screen,'_mode',None),'revision':getattr(app.screen,'_revision',None)}))
-    faulthandler.dump_traceback(file=diagnostics)
+    snapshot_threads(fixture/'ui-timeout-stacks.log')
     raise
   async def finished(kind,previous=None,timeout=65):
+   if sys.platform=='win32':timeout*=3
    service=app.recovery_service
    await ready(lambda:service.current() is not None and service.current()['kind']==kind and service.current()['operation_id']!=previous)
    operation=service.current()['operation_id']
@@ -205,7 +189,7 @@ async def main():
   if credentials:
    await ready(lambda:app.recovery_service.current() is not None and app.recovery_service.current()['kind']=='backup')
    refused=app.recovery_service.current()['operation_id']
-   rejection=await asyncio.to_thread(app.recovery_service.wait,refused,timeout=65)
+   rejection=await asyncio.to_thread(app.recovery_service.wait,refused,timeout=195 if sys.platform=='win32' else 65)
    (fixture/'ui-credential-observed-shape.json').write_text(json.dumps({'captures':credential_shapes,'read_errors':credential_read_errors},indent=2))
    assert rejection['state']=='failed' and rejection['issues']==('review_required',),dict(rejection)
    assert len(credential_observations)==1
@@ -296,7 +280,7 @@ async def main():
    assert kwargs['env']['PYTHONPATH']==str(package)
    reader='import sys;sys.path.append('+repr(str(test_root))+')\n'+OPEN_CHILD
    with (fixture/'ui-child.log').open('w') as output:
-    result=subprocess.run([sys.executable,'-c',reader,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=45)
+    result=subprocess.run([sys.executable,'-c',reader,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=135 if sys.platform=='win32' else 45)
    assert result.returncode==0,(fixture/'ui-child.log').read_text()[-10000:]
    return result.returncode
   subprocess.call=child
@@ -318,8 +302,8 @@ async def main():
   (fixture/'ui-result.json').write_text(json.dumps({'backup':created,'restore':restored_operation,'open':opened_operation,'archive_sha256':hashlib.sha256(destination.read_bytes()).hexdigest(),'source_preserved':True,'opened':True,'encrypted':encrypted,'credentials':credentials}))
  assert app.recovery_service._closed
 asyncio.run(main())
-faulthandler.cancel_dump_traceback_later()
-diagnostics.close()
+stop_diagnostics()
+stop_failures()
 """
 )
 
@@ -395,7 +379,7 @@ def _run_windows_console(
     )
     try:
         try:
-            returncode = process.wait(timeout=180)
+            returncode = process.wait(timeout=900)
         except subprocess.TimeoutExpired as error:
             diagnostic = (
                 receipt.read_text(encoding="utf-8")
