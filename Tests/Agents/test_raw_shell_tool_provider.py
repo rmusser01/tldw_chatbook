@@ -21,6 +21,9 @@ class _RuntimeProbe:
         self.armed = armed
         self.execute_calls: list[object] = []
 
+    def model_session_granted(self, session_id):
+        return False
+
     def execute(self, request, on_event):
         self.execute_calls.append((request, on_event))
         raise AssertionError("Slice 1 must not launch the raw executor")
@@ -264,3 +267,118 @@ def test_console_raw_shell_resolution_captures_the_exact_named_profile(
     assert service.calls == [
         (RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME, "research")
     ]
+
+
+@pytest.mark.parametrize(
+    "first,final,disabled,expected",
+    [
+        ("deny", "ask", False, "denied"),
+        ("ask", "deny", False, "denied"),
+        ("error", "ask", False, None),
+        ("ask", "error", False, None),
+        ("deny", "deny", True, None),
+    ],
+)
+def test_raw_actual_off_reads_supply_only_authoritative_denial(
+    tmp_path, first, final, disabled, expected
+):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+
+    runtime = _RuntimeProbe()
+    provider = _provider(tmp_path, runtime=runtime)
+    args = {"command": "printf hello"}
+    row = provider.pending_gate_for(ToolCall("shell_exec", args, "c1"))
+    provider.apply_batch_decisions("run", {"c1": "approve_once"}, [row])
+    states = iter([first, final])
+
+    def resolve(_hub):
+        state = next(states)
+        if state == "error":
+            raise RuntimeError("unavailable")
+        return EffectiveToolState(state=state, origin="tool_override")
+
+    provider._resolve_state = resolve
+    runtime.permitted = not disabled
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("raw_shell:shell_exec", args)
+    assert result.ok is False
+    assert result.approval_decision == expected
+    assert runtime.execute_calls == []
+
+
+@pytest.mark.parametrize("unanswered,expected", [(False, "denied"), (True, None)])
+def test_raw_stamped_answer_survives_scope_and_is_consumed(
+    tmp_path, unanswered, expected
+):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    provider = _provider(tmp_path)
+    args = {"command": "printf hello"}
+    row = provider.pending_gate_for(ToolCall("shell_exec", args, "c1"))
+    decisions = ApprovalDecisions({"c1": "deny"})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"c1"})
+    provider.apply_batch_decisions("run", decisions, [row])
+    with provider.stamp_scope("run"):
+        provider.apply_batch_decisions("run", {"c1": "approve_once"}, [row])
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("raw_shell:shell_exec", args)
+        next_result = provider.invoke("raw_shell:shell_exec", args)
+    assert result.approval_decision == expected
+    assert next_result.approval_decision is None
+
+
+def test_raw_opaque_runtime_refusal_supplies_no_answer_fact(tmp_path):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
+
+    runtime = _RuntimeProbe()
+    provider = _provider(tmp_path, runtime=runtime)
+    args = {"command": "printf hello"}
+    row = provider.pending_gate_for(ToolCall("shell_exec", args, "c1"))
+    provider.apply_batch_decisions("run", {"c1": "approve_once"}, [row])
+    runtime.execute = lambda request, on_event: RawCliResult(
+        invocation_id="c1",
+        caller="model",
+        resolved_shell="bash",
+        initial_directory=tmp_path,
+        elapsed_seconds=0,
+        stdout_preview="",
+        stderr_preview="admission refused",
+        record_output="",
+        exit_code=None,
+        terminal_state="refused",
+        truncated=False,
+        cleanup_proven=True,
+    )
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("raw_shell:shell_exec", args)
+    assert not result.ok and result.outcome == "blocked"
+    assert result.approval_decision is None
+
+
+def test_raw_off_without_pending_review_and_final_disabled_have_distinct_facts(
+    tmp_path,
+):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+
+    provider = _provider(
+        tmp_path, state=EffectiveToolState(state="deny", origin="tool_override")
+    )
+    args = {"command": "printf hello"}
+    assert provider.pending_gate_for(ToolCall("shell_exec", args, "c1")) is None
+    result = provider.invoke("raw_shell:shell_exec", args)
+    assert not result.ok and result.approval_decision == "denied"
+    provider = _provider(tmp_path)
+    row = provider.pending_gate_for(ToolCall("shell_exec", args, "c1"))
+    provider.apply_batch_decisions("run", {"c1": "approve_once"}, [row])
+    enabled = iter([True, False])
+    provider._local_tools_enabled = lambda: next(enabled)
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("raw_shell:shell_exec", args)
+    assert not result.ok and result.approval_decision is None

@@ -1289,11 +1289,20 @@ class BuiltinToolProvider:
         # ever writes, so such a call falls through to the resolved
         # permission state exactly as it did before per-run keying.
         try:
-            refusal = self._resolve_gate().check(tool, current_run_id())
+            gate = self._resolve_gate()
+            detailed_check = getattr(gate, "check_detailed", None)
+            if callable(detailed_check):
+                decision = detailed_check(tool, current_run_id())
+                refusal = decision.refusal
+                approval_decision = decision.approval_decision
+            else:
+                # Legacy injected gates retain their string-only contract.
+                refusal = gate.check(tool, current_run_id())
+                approval_decision = None
         except Exception as exc:  # noqa: BLE001 — fail closed
             return ToolResult(ok=False, error=f"permission check failed: {exc}")
         if refusal is not None:
-            return ToolResult.blocked(refusal)
+            return ToolResult.blocked(refusal, approval_decision=approval_decision)
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
 
         authority = (
@@ -1301,6 +1310,7 @@ class BuiltinToolProvider:
             if name in _FILE_AUTHORITY_BUILTIN_NAMES
             else nullcontext()
         )
+        execution_started = False
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no
@@ -1317,16 +1327,19 @@ class BuiltinToolProvider:
                 write_binding_ids=self._workspace_write_binding_ids,
                 binding_authority=self._workspace_binding_authority,
             ):
+                execution_started = True
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
             return ToolResult(
                 ok=False,
                 error=redact_root_locator(str(exc), self._sandbox_root),
+                approval_decision=approval_decision if execution_started else None,
             )
         if isinstance(raw, dict) and raw.get("error"):
             return ToolResult(
                 ok=False,
                 error=redact_root_locator(str(raw["error"]), self._sandbox_root),
+                approval_decision=approval_decision,
             )
         if isinstance(raw, dict):
             # Raw before/after contents captured for UI diff rendering
@@ -1367,7 +1380,7 @@ class BuiltinToolProvider:
             }
         raw = redact_root_locator(raw, self._sandbox_root)
         content = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
-        return ToolResult(ok=True, content=content)
+        return ToolResult(ok=True, content=content, approval_decision=approval_decision)
 
 
 def intersect_skill_tools(

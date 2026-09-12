@@ -13,6 +13,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
+    LOCAL_USER_DENY_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
 from tldw_chatbook.Agents.run_context import (
@@ -147,7 +148,7 @@ def _deny_callback(pendings):
         pytest.param(
             {"state": ASK, "approval_callback": _deny_callback},
             "denied",
-            LOCAL_DENY_REFUSAL,
+            LOCAL_USER_DENY_REFUSAL,
             id="user-deny",
         ),
     ],
@@ -905,3 +906,101 @@ def test_callback_failure_logs_only_safe_fixed_metadata(
     assert exception_sentinel not in rendered
     assert callback_input_sentinel not in rendered
     assert traceback_local_sentinel not in rendered
+
+
+@pytest.mark.parametrize(
+    "raw,unanswered,expected",
+    [
+        ("deny", False, "denied"),
+        ("deny", True, None),
+        ("approve_once", False, "approved"),
+        ("allow_matching", False, "approved"),
+        ("timeout", False, None),
+        (None, False, None),
+    ],
+)
+def test_review_to_virtual_invocation_answer_authority(
+    tmp_path, raw, unanswered, expected
+):
+    from tldw_chatbook.Agents.agent_models import normalize_tool_review
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ApprovalDecisions,
+        build_virtual_cli_review_hook,
+    )
+
+    provider = make_provider(tmp_path)
+    args = {"command": "ls", "argv": ["."]}
+    call = ToolCall("virtual_cli", args, "c1")
+    decisions = ApprovalDecisions({"c1": raw})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"c1"})
+    review = build_virtual_cli_review_hook(provider, lambda rows: decisions)
+    values = review([call], "run")
+    assert normalize_tool_review(values["c1"]).verdict == "proceed"
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("virtual_cli", args)
+        consumed = provider.invoke("virtual_cli", args)
+    assert result.approval_decision == expected
+    assert result.ok == (raw in {"approve_once", "allow_matching"})
+    assert consumed.approval_decision is None
+
+
+@pytest.mark.parametrize(
+    "state,kill,expected",
+    [(DENY, False, "denied"), (ASK, True, None), (ASK, False, None)],
+)
+def test_virtual_off_and_nondecision_facts(tmp_path, state, kill, expected):
+    provider = make_provider(tmp_path, state=state, kill_switch=lambda: kill)
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    assert result.ok is False and result.outcome == "blocked"
+    assert result.approval_decision == expected
+
+
+@pytest.mark.parametrize(
+    "raw,unanswered,expected",
+    [
+        ("deny", False, "denied"),
+        ("deny", True, None),
+        ("approve_once", False, "approved"),
+        ("timeout", False, None),
+        (None, False, None),
+        ({}, False, None),
+    ],
+)
+def test_virtual_direct_callback_answer_authority(tmp_path, raw, unanswered, expected):
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    def decide(rows):
+        key = rows[0].call_id or rows[0].llm_name
+        decisions = ApprovalDecisions({key: raw})
+        if unanswered:
+            decisions.unresolved_keys = frozenset({key})
+        return decisions
+
+    provider = make_provider(tmp_path, approval_callback=decide)
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    assert result.approval_decision == expected
+    assert result.ok == (raw == "approve_once")
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        ("tool_failure", "approved"),
+        ("root_pin_failed", None),
+        ("authority_unavailable", None),
+    ],
+)
+def test_virtual_approved_execution_failure_is_distinct_from_authority_loss(
+    tmp_path, failure, expected
+):
+    provider = make_provider(
+        tmp_path, workspace_executor=RecordingWorkspaceExecutor(error=failure)
+    )
+    args = {"command": "ls", "argv": ["."]}
+    row = provider.pending_gate_for(ToolCall("virtual_cli", args, "c1"))
+    provider.apply_batch_decisions("run", {"c1": "approve_once"}, [row])
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("virtual_cli", args)
+    assert not result.ok
+    assert result.approval_decision == expected

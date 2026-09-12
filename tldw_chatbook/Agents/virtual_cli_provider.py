@@ -6,6 +6,7 @@ import copy
 import re
 import threading
 from contextlib import contextmanager, nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, ContextManager, Iterator, Mapping, Sequence
 
@@ -33,6 +34,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutor,
 )
 
+from .approval_provenance import ApprovalStamp, approval_key_unanswered, approval_stamp
 from .agent_models import ToolCall, ToolCatalogEntry, ToolResult, ToolSchema
 from .local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
@@ -211,7 +213,7 @@ class VirtualCliProvider:
             if result_redaction_root is not None
             else None
         )
-        self._stamps: dict[tuple[str, str], str] = {}
+        self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         self._stamps_lock = threading.Lock()
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
@@ -374,9 +376,22 @@ class VirtualCliProvider:
                 key = row.call_id or row.tool_name
                 decision = decisions.get(key)
                 if decision is not None:
-                    self._stamps[(run_id, key)] = decision
+                    self._stamps[(run_id, key)] = approval_stamp(
+                        decision,
+                        unanswered=approval_key_unanswered(decisions, key),
+                        allowing=(
+                            "approve_once",
+                            "approve_session",
+                            "always_allow",
+                            "allow_matching",
+                        ),
+                    )
 
     def _pop_stamp(self, run_id: str, command: str) -> str | None:
+        stamp = self._pop_stamp_detail(run_id, command)
+        return stamp.decision if stamp is not None else None
+
+    def _pop_stamp_detail(self, run_id: str, command: str) -> ApprovalStamp | None:
         key = current_tool_call_id() or command
         with self._stamps_lock:
             return self._stamps.pop((run_id, key), None)
@@ -431,7 +446,8 @@ class VirtualCliProvider:
             return ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
         if state.state == "deny":
             self._record(hub, POLICY_DENIED_DECISION)
-            return ToolResult.blocked(LOCAL_DENY_REFUSAL)
+            return ToolResult.blocked(LOCAL_DENY_REFUSAL, approval_decision="denied")
+        fact = None
         if state.state == "allow":
             verdict = "allow"
         elif self._arg_rule_allows_safe(hub, args):
@@ -440,7 +456,9 @@ class VirtualCliProvider:
             # resolves allow without re-asking.
             verdict = "allow"
         else:
-            verdict = self._ask_verdict(hub, command, args)
+            detail = self._ask_verdict_detail(hub, command, args)
+            verdict = detail.decision
+            fact = detail.approval_decision
         if verdict != "allow":
             self._record(hub, "denied-timeout" if verdict == "timeout" else "denied")
             # Qodo #7: same split as `LocalToolProvider._invoke_detailed` --
@@ -453,7 +471,7 @@ class VirtualCliProvider:
                 if verdict == "timeout"
                 else LOCAL_USER_DENY_REFUSAL
             )
-            return ToolResult.blocked(refusal)
+            return ToolResult.blocked(refusal, approval_decision=fact)
 
         def execute() -> ToolResult:
             if not self._authority_is_valid(authority):
@@ -499,16 +517,28 @@ class VirtualCliProvider:
         scope = scope_factory() if scope_factory else nullcontext()
         try:
             with scope:
-                return execute()
+                result = execute()
+                return (
+                    replace(result, approval_decision=fact)
+                    if result.outcome != "blocked"
+                    else result
+                )
         except Exception:
             return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
 
     def _ask_verdict(self, hub: HubTool, command: str, args: dict) -> str:
-        stamp = self._pop_stamp(current_run_id(), command)
-        if stamp in {"approve_once", "approve_session", "always_allow"}:
+        """Keep the existing raw verdict accessor over the detailed decision."""
+        return self._ask_verdict_detail(hub, command, args).decision
+
+    def _ask_verdict_detail(
+        self, hub: HubTool, command: str, args: dict
+    ) -> ApprovalStamp:
+        detail = self._pop_stamp_detail(current_run_id(), command)
+        stamp = detail.decision if detail is not None else None
+        if stamp in ("approve_once", "approve_session", "always_allow"):
             if stamp != "approve_once":
                 self._persist(hub, stamp)
-            return "allow"
+            return ApprovalStamp("allow", detail.approval_decision)
         # task-32281: a pre-decided "allow_matching" stamp used to match
         # neither this branch nor the deny/timeout one below and fall
         # through to a re-ask (or "timeout" with no callback) -- the
@@ -517,22 +547,22 @@ class VirtualCliProvider:
         # `MCPToolProvider._apply_verdict()`'s `"allow_matching"` handling.
         if stamp == "allow_matching":
             self._persist_arg_rule_call(hub, args)
-            return "allow"
-        if stamp in {"deny", "timeout"}:
-            return stamp
+            return ApprovalStamp("allow", detail.approval_decision)
+        if stamp in ("deny", "timeout"):
+            return detail
         if self._session_approved(hub):
-            return "allow"
+            return ApprovalStamp("allow", "approved")
         if self._approval_callback is None:
-            return "timeout"
+            return ApprovalStamp("timeout")
         pending = self.pending_gate_for(ToolCall(VIRTUAL_CLI_TOOL_NAME, args))
         if pending is None:
-            return "timeout"
+            return ApprovalStamp("timeout")
         try:
             decisions = self._approval_callback([pending]) or {}
         except Exception:
-            return "timeout"
+            return ApprovalStamp("timeout")
         decision = decisions.get(pending.call_id or pending.llm_name, "timeout")
-        if decision in {"approve_session", "always_allow"}:
+        if decision in ("approve_session", "always_allow"):
             self._persist(hub, decision)
         # task-32281: the live-callback counterpart of the stamp branch
         # above -- "allow_matching" used to fall through to the final
@@ -541,11 +571,24 @@ class VirtualCliProvider:
         # then DENIED outright. Persisting here mirrors the stamp path.
         elif decision == "allow_matching":
             self._persist_arg_rule_call(hub, args)
-        return (
+        fact = approval_stamp(
+            decision,
+            unanswered=approval_key_unanswered(
+                decisions, pending.call_id or pending.llm_name
+            ),
+            allowing=(
+                "approve_once",
+                "approve_session",
+                "always_allow",
+                "allow_matching",
+            ),
+        ).approval_decision
+        return ApprovalStamp(
             "allow"
             if decision
-            in {"approve_once", "approve_session", "always_allow", "allow_matching"}
-            else decision
+            in ("approve_once", "approve_session", "always_allow", "allow_matching")
+            else decision,
+            fact,
         )
 
     def _root_is_valid(self) -> bool:

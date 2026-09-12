@@ -43,7 +43,7 @@ import contextlib
 import json
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -54,6 +54,12 @@ from loguru import logger
 # so the module stays off the UI-ready census path.
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+
+from tldw_chatbook.Agents.approval_provenance import (
+    ApprovalStamp,
+    approval_key_unanswered,
+    approval_stamp,
+)
 from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
@@ -412,7 +418,7 @@ class MCPToolProvider:
         sub-agents use ONE provider), and the old whole-dict REPLACE meant
         any run's turn destroyed every other run's verdicts.
         """
-        self._stamped_decisions: dict[tuple[str, str], str] = {}
+        self._stamped_decisions: dict[tuple[str, str], ApprovalStamp] = {}
         # Lock, not RLock: every critical section below is a short,
         # self-contained mutation of this one dict, and no locked method
         # calls another locked method (`stamp_scope` explicitly does NOT
@@ -637,7 +643,16 @@ class MCPToolProvider:
                 if key[0] != run_id
             }
             for llm_name, verdict in (decisions or {}).items():
-                self._stamped_decisions[(run_id, llm_name)] = verdict
+                self._stamped_decisions[(run_id, llm_name)] = approval_stamp(
+                    verdict,
+                    unanswered=approval_key_unanswered(decisions, llm_name),
+                    allowing=(
+                        "approve_once",
+                        "approve_session",
+                        "always_allow",
+                        "allow_matching",
+                    ),
+                )
 
     def stamped_decision(self, run_id: str, llm_name: str) -> str | None:
         """Peek at `run_id`'s stamped verdict for `llm_name`, if any.
@@ -658,6 +673,12 @@ class MCPToolProvider:
             The stamped verdict string for `llm_name` this turn, or
             `None` if it has no stamp.
         """
+        stamp = self._stamped_decision_detail(run_id, llm_name)
+        return stamp.decision if stamp is not None else None
+
+    def _stamped_decision_detail(
+        self, run_id: str, llm_name: str
+    ) -> ApprovalStamp | None:
         with self._decisions_lock:
             return self._stamped_decisions.get((run_id, llm_name))
 
@@ -945,9 +966,14 @@ class MCPToolProvider:
         # any run this is `""`, which matches no stamp a review hook ever
         # writes, so such a call falls through to the fresh gate below --
         # the same path it took before batch review existed.
-        stamped = self.stamped_decision(current_run_id(), tool_id)
+        stamped = self._stamped_decision_detail(current_run_id(), tool_id)
         if stamped is not None:
-            return self._apply_verdict(stamped, tool, call_args)
+            return self._apply_verdict(
+                stamped.decision,
+                tool,
+                call_args,
+                unanswered=stamped.approval_decision is None,
+            )
 
         try:
             # Task 7 (controller ruling from Task 6's review): same fix as
@@ -968,7 +994,7 @@ class MCPToolProvider:
             # you" in Audit) -- one bucket for both made "what did I
             # refuse?" unanswerable.
             self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION)
-            return ToolResult.blocked(DENY_REFUSAL)
+            return ToolResult.blocked(DENY_REFUSAL, approval_decision="denied")
 
         if state.state == "allow":
             return self._execute(tool, call_args, decision="allowed")
@@ -979,7 +1005,10 @@ class MCPToolProvider:
             # (and the model-facing execution record) distinct so Findings
             # mode can tell "server default was allow" apart from "the
             # user approved this session".
-            return self._execute(tool, call_args, decision=APPROVED_SESSION_DECISION)
+            return replace(
+                self._execute(tool, call_args, decision=APPROVED_SESSION_DECISION),
+                approval_decision="approved",
+            )
 
         # state == "ask"
         if self._arg_rule_allows_safe(tool, call_args):
@@ -1011,7 +1040,12 @@ class MCPToolProvider:
         # no one made. `_apply_verdict`'s fall-through maps it to
         # `UNRESOLVED_REFUSAL`; the fail-closed posture is unchanged.
         verdict = (decisions or {}).get(tool_id, "unresolved")
-        return self._apply_verdict(verdict, tool, call_args)
+        return self._apply_verdict(
+            verdict,
+            tool,
+            call_args,
+            unanswered=approval_key_unanswered(decisions or {}, tool_id),
+        )
 
     # -- internals ----------------------------------------------------------
 
@@ -1115,7 +1149,9 @@ class MCPToolProvider:
             )
             return False
 
-    def _apply_verdict(self, verdict: str, tool: HubTool, args: dict) -> ToolResult:
+    def _apply_verdict(
+        self, verdict: str, tool: HubTool, args: dict, *, unanswered: bool = False
+    ) -> ToolResult:
         """Apply one verdict's side effects (if any), then execute or refuse.
 
         `"approve_once"` has no side effect; `"approve_session"` writes the
@@ -1138,7 +1174,10 @@ class MCPToolProvider:
         only ever save that one redundant write.
         """
         if verdict == "approve_once":
-            return self._execute(tool, args, decision="approved")
+            return replace(
+                self._execute(tool, args, decision="approved"),
+                approval_decision=None if unanswered else "approved",
+            )
         if verdict == "approve_session":
             already_approved = self._is_session_approved_safe(tool)
             self._safe_side_effect(
@@ -1149,7 +1188,10 @@ class MCPToolProvider:
                 what="approve_for_session",
             )
             decision = APPROVED_SESSION_DECISION if already_approved else "approved"
-            return self._execute(tool, args, decision=decision)
+            return replace(
+                self._execute(tool, args, decision=decision),
+                approval_decision=None if unanswered else "approved",
+            )
         if verdict == "allow_matching":
             if set(tool.tags) & HIGH_RISK_TAGS:
                 # R22: `arg_rule_allows` refuses for these tools, so the
@@ -1160,7 +1202,10 @@ class MCPToolProvider:
                     f"{tool.server_key}/{tool.name} -- high-risk tags are "
                     "never quieted by an argument rule; approving once"
                 )
-                return self._execute(tool, args, decision="approved")
+                return replace(
+                    self._execute(tool, args, decision="approved"),
+                    approval_decision=None if unanswered else "approved",
+                )
             # TASK-26012: persist an allow scoped to EXACTLY the displayed
             # arguments (AC#3) -- never a whole-tool allow. Rug-pull hashing
             # happens service-side against this live HubTool.
@@ -1175,7 +1220,10 @@ class MCPToolProvider:
                 tool,
                 what="add_tool_arg_rule",
             )
-            return self._execute(tool, args, decision="approved")
+            return replace(
+                self._execute(tool, args, decision="approved"),
+                approval_decision=None if unanswered else "approved",
+            )
         if verdict == "always_allow":
             self._safe_side_effect(
                 lambda: self._service.set_tool_state(
@@ -1191,7 +1239,10 @@ class MCPToolProvider:
                 tool,
                 what="set_tool_state",
             )
-            return self._execute(tool, args, decision="approved")
+            return replace(
+                self._execute(tool, args, decision="approved"),
+                approval_decision=None if unanswered else "approved",
+            )
         if verdict == "timeout":
             self._record_decision_safe(tool, decision="denied-timeout")
             return ToolResult.blocked(TIMEOUT_REFUSAL)
@@ -1199,7 +1250,9 @@ class MCPToolProvider:
             # TASK-294: an explicit card "Deny" gets USER provenance -- a
             # person said no to this call; the permissions were not Off.
             self._record_decision_safe(tool, decision="denied")
-            return ToolResult.blocked(USER_DENY_REFUSAL)
+            return ToolResult.blocked(
+                USER_DENY_REFUSAL, approval_decision=None if unanswered else "denied"
+            )
         # An unrecognized or MISSING verdict fails closed -- but blaming the
         # user here would be the same provenance lie in the other direction:
         # nobody decided anything. Neutral copy, still a refusal -- and the

@@ -15,7 +15,11 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
-from tldw_chatbook.Agents.agent_models import ToolCall, ToolResult
+from tldw_chatbook.Agents.agent_models import (
+    normalize_tool_review,
+    ToolCall,
+    ToolResult,
+)
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LocalApprovalEffect,
@@ -214,8 +218,10 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
         RUN,
     )
     assert len(seen) == 1 and len(seen[0]) == 2  # ONE round trip for the batch
-    assert verdicts == {"fs_list": "proceed"}
-    assert p._stamps == {(RUN, "fs_list"): "approve_once"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {"fs_list": "proceed"}
+    assert p.stamped(RUN, "fs_list") == "approve_once"
 
 
 def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
@@ -248,11 +254,14 @@ def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
     )
 
     assert [row.call_id for row in seen[0]] == ["call-denied", "call-session"]
-    assert verdicts == {
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {
         "watchlists_create_collection": "proceed",
+        "call-session": "proceed",
         "call-denied": USER_DENIED_REFUSAL.format(name="watchlists_create_collection"),
     }
-    assert p._stamps == {(RUN, "watchlists_create_collection"): "approve_session"}
+    assert p.stamped(RUN, "watchlists_create_collection") == "approve_session"
 
 
 @pytest.mark.parametrize(
@@ -292,7 +301,13 @@ def test_local_same_name_broad_approval_scope_survives_later_narrow_scope(
         RUN,
     )
 
-    assert verdicts == {"watchlists_create_collection": "proceed"}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    } == {
+        "watchlists_create_collection": "proceed",
+        "call-broad": "proceed",
+        "call-narrow": "proceed",
+    }
     assert p.stamped(RUN, "watchlists_create_collection") == broad
 
 
@@ -350,7 +365,12 @@ def test_hook_skips_non_ask_calls(tmp_path):
     hook = build_local_review_hook(
         p, lambda pending: (_ for _ in ()).throw(AssertionError("must not ask"))
     )
-    assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
+    assert {
+        key: normalize_tool_review(value).verdict
+        for key, value in hook(
+            [ToolCall(name="fs_list", args={"path": "."})], RUN
+        ).items()
+    } == {}
 
 
 def test_combined_hook_does_not_overwrite_a_local_refusal(tmp_path):
@@ -364,12 +384,19 @@ def test_combined_hook_does_not_overwrite_a_local_refusal(tmp_path):
     # This deliberately impossible double-owner arrangement pins the merge
     # safety rule: a later refusal cannot be weakened to proceed.
     out = hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
-    assert out == {"fs_list": USER_DENIED_REFUSAL.format(name="fs_list")}
+    assert {
+        key: normalize_tool_review(value).verdict for key, value in out.items()
+    } == {"fs_list": USER_DENIED_REFUSAL.format(name="fs_list")}
 
 
 def test_combined_hook_empty_list_is_noop():
     hook = build_combined_review_hook([])
-    assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
+    assert {
+        key: normalize_tool_review(value).verdict
+        for key, value in hook(
+            [ToolCall(name="fs_list", args={"path": "."})], RUN
+        ).items()
+    } == {}
 
 
 def test_combined_hook_clears_later_providers_when_earlier_hook_raises(tmp_path):
@@ -413,7 +440,7 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
     with pytest.raises(RuntimeError):
         hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
     assert p1._stamps == {}  # cleared at entry, round trip raised
-    assert p2._stamps == {(RUN, "fs_list"): "deny"}  # fresh THIS-turn decision
+    assert p2.stamped(RUN, "fs_list") == "deny"  # fresh THIS-turn decision
 
 
 def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
@@ -580,6 +607,10 @@ def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
     controller.app = app
+    from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+
+    controller.set_pending_question = None
+    controller._interrupt_host = InterruptRoundHost(controller)
     controller._agent_bridge = None
     controller._pending_approval_event = None
     controller._pending_approval_decisions = None
@@ -1252,13 +1283,13 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     (outside / "secret.txt").write_text("outside")
     selected.symlink_to(outside, target_is_directory=True)
 
-    assert (
-        review(
+    assert {
+        key: normalize_tool_review(value).verdict
+        for key, value in review(
             [ToolCall(name="fs_read", args={"path": "secret.txt"})],
             "run-root-swap",
-        )
-        == {}
-    )
+        ).items()
+    } == {}
     result = local_provider.invoke("fs_read", {"path": "secret.txt"})
     assert result.ok is False
     assert "root changed" in result.error.lower()
@@ -1583,7 +1614,9 @@ def test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial(tmp_path
     )
 
     # Fails closed, exactly as before.
-    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="fs_list")
+    assert normalize_tool_review(
+        verdicts["call-1"]
+    ).verdict == USER_DENIED_REFUSAL.format(name="fs_list")
     assert isinstance(seen[0], ApprovalDecisions)
     assert seen[0].unresolved_keys == frozenset({"call-1"})
     assert denials == [], "a headless fail-closed deny was audited as the user's"

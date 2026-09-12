@@ -40,6 +40,10 @@ import weakref
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Agents.approval_provenance import (
+    approval_key_unanswered,
+    selected_approval_key,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
@@ -325,7 +329,12 @@ from tldw_chatbook.Chat.library_preparation import (
     library_preparation_event_for_outcome,
 )
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
-from tldw_chatbook.Agents.agent_models import WorkOrigin
+from tldw_chatbook.Agents.agent_models import (
+    ApprovalDecision,
+    ToolReviewDecision,
+    ToolReviewValue,
+    WorkOrigin,
+)
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     PromptQueueMutationResult,
@@ -1678,10 +1687,68 @@ def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str])
     Returns:
         Whether the verdict for ``row`` was defaulted by an unresolved round.
     """
-    unresolved = getattr(decisions, "unresolved_keys", ())
-    if not unresolved:
-        return False
-    return (str(getattr(row, "call_id", "") or "") or row.llm_name) in unresolved
+    key = selected_approval_key(
+        decisions, str(getattr(row, "call_id", "") or ""), row.llm_name
+    )
+    return approval_key_unanswered(decisions, key)
+
+
+def _approval_decision_fact(
+    decision: object, *, unanswered: bool = False
+) -> ApprovalDecision | None:
+    if unanswered:
+        return None
+    if decision == "deny":
+        return "denied"
+    if isinstance(decision, str) and decision in {
+        "approve_once",
+        "approve_session",
+        "always_allow",
+    }:
+        return "approved"
+    return None
+
+
+def _review_decision(
+    row: MCPPendingCall,
+    decisions: Mapping[str, str],
+    verdict: str,
+    *,
+    allowing: tuple[str, ...] = ("approve_once", "approve_session", "always_allow"),
+    name_fallback: bool = True,
+) -> ToolReviewDecision:
+    """Attach an answered raw choice to the owner's unchanged verdict."""
+    key = (
+        selected_approval_key(decisions, row.call_id, row.llm_name)
+        if name_fallback
+        else row.call_id or row.llm_name
+    )
+    decision = decisions.get(key)
+    unanswered = approval_key_unanswered(decisions, key)
+    fact = _approval_decision_fact(decision, unanswered=unanswered)
+    if fact == "approved" and decision not in allowing:
+        fact = None
+    if decision == "allow_matching" and decision in allowing and not unanswered:
+        fact = "approved"
+    return ToolReviewDecision(verdict, fact)
+
+
+def _stamp_answer_provenance(
+    stamps: dict[str, str],
+    rows: Sequence[MCPPendingCall],
+    decisions: Mapping[str, str],
+) -> ApprovalDecisions:
+    """Keep unresolved denies attached to the selected name-scoped stamp."""
+    result = ApprovalDecisions(stamps)
+    result.unresolved_keys = frozenset(
+        row.llm_name
+        for row in rows
+        if stamps.get(row.llm_name) == "deny"
+        and decisions.get(selected_approval_key(decisions, row.call_id, row.llm_name))
+        == "deny"
+        and approval_was_unanswered(row, decisions)
+    )
+    return result
 
 
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
@@ -1985,7 +2052,7 @@ def _build_approval_payload(
 def build_mcp_review_hook(
     provider: MCPToolProvider,
     request_mcp_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build this run's T4 `review_tool_calls` hook for one composed MCP provider.
 
     Handed to `ConsoleAgentBridge.run_reply` (P5-T6), which forwards it
@@ -2060,7 +2127,9 @@ def build_mcp_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         # I3: clear THIS turn's stamps FIRST, before pending_gate_for/the
         # approval round trip even run -- subsumes the `if not pending`
         # branch's own clear below (every invocation of this hook clears,
@@ -2077,7 +2146,20 @@ def build_mcp_review_hook(
             return {}
         decisions = request_mcp_approvals(pending)
         provider.apply_batch_decisions(run_id, decisions)
-        return {call.llm_name: "proceed" for call in pending}
+        return {
+            call.call_id or call.llm_name: _review_decision(
+                call,
+                decisions,
+                "proceed",
+                allowing=(
+                    "approve_once",
+                    "approve_session",
+                    "always_allow",
+                    "allow_matching",
+                ),
+            )
+            for call in pending
+        }
 
     return review_tool_calls
 
@@ -2091,7 +2173,7 @@ def build_tool_review_hook(
     workspace_id: str | None = None,
     kill_switch: Callable[[], bool] | None = None,
     library_provider: Any | None = None,
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build THIS run's run-level `review_tool_calls` hook (P5-T6/task-545).
 
     TASK-631: when ``kill_switch`` reports on, EVERY call in the batch is
@@ -2238,7 +2320,9 @@ def build_tool_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         # PR2a Task 5: every gate mutation below is scoped to `run_id` --
         # the run whose batch this is, supplied by `AgentService` (which
         # binds its own run id into the hook it puts on `LoopDeps`). The
@@ -2458,7 +2542,7 @@ def build_tool_review_hook(
                 return decisions[key]
             return decisions.get(row.llm_name)
 
-        def _stamps_for(rows: "list[MCPPendingCall]") -> dict[str, str]:
+        def _stamps_for(rows: "list[MCPPendingCall]") -> ApprovalDecisions:
             """Name-keyed stamps for `rows`: approvals win, all-denied denies.
 
             TASK-1861. A refusal must NOT be stamped against the name when a
@@ -2500,7 +2584,7 @@ def build_tool_review_hook(
             stamps = dict(approvals)
             for name in denied:
                 stamps.setdefault(name, "deny")
-            return stamps
+            return _stamp_answer_provenance(stamps, rows, decisions)
 
         if mcp_provider is not None:
             mcp_provider.apply_batch_decisions(
@@ -2509,8 +2593,12 @@ def build_tool_review_hook(
                     [r for r in mcp_pending if r.llm_name in mcp_claimed_names]
                 ),
             )
-        for name, decision in _stamps_for(builtin_pending).items():
-            builtin_gate.stamp(run_id, name, decision)
+        builtin_stamps = _stamps_for(builtin_pending)
+        for name, decision in builtin_stamps.items():
+            if approval_key_unanswered(builtin_stamps, name):
+                builtin_gate.stamp(run_id, name, decision, unanswered=True)
+            else:
+                builtin_gate.stamp(run_id, name, decision)
 
         # task-32280: because the runtime turns the refusal below into the
         # call's result and never dispatches it, `MCPToolProvider.invoke` --
@@ -2536,7 +2624,7 @@ def build_tool_review_hook(
         # non-"proceed" verdict string into that call's result without
         # dispatching it, so this is the only layer that can refuse one
         # target while running another.
-        verdicts: dict[str, str] = {
+        verdicts: dict[str, ToolReviewValue] = {
             row.llm_name: "proceed" for row in mcp_pending + builtin_pending
         }
         for row in mcp_pending + builtin_pending:
@@ -2548,7 +2636,31 @@ def build_tool_review_hook(
             # batch. That is fail-closed, and the only honest option when the
             # runtime cannot tell those calls apart.
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
-            verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+            verdicts[key] = _review_decision(
+                row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
+        # Settle all name-wide refusals first. Metadata must never add an
+        # exact proceed that bypasses an id-less sibling's refusal fallback.
+        verdicts.update(
+            {
+                row.call_id or row.llm_name: _review_decision(
+                    row,
+                    decisions,
+                    "proceed",
+                    allowing=(
+                        "approve_once",
+                        "approve_session",
+                        "always_allow",
+                        "allow_matching",
+                    )
+                    if row in mcp_pending
+                    else ("approve_once", "approve_session", "always_allow"),
+                )
+                for row in mcp_pending + builtin_pending
+                if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
+                == "proceed"
+            }
+        )
         verdicts.update(lesson_refusals)
         issue_lesson_approval = getattr(
             library_provider, "issue_agent_lesson_approval", None
@@ -2563,9 +2675,21 @@ def build_tool_review_hook(
                     verdicts[row.call_id] = AGENT_LESSON_APPROVAL_REQUIRED
                     lesson_issue_failed = True
                 else:
-                    verdicts[row.call_id] = "proceed"
+                    verdicts[row.call_id] = _review_decision(
+                        row,
+                        decisions,
+                        "proceed",
+                        allowing=("approve_once",),
+                        name_fallback=False,
+                    )
             elif decision == "deny":
-                verdicts[row.call_id] = AGENT_LESSON_DENIED
+                verdicts[row.call_id] = _review_decision(
+                    row,
+                    decisions,
+                    AGENT_LESSON_DENIED,
+                    allowing=("approve_once",),
+                    name_fallback=False,
+                )
             else:
                 verdicts[row.call_id] = AGENT_LESSON_APPROVAL_REQUIRED
         if lesson_issue_failed:
@@ -2584,7 +2708,7 @@ def build_tool_review_hook(
 def build_local_review_hook(
     provider: "LocalToolProvider",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build this run's review_tool_calls hook for the local provider.
 
     Identical discipline to build_mcp_review_hook (see its docstring for
@@ -2611,7 +2735,9 @@ def build_local_review_hook(
         `AgentService(review_tool_calls=...)`.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         # I3: clear THIS turn's stamps FIRST -- see build_mcp_review_hook.
         # PR2a Task 5: scoped to `run_id`, so the clear cannot reach a
         # concurrent sibling run's live verdicts.
@@ -2657,7 +2783,9 @@ def build_local_review_hook(
         stamps = dict(approvals)
         for name in denied:
             stamps.setdefault(name, "deny")
-        provider.apply_batch_decisions(run_id, stamps)
+        provider.apply_batch_decisions(
+            run_id, _stamp_answer_provenance(stamps, pending, decisions)
+        )
         reviewed_call_ids = {row.call_id for row in pending if row.call_id}
         provider.apply_promotion_decisions(
             run_id,
@@ -2672,7 +2800,9 @@ def build_local_review_hook(
         # -- the only thing that otherwise records a local refusal -- never
         # runs for a hook-level denied call. Record at the point the denial
         # becomes final, through the provider's own audit seam.
-        verdicts: dict[str, str] = {row.llm_name: "proceed" for row in pending}
+        verdicts: dict[str, ToolReviewValue] = {
+            row.llm_name: "proceed" for row in pending
+        }
         for row in pending:
             if _decision_for(row) != "deny":
                 continue
@@ -2682,7 +2812,18 @@ def build_local_review_hook(
             if not approval_was_unanswered(row, decisions):
                 provider.record_user_denial(row.llm_name)
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
-            verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+            verdicts[key] = _review_decision(
+                row, decisions, USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
+        # Preserve settled name-wide refusal fallback before adding facts.
+        verdicts.update(
+            {
+                row.call_id or row.llm_name: _review_decision(row, decisions, "proceed")
+                for row in pending
+                if verdicts.get(row.call_id or row.llm_name, verdicts[row.llm_name])
+                == "proceed"
+            }
+        )
         return verdicts
 
     return review_tool_calls
@@ -2691,10 +2832,12 @@ def build_local_review_hook(
 def build_managed_skill_promotion_review_hook(
     gate: "ManagedSkillProposalGate",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Build the primary-only approval hook for read-only skill proposals."""
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         gate.clear(run_id)
         pending = [
             row
@@ -2718,13 +2861,17 @@ def build_managed_skill_promotion_review_hook(
             [call for call in calls if call.call_id in reviewed_call_ids],
             decisions,
         )
-        verdicts: dict[str, str] = {}
+        verdicts: dict[str, ToolReviewValue] = {}
         for row in pending:
             key = row.call_id or row.llm_name
-            verdicts[key] = (
+            verdicts[key] = _review_decision(
+                row,
+                decisions,
                 "proceed"
                 if decisions.get(key) == "approve_once"
-                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+                else USER_DENIED_REFUSAL.format(name=row.llm_name),
+                allowing=("approve_once",),
+                name_fallback=False,
             )
         return verdicts
 
@@ -2734,7 +2881,7 @@ def build_managed_skill_promotion_review_hook(
 def build_virtual_cli_review_hook(
     provider: "VirtualCliProvider",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Gate each selected virtual command while exposing one model tool.
 
     Approval rows are command-specific Hub entries but verdict stamps are
@@ -2742,7 +2889,9 @@ def build_virtual_cli_review_hook(
     response remain independently addressable.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         provider.apply_batch_decisions(run_id, {})
         pending = [
             row
@@ -2753,7 +2902,21 @@ def build_virtual_cli_review_hook(
             return {}
         decisions = request_approvals(pending)
         provider.apply_batch_decisions(run_id, decisions, pending)
-        return {(row.call_id or row.llm_name): "proceed" for row in pending}
+        return {
+            row.call_id or row.llm_name: _review_decision(
+                row,
+                decisions,
+                "proceed",
+                allowing=(
+                    "approve_once",
+                    "approve_session",
+                    "always_allow",
+                    "allow_matching",
+                ),
+                name_fallback=False,
+            )
+            for row in pending
+        }
 
     return review_tool_calls
 
@@ -2761,10 +2924,12 @@ def build_virtual_cli_review_hook(
 def build_raw_shell_review_hook(
     provider: "RawShellToolProvider",
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
-) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Gate model-authored host-shell calls independently by native call id."""
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
         authority_generation = provider.authority_generation
         provider.apply_batch_decisions(run_id, {})
         pending = [
@@ -2781,14 +2946,18 @@ def build_raw_shell_review_hook(
             pending,
             authority_generation=authority_generation,
         )
-        verdicts: dict[str, str] = {}
+        verdicts: dict[str, ToolReviewValue] = {}
         for row in pending:
             key = row.call_id or row.llm_name
             decision = decisions.get(key)
-            verdicts[key] = (
+            verdicts[key] = _review_decision(
+                row,
+                decisions,
                 "proceed"
-                if decision in {"approve_once", "approve_session"}
-                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+                if decision in ("approve_once", "approve_session")
+                else USER_DENIED_REFUSAL.format(name=row.llm_name),
+                allowing=("approve_once", "approve_session"),
+                name_fallback=False,
             )
         return verdicts
 
@@ -2797,7 +2966,7 @@ def build_raw_shell_review_hook(
 
 def build_combined_review_hook(
     hooks: list[Callable[[list["ToolCall"]], dict[str, str]]],
-) -> Callable[[list["ToolCall"]], dict[str, str]]:
+) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Fan one batch through every provider's hook; merge verdict maps.
 
     Each hook gates only the calls its provider owns (pending_gate_for
@@ -2831,8 +3000,10 @@ def build_combined_review_hook(
         verdict map into one.
     """
 
-    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
-        verdicts: dict[str, str] = {}
+    def review_tool_calls(
+        calls: list["ToolCall"], run_id: str
+    ) -> dict[str, ToolReviewValue]:
+        verdicts: dict[str, ToolReviewValue] = {}
         first_exc: Exception | None = None
         for hook in hooks:
             try:

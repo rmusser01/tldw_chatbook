@@ -2078,3 +2078,80 @@ def test_allow_matching_verdict_persists_the_exact_args_rule(running_loop):
         "an arg rule must not widen into a whole-tool allow"
     )
     assert service.execute_calls[0][4] == "approved"
+
+
+@pytest.mark.parametrize(
+    "raw,unanswered,expected",
+    [
+        ("deny", False, "denied"),
+        ("deny", True, None),
+        ("approve_once", False, "approved"),
+        ("approve_once", True, None),
+        ("approve_session", False, "approved"),
+        ("timeout", False, None),
+        (None, False, None),
+        ({}, False, None),
+    ],
+)
+def test_mcp_direct_callback_answer_authority(running_loop, raw, unanswered, expected):
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        execute_raises=RuntimeError("execution failed"),
+    )
+    decisions = ApprovalDecisions({"mcp__srv__run": raw})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"mcp__srv__run"})
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda rows: decisions,
+    )
+    _compose(provider)
+    result = provider.invoke("mcp__srv__run", {})
+    assert result.ok is False
+    assert result.approval_decision == expected
+
+
+@pytest.mark.parametrize("off,expected", [(True, "denied"), (False, None)])
+def test_mcp_off_and_no_callback_share_copy_but_not_fact(running_loop, off, expected):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    if off:
+        service.default_state = EffectiveToolState(state="deny", origin="tool_override")
+    result = provider.invoke("mcp__srv__run", {})
+    assert result.error == DENY_REFUSAL
+    assert not result.ok and result.outcome == "blocked"
+    assert result.approval_decision == expected
+
+
+@pytest.mark.parametrize("unanswered,expected", [(False, "denied"), (True, None)])
+def test_mcp_stamp_keeps_answer_fact_with_run_scope_and_clear(
+    running_loop, unanswered, expected
+):
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    decisions = ApprovalDecisions({"mcp__srv__run": "deny"})
+    if unanswered:
+        decisions.unresolved_keys = frozenset({"mcp__srv__run"})
+    provider.apply_batch_decisions(RUN, decisions)
+    with provider.stamp_scope(RUN):
+        provider.apply_batch_decisions(RUN, {"mcp__srv__run": "approve_once"})
+    assert provider.invoke("mcp__srv__run", {}).approval_decision == expected
+    assert provider.invoke("mcp__srv__run", {}).approval_decision == expected
+    with use_run_id("other"):
+        assert provider.invoke("mcp__srv__run", {}).approval_decision is None
+    service.kill_switch = True
+    assert provider.invoke("mcp__srv__run", {}).approval_decision is None
+    service.kill_switch = False
+    provider.apply_batch_decisions(RUN, {})
+    assert provider.invoke("mcp__srv__run", {}).approval_decision is None

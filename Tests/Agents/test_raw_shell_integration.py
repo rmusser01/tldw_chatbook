@@ -226,6 +226,7 @@ def test_controller_composes_raw_provider_only_while_all_live_gates_are_open(
     )
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": local},
+        tool_policy_profile_id="default",
         scratch_space=SimpleNamespace(root=tmp_path),
     )
 
