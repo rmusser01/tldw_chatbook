@@ -10644,6 +10644,92 @@ def test_native_console_state_round_trip_preserves_source_aware_character_identi
     assert restored_session.character_ref() is not None
 
 
+def test_native_console_state_round_trip_preserves_persona_identity():
+    """Screen state keeps persona provenance and its trusted template."""
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-p",
+        title="Chat with Archivist",
+        runtime_backend="local",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+        persona_system_template="Guide {{user}} as {{persona}}.",
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = _console_snapshot_with_sessions(screen)
+    assert payload is not None
+    assert {
+        key: payload["sessions"][0][key]
+        for key in (
+            "runtime_backend",
+            "assistant_kind",
+            "assistant_id",
+            "assistant_name",
+            "persona_system_template",
+        )
+    } == {
+        "runtime_backend": "local",
+        "assistant_kind": "persona",
+        "assistant_id": "local-persona-abc",
+        "assistant_name": "Archivist",
+        "persona_system_template": "Guide {{user}} as {{persona}}.",
+    }
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.runtime_backend == "local"
+    assert restored_session.assistant_kind == "persona"
+    assert restored_session.assistant_id == "local-persona-abc"
+    assert restored_session.assistant_name == "Archivist"
+    assert (
+        restored_session.persona_system_template
+        == "Guide {{user}} as {{persona}}."
+    )
+    assert restored_session.character_name is None
+    assert restored_session.character_ref() is None
+
+
+def test_native_console_state_restore_drops_stray_character_name_on_persona():
+    """A contradictory payload keeps only the kind-appropriate name."""
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-p",
+        title="Chat with Archivist",
+        runtime_backend="local",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = _console_snapshot_with_sessions(screen)
+    assert payload is not None
+    payload["sessions"][0]["character_name"] = "Stale Character"
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.assistant_name == "Archivist"
+    assert restored_session.character_name is None
+
+
 def test_live_server_session_never_exposes_local_character_projection():
     """A stray server-side numeric ID cannot drive local rail/card state."""
     session = ConsoleChatSession(
