@@ -309,7 +309,7 @@ class TestBrokenSinkRemedy:
 
         # Capability probes: sink "available" (find_spec), no players.
         _machine(monkeypatch, sink=True, players={})
-        monkeypatch.setattr(tts_events, "find_player_for_format", lambda fmt: None)
+        monkeypatch.setattr(ap_module, "find_player_for_format", lambda fmt: None)
         # The sink itself cannot open: the conftest autouse audio guard
         # forces `streaming_sink._import_sounddevice` to return None, so
         # any real sink attempt fails -- exactly the broken-audio world.

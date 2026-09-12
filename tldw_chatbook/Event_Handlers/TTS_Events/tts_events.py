@@ -60,12 +60,6 @@ from tldw_chatbook.TTS.default_profile_request_resolver import (
     resolve_default_profile,
 )
 from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
-from tldw_chatbook.TTS.audio_player import find_player_for_format
-from tldw_chatbook.TTS.playback_capability import (
-    adapt_console_speech_format,
-    format_playable_locally,
-    playback_remedy,
-)
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
     TTSDefaultProfileSelection,
@@ -1863,6 +1857,13 @@ class TTSEventHandler:
                 and candidate_format is not None
                 and (on_finished is not None or playback_lifecycle is not None)
             ):
+                # Function-local (PR #2638 CI): playback_capability pulls
+                # the streaming-sink and audio-player modules, which must
+                # stay off the UI-ready module census ratchet.
+                from tldw_chatbook.TTS.playback_capability import (
+                    adapt_console_speech_format,
+                )
+
                 adapted = adapt_console_speech_format(candidate_format)
                 if adapted != candidate_format:
                     response_format_override = adapted
@@ -2832,7 +2833,14 @@ class TTSEventHandler:
                 the clip could still be playing. `1.0` (unchanged bound)
                 when the caller could not determine it.
         """
-        from tldw_chatbook.TTS.audio_player import get_audio_player
+        from tldw_chatbook.TTS.audio_player import (
+            find_player_for_format,
+            get_audio_player,
+        )
+        from tldw_chatbook.TTS.playback_capability import (
+            format_playable_locally,
+            playback_remedy,
+        )
 
         # TASK-32480 playback-capability pre-check: when this machine
         # provably cannot play the artifact's format (no sink coverage and
@@ -2928,6 +2936,8 @@ class TTSEventHandler:
         if self._playback_remedy_notified:
             return
         self._playback_remedy_notified = True
+        from tldw_chatbook.TTS.playback_capability import playback_remedy
+
         await self._post_tts_message(
             TTSCompleteEvent(
                 message_id=message_id,

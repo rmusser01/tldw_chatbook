@@ -144,7 +144,6 @@ from ...Chat.console_hands_free import (
     SuppressReplySpeech,
 )
 from ...Chat.reply_sentence_sequencer import SentenceSequencer
-from ...TTS.playback_capability import locally_playable_formats
 from ...Widgets.Console import ConsoleComposerBar
 
 if TYPE_CHECKING:
@@ -1283,8 +1282,13 @@ class ConsoleHandsFreeController:
         # ANY format, replies will be silent -- warn once per app run but
         # still enter (mic-only dictation-with-spoken-commands use is
         # legitimate, and the adaptive-format/remedy paths in the TTS
-        # layer own the per-failure signal).
+        # layer own the per-failure signal). Imported function-locally:
+        # this module is on the UI-ready path and playback_capability
+        # drags the streaming-sink/audio-player modules into the census
+        # ratchet when imported eagerly (PR #2638 CI).
         try:
+            from ...TTS.playback_capability import locally_playable_formats
+
             playable = locally_playable_formats()
         except Exception:  # noqa: BLE001 - a probe crash is not a warning
             logger.opt(exception=True).debug(

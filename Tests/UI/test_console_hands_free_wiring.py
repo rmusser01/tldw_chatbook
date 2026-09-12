@@ -2049,9 +2049,9 @@ async def test_entry_warns_once_when_no_playback_path_exists(monkeypatch):
         lambda self: fake,
     )
     _patch_availability(monkeypatch)
-    monkeypatch.setattr(
-        hands_free_module, "locally_playable_formats", lambda: frozenset()
-    )
+    from tldw_chatbook.TTS import playback_capability as pc_module
+
+    monkeypatch.setattr(pc_module, "locally_playable_formats", lambda: frozenset())
     _, host = _ready_host()
 
     async with host.run_test(size=(140, 42)) as pilot:
