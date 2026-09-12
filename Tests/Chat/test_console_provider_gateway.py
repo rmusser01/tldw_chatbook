@@ -2925,7 +2925,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Conversation settings" in resolved.visible_copy
+    assert "Save model defaults" in resolved.visible_copy
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
     assert "user" not in resolved.visible_copy
@@ -3035,7 +3035,7 @@ async def test_resolve_for_send_preserves_explicit_cloud_url_without_configured_
     assert resolved.readiness_key == "openai"
     assert resolved.execution_key == "openai"
     assert resolved.base_url == "http://127.0.0.1:9999/v1"
-    assert "save the endpoint in Conversation settings" not in resolved.visible_copy
+    assert "Save model defaults" not in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -3273,7 +3273,7 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
     )
 
     assert resolved.ready is False
-    assert "save the endpoint in Conversation settings" in resolved.visible_copy
+    assert "Save model defaults" in resolved.visible_copy
 
 
 @pytest.mark.asyncio
@@ -4987,6 +4987,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
         "_trace_preparation",
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "model_retry_callback",
         "usage_payload",
@@ -5007,6 +5008,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
         "_trace_preparation",
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "model_retry_callback",
         "usage_payload",
@@ -5053,6 +5055,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         f"ConsoleProviderStreamSignals(run_tag={signals.run_tag!r}, "
         "exchange_capture_enabled=True)"
     )
+    signals.automatic_work_chain_id = "private-chain-identity"
+    assert "private-chain-identity" not in repr(signals)
     signals.record_usage_payload({"prompt_tokens": 4242})
     call = signals.new_usage_call()
     call.begin_exchange(
@@ -11694,3 +11698,248 @@ def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
     payload = kwargs["messages_payload"]
     assert json.loads(json.dumps(payload)) == messages
     assert payload[1]["tool_calls"][0]["function"]["arguments"] == '{"query": "x"}'
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_openai_compatible_resolves_entry_url() -> None:
+    """An openai_compatible entry executes as the custom family with the
+    entry's URL (ADR-146), never the endpoint-not-saved guard."""
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.readiness_key == "custom"
+    assert resolved.execution_key == "custom-openai-api"
+    # The custom family materializes the chat-completions URL from the
+    # entry's base_url (provider endpoint contract), so assert the entry
+    # URL flowed rather than exact equality.
+    assert "api.example.com/v1" in resolved.base_url
+    assert "not saved" not in resolved.visible_copy
+
+
+# ADR-146 credential wiring: an entry that declares a credential
+# (api_key_env / api_key) must see it flow into ``resolution.api_key`` on
+# BOTH family execution paths -- the custom/llama families are keyless, so
+# the family readiness alone would resolve ``api_key=None`` and send
+# unauthenticated (server 401) while the UI gate says Ready. A declared
+# credential that does NOT resolve blocks with the same missing-API-key
+# copy Task 3's session-settings gate uses. Keyless entries and all
+# non-custom-ep providers are unchanged.
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_declared_env_key_flows_to_resolution(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PAID_KEY", "paid-secret")
+    # No `environ` injection: the gateway must read os.environ (the
+    # monkeypatched PAID_KEY) for the entry's env reference to resolve.
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key_env": "PAID_KEY",
+                }
+            }
+        },
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.api_key == "paid-secret"
+    assert resolved.execution_key == "custom-openai-api"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_stored_key_flows_to_resolution() -> None:
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "stored-secret",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.api_key == "stored-secret"
+    assert resolved.execution_key == "custom-openai-api"
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_unresolved_declared_key_blocks_with_missing_key_copy() -> None:
+    # `environ={}` guarantees PAID_KEY_UNSET is absent even when the host
+    # environment happens to define it.
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key_env": "PAID_KEY_UNSET",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://api.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is False
+    assert "API key" in resolved.visible_copy
+    assert resolved.api_key is None
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_llama_family_declared_key_flows_to_resolution() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "gpu": {
+                    "display_name": "GPU llama",
+                    "family": "llama_cpp",
+                    "base_url": "http://192.168.1.5:8080",
+                    "api_key": "llama-secret",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:gpu",
+            explicit_model="m",
+            base_url="http://192.168.1.5:8080",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.execution_key == "llama_cpp"
+    assert resolved.api_key == "llama-secret"
+
+
+# ADR-146 entry-URL authority: when a custom-ep provider resolves, the
+# entry's base_url wins over any session/selection-carried URL -- an edited
+# entry re-resolves on the next send, so a stale session-pinned URL must
+# never outrank it. Non-custom-ep providers keep selection.base_url
+# precedence exactly as before (covered by the endpoint-guard suite above).
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_session_url() -> None:
+    """An edited openai_compatible entry re-resolves on send: the session's
+    stale pinned URL is not used."""
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://new.example.com/v1",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://old.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert "new.example.com/v1" in resolved.base_url
+    assert "old.example.com" not in resolved.base_url
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url() -> None:
+    """An edited llama_cpp entry re-resolves on send: the session's stale
+    pinned URL is not used."""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    # The gateway deliberately leaves caller-owned clients open, so scope
+    # the client to an async-with for deterministic transport cleanup.
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: {
+                "custom_endpoints": {
+                    "gpu": {
+                        "display_name": "GPU llama",
+                        "family": "llama_cpp",
+                        "base_url": "http://192.168.1.9:9090",
+                    }
+                }
+            },
+            environ={},
+        )
+
+        resolved = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="custom-ep:gpu",
+                explicit_model="m",
+                base_url="http://192.168.1.5:8080",
+            )
+        )
+
+    assert resolved.ready is True
+    assert resolved.execution_key == "llama_cpp"
+    assert resolved.base_url == "http://192.168.1.9:9090"

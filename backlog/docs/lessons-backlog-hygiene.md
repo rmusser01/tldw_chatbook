@@ -595,6 +595,17 @@ load-bearing side keeps; references are attributed per side by their context,
 never rewritten wholesale — the same integer means different tasks in
 different files).
 
+**2026-09-11, TASK-13158 re-triage.** A local-worktree duplicate scan found
+nine colliding IDs, but dev had ZERO: seven pairs were pre-renumber ghosts
+resolved by dev commit `2b8dd094d5` (the branch predated it — rebase, don't
+renumber), and the remaining two were **untracked local-only task files**
+holding IDs dev uses for different tasks (TASK-18908, TASK-2511). Those are
+not ghosts — no twin exists — and they are the one case where renumbering
+locally IS the fix: renumber past the all-remote swept max (32470 at the
+time), filename and frontmatter both. So the triage order for any duplicate
+report on a branch: (1) is it already fixed on dev? (2) is one side an
+untracked local claimant? Only then consider renumbering a tracked file.
+
 ---
 
 ## Do not assign zsh's special lowercase `path` variable
@@ -737,6 +748,7 @@ itself: 076 was ALREADY claimed (library-lifecycle landed `1c567f3ae` at 14:24 t
 same day, four hours before the 18:44 renumber), caught only the next day, and the
 ADR renumbered again to 077 (TASK-19610) — the merge-time check must cover the
 number being renamed TO, not just the one being renamed FROM.
+and the owning task's plan references) mid-merge.
 
 **What to do.** ADR numbers have exactly the same collision dynamics as task IDs
 (see "assign against origin/dev" above), but no CI guard. Treat the drafted number
@@ -847,6 +859,12 @@ pushed — so `git reset --soft <parent>` and re-committing was clean, and the
 one document that cited the old hash was updated in the same operation. Had a
 blame-ignore entry pinned it, the rule is the opposite (recipe §10, §6): the
 message is immutable, and the correction lives in the report and the PR body.
+
+renumbering, grep the repo for both `NNN-<slug>` and `ADR-NNN` — the owning task's
+plan section references the ADR by number and path, and stale references there
+mislead the next session.
+
+---
 
 ## Related
 

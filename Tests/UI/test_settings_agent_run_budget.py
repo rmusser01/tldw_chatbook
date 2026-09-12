@@ -369,6 +369,7 @@ async def test_an_edit_saves_and_reaches_the_run_budget_resolver(monkeypatch):
         screen.handle_console_agent_budget_changed(
             Input.Changed(widget, widget.value)
         )
+        await pilot.pause()
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(
             screen, pilot, "Console behavior settings saved."

@@ -17049,22 +17049,12 @@ class TldwCli(
             )
 
     def _schedule_launch_wake(self) -> None:
-        """Deliver a supervisor wake this install already owed at launch.
+        """Discover saved child results in existing history and audit before waking.
 
-        task-15860 Task 6. A background sub-agent that finished while the
-        app was closed -- or one whose delivery the user quit out from
-        under -- used to wait for the next Console visit. It no longer
-        does, under the owner's mark-gated ruling: only a conversation
-        that already carries a durable ``FLEET_UNSEEN`` mark AND an owed
-        ``agent_runs`` row is delivered, behind the existing ``[agents]
-        autowake_enabled`` (there is no separate launch switch).
-
-        **The common path costs one indexed read and constructs nothing.**
-        With no marks -- every install that has never run a background
-        sub-agent, and every one whose results have all been seen -- this
-        returns before touching the Console store, provider gateway, agent
-        bridge (so ``agent_runs.db`` is not even opened) or controller.
-        That is pinned in ``Tests/UI/test_console_launch_wake.py``.
+        ADR-135 makes durable attempts and causal lineage the authority. Unseen
+        badges are only a projection. An absent or empty runs database does not
+        construct the Console runtime; the existing autowake switch still gates
+        automatic launch work.
         """
         try:
             from tldw_chatbook.Chat.console_launch_wake import (

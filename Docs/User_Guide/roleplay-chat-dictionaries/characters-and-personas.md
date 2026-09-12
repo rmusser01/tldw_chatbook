@@ -12,12 +12,12 @@ off a character; come here for a persona when a full character is overkill.
 
 ## Getting there
 
-Press **Ctrl+5** (or **Ctrl+P** → "Tab Navigation: Switch to Roleplay &
+Press **Ctrl+4** (or **Ctrl+P** → "Tab Navigation: Switch to Roleplay &
 Chat Dictionaries"), then pick
 the **Characters** chip in the Modes strip — it is the mode the screen opens
 on. **Personas** is the chip beside it. Once you are on this screen,
-**Ctrl+1** and **Ctrl+2** jump to those two modes (they do *not* change
-screens here — see [Keyboard & commands](#keyboard--commands)).
+**c** and **p** jump to those two modes (they type into a focused text box
+instead — see [Keyboard & commands](#keyboard--commands)).
 
 ## Layout tour
 
@@ -317,10 +317,11 @@ previews on this screen, `{{user}}` comes out as the literal word "User".
 | Ctrl+S | Save — works in both the character editor and the persona editor |
 | Escape | Cancel the open editor (the **Cancel** path, unsaved guard included) |
 | Ctrl+Enter | Attach the selection to Console (does nothing when Attach is unavailable) |
-| Ctrl+1 / Ctrl+2 | Switch to the Characters / Personas mode |
+| c / p | Switch to the Characters / Personas mode — **only when focus is not in a text box** (in a text box they type the letter) |
 
-**Ctrl+1 – Ctrl+4 do not change screens here** — they switch modes. To leave,
-click a nav label, press **Ctrl+P**, or use Ctrl+5 … Ctrl+0.
+**Ctrl+1 – Ctrl+4 always change screens here** — the mode keys are the single
+letters above (and **d** / **l** reach Dictionaries / Lore). To leave, click a
+nav label, press **Ctrl+P**, or use any Ctrl+digit chord.
 
 ## Related settings & docs
 

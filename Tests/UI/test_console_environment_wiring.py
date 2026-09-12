@@ -1989,3 +1989,15 @@ async def test_environment_poll_tick_survives_app_teardown_through_the_real_scre
             assert owner._rail_open_accessor() is False
         finally:
             stack.extend(saved)  # let the harness tear down normally
+
+
+@pytest.mark.asyncio
+async def test_changed_files_overflow_tail_opens_the_working_tree_view():
+    """TASK-32333: activating "... N more — Review opens all" opens Change
+    Review on the working tree, same destination as its neighbour row."""
+    async with _console_screen() as (pilot, screen):
+        captured: list[dict] = []
+        screen._open_change_review = lambda *a, **kw: captured.append(dict(kw))
+        screen._handle_console_environment_row("environment", "env-file-more")
+        await pilot.pause()
+        assert captured == [{"initial_current_mode": True}]

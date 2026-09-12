@@ -45,6 +45,14 @@ def _attach_real_dbs(app, tmp_path):
     db = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="ui-test")
     app.conversation_local_marks_service = ConversationLocalMarksService(db)
     app.chachanotes_db = db
+    # ConsoleHarness bypasses application startup and mounts its ready screen.
+    app._ui_ready = True
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    app.local_chat_conversation_service = ChatConversationService(db)
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+    app.local_chat_dictionary_service = LocalChatDictionaryService(db)
+    if getattr(app, "chat_dictionary_scope_service", None) is not None:
+        app.chat_dictionary_scope_service.local_service = app.local_chat_dictionary_service
     return app.conversation_local_marks_service
 
 
@@ -113,20 +121,25 @@ async def test_the_mount_claim_seeds_pending_from_mark_and_runs_db(tmp_path):
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
+        from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="Research", persist=True)
+        cid = session.persisted_conversation_id
+        assert cid
         runs_db = bridge.runs_db
-        parent_id = runs_db.create_run(conversation_id=session.id, agent_kind="primary")
+        parent_id = runs_db.create_run(conversation_id=cid, agent_kind="primary")
         runs_db.set_status(parent_id, "done", "turn final")
         child_id = runs_db.create_run(
-            conversation_id=session.id,
+            conversation_id=cid,
             agent_kind="subagent",
             task="long job",
             parent_run_id=parent_id,
         )
-        marks.set_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN)
+        marks.set_mark(cid, ConversationLocalMarksService.FLEET_UNSEEN)
         runs_db.set_status(child_id, "done", "staged answer")
 
         console._fleet._claim_console_fleet_wake_marks()
-        assert controller.fleet_wake.has_pending(session.id), (
+        from Tests.UI.test_console_fleet_wake_ui_freshness import _settle
+        assert await _settle(pilot, lambda: controller.fleet_wake.has_pending(cid)), (
             "the mount-claim seam must turn mark + runs-DB state into a pending wake"
         )
 

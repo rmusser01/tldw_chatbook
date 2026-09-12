@@ -1,0 +1,214 @@
+"""Reproducibly specialize the reviewed Kokoro runner; never modify that source."""
+
+import argparse
+import ast
+import hashlib
+from pathlib import Path
+
+
+def build(path):
+    source = path.read_text()
+    source_hash = hashlib.sha256(source.encode()).hexdigest()
+
+    def replace(old, new):
+        nonlocal source
+        if old not in source:
+            raise ValueError(f"Upstream runner changed; missing anchor: {old}")
+        source = source.replace(old, new)
+
+    def section(start, end, new):
+        nonlocal source
+        first = source.index(start)
+        last = source.index(end, first)
+        source = source[:first] + new + "\n\n" + source[last:]
+
+    replace(
+        "Opt-in local Kokoro playback/cancellation evidence; imports are inert.",
+        "Task-owned Chatterbox subprocess CUDA qualification; imports are inert.",
+    )
+    section(
+        "VOICE_LANGUAGES =",
+        "def check_package_root",
+        """# Admit only this task-owned sibling helper directory even under python -I.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from chatterbox_observation import build_parser, validate_args, ChildObservations, select_lab_reference  # noqa: E402
+""",
+    )
+    section(
+        "def check_backend_assets",
+        "def _deny_network",
+        """def check_backend_assets(backend, args):
+    if backend.device != "cuda" or backend.voice_dir.resolve() != (args.output / "voices").resolve():
+        raise ValueError("Registered backend selected an unqualified device/reference root")
+""",
+    )
+    section(
+        "    app_tts = {",
+        "    configuration = {",
+        """    voices = root / "voices"
+    voices.mkdir(mode=0o700, exist_ok=True)
+    reference_path = None
+    if args.reference_voice is not None:
+        reference_path = voices / f"{args.reference_voice}.wav"
+        shutil.copyfile(args.reference_dir / f"{args.reference_voice}.wav", reference_path)
+    app_tts = {
+        "default_provider": "chatterbox", "default_model_mode": "exact", "default_model": "chatterbox",
+        "default_voice_mode": "exact", "default_voice": args.voice, "default_format": args.format, "default_speed": 1.0,
+        "CHATTERBOX_DEVICE": "cuda", "CHATTERBOX_VOICE_DIR": str(voices),
+        "CHATTERBOX_RANDOM_SEED": 42, "CHATTERBOX_VALIDATE_WHISPER": False,
+    }
+    assets = sorted(voices.glob("*.wav"))
+    evidence["model_cache"] = str(args.model_cache)
+""",
+    )
+    replace(
+        '"kokoro",\n            "kokoro-onnx",',
+        '"chatterbox-tts",\n            "transformers",',
+    )
+    section(
+        "    cuda_device = None",
+        "    import numpy as np",
+        """    # CUDA belongs to actual child processes. Parent RSS is sampled separately.
+    cuda_device = None
+""",
+    )
+    replace(
+        "from tldw_chatbook.TTS.backends.kokoro import KokoroTTSBackend",
+        "from tldw_chatbook.TTS.backends.chatterbox import ChatterboxTTSBackend as ProviderBackend",
+    )
+    replace('provider="kokoro",', 'provider="chatterbox",')
+    replace(
+        "    def checkpoint():\n        with lock:",
+        "    children = ChildObservations(root, package, lambda: current[0], evidence, write_evidence)\n\n    def checkpoint():\n        children.sync()\n        with lock:",
+    )
+    replace(
+        "        while not predicate():",
+        "        while True:\n            children.sync()\n            if predicate():\n                break",
+    )
+    replace(
+        "    def resources():\n        calls",
+        "    def resources():\n        children.sync()\n        calls",
+    )
+    replace(
+        '            "generation_owner":',
+        '            "child_delivery_pending": children.pending_delivery(),\n            "child_gpu_release_pending": children.pending_gpu_release(),\n            "generation_owner":',
+    )
+    replace(
+        "            memory=memory,",
+        "            memory=memory,\n            child_memory=children.settled_memory(),",
+    )
+    section(
+        "    original_initialize = KokoroTTSBackend.initialize",
+        "    original_player = player.play",
+        """    original_initialize = ProviderBackend.initialize
+
+    async def initialize(backend):
+        if not any(item is backend for item in backends):
+            backends.append(backend)
+        check_backend_assets(backend, args)
+        await original_initialize(backend)
+        check_backend_assets(backend, args)
+
+    original_spawn = asyncio.create_subprocess_exec
+
+    async def spawn(*positional, **keywords):
+        return await children.launch(original_spawn, *positional, **keywords)
+""",
+    )
+    section(
+        "    with ExitStack() as observers:",
+        '        evidence["runtime_files"] = {',
+        """    with ExitStack() as observers:
+        observers.enter_context(patch.object(ProviderBackend, "initialize", initialize))
+        observers.enter_context(patch.object(ProviderBackend, "_initialize_sync", side_effect=ValueError("Unobserved in-process fallback is not admitted by subprocess qualification")))
+        observers.enter_context(patch.object(asyncio, "create_subprocess_exec", spawn))
+        observers.enter_context(patch.object(player, "play", play))
+        observers.enter_context(patch.object(events_module, "StreamingPcmSink", sink))
+        observers.enter_context(patch.object(sd, "OutputStream", output_stream))
+""",
+    )
+    replace(
+        '"kokoro.model",\n                "torch._C",\n                "kokoro_onnx",\n                "onnxruntime.capi.onnxruntime_pybind11_state",',
+        '"tldw_chatbook.TTS.backends.chatterbox",',
+    )
+    replace('if args.language != "en-us":', 'if args.language != "en":')
+    replace(
+        '            evidence["status"] = "runtime_passed_content_pending"',
+        '''                if reference_path is not None:
+                    row = phase("speech-lab-reference")
+                    row["reference_audio"] = {"path": str(reference_path), "sha256": sha256(reference_path)}
+                    select_lab_reference(host.pane, reference_path)
+                    host.pane.query_one("#tts-text-input", TextArea).text = text
+                    await pilot.pause()
+                    request_count = len(host.requests)
+                    notice_count = len(host.notices)
+                    host.pane.query_one("#tts-generate-btn", Button).press()
+                    await wait_until(lambda: len(host.requests) > request_count, "Lab reference request admission")
+                    request = host.requests[-1]
+                    expected_voice = f"custom:{reference_path}"
+                    if request.voice_id != expected_voice:
+                        raise ValueError("Lab reference selection did not reach the admitted request")
+                    row["request"] = {"operation_id": request.operation_id, "model_id": request.model_id, "voice_id": request.voice_id, "speed": request.speed}
+                    await wait_until(lambda: (
+                        getattr(host.lab_handler._current_playground_artifact, "operation_id", None) == request.operation_id
+                        or any(notice.get("severity") == "error" for notice in host.notices[notice_count:])
+                    ), "exact Lab reference artifact")
+                    if getattr(host.lab_handler._current_playground_artifact, "operation_id", None) != request.operation_id:
+                        raise ValueError("Lab reference generation failed")
+                    await wait_until(lambda: not host.pane.query_one("#audio-play-btn", Button).disabled, "Lab reference Play enabled")
+                    host.pane.query_one("#audio-play-btn", Button).press()
+                    await complete(row, lab=True)
+                    children.sync()
+                    generations = [generation for _, child in children.children for generation in child.get("observations", {}).get("generate_calls", [])]
+                    matching = [generation for generation in generations if generation.get("reference_audio", {}).get("path") == str(reference_path)]
+                    if not matching or any(generation["reference_audio"]["sha256"] != row["reference_audio"]["sha256"] for generation in matching):
+                        raise ValueError("Actual child generation did not consume the exact Lab reference")
+                    row["reference_native_verified"] = True
+                    checkpoint()
+            evidence["status"] = "runtime_passed_content_pending"''',
+    )
+    replace(
+        "                    validate_cancellation(cancelled)",
+        '''                    validate_cancellation(cancelled)
+                    cancelled["cancellation_boundary"] = "Production Stop terminates and reaps the registered child. Interrupted native calls require both child reap and NVIDIA compute PID disappearance; this does not claim a natural CUDA synchronized return."''',
+    )
+    replace(
+        "            evidence.update(\n                cleanup_errors=",
+        """            await wait_until(lambda: not any(children.final_resources().values()), "child process and CUDA context release", args.cleanup_timeout)
+            evidence.update(
+                cleanup_errors=""",
+    )
+    replace(
+        '            assert_quiescent(evidence["final_resources"])',
+        """            evidence["final_resources"].update(children.final_resources())
+            checkpoint()
+            assert_quiescent(evidence["final_resources"])""",
+    )
+    replace(
+        "        setup_environment(args.output)\n        sys.addaudithook(_deny_network)",
+        """        setup_environment(args.output)
+        os.environ["HF_HUB_CACHE"] = str(args.model_cache)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(args.model_cache)
+        os.environ["MPLCONFIGDIR"] = str(args.output / "cache/matplotlib")
+        os.environ["NUMBA_CACHE_DIR"] = str(args.output / "cache/numba")
+        sys.addaudithook(_deny_network)""",
+    )
+    replace(
+        '            "schema_version": 1,',
+        f'''            "schema_version": 1,
+            "upstream_runner_sha256": "{source_hash}",
+            "injection_scope": "Task-owned child launcher executes the installed original chatterbox_process.py with observed original from_pretrained/generate and audio delivery. Production backend, child protocol and audio results unchanged.",''',
+    )
+    ast.parse(source)
+    return source
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument(
+        "--output", type=Path, default=Path(__file__).with_name("qualify_chatterbox.py")
+    )
+    options = parser.parse_args()
+    options.output.write_text(build(options.source))
+    print(options.output)

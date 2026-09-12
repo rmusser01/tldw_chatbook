@@ -274,7 +274,7 @@ class RedactingFileFormatter(logging.Formatter):
     not that code opted in. The standing rule from the loguru ``diagnose``
     incident is to fix disclosure at the sink rather than at each call site,
     and TASK-23108 leans on exactly that by telling users "Details are in Logs
-    (F8)" while its own user-facing paths log only exception type names.
+    (F3)" while its own user-facing paths log only exception type names.
 
     Applied at the format step rather than as a ``logging.Filter`` for two
     reasons:

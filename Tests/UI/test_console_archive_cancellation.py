@@ -11,6 +11,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat import conversation_archive_actions
 from tldw_chatbook.UI.Console_Modules import archive
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -103,9 +104,15 @@ async def test_cancelled_archive_delivers_committed_outcome(monkeypatch, navigat
         callbacks.append(callback)
 
     screen.app = SimpleNamespace(screen=screen, push_screen=push_screen)
-    monkeypatch.setattr(archive, "local_conversation_service", lambda _app: object())
     monkeypatch.setattr(
-        archive, "storage_call", AsyncMock(return_value={"version": 3, "title": "Chat"})
+        conversation_archive_actions,
+        "local_conversation_service",
+        lambda _app: object(),
+    )
+    monkeypatch.setattr(
+        conversation_archive_actions,
+        "storage_call",
+        AsyncMock(return_value={"version": 3, "title": "Chat"}),
     )
 
     async def change(*args, **kwargs):
@@ -114,7 +121,9 @@ async def test_cancelled_archive_delivers_committed_outcome(monkeypatch, navigat
         committed.set()
         return {"changed": {"chat-a": 4}, "failures": {}}
 
-    monkeypatch.setattr(archive, "change_conversation_archive", change)
+    monkeypatch.setattr(
+        conversation_archive_actions, "change_conversation_archive", change
+    )
     task = asyncio.create_task(archive.archive_current_conversation(screen))
     await asyncio.wait_for(started.wait(), 5)
     if navigate_away:

@@ -3079,7 +3079,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
     pane to its own AUTOMATIC width, and the 30-cell
     ``document · updated 5m · analysed`` paints whole in it, indented, with room to
     spare. The narrower 36-cell FLOOR is pinned separately by
-    ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
+    ``test_analysed_secondary_is_bounded_at_custom_items_widths`` -- a
     ``>= 36`` assertion here would have claimed a floor that never ran,
     which is why the exact automatic width is asserted instead.
 
@@ -3538,14 +3538,20 @@ async def test_returning_to_read_restores_the_reading_position_once():
         )
 
 
+@pytest.mark.parametrize(
+    ("items_width", "expected"),
+    [(36, "document · updated 5m · a…"), (44, _ANALYSED_SECONDARY)],
+)
 @pytest.mark.asyncio
-async def test_analysed_secondary_survives_the_36_cell_items_floor():
-    """M-1: the 30-cell secondary at the Items pane's 36-cell floor.
+async def test_analysed_secondary_is_bounded_at_custom_items_widths(
+    items_width, expected
+):
+    """Pin truncation at the floor and full text at a wider custom size.
 
-    The automatic resolver gives Items 52 cells at both tested terminal
-    sizes, so the floor only runs when a custom Items width asks for it (a
-    custom width is obeyed as typed). 36 is ``list_min_width`` + Media's two
-    one-cell grips -- the narrowest the pane ever gets.
+    A custom 36-cell Items pane gives its canvas 32 cells after padding.
+    Since task-32060 the canvas fits that content box instead of overflowing
+    it with its own 36-cell minimum. The longer labelled age from task-32347
+    now ellipsises the analysis suffix at that floor; a wider pane shows it.
     """
     host = _review_state_host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -3553,23 +3559,28 @@ async def test_analysed_secondary_survives_the_36_cell_items_floor():
         screen._media_state.reader_preferences = dataclasses.replace(
             screen._media_state.reader_preferences,
             custom_widths_enabled=True,
-            items_width=36,
+            items_width=items_width,
         )
         screen._sync_library_media_reader_layout_from_shell()
         await _wait_for_condition(
             pilot,
-            lambda: _items_pane_width(screen) == 36,
-            message="The Items pane never reached its 36-cell floor.",
+            lambda: _items_pane_width(screen) == items_width - 4,
+            message=lambda: (
+                f"Items canvas width={_items_pane_width(screen)}; "
+                f"view={screen._media_state.view}; "
+                f"preferences={screen._media_state.reader_preferences}; "
+                f"layout={screen._media_state.reader_layout}"
+            ),
         )
 
         # The crop at this width clips a neighbouring pane border into the
         # right edge, so strip that too before comparing the row's own text.
         _titles, secondaries = _painted_media_rows(host, screen)
         assert [line.strip(" │") for line in secondaries[:2]] == [
-            _ANALYSED_SECONDARY,
-            _ANALYSED_SECONDARY,
+            expected,
+            expected,
         ], secondaries
-        assert "…" not in "".join(secondaries), secondaries
+        assert all("…" not in line for line in secondaries[2:]), secondaries
 
 
 # ---------------------------------------------------------------------------
@@ -3682,9 +3693,8 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
     row has ~28 cells and `article · updated 2m · keyword: notes` needs 37 --
     at the floor a keyword row still cannot show its whole term, for the
     short keyword as well as the long one. The neighbouring
-    `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
-    a line that DOES fit looks like there; this one is the honest contrast,
-    and it exists so nobody re-derives the false "the cap makes it fit".
+    `test_analysed_secondary_is_bounded_at_custom_items_widths` also pins
+    truncation at this floor and complete text at a wider custom size.
 
     task-32060: what changed is HOW it stops. The canvas used to carry a
     36-cell min-width, so at a 36-cell pane it overflowed its 32-cell slot
@@ -4259,7 +4269,7 @@ async def test_more_row_actions_share_one_grid_column_grammar(size):
 
     "Open manager" used to sit one cell further in than its siblings. PR H
     replaced the More disclosure's bare Vertical with a single ``ItemGrid``
-    (``#library-media-reader-more-actions``, fixed 15-16 cell columns), so
+    (``#library-media-reader-more-actions``, now fixed 17-cell columns), so
     every action in the row is laid out on the same column origins by
     construction. This is the painted proof, kept as a pin so the column
     grammar cannot silently drift back.
@@ -4281,23 +4291,36 @@ async def test_more_row_actions_share_one_grid_column_grammar(size):
             "library-media-open",
             "library-media-delete",
         ], actions
-        columns = sorted({action.region.x for action in actions})
+        # task-31980 deliberately separates the destructive label by two
+        # cells inside its grid slot. Compare slot origins, then verify the
+        # full labels are still painted rather than treating that margin as
+        # a broken column alignment.
+        expected_margins = {
+            "library-media-edit": 0,
+            "library-media-open": 0,
+            "library-media-delete": 2,
+        }
+        assert {
+            action.id: action.styles.margin.left for action in actions
+        } == expected_margins
+        origins = {
+            action.id: action.region.x - expected_margins[action.id]
+            for action in actions
+        }
+        columns = sorted(set(origins.values()))
         # One pitch for the whole row: "Open manager" starts exactly one
         # column after "Edit metadata" and one before "Move to trash",
         # never on an origin (or an extra cell of indent) of its own.
-        pitches = {
-            second - first for first, second in zip(columns, columns[1:])
-        }
-        assert len(pitches) == 1, [
-            (action.id, action.region) for action in actions
-        ]
+        pitches = {second - first for first, second in zip(columns, columns[1:])}
+        assert len(pitches) == 1, [(action.id, action.region) for action in actions]
         # ...and every row of the grid starts at the same leftmost column.
         rows: dict[int, list[int]] = {}
         for action in actions:
-            rows.setdefault(action.region.y, []).append(action.region.x)
+            rows.setdefault(action.region.y, []).append(origins[action.id])
         assert {min(xs) for xs in rows.values()} == {columns[0]}, rows
         painted = _painted(host, grid.region)
-        assert "Open manager" in painted, painted
+        for label in ("Edit metadata", "Open manager", "Move to trash"):
+            assert label in painted, painted
 
 
 # ---------------------------------------------------------------------------

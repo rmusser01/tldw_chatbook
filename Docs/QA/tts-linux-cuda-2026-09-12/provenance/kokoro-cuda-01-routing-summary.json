@@ -1,0 +1,55 @@
+{
+  "sink_name": "alsa_output.usb-Logitech_Logi_USB_Headset_000000000000-00.analog-stereo",
+  "sink_id": 55,
+  "streams": {
+    "86": {
+      "sink": 55,
+      "application": "ffplay",
+      "pid": "959956",
+      "first_observed": 123686.25868465,
+      "last_observed": 123692.612567603,
+      "observations": 26
+    },
+    "123": {
+      "sink": 55,
+      "application": "ALSA plug-in [python3.12]",
+      "pid": "959839",
+      "first_observed": 123692.866819935,
+      "last_observed": 123701.509340589,
+      "observations": 35
+    },
+    "171": {
+      "sink": 55,
+      "application": "ALSA plug-in [python3.12]",
+      "pid": "959839",
+      "first_observed": 123702.272359288,
+      "last_observed": 123710.916904365,
+      "observations": 35
+    },
+    "217": {
+      "sink": 55,
+      "application": "ALSA plug-in [python3.12]",
+      "pid": "959839",
+      "first_observed": 123711.170666282,
+      "last_observed": 123719.820985214,
+      "observations": 35
+    },
+    "264": {
+      "sink": 55,
+      "application": "ALSA plug-in [python3.12]",
+      "pid": "959839",
+      "first_observed": 123720.330089358,
+      "last_observed": 123728.985450859,
+      "observations": 35
+    },
+    "311": {
+      "sink": 55,
+      "application": "ALSA plug-in [python3.12]",
+      "pid": "959839",
+      "first_observed": 123729.49408576,
+      "last_observed": 123738.146515271,
+      "observations": 35
+    }
+  },
+  "all_observed_streams_routed_to_headset": true
+}

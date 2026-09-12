@@ -75,6 +75,37 @@ $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
 $ds-library-source-browser-width: 31;
 
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+$ds-textarea-min-height: 5;
+
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+$ds-opacity-dim: 70%;
+
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
+
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
 
 .tldw-agentic-split-preamble-end { }
 

@@ -46,6 +46,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.UI.test_console_fleet_panel import _real_fleet_recovery_database
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -361,9 +362,8 @@ def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(tmp_path)
     _, sub_ids = _seed_done_primary_with_subagents(db_path, tasks=("research",))
 
     screen = ChatScreen(_build_test_app())
-    screen.app_instance.chachanotes_db = SimpleNamespace(
-        db_path=str(tmp_path / "chacha.db")
-    )
+    from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+    _attach_real_dbs(screen.app_instance, tmp_path)
 
     bridge = screen._ensure_console_agent_bridge()
     assert bridge is not None
@@ -395,9 +395,8 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
     assert screen._ensure_console_agent_bridge() is None
 
     # A durable path appears afterwards: the next call builds for real.
-    screen.app_instance.chachanotes_db = SimpleNamespace(
-        db_path=str(tmp_path / "chacha.db")
-    )
+    from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+    _attach_real_dbs(screen.app_instance, tmp_path)
     assert screen._ensure_console_agent_bridge() is not None
 
 

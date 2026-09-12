@@ -98,6 +98,7 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+from tldw_chatbook.Chat.message_metadata import MESSAGE_ORIGIN_HOOK
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -3600,6 +3601,48 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     # persistent write, so it must stay offered (spec correction 0e6e8a56d).
     assert row.options == ("approve_once", "approve_session", "deny")
     assert verdicts == {"write_thing": "proceed"}
+
+
+def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
+    """task-32278 AC#3: the card's blast-radius sentence must be right.
+
+    The read-vs-mutation wording keys off `MCPPendingCall.effects`, and this
+    builder passed none -- so `write_file`, whose `risk_tags == ("mutates",)`
+    is exactly what floors it to "ask", rendered "this tool reads local
+    data". Driven through the REAL hook with the REAL tools: a
+    reconstruction of these kwargs would keep passing if the builder stopped
+    supplying them, which is the defect itself.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool, WriteFileTool
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    def _row_for(tool) -> MCPPendingCall:
+        asked: dict[str, list[MCPPendingCall]] = {}
+
+        def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+            asked["pending"] = pending
+            return {p.llm_name: "deny" for p in pending}
+
+        hook = build_tool_review_hook(
+            _FakeBuiltinGate(), _FakeBuiltinProvider(tool), None, request_approvals
+        )
+        hook([_builtin_call(tool.name)], RUN)
+        return asked["pending"][0]
+
+    mutating = _row_for(WriteFileTool())
+    assert mutating.effects == ("mutates_local",)
+    assert format_approval_reason(vars(mutating)) == (
+        "High risk: this tool changes local data and always asks first."
+    )
+
+    reading = _row_for(ReadFileTool())
+    assert reading.effects == ()
+    assert format_approval_reason(vars(reading)) == (
+        "High risk: this tool reads local data and always asks first."
+    )
 
 
 def _file_tool(name: str):
@@ -11531,3 +11574,225 @@ def test_pre_provider_setup_phase_marks_and_clears_the_bridge():
     with pytest.raises(RuntimeError):
         asyncio.run(_raising())
     assert bridge.cleared == ["c1", "c2"]
+
+
+# ---------------------------------------------------------------------------
+# Run hooks (spec 2026-09-11), Task 7: UserPromptSubmit in the submit path.
+# ---------------------------------------------------------------------------
+
+
+class TestUserPromptSubmitHooks:
+    """User-authored sends consult UserPromptSubmit hooks; wake notices never do.
+
+    The engine is injected the Task 5/6 way: a real ``RunHooksEngine`` built
+    over a temp config, handed to the controller through the optional
+    ``ensure_run_hooks`` accessor -- no ``ConsoleRuntime`` involved. Stub
+    commands are ``sys.executable -c`` snippets with real exit codes
+    (``raise SystemExit(2)`` -- not ``sys.exit(2)``, which NameErrors
+    under ``-c`` without an explicit import).
+    """
+
+    @staticmethod
+    def _engine(tmp_path, code):
+        import sys
+
+        from tldw_chatbook.Agents.run_hooks import RunHooksEngine, load_hooks_config
+
+        config = load_hooks_config(
+            {
+                "hooks": {
+                    "hook": [
+                        {
+                            "event": "UserPromptSubmit",
+                            "command": [sys.executable, "-c", code],
+                        }
+                    ]
+                }
+            }
+        )
+        return RunHooksEngine(
+            config_provider=lambda: config,
+            cwd_provider=lambda: str(tmp_path),
+        )
+
+    @pytest.mark.asyncio
+    async def test_block_rejects_send_without_assistant_row(self, tmp_path):
+        engine = self._engine(
+            tmp_path,
+            'import json; print(json.dumps({"decision": "block", "reason": "after hours"}))',
+        )
+        persistence = FakePersistence()
+        store = ConsoleChatStore(persistence=persistence)
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        assert result.accepted is False
+        assert result.should_clear_draft is False
+        assert result.visible_copy == "Blocked by hook: after hours"
+        messages = store.messages_for_session(store.active_session_id)
+        assert [message.role for message in messages] == [ConsoleMessageRole.SYSTEM]
+        # Releasing a preaccept preparation removes its optimistic echo.
+        assert not controller._prepared_send_continuations
+        block_row = messages[0]
+        assert block_row.content == "Send blocked by hook: after hours"
+        assert block_row.metadata is not None
+        assert block_row.metadata.origin == MESSAGE_ORIGIN_HOOK
+        assert block_row.persisted_message_id is not None
+        assert gateway.messages_seen is None
+
+    @pytest.mark.asyncio
+    async def test_stdout_injected_as_hook_origin_system_row(self, tmp_path):
+        engine = self._engine(tmp_path, "print('hook-supplied ctx')")
+        persistence = FakePersistence()
+        store = ConsoleChatStore(persistence=persistence)
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        assert result.accepted is True
+        messages = store.messages_for_session(store.active_session_id)
+        # Durable owner publication hydrates both committed message owners
+        # before publishing the separate audit record.
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.ASSISTANT,
+            ConsoleMessageRole.SYSTEM,
+        ]
+        injected = messages[2]
+        assert injected.content == "hook-supplied ctx"
+        assert injected.metadata is not None
+        assert injected.metadata.origin == MESSAGE_ORIGIN_HOOK
+        assert injected.persisted_message_id is not None
+        # R22 (fix round 1): the context must be MODEL-VISIBLE this turn.
+        # SYSTEM rows are dropped from provider payloads, so the wake
+        # notice's payload-only trailing user-role entry carries it -- the
+        # gateway must see it after the user's prompt, and the transcript
+        # must hold no second user row for it (the SYSTEM record above is
+        # the only store-side trace).
+        assert gateway.messages_seen == [
+            {"role": "user", "content": "hello"},
+            {"role": "user", "content": "hook-supplied ctx"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_exit_two_shorthand_blocks_send(self, tmp_path):
+        engine = self._engine(tmp_path, "raise SystemExit(2)")
+        store = ConsoleChatStore()
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        # Exit 2 is the block shorthand when stdout carries no JSON
+        # decision: the send is refused with the fallback reason.
+        assert result.accepted is False
+        assert result.should_clear_draft is False
+        assert result.visible_copy == "Blocked by hook: blocked by hook"
+        messages = store.messages_for_session(store.active_session_id)
+        assert [message.role for message in messages] == [ConsoleMessageRole.SYSTEM]
+        assert messages[0].content == "Send blocked by hook: blocked by hook"
+        assert messages[0].metadata is not None
+        assert messages[0].metadata.origin == MESSAGE_ORIGIN_HOOK
+        assert gateway.messages_seen is None
+
+    @pytest.mark.asyncio
+    async def test_wake_notice_fires_nothing(self, tmp_path):
+        from tldw_chatbook.Chat import console_fleet_wake
+        from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+
+        # A UserPromptSubmit hook that WOULD block every send: if the wake
+        # path ever fired THAT event, this wake turn would come back
+        # refused. (Task 8: the terminal Stop fire consults the engine
+        # once -- non-blocking, and no Stop hook is configured here.)
+        engine = self._engine(tmp_path, "raise SystemExit(2)")
+        accessor_calls = []
+
+        def accessor():
+            accessor_calls.append("called")
+            return engine
+
+        store = ConsoleChatStore()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=RecordingStreamingGateway(),
+            ensure_run_hooks=accessor,
+        )
+        session = store.ensure_session()
+        wake = controller.fleet_wake
+        token = console_fleet_wake.AgentWakeAuthorization(
+            wake, session.id, _key=console_fleet_wake._WAKE_AUTHORIZATION_KEY,
+            conversation_id="conv-1", owner_id=wake._owner_id,
+        )
+        # Register the exact live owner. Durable budget admission is covered
+        # by the fleet-wake integration suite; this test isolates hook routing.
+        wake._active["conv-1"] = console_fleet_wake._WakeDelivery(session.id, token)
+        async def accept(authorization, session_id):
+            assert wake.authorizes(authorization, session_id)
+            authorization.acceptance_started = True
+            return True
+        wake.accept = accept
+        try:
+            result = await controller.submit_draft(
+                "Sub-agent finished its run.",
+                session_id=session.id,
+                origin=ConsoleSubmissionOrigin.AGENT_WAKE,
+                wake_authorization=token,
+            )
+        finally:
+            wake._active.pop("conv-1", None)
+
+        assert result.accepted is True
+        # Task 8 (run hooks): the wake EXEMPTION is UserPromptSubmit-only.
+        # The blocking UserPromptSubmit hook never ran -- the turn was not
+        # refused, and no hook-origin row exists below -- but the run's
+        # terminal Stop stamp now consults the engine too (spec §3: "Stop/
+        # SubagentStop fire for wake turns too -- they report run
+        # outcomes, not user input"), which is exactly one accessor call:
+        # the non-blocking Stop fire at the COMPLETED transition.
+        assert accessor_calls == ["called"]
+        messages = store.messages_for_session(session.id)
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.SYSTEM,
+            ConsoleMessageRole.ASSISTANT,
+        ]
+        for message in messages:
+            origin = message.metadata.origin if message.metadata else ""
+            assert origin != MESSAGE_ORIGIN_HOOK
+
+    @pytest.mark.asyncio
+    async def test_hook_crash_send_proceeds(self, tmp_path):
+        engine = self._engine(tmp_path, "raise SystemExit(1)")
+        store = ConsoleChatStore()
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        # Fail-open: a crashing hook must not brick the composer -- the send
+        # proceeds, no hook SYSTEM row is appended.
+        assert result.accepted is True
+        messages = store.messages_for_session(store.active_session_id)
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.ASSISTANT,
+        ]
+        assert gateway.messages_seen == [{"role": "user", "content": "hello"}]

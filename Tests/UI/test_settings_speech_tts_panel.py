@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from Tests.UI.consolidated_css import APP_STYLESHEETS, app_css_text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
@@ -276,14 +275,23 @@ _BUNDLE = (
     / "css"
     / "tldw_cli_modular.tcss"
 )
+# TASK-25812 split the per-screen rules out of the boot bundle: the speech
+# disclosure/modal styles the "real styles" tests verify now live in the
+# sheet SettingsScreen itself attaches via CSS_PATH, not in _BUNDLE.
+_SETTINGS_SHEET = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "screen_agentic_settings.tcss"
+)
 
 
 class _StyledDestinationHarness(DestinationHarness):
-    CSS_PATH = _BUNDLE
+    CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
 
 
 class _StyledPanelHarness(_PanelHarness):
-    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+    CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
 
 
 def test_speech_tts_is_a_first_class_core_settings_category() -> None:
@@ -300,6 +308,7 @@ def test_speech_tts_is_a_first_class_core_settings_category() -> None:
     assert SettingsCategoryId.SPEECH_TTS in dict(screen._category_groups())["Core"]
 
 
+@pytest.mark.loopback_network
 @pytest.mark.asyncio
 async def test_production_settings_actions_cross_the_pushed_screen_boundary(
     monkeypatch: pytest.MonkeyPatch,
@@ -338,6 +347,9 @@ async def test_production_settings_actions_cross_the_pushed_screen_boundary(
     app = _build_test_app(configured_default="settings")
 
     async with app.run_test(size=(190, 55)) as pilot:
+        # Factory apps boot the 7s animated splash (app.py's splash reads
+        # ship enabled); any keypress skips it so Settings mounts promptly.
+        await pilot.press("space")
         for _ in range(200):
             if isinstance(app.screen, SettingsScreen):
                 break
@@ -590,7 +602,7 @@ async def test_global_panel_states_scope_and_mounts_only_selected_provider() -> 
         assert "Studio preferences" in text
         assert screen.query_one("#settings-speech-default-provider", Select)
         assert screen.query_one("#settings-speech-configure-provider", Select)
-        assert screen.query_one("#settings-speech-open-lab", Button)
+        assert screen.query_one("#settings-speech-open-lab-bottom", Button)
         assert len(screen.query(".settings-speech-provider-form")) == 1
 
         configure = screen.query_one("#settings-speech-configure-provider", Select)
@@ -604,18 +616,15 @@ async def test_scope_banner_points_to_the_two_profile_surfaces() -> None:
 
     Voice profiles are a Speech Lab concept and per-character assignment
     lives in the Roleplay character editor (ADR-039 scope separation) --
-    neither is managed from this panel. The card is a static note, not a
-    control: it reuses the existing "Open Speech Lab" button rather than
-    adding a second, competing affordance.
+    neither is managed from this panel. The card is a two-line static
+    note; the single "Open Speech Lab" action lives with the Save actions.
     """
     app = _PanelHarness()
     async with app.run_test(size=(150, 60)):
         note = app.query_one("#settings-speech-profile-surfaces-note", Static)
         assert str(note.renderable) == (
-            "Voice profiles are managed in Lab > Speech > Voice Profiles — "
-            "open Speech Lab, above, to get there. Per-character voices are "
-            "assigned in the Roleplay character editor's Voice & Speech "
-            "section, not here."
+            "Voice profiles: Speech Lab (open it from the actions below). "
+            "Per-character voices: the Roleplay character editor."
         )
 
 
@@ -1244,8 +1253,8 @@ async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
-        field = screen.query_one("#settings-speech-model-value", Input)
-        field.value = "dismissal-draft"
+        field = screen.query_one("#settings-speech-voice-value", Select)
+        field.value = "echo"
         field.focus()
         panel._ask_leave_choice = AsyncMock(return_value="cancel")
         await pilot.pause()
@@ -1253,7 +1262,7 @@ async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
         assert await screen.flush_pending_work() is False
 
         assert screen.active_category == SettingsCategoryId.SPEECH_TTS.value
-        assert field.value == "dismissal-draft"
+        assert field.value == "echo"
         assert host.focused is field
 
 
@@ -2284,10 +2293,12 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         screen = await _open_speech_tts(host, pilot)
-        screen.query_one("#settings-speech-model-value", Input).value = "draft-model"
-        await pilot.click("#settings-speech-restore-defaults")
+        screen.query_one("#settings-speech-model-value", Select).value = "tts-1"
+        # press() not pilot.click: the actions row sits below the fold at
+        # this size and these tests verify routing, not hit regions.
+        screen.query_one("#settings-speech-restore-defaults", Button).press()
         await pilot.pause()
-        await pilot.click("#settings-speech-revert")
+        screen.query_one("#settings-speech-revert", Button).press()
         await pilot.pause()
 
     assert calls == []
@@ -3207,8 +3218,10 @@ async def test_settings_generic_save_and_revert_actions_route_to_speech_panel() 
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
-        model_value = screen.query_one("#settings-speech-model-value", Input)
-        model_value.value = f"{model_value.value}-draft"
+        model_value = screen.query_one("#settings-speech-model-value", Select)
+        model_value.value = (
+            "tts-1-hd" if model_value.value != "tts-1-hd" else "tts-1"
+        )
         await pilot.pause()
         request_save = Mock()
         revert_to_saved = AsyncMock()
@@ -3242,8 +3255,8 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
             for widget in panel.query(Static)
             if widget.display and widget.is_on_screen
         ).casefold()
-        assert "task: set up" in visible_copy
         assert "current status" in visible_copy
+        assert "provider setup" in visible_copy
         assert "revision" not in visible_copy
         assert "effective source" not in visible_copy
 
@@ -3286,9 +3299,7 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
 
 @pytest.mark.asyncio
 async def test_production_bundle_applies_speech_disclosure_styles() -> None:
-    # task-32204: these rules live in the settings split sheet now, so the
-    # contract is the app's stylesheet union, not the boot bundle alone.
-    app_css = app_css_text()
+    sheet_css = _SETTINGS_SHEET.read_text(encoding="utf-8")
     for selector in (
         "#settings-speech-details,\n#settings-speech-scope-inspector",
         "#settings-speech-details > CollapsibleTitle,\n"
@@ -3296,11 +3307,11 @@ async def test_production_bundle_applies_speech_disclosure_styles() -> None:
         "#settings-speech-details > Contents,\n"
         "#settings-speech-scope-inspector > Contents",
     ):
-        assert selector in app_css
+        assert selector in sheet_css
 
     app = _StyledPanelHarness(configure_provider="audio_cpp")
-    assert [Path(path).resolve() for path in app.CSS_PATH] == [
-        path.resolve() for path in APP_STYLESHEETS
+    assert _SETTINGS_SHEET.resolve() in [
+        Path(sheet).resolve() for sheet in app.CSS_PATH
     ]
 
     async with app.run_test(size=(120, 40)):
@@ -3351,7 +3362,7 @@ async def test_managed_guided_selection_provenance_stays_in_collapsed_details() 
             for widget in panel.query(Static)
             if widget.display and widget.is_on_screen
         ).casefold()
-        assert "task: set up audio.cpp" in visible_copy
+        assert "provider setup" in visible_copy
         assert "current status:" in visible_copy
         assert "selection source" not in visible_copy
 
@@ -3449,7 +3460,12 @@ async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blu
 @pytest.mark.asyncio
 async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
-    async with host.run_test(size=(190, 55)) as pilot:
+    # Tall enough that the actions row is genuinely on-screen: this test
+    # exercises the real hit-tested mouse path from a focused field, so the
+    # buttons must be clickable, not pressed programmatically. (The panel
+    # mounts ~115 rows; at the usual (190, 55) the actions sit below nested
+    # folds and scroll_visible cannot reach them.)
+    async with host.run_test(size=(190, 130)) as pilot:
         screen = await _open_speech_tts(host, pilot)
         panel = screen.query_one(
             "#settings-speech-tts-panel",
@@ -3473,15 +3489,22 @@ async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> 
         )
         panel.request_save = request_save
         panel.revert_to_saved = revert_to_saved
+        # Let the provider-change rebuild's focus restoration finish (it
+        # re-asserts the pre-change focus after the card swap) before the
+        # endpoint takes focus, so the clicks below really start focused.
+        await pilot.pause(0.5)
         endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
 
         endpoint.focus()
+        await pilot.pause()
+        assert pilot.app.focused is endpoint
         await pilot.click("#settings-speech-save")
         request_save.assert_called_once_with()
 
         endpoint.focus()
-        await pilot.click("#settings-speech-revert")
         await pilot.pause()
+        assert pilot.app.focused is endpoint
+        await pilot.click("#settings-speech-revert")
         revert_to_saved.assert_awaited_once_with()
 
 
@@ -3521,8 +3544,11 @@ async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus() ->
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
-        model = screen.query_one("#settings-speech-model-value", Input)
-        model.value = "unsaved-exact-model"
+        model = screen.query_one("#settings-speech-model-value", Select)
+        dirty_value = (
+            "tts-1-hd" if model.value != "tts-1-hd" else "tts-1"
+        )
+        model.value = dirty_value
         model.focus()
         panel._ask_leave_choice = AsyncMock(return_value="cancel")
         await pilot.pause()
@@ -3532,8 +3558,8 @@ async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus() ->
         await pilot.pause()
 
         assert screen.active_category == SettingsCategoryId.SPEECH_TTS.value
-        assert screen.query_one("#settings-speech-model-value", Input).value == (
-            "unsaved-exact-model"
+        assert screen.query_one("#settings-speech-model-value", Select).value == (
+            dirty_value
         )
         assert host.focused is model
         assert panel.has_unsaved_changes() is True
@@ -3785,10 +3811,17 @@ async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
                 "idle_timeout_minutes": 8,
                 "turn_detection": "semantic_vad",
             },
-            "dictation": {"handsfree_engine": "realtime"},
+            # TASK-32496: barge-in is always written (explicit Switch);
+            # the untouched blank send delay deletes its key so the
+            # readers' own default keeps winning.
+            "dictation": {
+                "handsfree_engine": "realtime",
+                "acoustic_barge_in": False,
+            },
         }
         assert kwargs["delete_keys"] == {
-            "realtime": ("vad_threshold", "vad_silence_ms")
+            "realtime": ("vad_threshold", "vad_silence_ms"),
+            "dictation": ("handsfree_send_delay_seconds",),
         }
         assert "Saved" in str(
             app.query_one("#settings-speech-save-result", Static).renderable
@@ -3807,7 +3840,7 @@ async def test_realtime_blank_voice_deletes_key_instead_of_empty_string(
         lambda *a, **k: (calls.append((a, k)), True)[1],
     )
     app = _PanelHarness(configure_provider="audio_cpp")
-    async with app.run_test(size=(150, 60)) as pilot:
+    async with app.run_test(size=(150, 68)) as pilot:
         await _settle(pilot)
         app.query_one("#settings-speech-realtime-enabled", Switch).value = True
         await pilot.pause()
@@ -3820,9 +3853,12 @@ async def test_realtime_blank_voice_deletes_key_instead_of_empty_string(
         assert "voice" not in section_values["realtime"]
         # Semantic turn detection (the default) also deletes the two
         # server_vad-only knobs: the provider rejects them in that mode,
-        # so leaving them in config would arm a future rejection.
+        # so leaving them in config would arm a future rejection. The
+        # untouched blank send delay deletes its key too (TASK-32496's
+        # unset contract).
         assert kwargs["delete_keys"] == {
-            "realtime": ("voice", "vad_threshold", "vad_silence_ms")
+            "realtime": ("voice", "vad_threshold", "vad_silence_ms"),
+            "dictation": ("handsfree_send_delay_seconds",),
         }
 
 
@@ -4257,3 +4293,236 @@ async def test_default_profile_dirty_check_does_not_depend_on_provider_validity(
         await pilot.pause()
 
         assert panel.has_unsaved_changes() is True
+
+
+def _kokoro_defaults_state():
+    state = load_global_speech_tts_state({})
+    state.defaults.provider_id = "kokoro"
+    state.defaults.model_mode = "exact"
+    state.defaults.model_id = "kokoro"
+    state.defaults.voice_mode = "exact"
+    state.defaults.voice_id = "af_heart"
+    return state
+
+
+@pytest.mark.asyncio
+async def test_legacy_voice_value_select_offers_known_voices() -> None:
+    """Recognition over recall: the legacy Voice value control offers the
+    provider's labeled voices instead of a free-text box, and a pick both
+    lands in the draft and dirties it (the 2026-09-11 critique's P1)."""
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        voice = app.query_one("#settings-speech-voice-value", Select)
+        assert voice.value == "af_heart"
+        # Raises if the labeled Kokoro voices are not real options.
+        voice.value = "bf_emma"
+        await pilot.pause()
+
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        assert panel.state.defaults.voice_id == "bf_emma"
+        assert panel.has_unsaved_changes() is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_saved_voice_stays_selectable_as_custom() -> None:
+    """A saved voice the known list does not carry stays selectable as an
+    explicit '(custom)' option -- the never-drop-a-saved-value rule the
+    audio.cpp exact choices already follow."""
+    state = _kokoro_defaults_state()
+    state.defaults.voice_id = "my_cloned_voice"
+    app = _PanelHarness(state=state, configure_provider="kokoro")
+    async with app.run_test(size=(150, 60)):
+        voice = app.query_one("#settings-speech-voice-value", Select)
+        assert voice.value == "my_cloned_voice"
+
+
+@pytest.mark.asyncio
+async def test_custom_entry_modal_sets_voice_id() -> None:
+    """Picking Custom… opens the free-text editor; a confirmed ID becomes
+    the draft value and stays selected after the card rebuild."""
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        voice = app.query_one("#settings-speech-voice-value", Select)
+        voice.value = speech_tts_settings_panel_module._CUSTOM_ID_SENTINEL
+        await pilot.pause()
+
+        modal = app.screen
+        assert isinstance(
+            modal, speech_tts_settings_panel_module._CustomIdModal
+        )
+        modal.query_one("#settings-speech-custom-id-value", Input).value = (
+            "af_sky"
+        )
+        await pilot.click("#settings-speech-custom-id-confirm")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        assert panel.state.defaults.voice_id == "af_sky"
+        assert (
+            app.query_one("#settings-speech-voice-value", Select).value
+            == "af_sky"
+        )
+        # A Save racing the rebuild must not clobber the confirmed ID.
+        panel._collect_visible_state()
+        assert panel.state.defaults.voice_id == "af_sky"
+
+
+@pytest.mark.asyncio
+async def test_browse_voices_button_navigates_to_speech_lab() -> None:
+    """The Voice value row bridges to Speech Lab with the default provider
+    staged and the voice selector focused (refresh-voices intent), so a
+    discovered voice no longer has to be retyped from memory."""
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-browse-voices", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.navigation) == 1
+        assert app.navigation[0].screen_name == "stts"
+        assert app.navigation[0].screen_context == {
+            "view": "playground",
+            "provider": "kokoro",
+            "intent": "refresh-voices",
+        }
+
+
+@pytest.mark.asyncio
+async def test_local_provider_forms_surface_dependency_and_model_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The install extra and the model-download story live in the Kokoro
+    form itself, not only inside the collapsed Scope inspector (the
+    2026-09-11 critique's first-run dead-end P1)."""
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "speech_local_dependency_availability",
+        lambda **_kwargs: SpeechLocalDependencyAvailability(
+            stt=False, kokoro=False, chatterbox=False, higgs=False
+        ),
+    )
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)):
+        status = app.query_one(
+            "#settings-speech-kokoro-dependency-status", Static
+        )
+        assert "tldw_chatbook[local_tts]" in str(status.renderable)
+        assert "not installed" in str(status.renderable)
+        guidance = app.query_one(
+            "#settings-speech-kokoro-model-guidance", Static
+        )
+        assert "kokoro-v0_19.onnx" in str(guidance.renderable)
+
+@pytest.mark.asyncio
+async def test_handsfree_pipeline_tuning_fields_render_and_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-32496: the pipeline loop's two tuning knobs (send countdown,
+    acoustic barge-in) were config.toml-only -- invisible at the point of
+    use. They render in the Speech panel's hands-free section and round-trip
+    through the same atomic config writer."""
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        delay = app.query_one("#settings-speech-handsfree-send-delay", Input)
+        barge_in = app.query_one(
+            "#settings-speech-handsfree-acoustic-barge-in", Switch
+        )
+
+        # Unset renders blank (readers default to 1.5s) and off.
+        assert delay.value == ""
+        assert barge_in.value is False
+
+        delay.value = "2.5"
+        barge_in.value = True
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        (section_values,), _kwargs = calls[0]
+        assert section_values["dictation"]["handsfree_send_delay_seconds"] == 2.5
+        assert section_values["dictation"]["acoustic_barge_in"] is True
+
+
+@pytest.mark.asyncio
+async def test_handsfree_blank_send_delay_deletes_key_and_invalid_refuses_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blank delay means "unset" (the readers' own default wins, the key is
+    deleted); a non-positive or non-numeric value refuses the entire Save
+    with an inline error, never a partial write."""
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        barge_in = app.query_one(
+            "#settings-speech-handsfree-acoustic-barge-in", Switch
+        )
+        delay = app.query_one("#settings-speech-handsfree-send-delay", Input)
+
+        # Invalid first: refuses the whole Save.
+        delay.value = "0"
+        barge_in.value = True
+        await pilot.pause()
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+        assert calls == [], "an invalid delay must refuse the entire Save"
+        error = app.query_one(
+            "#settings-speech-realtime-handsfree-send-delay-seconds-error", Static
+        )
+        assert "positive" in str(error.renderable)
+
+        # Blank means unset: the key is deleted, the readers' default wins.
+        delay.value = ""
+        await pilot.pause()
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+        (section_values,), kwargs = calls[0]
+        assert "handsfree_send_delay_seconds" not in section_values["dictation"]
+        assert "handsfree_send_delay_seconds" in kwargs["delete_keys"]["dictation"]
+        assert section_values["dictation"]["acoustic_barge_in"] is True
+
+
+def test_optional_number_validator_rejects_non_finite_values():
+    """PR #2638 Qodo #5: NaN compares False to every bound and infinity
+    passes a positive lower bound, yet neither belongs in config -- the
+    shared helper every realtime numeric knob uses must refuse them."""
+    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+        GlobalSpeechTTSValidationError,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    for bad in ("nan", "inf", "-inf"):
+        with pytest.raises(GlobalSpeechTTSValidationError):
+            SpeechTTSSettingsPanel._validated_optional_number(
+                bad,
+                field="handsfree_send_delay_seconds",
+                message="Send delay must be a positive number of seconds.",
+                cast=float,
+                low=0.0,
+                high=None,
+                exclusive_low=True,
+            )

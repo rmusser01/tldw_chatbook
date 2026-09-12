@@ -52,6 +52,23 @@ TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
 
 
+def validate_tts_inference_device(value: object) -> str:
+    """Admit an exact device family for the opt-in TTS qualification runner.
+
+    Args:
+        value: Candidate device family, without coercion or ordinal expansion.
+
+    Returns:
+        The validated cpu, mps or cuda value.
+
+    Raises:
+        ValueError: The value is not a supported device family.
+    """
+    if not isinstance(value, str) or value not in ("cpu", "mps", "cuda"):
+        raise ValueError("device must be cpu, mps, or cuda")
+    return value
+
+
 class ReasoningHistorySelectorInput(BaseModel):
     """Strict boundary for a Console reasoning-history selector event.
 
@@ -286,6 +303,44 @@ def validate_tool_arguments(value: object) -> dict[str, Any]:
         if message.startswith("Value error, "):
             message = message.removeprefix("Value error, ")
         raise ValueError(message) from None
+
+
+class CanvasGuideArgumentsInput(BaseModel):
+    """Strict, closed arguments for the model-visible Canvas guide tool.
+
+    Attributes:
+        topic: Exact packaged documentation topic, without coercion.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    topic: Literal["basics", "controls", "mermaid", "repair"]
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def _exact_topic(cls, value: object) -> str:
+        if type(value) is not str:
+            raise ValueError("invalid topic type")
+        return value
+
+
+def validate_canvas_guide_arguments(value: object) -> dict[str, str]:
+    """Validate guide arguments without normalizing or echoing raw input.
+
+    Args:
+        value: Untrusted model-issued tool arguments.
+
+    Returns:
+        A new dictionary containing only the validated topic.
+
+    Raises:
+        ValueError: If arguments are not an exact dictionary with one valid topic.
+    """
+    if type(value) is not dict:
+        raise ValueError("invalid Canvas guide arguments") from None
+    try:
+        return {"topic": CanvasGuideArgumentsInput.model_validate(value).topic}
+    except PydanticValidationError:
+        raise ValueError("invalid Canvas guide arguments") from None
 
 
 class CanvasBridgeWireInput(BaseModel):
@@ -845,6 +900,27 @@ def validate_username(username: str, min_length: int = 3, max_length: int = 50) 
     log_counter("input_validation_username_result", labels={"valid": str(result)})
 
     return result
+
+
+def validate_env_var_reference(name: str) -> bool:
+    """Validate an environment-variable reference name (credential lookup key).
+
+    Covers user-entered ``api_key_env``-style references: a portable
+    environment-variable name (POSIX ``[A-Za-z_][A-Za-z0-9_]*``) of at most
+    128 characters. The value is only ever used as an ``os.environ`` lookup
+    key, so shape validation exists to catch typos and stray punctuation,
+    not to defuse an injection surface.
+
+    Args:
+        name: Candidate variable name (already stripped by the caller).
+
+    Returns:
+        ``True`` when ``name`` is a well-formed environment-variable name;
+        ``False`` otherwise (never raises).
+    """
+    if not name or len(name) > 128:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
 
 
 def validate_ip_address(ip: str) -> bool:
@@ -1408,7 +1484,10 @@ def validate_number_range(
 
         log_counter("input_validation_number_range_result", labels={"valid": "true"})
         return True
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
+        # OverflowError (PR #2624 review): float(10**400) is a valid int
+        # whose float conversion overflows -- a several-hundred-digit
+        # limit from a model caller must be "not numeric", not a crash.
         log_counter(
             "input_validation_number_range_invalid", labels={"reason": "not_numeric"}
         )

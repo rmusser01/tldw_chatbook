@@ -3,6 +3,9 @@
 - **Status:** Accepted
 - **Date:** 2026-08-23
 - **Last amended:** 2026-08-24 (private Local Quick Note recovery proof)
+- **Status:** Proposed
+- **Date:** 2026-08-23
+- **Last amended:** 2026-08-23 (unsent draft recovery and extended-output owners)
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)
 - **Amends:** ADR-015 (shell destination taxonomy); ADR-028 (adds Research
@@ -12,6 +15,8 @@
   ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-043
   (explicit rail preferences versus responsive collapse), ADR-068 (local
   research engine), ADR-070 (research run durability)
+  ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-068
+  (local research engine), ADR-070 (research run durability)
 
 ## Context
 
@@ -97,6 +102,8 @@ payloads:
 - stable Local TTS history owns Audio Summary when available;
 - Local Mind Map, Timeline, Slides, and Data Table remain unavailable until a
   working canonical owner/editor exists;
+- specialist stores own future audio, slides, mind-map, timeline, and data-table
+  artifacts when implemented;
 - Research Interop owns Research Runs.
 
 The UI may normalize these as `WorkspaceOutputRef` values in memory. It does
@@ -226,6 +233,22 @@ Runtime abandonment compares parsed SQLite Julian instants rather than raw
 timestamp text, so historical space-separated UTC values and runtime ISO/offset
 values share the same exact seven-day boundary. No migration heuristic promotes
 or deletes an ordinary membership.
+sharing, and operation APIs.
+
+Research ingestion first creates or reuses an item in the selected authority's
+general catalog and then associates its stable identity with the captured
+workspace. Local uses a Library item plus `WorkspaceMembership(role=source)`;
+Server uses a server Media item plus a server workspace-source row. The
+qualified association intent is durable across navigation and restart. It may
+never attach to the other authority or to the workspace visible when a late
+completion happens to arrive.
+
+A name-derived workspace keyword may be projected for search/display parity,
+but it is not the association or authority boundary: names and tags are
+editable and can drift. Removing a workspace association does not delete the
+canonical item. If catalog ingestion succeeds and association or indexing
+fails, the item remains in the general catalog and the failed stage is
+independently retryable.
 
 ### 5. Server folders and annotations are explicit device-only overlays
 
@@ -236,6 +259,8 @@ qualified workspace, and payload-free append-stage recovery receipts in one
 private atomic device overlay keyed by data source, server/profile, principal,
 and workspace ID. A successful canonical chat append clears the draft; sent
 transcript bodies are never mirrored into the overlay.
+Deep-Research launch context, in one private atomic device overlay keyed by
+data source, server/profile, principal, and workspace ID.
 
 The overlay does not create remote workspace records in the local registry and
 is never represented as uploaded, shared, or cross-device state. UI copy says
@@ -384,6 +409,10 @@ preserves control and provenance.
 - Ingested sources remain discoverable in the selected authority's general
   catalog while stable workspace associations provide eligibility and
   provenance.
+- Complete server parity remains discoverable without overwhelming the primary
+  flow.
+- Side-pane controls share the app's tested preference, responsive-collapse,
+  and focus behavior while using the requested compact ASCII labels.
 - Complete server parity remains discoverable without overwhelming the primary
   flow.
 - Side-pane controls share the app's tested preference, responsive-collapse,

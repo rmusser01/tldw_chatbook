@@ -72,8 +72,15 @@ def build_console_workbench_state(
         ),
         WorkbenchAction(
             id="attach-context",
-            label="Attach context",
-            tooltip="Stage Library or workspace context",
+            # TASK-32325: the label says what the button DOES (open the
+            # rail); the tooltip carries the staging pointer. "Attach
+            # context" claimed an attachment this control never made, and
+            # with the rail already open by default the click looked like
+            # a dead button.
+            label="Context rail",
+            tooltip=(
+                "Open the Console context rail; stage sources from Library"
+            ),
         ),
         WorkbenchAction(
             id="run-library-rag",

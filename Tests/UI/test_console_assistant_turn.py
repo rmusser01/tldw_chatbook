@@ -439,6 +439,27 @@ def _styled_turn_messages() -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
     return assistant, activity
 
 
+@pytest.mark.parametrize(
+    ("status", "line"),
+    [
+        ("denied", "list_characters · denied by you"),
+        ("blocked_off", "list_characters · blocked (Off)"),
+        ("blocked_kill_switch", "list_characters · blocked (kill switch)"),
+        ("blocked", "list_characters · blocked"),
+    ],
+)
+def test_refusal_marker_line_names_who_refused(status: str, line: str) -> None:
+    """task-32279: a Deny the user made must not read as a policy block.
+
+    Live evidence on dev: pressing Deny on the card left the transcript
+    saying `list_characters · blocked` -- the same word an Off entry or the
+    kill switch produces.
+    """
+    header = ConsoleActivityHeader("refusal", "list_characters", status)
+
+    assert header.renderable.plain == line
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(120, 32), (42, 24)])
 async def test_assistant_turn_geometry_under_production_bundle(

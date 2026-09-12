@@ -256,26 +256,15 @@ def test_grouped_rows_take_the_first_non_empty_rationale():
     assert _collapse_pending_calls(blanks)[0]["rationale"] == ""
 
 
-@pytest.mark.unit
-def test_needs_decision_state_is_text_labelled_not_colour_only():
-    """TASK-1845: PRODUCT.md forbids colour as the only carrier of meaning.
-
-    `.approval-row.needs-decision` was a border plus a 10% tint with no text
-    change, so the state was invisible in monochrome and to anyone who cannot
-    distinguish the tint.
-    """
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-        NEEDS_DECISION_PREFIX,
-        _format_row_header,
-    )
-
-    entry = {"llm_name": "write_file", "server": "Built-in", "needs_decision": True}
-    header = _format_row_header(entry)
-    assert NEEDS_DECISION_PREFIX in header, (
-        f"needs-decision is colour-only; header reads {header!r}"
-    )
-    plain = _format_row_header({"llm_name": "write_file", "server": "Built-in"})
-    assert NEEDS_DECISION_PREFIX not in plain
+# TASK-1845's "colour is never the only carrier of state" contract for the
+# needs-decision flag is exercised end to end (row class AND header text)
+# by the live `_mark_row_needs_decision` mechanism's own tests in
+# ``test_console_mcp_approval.py`` (e.g.
+# ``test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision``).
+# A unit test used to cover the same claim here via a `needs_decision` key
+# on the row entry dict, but no producer ever set that key on a real entry
+# -- `_format_row_header`'s read of it was dead code, removed alongside
+# this comment.
 
 
 @pytest.mark.unit
@@ -415,3 +404,432 @@ def test_format_approval_deadline_hides_copy_when_no_deadline_armed():
 
     assert format_approval_deadline(0) == ""
     assert format_approval_deadline(None) == ""
+
+
+# ---------------------------------------------------------------------------
+# task-32278: decision labels fit the closed Select and state their scope
+# ---------------------------------------------------------------------------
+
+#: What Textual's closed `Select` spends on chrome, leaving the rest for the
+#: label: `SelectCurrent` is `border: tall` (1 cell each side) + `padding: 0 2`
+#: (2 each side) and its `.arrow` is `width: 1` with `padding: 0 0 0 1`.
+_SELECT_CHROME_CELLS = 8
+
+
+def _decision_select_width() -> int:
+    """Return the shipped `.approval-row-decision` width, from the stylesheet.
+
+    Read from the source component rather than hard-coded: the label budget
+    and the rule that sets it must not be able to drift apart, which is
+    exactly how "Approve for session" came to render as "Approve for".
+    """
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "components"
+        / "_agentic_terminal.tcss"
+    ).read_text()
+    # `;`-anchored so the `width: 1fr` in the BuddyConversationModal
+    # override further down the file cannot match as "1", and the property
+    # name anchored at a line start so `min-width:`/`max-width:` cannot
+    # stand in for the `width` that actually sizes the closed Select.
+    match = re.search(
+        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?^\s*width:\s*(\d+);",
+        source,
+        re.S | re.M,
+    )
+    assert match, "`.approval-row-decision` no longer sets an explicit width"
+    return int(match.group(1))
+
+
+@pytest.mark.unit
+def test_every_decision_label_fits_the_closed_select():
+    """AC#1: no decision label may be wider than the Select can paint.
+
+    A label one cell too long does not ellipsize -- `SelectCurrent` is
+    `height: auto` and its `Static#label` wraps, so the row's Select grows a
+    line and the choice reads as two half-sentences.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _RAW_SHELL_DECISION_OPTIONS,
+    )
+
+    budget = _decision_select_width() - _SELECT_CHROME_CELLS
+    too_long = {
+        label: len(label)
+        for label, _value in [*_DECISION_OPTIONS, *_RAW_SHELL_DECISION_OPTIONS]
+        if len(label) > budget
+    }
+    assert not too_long, (
+        f"these labels exceed the {budget}-cell label area of a "
+        f"{_decision_select_width()}-cell Select: {too_long}"
+    )
+
+
+@pytest.mark.unit
+def test_every_offered_decision_states_its_scope():
+    """AC#2: a decision the card offers must say how long it lasts."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        DECISION_SCOPE_COPY,
+        _RAW_SHELL_DECISION_OPTIONS,
+    )
+
+    offered = {
+        value for _label, value in [*_DECISION_OPTIONS, *_RAW_SHELL_DECISION_OPTIONS]
+    }
+    assert offered <= set(DECISION_SCOPE_COPY), (
+        "no scope copy for: " f"{sorted(offered - set(DECISION_SCOPE_COPY))}"
+    )
+    assert DECISION_SCOPE_COPY["approve_once"] == "This call only."
+
+
+@pytest.mark.unit
+def test_persistent_decisions_name_where_to_undo_them():
+    """AC#2: "remembered" is only honest if the card says where to remove it."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        DECISION_SCOPE_COPY,
+    )
+
+    assert "MCP ▸ Tools" in DECISION_SCOPE_COPY["allow_matching"]
+    assert "MCP ▸ Permissions" in DECISION_SCOPE_COPY["always_allow"]
+
+
+@pytest.mark.unit
+def test_the_high_risk_explanation_differs_for_reads_and_mutations():
+    """AC#3: the reads-only sentence was also shown for `write_file`."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    read = format_approval_reason({"reason": "risk_floored"})
+    mutate = format_approval_reason(
+        {"reason": "risk_floored", "effects": ["mutates_local"]}
+    )
+    assert read == "High risk: this tool reads local data and always asks first."
+    assert mutate == "High risk: this tool changes local data and always asks first."
+
+
+@pytest.mark.unit
+def test_a_changed_definition_explains_itself_too():
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    assert format_approval_reason({"reason": "config_changed"}) == (
+        "Definition changed since you last allowed it; review the arguments."
+    )
+    assert format_approval_reason({"reason": "ask"}) == ""
+    assert format_approval_reason({}) == ""
+
+
+@pytest.mark.unit
+def test_a_mutating_tool_is_floored_by_the_same_tag_the_effect_derives_from():
+    """The card's sentence and the reason the row asks share one vocabulary.
+
+    If `HIGH_RISK_TAGS` and the effect derivation ever key on different
+    tags, a floored row can render the wrong blast radius again.
+    """
+    from tldw_chatbook.Agents.mcp_tool_provider import approval_effects_for_tool
+    from tldw_chatbook.MCP.permission_store import HIGH_RISK_TAGS
+    from tldw_chatbook.Tools.file_operation_tools import WriteFileTool
+
+    tool = WriteFileTool()
+    assert set(tool.risk_tags) & HIGH_RISK_TAGS, "write_file is no longer floored"
+    assert approval_effects_for_tool(tool) == ("mutates_local",)
+    # An MCP row's tool is a HubTool, which spells the same vocabulary
+    # `tags` rather than `risk_tags` -- pin the REAL dataclass, since that
+    # attribute-name difference is what the derivation has to bridge.
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    def _hub(tags):
+        return HubTool(
+            server_key="local:srv",
+            server_label="Srv",
+            source="server",
+            name="write",
+            description="",
+            input_schema=None,
+            tags=tags,
+            stale=False,
+            executable=True,
+        )
+
+    assert approval_effects_for_tool(_hub(("mutates",))) == ("mutates_local",)
+    assert approval_effects_for_tool(_hub(("reads",))) == ()
+
+
+# ---------------------------------------------------------------------------
+# Mounted geometry -- the card hugs its content (task-32287)
+# ---------------------------------------------------------------------------
+#
+# Live at 200x50 a ONE-row batch rendered a 17-row card with ~10 blank rows
+# between the "Approve all / Submit / Deny all" bar and the bottom border,
+# and at 80x24 the bar was clipped away entirely. Cause: `#approval-batch-
+# body` (a Container) and `#approval-batch-actions` (a Horizontal) had no
+# CSS at all, so both kept Textual's `height: 1fr` default and grew to fill
+# whatever the parent offered; `#console-task-surface` (ChatTaskCards, also
+# a Container) did the same one level up, taking a 1fr share of the session
+# column -- too much at 50 rows, too little at 24, where it clipped the card.
+
+_ONE_ROW_CARD_MAX_HEIGHT = 12
+_THREE_ROW_CARD_MAX_HEIGHT = 22
+#: The surface's non-approval cards: a few Statics and one button row each.
+_SIBLING_CARD_MAX_HEIGHT = 8
+
+
+def _pending_calls(count: int) -> list[dict]:
+    """Return ``count`` distinct ordinary (non-raw-shell) MCP pending calls."""
+    return [
+        {
+            "llm_name": f"mcp__srv__tool{index}",
+            "server_key": "local:srv",
+            "tool_name": f"tool{index}",
+            "server_label": "Srv",
+            "arguments": {"query": "hello"},
+            "reason": "ask",
+        }
+        for index in range(count)
+    ]
+
+
+async def _mounted_batch(app, pilot, count: int):
+    """Render ``count`` rows through the real ChatTaskCards sync path."""
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+    app.query_one(ChatTaskCards).sync_state(
+        TaskResumeState(
+            pending_approval={
+                "calls": _pending_calls(count),
+                "timeout_seconds": 45.0,
+            }
+        )
+    )
+    await pilot.pause()
+    card = app.query_one(ChatApprovalCard)
+    assert card.display is True
+    assert len(card.query(".approval-row")) == count
+    return card
+
+
+def _task_surface_harness():
+    """An app whose only content is the production task-card surface.
+
+    `APP_STYLESHEETS`, not `BUNDLED_STYLESHEET`: the console's rules were
+    split out of the bundle into `screen_agentic_console.tcss`, which the
+    real app parses on first visit to the Console (see the module docstring
+    in Tests/UI/consolidated_css.py). Pinning the bundle alone would drop
+    `#console-task-surface` and every other console rule on the floor and
+    measure a surface production never renders.
+    """
+    from textual.app import ComposeResult
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+    class _TaskSurfaceHarness(ConsolidatedCSSApp):
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+        def compose(self) -> ComposeResult:
+            yield ChatTaskCards(id="console-task-surface")
+
+    return _TaskSurfaceHarness()
+
+
+@pytest.mark.asyncio
+async def test_one_row_approval_card_hugs_its_content():
+    """A one-row card is content-height, with no reserved slack under the bar."""
+    app = _task_surface_harness()
+    async with app.run_test(size=(200, 50)) as pilot:
+        card = await _mounted_batch(app, pilot, 1)
+
+        actions = card.query_one("#approval-batch-actions")
+        submit = card.query_one("#approval-submit")
+
+        assert card.size.height <= _ONE_ROW_CARD_MAX_HEIGHT, (
+            f"one-row approval card is {card.size.height} lines tall "
+            f"(> {_ONE_ROW_CARD_MAX_HEIGHT}) -- a container inside it is "
+            "still reserving blank rows"
+        )
+        assert actions.size.height <= submit.size.height + 1, (
+            f"the action bar is {actions.size.height} lines tall for a "
+            f"{submit.size.height}-line button -- it is padding the card "
+            "with blank rows"
+        )
+        # Nothing but the card's own padding + border may sit under the bar.
+        assert card.region.bottom - actions.region.bottom <= 2, (
+            f"{card.region.bottom - actions.region.bottom} rows sit between "
+            "the action bar and the card's bottom border"
+        )
+
+
+@pytest.mark.asyncio
+async def test_three_row_approval_card_stays_bounded():
+    """Three rows grow the card, but the rows container's cap still bounds it."""
+    app = _task_surface_harness()
+    async with app.run_test(size=(200, 50)) as pilot:
+        card = await _mounted_batch(app, pilot, 3)
+
+        actions = card.query_one("#approval-batch-actions")
+        batch_rows = card.query_one("#approval-batch-rows")
+
+        assert card.size.height <= _THREE_ROW_CARD_MAX_HEIGHT, (
+            f"three-row approval card is {card.size.height} lines tall "
+            f"(> {_THREE_ROW_CARD_MAX_HEIGHT})"
+        )
+        # Three 7-line rows exceed `#approval-batch-rows`' `max-height: 15`,
+        # so the rows scroll and the bar sits directly under that cap.
+        assert actions.region.y >= batch_rows.region.bottom, (
+            "the action bar must stay below the rows it commits"
+        )
+        assert card.region.bottom - actions.region.bottom <= 2, (
+            f"{card.region.bottom - actions.region.bottom} rows sit between "
+            "the action bar and the card's bottom border"
+        )
+
+
+@pytest.mark.asyncio
+async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console():
+    """AC#2: at 80x24 the Submit button is on screen AND not clipped away.
+
+    Region alone is not evidence here: pre-fix the button reported a
+    region inside the 24-row screen while `#console-task-surface`'s 1fr
+    share (6 rows) clipped it, so the compositor handed those coordinates
+    to the transcript's empty state instead. `get_widget_at` is the check
+    that fails on the bug the live pass actually saw.
+    """
+    import time
+    from unittest.mock import patch
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+
+    def _settings_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return default
+
+    app = _build_test_app()
+    with patch(
+        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
+    ):
+        async with app.run_test(size=(80, 24)) as pilot:
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                screen = app.screen
+                if (
+                    isinstance(screen, ChatScreen)
+                    and screen.is_mounted
+                    and screen.query("#console-task-surface")
+                ):
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Production Console did not finish mounting")
+
+            screen.set_task_resume_state(
+                TaskResumeState(
+                    pending_approval={
+                        "calls": _pending_calls(1),
+                        "timeout_seconds": 45.0,
+                    }
+                )
+            )
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                cards = screen.query("#chat-approval-card")
+                if cards and cards.first().display and cards.first().query(
+                    ".approval-row"
+                ):
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("Approval batch did not finish rendering")
+            # An approval can only reach a Console the user has already set
+            # up, so the first-run modal is never up at the same time; left
+            # covering the workbench it would be the widget every hit test
+            # below reported, measuring nothing about the card. `display =
+            # False` is not enough -- the screen re-syncs the modal during
+            # the pause that follows, so it has to go.
+            await screen.query("#console-setup-modal").remove()
+            await pilot.pause()
+
+            submit = screen.query_one("#approval-submit")
+            x, y = submit.region.center
+            assert submit.region in app.screen.region, (
+                f"Submit at {submit.region} is off an 80x24 screen"
+            )
+            hit, _region = app.screen.get_widget_at(int(x), int(y))
+            assert hit.id == "approval-submit", (
+                "the Submit button's own coordinates render "
+                f"{hit.id or type(hit).__name__} instead -- the approval card "
+                "is clipped by its task surface at 80x24"
+            )
+
+
+@pytest.mark.asyncio
+async def test_every_task_surface_card_hugs_its_content():
+    """The surface's other cards must not re-inflate it (task-32287 review).
+
+    `#console-task-surface { height: auto }` is only half a fix while a
+    card inside it still carries Textual's `height: 1fr` default: the
+    fraction resolves against the whole offered box, so the surface grows
+    right back. All four cards it hosts measured 50 rows in this 50-row
+    harness before their rules landed (the two skill cards through their
+    unstyled `Horizontal` button rows, one level down).
+    """
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+    revealed = {
+        "#chat-resume-panel": TaskResumeState(
+            summary="Refactor the parser",
+            last_step="ran the tests",
+            diff_summary="3 files changed",
+            next_action="review the diff",
+        ),
+        "#chat-skill-install-card": TaskResumeState(
+            pending_skill_install={
+                "url": "https://example.com/demo.zip",
+                "timeout_seconds": 120.0,
+                "request_id": "r1",
+            }
+        ),
+        "#chat-skill-script-card": TaskResumeState(
+            pending_skill_script={
+                "skill_name": "demo",
+                "script_path": "run.sh",
+                "request_id": "r1",
+            }
+        ),
+    }
+
+    for selector, state in revealed.items():
+        app = _task_surface_harness()
+        async with app.run_test(size=(200, 50)) as pilot:
+            await pilot.pause()
+            surface = app.query_one(ChatTaskCards)
+            surface.sync_state(state)
+            await pilot.pause()
+            await pilot.pause()
+
+            card = app.query_one(selector)
+            assert card.display is True, f"{selector} did not reveal"
+            assert card.size.height <= _SIBLING_CARD_MAX_HEIGHT, (
+                f"{selector} is {card.size.height} lines tall "
+                f"(> {_SIBLING_CARD_MAX_HEIGHT}) -- it is still filling the "
+                "surface instead of hugging its content"
+            )
+            visible = sum(
+                child.region.height for child in surface.children if child.display
+            )
+            assert surface.size.height == visible, (
+                f"the task surface is {surface.size.height} lines tall for "
+                f"{visible} lines of visible cards"
+            )

@@ -43,12 +43,32 @@ class MCPProfileForm(Vertical):
         on FAILED saves -- a successful save unmounts the whole form
         (`hide_form()`) sub-second, so the host must re-surface the warning
         as a toast alongside its own success notify for the user to ever
-        see it."""
+        see it.
 
-        def __init__(self, payload: dict[str, Any], warning: str | None = None) -> None:
+        Wave C (F7a): `connect_after=True` is the "Save and connect"
+        button's request -- the host saves and then dispatches the connect
+        lifecycle for the saved profile.
+
+        Args:
+            payload: The parsed store payload (`build_payload()` shape:
+                profile_id/command/args/env_placeholders/env_literals).
+            warning: Non-blocking args secret-lint text to re-surface as a
+                toast on the success path, or None when clean.
+            connect_after: Dispatch the connect lifecycle after a
+                successful save (the "Save and connect" button).
+        """
+
+        def __init__(
+            self,
+            payload: dict[str, Any],
+            warning: str | None = None,
+            *,
+            connect_after: bool = False,
+        ) -> None:
             super().__init__()
             self.payload = payload
             self.warning = warning
+            self.connect_after = connect_after
 
     class Cancelled(Message, namespace="mcp_profile_form"):
         pass
@@ -123,9 +143,20 @@ class MCPProfileForm(Vertical):
             yield Button(
                 "Save",
                 id="mcp-form-save",
-                classes="console-action-primary",
+                classes="console-action-secondary",
                 compact=True,
                 tooltip="Validate and save this profile.",
+            )
+            # Wave C (F7a): the primary action for a brand-new server is
+            # USING it -- save + connect in one press, so the
+            # saved->connected journey is not a row hunt followed by an
+            # inspector hunt.
+            yield Button(
+                "Save and connect",
+                id="mcp-form-save-connect",
+                classes="console-action-primary",
+                compact=True,
+                tooltip="Save this profile, then connect and discover its tools.",
             )
             yield Button(
                 "Cancel",
@@ -180,12 +211,13 @@ class MCPProfileForm(Vertical):
         self._refresh_save_enabled()
 
     def _refresh_save_enabled(self) -> None:
-        """A4: Save is enabled only once both required fields are filled in
-        (edit mode's disabled-but-prefilled id Input still counts -- this
-        checks `.value`, not `.disabled`) and no submit posted by this form
-        is still awaiting the host's outcome. Called after compose (here, via
-        `on_mount`), on every required-field change, and from `show_error()`
-        so a failed save only re-arms Save when the fields are still valid.
+        """A4: Save and Save-and-connect are enabled only once both
+        required fields are filled in (edit mode's disabled-but-prefilled
+        id Input still counts -- this checks `.value`, not `.disabled`) and
+        no submit posted by this form is still awaiting the host's outcome.
+        Called after compose (here, via `on_mount`), on every required-field
+        change, and from `show_error()` so a failed save only re-arms the
+        buttons when the fields are still valid.
 
         Review fix: the two disable-reasons (missing fields vs. a submit
         already in flight) get DISTINCT tooltips -- collapsing them into one
@@ -194,20 +226,29 @@ class MCPProfileForm(Vertical):
         while both fields were still filled in, which is simply false.
         """
         try:
-            save_button = self.query_one("#mcp-form-save", Button)
             has_id = bool(self.query_one("#mcp-form-id", Input).value.strip())
-            has_command = bool(self.query_one("#mcp-form-command", Input).value.strip())
+            has_command = bool(
+                self.query_one("#mcp-form-command", Input).value.strip()
+            )
         except Exception:
             return
         fields_valid = has_id and has_command
         enabled = fields_valid and not self._submit_in_flight
-        save_button.disabled = not enabled
+        save_button = self.query_one("#mcp-form-save", Button)
+        save_connect_button = self.query_one("#mcp-form-save-connect", Button)
+        for button in (save_button, save_connect_button):
+            button.disabled = not enabled
         if enabled:
             save_button.tooltip = "Validate and save this profile."
+            save_connect_button.tooltip = (
+                "Save this profile, then connect and discover its tools."
+            )
         elif not fields_valid:
             save_button.tooltip = "Enter a profile id and command first."
+            save_connect_button.tooltip = "Enter a profile id and command first."
         else:
             save_button.tooltip = "Save already in progress."
+            save_connect_button.tooltip = "Save already in progress."
 
     def build_payload(self) -> dict[str, Any]:
         """Parse the form into the store's exact save-payload keys.
@@ -294,7 +335,7 @@ class MCPProfileForm(Vertical):
         return ""
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "mcp-form-save":
+        if event.button.id in ("mcp-form-save", "mcp-form-save-connect"):
             event.stop()
             try:
                 payload = self.build_payload()
@@ -318,7 +359,13 @@ class MCPProfileForm(Vertical):
             # so the in-flight flag (not just the button) reflects reality.
             self._submit_in_flight = True
             self._refresh_save_enabled()
-            self.post_message(self.SubmitRequested(payload, warning or None))
+            self.post_message(
+                self.SubmitRequested(
+                    payload,
+                    warning or None,
+                    connect_after=event.button.id == "mcp-form-save-connect",
+                )
+            )
         elif event.button.id == "mcp-form-cancel":
             event.stop()
             self.post_message(self.Cancelled())

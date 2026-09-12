@@ -1250,7 +1250,7 @@ def test_console_workbench_state_exposes_core_actions_visibly():
 
     assert {
         "Settings",
-        "Attach context",
+        "Context rail",
         "Search Library",
         "Help",
     } <= action_labels
@@ -1595,6 +1595,79 @@ async def test_console_workbench_send_action_disables_during_active_run():
 
 
 @pytest.mark.asyncio
+async def test_console_workbench_state_provider_ready_but_send_still_blocked_mid_run():
+    """task-32345: `_console_provider_blocker_copy`'s active-run narrowing
+    changes `provider_status` (now "ready" for a healthy active run, not a
+    misleading "blocked") but must NOT change `send_available` -- that stays
+    gated by `run_allows_send` (`run_state.is_send_allowed`), independent of
+    the blocker copy, exactly as the sibling test above (real CSS classes)
+    already pins for the Send button.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-send-message")
+
+        await pilot.press("h")
+        await pilot.pause()
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
+
+        control_state = console._build_console_control_state(None)
+        workbench = console._build_console_workbench_state(control_state)
+
+        provider_mode = next(m for m in workbench.modes if m.id == "provider")
+        send_action = next(a for a in workbench.actions if a.id == "send")
+
+        # Ready, not "blocked" -- a run in flight is not a provider gap.
+        assert provider_mode.status == "ready"
+        # Still unavailable -- gated by run state, not by the (now empty)
+        # blocker copy.
+        assert send_action.disabled is True
+        assert send_action.primary is False
+
+
+@pytest.mark.asyncio
+async def test_setup_modal_stays_non_blocking_mid_run_regardless_of_blocker_copy():
+    """task-32345: `_sync_console_transcript_guidance`'s use of the blocker
+    copy is confirmed a non-issue mid-run -- `ConsoleSetupModal.is_blocking`
+    reads only `card_state.mode`, which `build_console_setup_card_state`
+    forces to "quiet" once the transcript has a message (`has_messages`),
+    and a run cannot become active before its own turn's user message is
+    persisted. The modal was never blocking here before this task's change
+    either; this pins that it still isn't.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-send-message")
+
+        await pilot.press("h")
+        await pilot.pause()
+        console.query_one("#console-send-message").press()
+        await pilot.pause()
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
+        console._sync_console_transcript_guidance()
+        await pilot.pause()
+
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking is False
+
+
+@pytest.mark.asyncio
 async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(
     monkeypatch,
 ):
@@ -1720,7 +1793,7 @@ async def test_console_f1_help_lists_visible_actions():
         assert _is_displayed(panel)
         body = str(host.screen.query_one("#workbench-help-body").renderable)
         assert "Settings" in body
-        assert "Attach context" in body
+        assert "Context rail" in body
         assert "Search Library" in body
         assert "F6" in body
         assert "next pane" in body
@@ -1759,8 +1832,10 @@ async def test_console_registers_footer_workbench_shortcuts():
             # rail ships CLOSED and F6 could not reach it, so the footer is
             # where its accelerator has to be taught -- an accelerator only
             # the source mentions is not a discoverable one.
+            # task-32277: Alt+A follows immediately after, same reasoning --
+            # the approval card had no key binding at all before this.
             "Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new "
-            "tab | Alt+I inspect | Ctrl+P palette | Ctrl+Q quit"
+            "tab | Alt+I inspect | Alt+A approval | Ctrl+P palette | Ctrl+Q quit"
         )
 
         await console.remove()

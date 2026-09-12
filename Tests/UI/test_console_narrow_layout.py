@@ -533,3 +533,54 @@ async def test_inspector_fold_hint_renders_wherever_content_overflows(size):
             "The rail is shorter than its declared min-height, so its last "
             "child falls off the bottom while still reporting display=True."
         )
+
+
+# --- TASK-32327: responsive force-collapse posts a visible notice -------------
+
+
+@pytest.mark.asyncio
+async def test_responsive_collapse_posts_notice_once_per_rail():
+    """TASK-32327: when a width rule force-closes a rail the user had open,
+    a transient notice names what happened -- once per session per rail,
+    never per resize tick."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        left_rail = console.query_one("#console-left-rail")
+        await _wait_for_selector(console, pilot, "#console-left-rail")
+        await pilot.pause(0.2)
+        assert left_rail.display is True
+
+        notifications: list[tuple[str, dict]] = []
+        console.app_instance.notify = lambda message, **kwargs: notifications.append(
+            (message, kwargs)
+        )
+
+        # Cross below 100 columns: the left rail force-collapses.
+        await pilot.resize_terminal(90, 42)
+        await _wait_for_condition(pilot, lambda: left_rail.display is False)
+
+        assert any(
+            "Context" in message and "reopen" in message.lower()
+            for message, _ in notifications
+        ), f"expected a Context collapse notice, got {notifications}"
+        context_notices = [
+            (message, kw)
+            for message, kw in notifications
+            if "Context" in message
+        ]
+        assert len(context_notices) == 1, "notice must fire once, not per tick"
+
+        # Wiggle across the same band: no second notice for the same rail.
+        await pilot.resize_terminal(140, 42)
+        await _wait_for_condition(pilot, lambda: left_rail.display is True)
+        await pilot.resize_terminal(90, 42)
+        await _wait_for_condition(pilot, lambda: left_rail.display is False)
+        context_notices = [
+            (message, kw)
+            for message, kw in notifications
+            if "Context" in message
+        ]
+        assert len(context_notices) == 1, "once per session per rail"

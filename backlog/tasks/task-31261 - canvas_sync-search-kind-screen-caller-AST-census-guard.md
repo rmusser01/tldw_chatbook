@@ -1,8 +1,9 @@
 ---
 id: TASK-31261
 title: canvas_sync search-kind screen-caller AST census guard
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@zcode'
 created_date: '2026-09-04 05:44'
 labels: []
 dependencies: []
@@ -16,6 +17,18 @@ canvas_sync.py's _sync_library_canvas dispatcher's "search"-kind branch (~line 4
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A guard test fails if a future _sync_library_canvas(..., "search", ...) call site is added directly on library_screen.py itself rather than on the controller
-- [ ] #2 The guard test passes against the current tree, confirming today's only two "search"-kind call sites both live in library_rag_search_controller.py
+- [x] #1 A guard test fails if a future _sync_library_canvas(..., "search", ...) call site is added directly on library_screen.py itself rather than on the controller
+- [x] #2 The guard test passes against the current tree, confirming today's only two "search"-kind call sites both live in library_rag_search_controller.py
 <!-- AC:END -->
+
+## Implementation Notes
+
+``test_search_kind_canvas_sync_never_targets_the_screen_directly`` (Tests/Library/test_library_rag_scope.py, beside the sketch whose mechanism it follows) censuses ``_sync_library_canvas`` calls with kind ``"search"`` -- second positional constant or ``kind=`` keyword -- across ``library_screen.py`` AND every ``UI/Library_Modules/*.py``. Any hit outside ``library_rag_search_controller.py`` fails with the why (a screen receiver would silently grow a dead ``_library_rag_answer_render_key`` attribute instead of raising); an empty total census also fails, so the guard cannot go silently green if the sites move again (the rag-scope sketch's own recorded lesson).
+
+Evidence: green on the current tree with the census finding exactly the two known sites (controller :962, :988) and zero screen hits (AC#2); mutation -- adding ``_sync_library_canvas(self, "search")`` directly on the screen -- fails the guard naming the file and line (AC#1), mutation reverted. File suite: 22 passed. Format clean.
+
+ADR required: no
+ADR path: N/A
+Reason: Test-only census guard; no production change.
+
+Modified: ``Tests/Library/test_library_rag_scope.py``.

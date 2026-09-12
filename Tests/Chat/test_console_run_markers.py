@@ -332,3 +332,32 @@ def test_legacy_boolean_shim_stacks_with_a_real_round_until_both_clear(
     # the badge fully clear.
     controller.set_run_pending_approval(session_a, False)
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+
+
+def test_pending_round_kinds_track_and_clear_with_their_rounds(
+    controller_with_two_sessions,
+):
+    """Qodo #4 (task-32345): the registry remembers WHICH kind is waiting.
+
+    Kept beside `_pending_approvals` rather than inside it -- that map's
+    `set[str]` value is asserted on verbatim across eight test files, and
+    every lifecycle reader only wants "is anything outstanding". The two
+    must stay in step: a round's kind appears when it registers and is gone
+    the moment it resolves, including the terminal sweep.
+    """
+    controller, session_a, _session_b = controller_with_two_sessions
+
+    assert controller.pending_round_kinds(session_a) == frozenset()
+
+    controller.add_pending_round(session_a, "q-1", kind="question")
+    controller.add_pending_round(session_a, "a-1")  # default: approval
+    assert controller.pending_round_kinds(session_a) == {"question", "approval"}
+    assert controller._pending_approvals[session_a] == {"q-1", "a-1"}
+
+    controller.discard_pending_round(session_a, "a-1")
+    assert controller.pending_round_kinds(session_a) == {"question"}
+
+    controller.discard_pending_round(session_a, "q-1")
+    assert controller.pending_round_kinds(session_a) == frozenset()
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._pending_round_kinds

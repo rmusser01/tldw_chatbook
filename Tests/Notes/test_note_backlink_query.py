@@ -1,7 +1,9 @@
 """Real-DB coverage for the note-backlink query (task-32145).
 
 The Obsidian importer rewrites a resolvable ``[[wikilink]]`` as
-``[label](note://<note_id>)`` (``note_import_plan_models.rewrite_wikilinks``),
+``[[target|title]](note://<note_id>)`` (``note_import_plan_models.
+rewrite_wikilinks``; task-32263 moved the display text back inside the
+wikilink and kept the ``(note://<id>)`` tail this query needs),
 so "which notes link to this one" is a containment search for that exact
 token. These tests run the query against a real ``CharactersRAGDB`` through
 the real ``NotesInteropService``/``NotesScopeService`` wiring, because the
@@ -161,3 +163,37 @@ async def test_a_prefix_of_another_note_id_is_not_a_backlink(notes_scope_service
     )
 
     assert backlinks == []
+
+
+@pytest.mark.asyncio
+async def test_backlinks_find_the_display_text_link_form_the_importer_writes(
+    notes_scope_service,
+):
+    """task-32263: the stored spelling changed; the containment probe must not.
+
+    The link the importer actually writes is built here by the production
+    rewrite, not typed by hand, so a future change to that spelling fails
+    this test instead of silently emptying every note's Backlinks panel.
+    """
+    from tldw_chatbook.Notes.note_import_plan_models import (
+        ParsedNotePayload,
+        rewrite_wikilinks,
+    )
+
+    target = await _add(notes_scope_service, "Zettelkasten — overview", "hub")
+    linked = rewrite_wikilinks(
+        ParsedNotePayload(
+            title="Library review",
+            content="Related: [[Reading/Zettelkasten]].",
+            wikilinks=("Reading/Zettelkasten",),
+        ),
+        {"reading/zettelkasten": target},
+        titles={"reading/zettelkasten": "Zettelkasten — overview"},
+    )
+    await _add(notes_scope_service, "Library review", linked.content)
+
+    backlinks = await notes_scope_service.list_note_backlinks(
+        scope="local_note", note_id=target, user_id=USER_ID
+    )
+
+    assert [row["title"] for row in backlinks] == ["Library review"]

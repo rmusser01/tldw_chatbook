@@ -1,8 +1,9 @@
 ---
 id: TASK-31262
 title: Sweep earlier-wave stale present-tense shim-footer comments
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@zcode'
 created_date: '2026-09-04 05:44'
 labels: []
 dependencies: []
@@ -16,6 +17,16 @@ This wave's final review found a shim-footer comment in library_rag_search_contr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 library_conversation_reader_controller.py's shim-footer comment is reworded to past tense, matching library_collections_controller.py's corrected template phrasing
-- [ ] #2 library_conversations_controller.py's shim-footer comment is reworded the same way, and the controller-ratchet file's pinned line count for either file is re-measured and re-pinned in the same commit if the rewording changed it
+- [x] #1 library_conversation_reader_controller.py's shim-footer comment is reworded to past tense, matching library_collections_controller.py's corrected template phrasing
+- [x] #2 library_conversations_controller.py's shim-footer comment is reworded the same way, and the controller-ratchet file's pinned line count for either file is re-measured and re-pinned in the same commit if the rewording changed it
 <!-- AC:END -->
+
+## Implementation Notes
+
+Swept the two stale present-tense shim-footer comments to the corrected template phrasing (``library_rag_search_controller.py``'s past-tense form): ``library_conversation_reader_controller.py`` (~:938) and ``library_conversations_controller.py`` (~:1773) both claimed ``LibraryScreen`` "carries" a generated state-shim block that the conversations cleanup PR deleted. Both now read "the shim block task 6 installed on ``LibraryScreen`` (deleted at the conversations cleanup PR once the controller copies made the screen's own dead)"; the conversations controller's additional true present-tense clause (``LibraryConversationReaderController`` carries, task 7) is kept, since that controller's own shim block is alive. Comment-only change; wiring suites green. A repo-wide grep confirms no ``LibraryScreen carries`` present-tense claim remains in any Library controller.
+
+ADR required: no
+ADR path: N/A
+Reason: Comment-only correction.
+
+Modified: ``tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py``, ``tldw_chatbook/UI/Library_Modules/library_conversations_controller.py``.

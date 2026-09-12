@@ -1,0 +1,308 @@
+[
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-01/child-00.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-01/child-00.json",
+    "sha256": "0fca4459a72cb8f20326b929387ddaefe386467bac9be958d41ac20e914f56f0",
+    "bytes": 23337
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-01/evidence.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-01/evidence.json",
+    "sha256": "1bc257725c393cc4b2852702a05fd974448cad977d8855a95390a0c265866103",
+    "bytes": 551988
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-02/child-00.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-02/child-00.json",
+    "sha256": "b75211752a6251156ffba2795a54ac71db09fbf19a46bdf987ce57ff8dc642fc",
+    "bytes": 28418
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-02/evidence.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-02/evidence.json",
+    "sha256": "485c70127b3c07286444fbfbc8272abb8299ec73aaf64b0a61e376139d1af6c3",
+    "bytes": 636993
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-02/child-01.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-02/child-01.json",
+    "sha256": "1614b2cbb169bbfda248af2b028c3d63cf23fcf4a36324add4c3eb5866991c26",
+    "bytes": 33739
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-02/content.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-02/content.json",
+    "sha256": "bb2b9750c2e5a5150e0d79c7e414e168f28482f303bdd25d8d194096b13fa1a0",
+    "bytes": 7637
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-03/child-00.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-03/child-00.json",
+    "sha256": "9fbba301f45b5c660ba7581e669aa590e3ab78c622bcbf7458e99581ee3c4543",
+    "bytes": 28423
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-03/content-medium.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-03/content-medium.json",
+    "sha256": "0dc5d50c492c27f5847516140c551335b45304da32ea8bf1be6b1d16888057a6",
+    "bytes": 8940
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-03/evidence.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-03/evidence.json",
+    "sha256": "680607a83bc2fddcb03aa424417c93218e78d0363cfdbf93c1e9044fbe73a550",
+    "bytes": 648557
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-03/child-01.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-03/child-01.json",
+    "sha256": "dfca3c49405ed16c474956cd6eab72f9fb740c3f11a00dd161737c6a754add8d",
+    "bytes": 37546
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-03/content.json",
+    "packaged_path": "chatterbox/runs/chatterbox-cuda-03/content.json",
+    "sha256": "98431e01a0b6b915b70d8feff1180335985ffc764d7b7c2963fe198137ac00be",
+    "bytes": 8775
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-fixed-startup-close/result.json",
+    "packaged_path": "chatterbox/runs/chatterbox-fixed-startup-close/result.json",
+    "sha256": "5e7e1c95aba515df56193ef1091daf2e2ba2d659b348b7c87a4e060c5582aaa0",
+    "bytes": 328
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-load-preflight/termination.json",
+    "packaged_path": "chatterbox/runs/chatterbox-load-preflight/termination.json",
+    "sha256": "8b0aefb0672cbd13903e16de12de936c8e09b7e361e84e61c2f8d3aa7ed73321",
+    "bytes": 500
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-load-preflight/result.json",
+    "packaged_path": "chatterbox/runs/chatterbox-load-preflight/result.json",
+    "sha256": "b735e65ba1a166b4ee81bdc1586af71e7e445f315c21a45fe4d69fe9c4709292",
+    "bytes": 194
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/host-after.json",
+    "packaged_path": "chatterbox/provenance/host-after.json",
+    "sha256": "b207f8ccb8e3206ef0780f3315a5807c8bdade8e8fa1a635f8d307365555a3ed",
+    "bytes": 445
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-assets.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-assets.json",
+    "sha256": "d890d216149b4146d1c46b9d90fb7d2689177bc348cf281ec51f6d7f9d5cdfdc",
+    "bytes": 1748
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-freeze.txt",
+    "packaged_path": "chatterbox/provenance/chatterbox-freeze.txt",
+    "sha256": "6f68d3cc881282445c01a81b298474e0774dbbd10a68f1d11b2ba893cfda4826",
+    "bytes": 3243
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-wheel-identity.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-wheel-identity.json",
+    "sha256": "ae236b6064875b9d3504647adc98e8f98d733727090a90caf9b35c931accec7c",
+    "bytes": 322
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/fixed-wheel-identity.json",
+    "packaged_path": "chatterbox/provenance/fixed-wheel-identity.json",
+    "sha256": "82d89fbab01dc36ba583e4e035b5a5a1721ac10c07da8e74302a0dd01fac54bb",
+    "bytes": 291830
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/fixed-wheel-build.exit",
+    "packaged_path": "chatterbox/provenance/fixed-wheel-build.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/post-fixed-validation.json",
+    "packaged_path": "chatterbox/provenance/post-fixed-validation.json",
+    "sha256": "c8939960cc7f38943e090c1016fb1972320d0cd651f28da5220d9df5ad16d9d8",
+    "bytes": 1034
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/synthetic-reference.json",
+    "packaged_path": "chatterbox/provenance/synthetic-reference.json",
+    "sha256": "c31a9a384b9103cf7dd9e4361765dd159b529e58d78e7d6d4f04fededd47dffe",
+    "bytes": 465
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/whisper-medium-assets.json",
+    "packaged_path": "chatterbox/provenance/whisper-medium-assets.json",
+    "sha256": "e7c66947ea6477b88873c75d24804891794d899aa42d6b0d77e77047557f9c45",
+    "bytes": 1603
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-01.exit",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-01.exit",
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-01-process-exit.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-01-process-exit.json",
+    "sha256": "b38ae8d774850e5de616dcd1e7090a81e6f4cf6ac0dce18442933d575a6e6a27",
+    "bytes": 137
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-01-routing-summary.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-01-routing-summary.json",
+    "sha256": "059b30dca0b677dc74e4ebac2532f648797b931faecb8549b70df9140449056e",
+    "bytes": 178
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-02.exit",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-02.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-02-asr.exit",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-02-asr.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-02-process-exit.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-02-process-exit.json",
+    "sha256": "b94af80a8d54f64df2720663acc6f5fcba7814540e177f03a74b54c0b3d722a9",
+    "bytes": 149
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-02-routing-summary.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-02-routing-summary.json",
+    "sha256": "19f116233b3a94194d6869c0e28cac9c9839ce2821fbf397da33485fde1bb900",
+    "bytes": 1478
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-03.exit",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-03.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-03-asr.exit",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-03-asr.exit",
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-03-process-exit.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-03-process-exit.json",
+    "sha256": "4ee94e36363e158df391fa9fd23e614bf126d78550d2a39891d80f0242585c6e",
+    "bytes": 203
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-03-routing-summary.json",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-03-routing-summary.json",
+    "sha256": "9ea78d433fdf82935240a832f25fbd68e2a471bcf2f6bf2ae98532de389ecfcb",
+    "bytes": 1680
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-03-medium-asr.exit",
+    "packaged_path": "chatterbox/provenance/chatterbox-cuda-03-medium-asr.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/reference-ui-probe.log",
+    "packaged_path": "chatterbox/recipes/reference-ui-probe.log.txt",
+    "sha256": "860f895622376f77b63b23b799cd0d9da22f19d5a14f44a578f860f71b4eff47",
+    "bytes": 4650
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/README.md",
+    "packaged_path": "chatterbox/recipes/README.md.txt",
+    "sha256": "7bb2fc3b17044228c5918afcd537d113879faecfebbfb52f64f43e17dcef19b3",
+    "bytes": 6850
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/build_runner.py",
+    "packaged_path": "chatterbox/recipes/build_runner.py.txt",
+    "sha256": "f7c81a8ff64ceddda5c5b8d35ff7a93a03d3f0bc51f9afa26d2b34e8904c77b3",
+    "bytes": 10755
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/observe_child.py",
+    "packaged_path": "chatterbox/recipes/observe_child.py.txt",
+    "sha256": "a2d82bee92992230fc06ff2ea4312cddfde46a883a01daa5eeb55f909e9bdfb7",
+    "bytes": 9074
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/qualify_chatterbox.py",
+    "packaged_path": "chatterbox/recipes/qualify_chatterbox.py.txt",
+    "sha256": "8fce42e8275dee8e90357fe68a8f859c81b07c1bb9ec6d13707d2e2aba5c44d8",
+    "bytes": 55310
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/chatterbox_observation.py",
+    "packaged_path": "chatterbox/recipes/chatterbox_observation.py.txt",
+    "sha256": "8e7555f90783d27a7238bb953d3647efc079cd6a3c89d34fb0735b525d881408",
+    "bytes": 11224
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/probe_reference_ui.py",
+    "packaged_path": "chatterbox/recipes/probe_reference_ui.py.txt",
+    "sha256": "aa7140bb53a8cb3ea2dab6975b103eb7be87016dc567010f9f2deb4734059a4c",
+    "bytes": 4652
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/test_observation.py",
+    "packaged_path": "chatterbox/recipes/test_observation.py.txt",
+    "sha256": "d112ad0751c11028bf91e9cedd72762f97cc8995bcefdb3132dbbb206a22a167",
+    "bytes": 7618
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-chatterbox-cuda-01.sh",
+    "packaged_path": "chatterbox/recipes/run-chatterbox-cuda-01.sh.txt",
+    "sha256": "de333b0fd52c0c2896c557769e994d574f7641d10e5163051b63f9027aa59bbd",
+    "bytes": 749
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-chatterbox-cuda-02.sh",
+    "packaged_path": "chatterbox/recipes/run-chatterbox-cuda-02.sh.txt",
+    "sha256": "26faacd0b8d70105a1b9fd888faaa006906287182a87b3efccc387d659759b65",
+    "bytes": 696
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-chatterbox-cuda-03.sh",
+    "packaged_path": "chatterbox/recipes/run-chatterbox-cuda-03.sh.txt",
+    "sha256": "0e64587ea4e40b4ceaa18cab0564666acfb527327be2623241fa72ff26a3e38e",
+    "bytes": 749
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/preflight-chatterbox.py",
+    "packaged_path": "chatterbox/recipes/preflight-chatterbox.py.txt",
+    "sha256": "e2b80cfe9b75a38c8ddcfa55d7ac39804fbb5d41bf39158308d2d58d2bc87609",
+    "bytes": 1523
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/verify-fixed-startup-close.py",
+    "packaged_path": "chatterbox/recipes/verify-fixed-startup-close.py.txt",
+    "sha256": "e386e77153b0f16a9496a66e64c14504cd8e9d35501e4a8c51060ce083814fb0",
+    "bytes": 1661
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/post-fixed-validation.py",
+    "packaged_path": "chatterbox/recipes/post-fixed-validation.py.txt",
+    "sha256": "742176d1e7c58c6235ce66c714c20f0befebfb2bed496d775451025c58e4ebbf",
+    "bytes": 1075
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/build-fixed.sh",
+    "packaged_path": "chatterbox/recipes/build-fixed.sh.txt",
+    "sha256": "fd19143196a56fdd5a9b109bba7a1bd5add1ec38a5dce08ce23c4a2d08c07c2f",
+    "bytes": 414
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/download-asr-medium.py",
+    "packaged_path": "chatterbox/recipes/download-asr-medium.py.txt",
+    "sha256": "f21d5b5d7739851ec41d4719cebffb4b6aa825f733dbf3e123e93a8a216b194a",
+    "bytes": 809
+  }
+]

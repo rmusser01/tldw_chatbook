@@ -930,6 +930,26 @@ def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
     )
 
 
+#: task-32246 AC#2: the Enter action of every control Tab can reach inside
+#: the open note editor, so the footer can name where focus is when the
+#: characters typed there would go nowhere. Read by
+#: ``LibraryScreen._library_focus_enter_label``.
+_LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
+    "library-note-back": "back to list",
+    "library-note-context-back": "back to list",
+    "library-note-edit": "edit note",
+    "library-note-preview": "preview note",
+    "library-note-context": "show info",
+    "library-note-save": "save note",
+    "library-note-use-in-console": "use in Console",
+    "library-note-discard-new": "discard new note",
+    "library-note-context-copy": "copy note",
+    "library-note-context-export-md": "export Markdown",
+    "library-note-context-export-txt": "export text",
+    "library-note-context-delete": "delete note",
+}
+
+
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
@@ -1466,8 +1486,30 @@ class LibraryScreen(BaseAppScreen):
         ("/", "find"),
         ("esc", "rail"),
     )
-    LIBRARY_NOTES_EDITOR_SHORTCUTS = (("esc", "back to notes"),)
-    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (("esc", "notes"),)
+    # task-32247 AC#2: the document-end key is advertised beside the other
+    # editor keys. Without it the only way to learn it was to guess -- and
+    # before the binding existed, guessing it did nothing.
+    # Escape stays FIRST here, unlike its sibling tiers, because the real
+    # footer drops trailing chips that miss the width budget and the exit
+    # is the one that must survive. Measured through the real
+    # ``AppFooterStatus`` at 60 columns (fix round 1, review F2 -- the
+    # round-0 comment cited a pin that did not exist and a budget of one
+    # chip that is not this tier's): BOTH compact chips paint
+    # ("esc notes | ctrl+end end"), a third is dropped, and the same pair
+    # in the WIDE wording paints only "esc back to notes". So the head of
+    # the tier is what is guaranteed, whatever a later label growth does.
+    # ``test_only_one_context_chip_paints_at_sixty_columns`` pins the budget
+    # itself; ``test_the_editor_exit_chip_survives_at_sixty_columns`` pins
+    # this tier against the focus chip appended below. The two tiers carry
+    # the same keys in the same order, which the honesty contract requires.
+    LIBRARY_NOTES_EDITOR_SHORTCUTS = (
+        ("esc", "back to notes"),
+        ("ctrl+end", "end of note"),
+    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (
+        ("esc", "notes"),
+        ("ctrl+end", "end"),
+    )
     LIBRARY_NOTES_PREVIEW_SHORTCUTS = (
         ("pgup/pgdn", "scroll"),
         ("esc", "back to notes"),
@@ -4393,7 +4435,12 @@ class LibraryScreen(BaseAppScreen):
             return "cancel"
         if widget_id == "library-note-delete-confirm":
             return "delete"
-        return ""
+        # task-32246 AC#2: Tab out of the note body lands on the editor's
+        # first toolbar Button, which swallows whatever is typed next. The
+        # characters cannot land visibly there, so the footer names the
+        # control instead -- the AC's other branch, in the grammar the two
+        # surfaces above already use.
+        return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
 
     @staticmethod
     def _review_footer_entries(
@@ -8008,10 +8055,28 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
             )
         if region == "editor":
-            return self._notes_footer_tier(
+            tier = self._notes_footer_tier(
                 self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
                 self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
             )
+            # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
+            # where typed characters go nowhere. Name it, so focus is never
+            # unaccounted for -- the honest-footer rule, applied to the
+            # editor the way the create canvas and delete prompt apply it.
+            #
+            # APPENDED, not prepended (fix round 1, review F1). The real
+            # footer keeps only the leading chips that fit, and the
+            # <=64-column narrow stage fits exactly one
+            # (``test_only_one_context_chip_paints_at_sixty_columns``), so a
+            # LEADING "enter …" evicted the exit outright: after the very Tab
+            # this task fixes the footer painted "enter back to list" alone,
+            # and with Save focused it advertised neither an exit nor a way
+            # back. Naming focus is the smaller promise of the two, so it
+            # yields wherever the two compete for the budget.
+            enter_label = self._library_focus_enter_label()
+            if enter_label:
+                return tier + (("enter", enter_label),)
+            return tier
         if region == "create":
             if self._notes_state.create_running:
                 return ()
@@ -8540,6 +8605,31 @@ class LibraryScreen(BaseAppScreen):
         self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(-1)
 
+    #: task-32246: the Tab region INSIDE an open note editor. The body is the
+    #: last focusable of ``#screen-content``, so one Tab out of it used to
+    #: wrap the whole cycle round to that region's first control --
+    #: ``#library-notes-source-database``, the browse chrome's source switch
+    #: above the editor. Live at dev 4a14b3f36f: the body lost its focus
+    #: border and "TAILEDIT" typed straight after vanished, because a Button
+    #: swallows printable keys; the switch's focus treatment is the same
+    #: background-and-bold it already wears for ``-selected``, which is why
+    #: the pane read as having nothing focused at all. Tab now closes inside
+    #: the editor the way it already closes inside the delete prompt
+    #: (``on_key``) and inside ``#screen-content`` (task-32052). F6 and
+    #: Escape remain the ways out, as the guide says.
+    _LIBRARY_NOTE_EDITOR_TAB_REGION = (
+        "#library-note-work-pane, #library-note-work-pane *"
+    )
+
+    def _library_note_editor_owns_tab(self, focused: Widget | None) -> bool:
+        """Whether Tab should cycle inside the open note editor."""
+        if focused is None or self._notes_state.view != "editor":
+            return False
+        return any(
+            node.id == "library-note-work-pane"
+            for node in focused.ancestors_with_self
+        )
+
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
         """Cycle focus within the Library content, or app-wide from chrome.
 
@@ -8548,6 +8638,11 @@ class LibraryScreen(BaseAppScreen):
         ``_advance_library_ordinary_emergency_user_interaction``.
         """
         focused = self.focused
+        if self._library_note_editor_owns_tab(focused):
+            selector = self._LIBRARY_NOTE_EDITOR_TAB_REGION
+            if direction >= 0:
+                return self.focus_next(selector)
+            return self.focus_previous(selector)
         inside = focused is not None and any(
             node.id == "screen-content" for node in focused.ancestors
         )
@@ -17178,6 +17273,21 @@ class LibraryScreen(BaseAppScreen):
             return False
 
         located_folder_ids: list[str] = []
+
+        def reveal_resolved_ancestors() -> None:
+            """Open every ancestor this locate has already confirmed.
+
+            task-32255: the locate used to bank all expansion until the
+            whole path AND the placement under it had answered, so a
+            branch that failed to re-page left the folder SHUT. Undo
+            restores through here: the row came back to the tree,
+            invisible, with nothing on screen saying so. Only called from
+            the two bail-outs that run while this navigation is still
+            current -- a SUPERSEDED locate still leaves no trace, which
+            the abandoned-locator pins require.
+            """
+            self._notes_state.tree_expanded_ids.update(located_folder_ids)
+
         for step in location.path:
             key = NotesBranchKey(step.parent_id, "folders")
             folder_state = self._notes_state.tree_branches.get(key)
@@ -17205,6 +17315,7 @@ class LibraryScreen(BaseAppScreen):
                 or folder_state.error
                 or placement_id not in folder_state.item_ids
             ):
+                reveal_resolved_ancestors()
                 self._notes_state.navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
                 return False
@@ -17236,11 +17347,12 @@ class LibraryScreen(BaseAppScreen):
                 or placement_state.error
                 or location.placement_id not in placement_state.item_ids
             ):
+                reveal_resolved_ancestors()
                 self._notes_state.navigation_status = ""
                 LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
                 return False
 
-        self._notes_state.tree_expanded_ids.update(located_folder_ids)
+        reveal_resolved_ancestors()
         self._notes_state.navigation_status = ""
         self._notes_state.tree_selected_placement_id = location.placement_id
         if not focus:

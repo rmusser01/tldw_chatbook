@@ -59,6 +59,7 @@ from tldw_chatbook.Chat.console_chat_store import (
 )
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
+    KILL_SWITCH_REFUSAL,
     USER_DENIED_REFUSAL as CONTROLLER_USER_DENIED_REFUSAL,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -154,7 +155,11 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Canvas.models import CanvasScope
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_KILL_SWITCH_REFUSAL,
+    LocalToolProvider,
+    _default_specs,
+)
 from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.workspace_tool_executor import (
@@ -663,6 +668,11 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
+    if "work_chain_id" not in kwargs:
+        from uuid import uuid4
+        kwargs["work_chain_id"] = bridge._db.automatic_work.create_chain(
+            kwargs["conversation_id"], root_submission_id=uuid4().hex
+        )
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome
@@ -885,14 +895,16 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     )
     events = []
     monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
-    monkeypatch.setattr(agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10)
+    monkeypatch.setattr(
+        agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10
+    )
     monkeypatch.setattr(
         bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
     )
     monkeypatch.setattr(
         bridge_module,
         "_count_model_messages",
-        lambda *_: transformed_tokens,
+        lambda *_, **_kwargs: transformed_tokens,
         raising=False,
     )
     marks = []
@@ -1206,15 +1218,41 @@ def test_compose_appends_discovery_hint_only_when_find_load_offered():
 
 
 def test_canvas_discovery_hint_requires_the_actual_complete_run_allow_list():
+    from tldw_chatbook.Canvas import guide
+
     base = "system"
+    artifacts = CANVAS_TOOL_NAMES - {"canvas_guide"}
 
     assert _append_canvas_discovery_hint(base, ()) == base
-    assert (
-        _append_canvas_discovery_hint(base, CANVAS_TOOL_NAMES - {"canvas_read"}) == base
-    )
+    assert _append_canvas_discovery_hint(base, artifacts - {"canvas_read"}) == base
     complete = _append_canvas_discovery_hint(base, CANVAS_TOOL_NAMES)
     assert complete.startswith(base)
-    assert complete.endswith(CANVAS_DISCOVERY_HINT)
+    assert CANVAS_DISCOVERY_HINT in complete
+    assert guide.CANVAS_OFFER_POLICY in complete
+    assert "If context does not establish consent, clarify." in complete
+    assert "canvas_guide" in complete
+    without_guide = _append_canvas_discovery_hint(base, artifacts)
+    assert CANVAS_DISCOVERY_HINT in without_guide
+    assert guide.CANVAS_OFFER_POLICY in without_guide
+    assert "canvas_guide" not in without_guide
+    for allowed in ({"canvas_guide"}, CANVAS_TOOL_NAMES - {"canvas_read"}):
+        docs = _append_canvas_discovery_hint(base, allowed)
+        assert "canvas_guide" in docs
+        assert guide.CANVAS_OFFER_POLICY in docs
+        assert CANVAS_DISCOVERY_HINT not in docs
+        assert "canvas_create" not in docs and "canvas_update" not in docs
+
+
+def test_canvas_discovery_does_not_read_packaged_guides(monkeypatch):
+    from tldw_chatbook.Canvas import guide
+
+    def no_read(*_args, **_kwargs):
+        pytest.fail("discovery must not read packaged guide bodies")
+
+    monkeypatch.setattr(guide, "files", no_read)
+    assert guide.CANVAS_OFFER_POLICY in _append_canvas_discovery_hint(
+        "system", CANVAS_TOOL_NAMES
+    )
 
 
 def test_no_tool_message_streams_final_answer_like_today(tmp_path):
@@ -3975,21 +4013,29 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     assert tool_step.tool_outcome == "success"
     assert persisted_step["tool_outcome"] == "success"
     assert live[-1].activity_presentation.status == "success"
-    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+    assert resumed[-1].activity_presentation == live[-1].activity_presentation
+    if content.startswith("tool call denied"):
+        assert "***REDACTED***" in resumed[-1].content
+        assert resumed[-1].tool_output_full is None
+    else:
+        assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
 @pytest.mark.parametrize(
-    ("result", "expected"),
+    ("result", "tool_outcome", "activity_status"),
     [
-        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed"),
+        (ToolResult(ok=False, error="ordinary dispatch failure"), "failed", "failed"),
+        # task-32279: the protocol outcome stays "blocked" -- the DISPLAY
+        # status narrows to name the authority that refused.
         (
-            ToolResult.blocked("tool execution is disabled by the kill switch"),
+            ToolResult.blocked(KILL_SWITCH_REFUSAL),
             "blocked",
+            "blocked_kill_switch",
         ),
     ],
 )
 def test_structured_tool_failure_status_has_live_resume_parity(
-    tmp_path, result: ToolResult, expected: str
+    tmp_path, result: ToolResult, tool_outcome: str, activity_status: str
 ) -> None:
     bridge, db, store, session, aid = _bridge(
         tmp_path,
@@ -4007,8 +4053,8 @@ def test_structured_tool_failure_status_has_live_resume_parity(
     live = _tool_messages(store, session.id)
     resumed = _resume_tool_messages(db)
     tool_step = next(step for step in outcome.steps if step.kind == STEP_TOOL_RESULT)
-    assert tool_step.tool_outcome == expected
-    assert live[-1].activity_presentation.status == expected
+    assert tool_step.tool_outcome == tool_outcome
+    assert live[-1].activity_presentation.status == activity_status
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
@@ -6987,8 +7033,15 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     ]
     assert live[0].content == "I will request approval for this calculation."
     assert any("denied" in row.content.lower() for row in live)
-    assert live[1].activity_presentation.status == "blocked"
-    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+    # task-32279: the hook returned the Console review hook's USER-denial
+    # copy, so the marker names the user, not a policy.
+    assert live[1].activity_presentation.status == "denied"
+    assert [row.activity_presentation for row in resumed] == [
+        row.activity_presentation for row in live
+    ]
+    assert resumed[0].content == live[0].content
+    assert "***REDACTED***" in resumed[1].content
+    assert resumed[1].tool_output_full is None
 
 
 def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(
@@ -7417,6 +7470,12 @@ def test_admitted_run_budget_is_intersected_with_later_live_narrowing():
 def _make_bridge() -> ConsoleAgentBridge:
     store = MagicMock()
     store.messages_for_session.return_value = []
+    identity_store = ConsoleChatStore()
+    identity_store.create_session(session_id="s1")
+    store.progress_owner_scope = identity_store.progress_owner_scope
+    store.register_progress_message_store = (
+        identity_store.register_progress_message_store
+    )
     return ConsoleAgentBridge(
         agent_runs_db=MagicMock(),
         store=store,
@@ -9743,11 +9802,11 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
         row for row in db.list_runs("conv-survivor") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == "cancelled", child["status"]
-    # Settled: the conversation's live fleet is empty again and the
-    # retained owner has been dropped.
+    # Settled: the conversation's live fleet is empty again. The existing
+    # live-snapshot cleanup path then drops the retained owner.
     assert bridge.fleet_snapshot("conv-survivor") == []
-    assert bridge._fleet_survivor_services.get("conv-survivor") is None
     assert bridge.live_snapshot("conv-survivor").subagents[0].status == "cancelled"
+    assert bridge._fleet_survivor_services.get("conv-survivor") is None
 
 
 def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
@@ -9842,6 +9901,132 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
         row for row in db.list_runs("conv-survivor") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == "cancelled", child["status"]
+
+
+def _release_gates_and_assert_fleet_stopped(*gates, timeout: float = 5.0) -> None:
+    """Release local gated workers and fail if their bounded drain times out."""
+    for gate in gates:
+        gate.set()
+    deadline = time.monotonic() + timeout
+    fleet_threads = [
+        thread for thread in threading.enumerate() if thread.name.startswith("fleet-")
+    ]
+    for thread in fleet_threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    assert not [thread.name for thread in fleet_threads if thread.is_alive()]
+
+
+def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path):
+    first_gate = threading.Event()
+    first_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["first child answer"],
+        gate=first_gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, first_gateway)
+
+    try:
+        _run(bridge, store, session, aid, conversation_id=session.id)
+        assert first_gateway.entered_event.wait(5), "the first child never started"
+    finally:
+        _release_gates_and_assert_fleet_stopped(first_gate)
+    first_owner = bridge._retained_fleet_owners(session.id)
+    assert len(first_owner) == 1
+
+    second_gate = threading.Event()
+    second_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["turn 2 final"],
+        ],
+        child_result=["second child answer"],
+        gate=second_gate,
+        needed=1,
+    )
+    bridge._gateway = second_gateway
+    second = _second_turn_message(store, session)
+    try:
+        _run(bridge, store, session, second, conversation_id=session.id)
+        assert second_gateway.entered_event.wait(5), "the second child never started"
+
+        retained = bridge._retained_fleet_owners(session.id)
+        assert len(retained) == 1
+        assert retained[0] is not first_owner[0]
+        live = bridge.fleet_snapshot(session.id)
+        assert len(live) == 1
+        assert live[0].task == "second job"
+        assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
+    finally:
+        _release_gates_and_assert_fleet_stopped(second_gate)
+
+    bridge._gateway = _ChunkGateway([["turn 3 final"]])
+    third = _second_turn_message(store, session)
+    _run(bridge, store, session, third, conversation_id=session.id)
+    assert bridge._retained_fleet_owners(session.id) == []
+
+
+def test_fleet_disabled_next_turn_keeps_a_live_survivor_owner(tmp_path, monkeypatch):
+    settled_gate = threading.Event()
+    settled_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "settling job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["settled child answer"],
+        gate=settled_gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, settled_gateway)
+    live_gate = threading.Event()
+    try:
+        _run(bridge, store, session, aid, conversation_id=session.id)
+        assert settled_gateway.entered_event.wait(5), "the first child never started"
+
+        live_gateway = _FleetTwoChildGateway(
+            parent_script=[
+                [_fence("spawn_subagent", {"task": "live job"})],
+                ["turn 2 final"],
+            ],
+            child_result=["live child answer"],
+            gate=live_gate,
+            needed=1,
+        )
+        bridge._gateway = live_gateway
+        second = _second_turn_message(store, session)
+        _run(bridge, store, session, second, conversation_id=session.id)
+        assert live_gateway.entered_event.wait(5), "the second child never started"
+        owners_before = bridge._retained_fleet_owners(session.id)
+        assert len(owners_before) == 2
+
+        settled_gate.set()
+        deadline = time.monotonic() + 5
+        while owners_before[0].live_subagent_handles() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert owners_before[0].live_subagent_handles() == []
+        assert owners_before[1].live_subagent_handles()
+
+        monkeypatch.setattr(
+            agent_service,
+            "_setting",
+            lambda key, default: (
+                1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+            ),
+        )
+        bridge._gateway = _ChunkGateway([["turn 3 final"]])
+        third = _second_turn_message(store, session)
+        _run(bridge, store, session, third, conversation_id=session.id)
+
+        assert bridge._retained_fleet_owners(session.id) == [owners_before[1]]
+        live = bridge.fleet_snapshot(session.id)
+        assert len(live) == 1
+        assert live[0].task == "live job"
+        assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
+    finally:
+        _release_gates_and_assert_fleet_stopped(settled_gate, live_gate)
 
 
 def test_a_finished_childs_row_does_not_follow_the_conversation_forever(
@@ -10235,17 +10420,31 @@ def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
         assert controller.in_flight_run_count() == 0
         assert bridge.fleet_snapshot(session.id), "precondition: a live survivor"
 
+        owners_before = bridge._retained_fleet_owners(session.id)
+        handles_before = bridge._conversation_fleet_handles(session.id)
+        assert owners_before
         assert controller.busy_fleet_session_count() == 1, (
             "the confirm dialog would tell the user 0 runs will be killed, "
             "and then kill one"
         )
+        assert bridge._retained_fleet_owners(session.id) == owners_before
+        assert bridge._conversation_fleet_handles(session.id) == handles_before
     finally:
         gate.set()
     _join_fleet_threads()
 
     # ... and it goes back to 0 once the survivor settles, so an idle
     # Console still navigates away with no dialog at all.
+    owners_before = bridge._retained_fleet_owners(session.id)
+    handles_before = bridge._conversation_fleet_handles(session.id)
+    assert owners_before
     assert controller.busy_fleet_session_count() == 0
+    assert bridge._retained_fleet_owners(session.id) == owners_before
+    assert bridge._conversation_fleet_handles(session.id) == handles_before
+
+    assert bridge.live_snapshot(session.id).subagents[0].status == "done"
+    assert bridge._retained_fleet_owners(session.id) == []
+    assert bridge._conversation_fleet_handles(session.id) == handles_before
 
 
 def test_busy_fleet_session_count_ignores_a_terminal_child():
@@ -10434,6 +10633,51 @@ def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
     assert recorded, "expected the stall boundary handler to fire through chat_call"
     assert recorded[0][1] == "TestProvider"
     wd._SESSION_TRACKERS.clear()
+
+
+def test_kill_switch_refusal_wording_is_unified_everywhere():
+    """task-32285: four differently worded kill-switch refusals used to
+    exist (the controller's pre-dispatch review block, the MCP provider,
+    the local-tool provider, and the built-in gate's own copy hand-
+    duplicated here as `_BUILTIN_KILL_SWITCH_REFUSAL` to avoid dragging
+    `Agents.builtin_tool_gate` across this module's lazy-import boundary,
+    see `_blocked_provider_refusals()`'s docstring) -- lane B's transcript
+    classifier and this module's own `_refusal_statuses()`-style tables key
+    on these constants by identity/prefix, so the fix unifies the WORDING
+    (the constants' VALUES) while every constant NAME and import path stays
+    exactly where it was.
+
+    The builtin gate's own string (returned by `BuiltinToolGate.check()`
+    when the kill switch is on) is the single source of truth the hand
+    copy here must equal -- asserted by actually triggering `check()`
+    rather than importing the gate module at collection time, matching
+    what the brief asked for over reaching across the lazy-import
+    boundary.
+    """
+    from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
+
+    shared = "tool call blocked: the chat tool kill switch is on"
+    assert TOOL_KILL_SWITCH_REFUSAL == shared
+
+    # Qodo #2597 #2 fix round: the five sites no longer each hold their own
+    # copy of the sentence -- they all ALIAS the one definition in the
+    # import-free leaf `Agents.tool_refusals`, so identity (`is`) holds and
+    # a future edit physically cannot change only one of them.
+    assert bridge_module.CONTROLLER_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert bridge_module.MCP_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert LOCAL_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+    assert bridge_module._BUILTIN_KILL_SWITCH_REFUSAL is TOOL_KILL_SWITCH_REFUSAL
+
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    class _KillSwitchOnService:
+        def get_kill_switch(self) -> bool:
+            return True
+
+    gate = BuiltinToolGate(_KillSwitchOnService())
+    reason = gate.check(CalculatorTool(), "run-1")
+    assert reason is TOOL_KILL_SWITCH_REFUSAL
 
 
 # --------------------------------------------------------------------------

@@ -8,12 +8,6 @@ from typing import Any
 
 from loguru import logger
 
-from ...Chat.conversation_archive_actions import (
-    archive_failure_copy,
-    change_conversation_archive,
-    local_conversation_service,
-    storage_call,
-)
 from ...UI.Navigation.pending_handoff_store import (
     ConsoleConversationResumeIntent,
     HandoffChannel,
@@ -33,6 +27,12 @@ async def request_conversation_resume(
     """
     if request_if is not None and not request_if():
         return
+    from ...Chat.conversation_archive_actions import (
+        change_conversation_archive,
+        local_conversation_service,
+        storage_call,
+    )
+
     request_token = object()
     app._console_conversation_resume_request = request_token
 
@@ -231,6 +231,11 @@ async def consume_conversation_resume(screen: Any) -> None:
     while (
         screen.app.screen is screen and (claim := handoffs.claim(channel)) is not None
     ):
+        from ...Chat.conversation_archive_actions import (
+            local_conversation_service,
+            storage_call,
+        )
+
         workspace_id = None
         try:
             conversation_id = claim.value.conversation_id
@@ -338,6 +343,11 @@ async def archive_current_conversation(screen: Any) -> None:
             severity="information",
         )
         return
+    from ...Chat.conversation_archive_actions import (
+        local_conversation_service,
+        storage_call,
+    )
+
     row = None
     try:
         row = await storage_call(
@@ -380,6 +390,11 @@ def _archive_screen_current(screen: Any) -> bool:
 async def _complete_conversation_archive(
     screen: Any, conversation_id: str, row: dict[str, Any]
 ) -> None:
+    from ...Chat.conversation_archive_actions import (
+        archive_failure_copy,
+        change_conversation_archive,
+    )
+
     app = screen.app_instance
     try:
         result = await change_conversation_archive(

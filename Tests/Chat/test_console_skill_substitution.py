@@ -8,6 +8,9 @@ build time if it parses as a resolvable skill command. Earlier history
 messages (including earlier raw skill commands) are never substituted.
 """
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -15,6 +18,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRu
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from Tests.console_provider_doubles import persisted_console_store
 from Tests.console_provider_doubles import provider_resolution
+from Tests.Skills.test_canvas_skill import _import_canvas_skill
 
 
 class _Skills:
@@ -44,6 +48,19 @@ class _Skills:
 
     async def get_context(self, *, mode="local"):
         self.get_context_calls += 1
+        return self._context()
+
+    def _load_index(self):
+        context = self._context()
+        return {
+            item["name"]: item
+            for item in (*context["available_skills"], *context["blocked_skills"])
+        }
+
+    def _summary_for_record(self, record):
+        return dict(record)
+
+    def _context(self):
         return {
             "available_skills": [
                 {
@@ -205,6 +222,8 @@ async def test_submit_sends_rendered_payload_but_stores_raw_command():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
 
     result = await controller.submit_draft("$code-review fix it")
 
@@ -229,6 +248,8 @@ async def test_fork_survives_retry_by_re_rendering_fresh():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     await controller.submit_draft("$code-review go")
     messages = store.messages_for_session(store.active_session_id)
     failed = next(
@@ -261,6 +282,8 @@ async def test_submit_refusal_appends_system_row_and_aborts_without_provider_cal
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
 
     result = await controller.submit_draft("$code-review go")
 
@@ -303,6 +326,8 @@ async def test_submit_refusal_never_invokes_accepted_hook():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     accepted_calls = []
     controller.on_submission_accepted = lambda: accepted_calls.append(True)
 
@@ -313,11 +338,8 @@ async def test_submit_refusal_never_invokes_accepted_hook():
 
 
 @pytest.mark.asyncio
-async def test_submit_success_still_invokes_accepted_hook_before_assistant_row():
-    """The Qodo-3 reorder must not regress the successful path: the hook
-    still fires exactly once, and still fires strictly before the
-    ASSISTANT placeholder is appended (store order stays
-    [USER, ..., ASSISTANT])."""
+async def test_submit_success_invokes_accepted_hook_after_placeholder_before_provider():
+    """Successful skill sends announce acceptance after committing the placeholder."""
     skills = _Skills("inline")
     store = persisted_console_store()
     gateway = _RecordingGateway()
@@ -328,21 +350,30 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     assistant_rows_seen_at_hook_time = []
+    provider_calls_seen_at_hook_time = []
 
     def _on_accepted():
         session_id = store.active_session_id
         messages = store.messages_for_session(session_id) if session_id else []
         assistant_rows_seen_at_hook_time.append(
-            [m for m in messages if m.role is ConsoleMessageRole.ASSISTANT]
+            [
+                (m.status, m.content)
+                for m in messages
+                if m.role is ConsoleMessageRole.ASSISTANT
+            ]
         )
+        provider_calls_seen_at_hook_time.append(len(gateway.payloads))
 
     controller.on_submission_accepted = _on_accepted
 
     result = await controller.submit_draft("$code-review go")
 
     assert result.accepted is True
-    assert assistant_rows_seen_at_hook_time == [[]]
+    assert assistant_rows_seen_at_hook_time == [[("pending", "")]]
+    assert provider_calls_seen_at_hook_time == [0]
 
 
 @pytest.mark.asyncio
@@ -357,6 +388,8 @@ async def test_regenerate_refusal_after_skill_edit_keeps_prior_answer():
         model="m",
         skills_service=skills,
     )
+    # Runtime snapshots capture the app-owned skill catalog before dispatch.
+    controller.app = SimpleNamespace(local_skills_service=skills)
     await controller.submit_draft("$code-review go")
     messages = store.messages_for_session(store.active_session_id)
     assistant = next(
@@ -761,3 +794,183 @@ async def test_skill_with_no_reference_files_binds_with_empty_block():
     assert refuse is None
     assert bindings == ("code-review",)
     assert block == ""
+
+
+class _LocalCanvasSkillsAdapter:
+    """Adapt only the routing keyword; import, trust and rendering stay real."""
+
+    def __init__(self, service):
+        self.service = service
+
+    async def get_context(self, *, mode="local"):
+        assert mode == "local"
+        return await self.service.get_context()
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        assert mode == "local"
+        return await self.service.execute_skill(name, args=args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        ("$canvas Create a savings calculator", "Create a savings calculator"),
+        ("Please use $canvas to create a savings calculator", ""),
+        ("$canvas", ""),
+    ],
+    ids=["leading", "embedded", "bare"],
+)
+async def test_real_canvas_skill_stays_inline_with_owning_run_tools(
+    tmp_path, monkeypatch, command, args
+):
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+    from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+    from tldw_chatbook.Canvas.models import CanvasScope
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        ConsoleAgentBridge,
+        _BridgeSkillRunner,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    service, trust, _imported = await _import_canvas_skill(tmp_path / "local")
+    review = trust.capture_review("canvas")
+    trust.trust_reviewed_snapshot(review["review_id"])
+    skills = _LocalCanvasSkillsAdapter(service)
+    controller, store = _controller(skills)
+    messages = [
+        {"role": "user", "content": "Earlier context"},
+        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "user", "content": command},
+    ]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    rendered = (await service.execute_skill("canvas", args=args))["rendered_prompt"]
+    assert refuse is None and notes == ()
+    assert out[:-1] == messages[:-1]
+    assert messages[-1]["content"] == command
+    assert rendered in out[-1]["content"]
+    if command.startswith("$canvas"):
+        assert out[-1]["content"] == rendered
+    else:
+        assert (
+            out[-1]["content"]
+            == f"Please use {rendered} to create a savings calculator"
+        )
+    assert (
+        "Bare activation without a concrete request requires clarification before authoring"
+        in " ".join(rendered.split())
+    )
+    assert bindings == ("canvas",) and block == ""
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Inline Canvas must not spawn children or invoke a model skill")
+
+    monkeypatch.setattr(_BridgeSkillRunner, "run", forbidden)
+    monkeypatch.setattr(FleetCoordinator, "reserve", forbidden)
+    allowed_sets = []
+    real_run_turn = AgentService.run_turn
+
+    def capture_run(self, **kwargs):
+        allowed_sets.append(frozenset(kwargs["config"].allowed_tools))
+        return real_run_turn(self, **kwargs)
+
+    monkeypatch.setattr(AgentService, "run_turn", capture_run)
+    gateway = _RecordingGateway()
+    session = store.ensure_session()
+    coordinator = SimpleNamespace(
+        is_scope_current=lambda _scope: True,
+        finish_assistant_run=lambda *_args, **_kwargs: None,
+        list_canvases=forbidden,
+        read_canvas=forbidden,
+        create_canvas=forbidden,
+        update_canvas=forbidden,
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="canvas-skill-test")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway, skills_service=skills
+    )
+    try:
+        for payload, bound in ((messages, ()), (out, bindings)):
+            provider = CanvasToolProvider(
+                coordinator,
+                scope=CanvasScope(
+                    session_id=session.id,
+                    conversation_id="canvas-skill-owner",
+                    active_message_ids=(),
+                    selected_canvas_id=None,
+                    selected_revision_id=None,
+                    run_id=f"canvas-skill-run-{len(allowed_sets)}",
+                ),
+                enabled_reader=lambda: True,
+            )
+            authority = provider.issue_registration_authority()
+            assistant = store.append_message(
+                session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+            )
+            _run_id, outcome = await asyncio.to_thread(
+                bridge.run_reply,
+                conversation_id="canvas-skill-owner",
+                session_id=session.id,
+                resolution=provider_resolution(
+                    provider="groq", model="m", execution_key="groq"
+                ),
+                assistant_message_id=assistant.id,
+                model="m",
+                session_system_prompt="",
+                agent_messages=payload,
+                should_cancel=lambda: False,
+                turn_skill_bindings=bound,
+                canvas_provider=provider,
+                canvas_authority=authority,
+            )
+            assert outcome.status == "done"
+        assert len(allowed_sets) == 2
+        assert allowed_sets[0] == allowed_sets[1]
+        assert {
+            "canvas_list",
+            "canvas_read",
+            "canvas_create",
+            "canvas_update",
+            "canvas_guide",
+        } <= allowed_sets[1]
+        assert "canvas" not in allowed_sets[1]
+        assert rendered in gateway.payloads[-1][-1]["content"]
+        runs = db.list_runs("canvas-skill-owner")
+        assert len(runs) == 2
+        assert all(run["parent_run_id"] is None for run in runs)
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("modified", [False, True], ids=["untrusted", "modified"])
+async def test_real_canvas_skill_refusal_is_not_silently_substituted(
+    tmp_path, modified
+):
+    service, trust, imported = await _import_canvas_skill(tmp_path)
+    if modified:
+        review = trust.capture_review("canvas")
+        trust.trust_reviewed_snapshot(review["review_id"])
+        (tmp_path / "skills/canvas/SKILL.md").write_text(
+            imported["content"] + "\nUnreviewed change.\n", encoding="utf-8"
+        )
+    controller, _store = _controller(_LocalCanvasSkillsAdapter(service))
+    leading = [{"role": "user", "content": "$canvas Create a calculator"}]
+    out, refusal, notes, bindings, block = await controller._apply_skill_substitution(
+        leading
+    )
+    assert out == leading
+    assert 'Skill "canvas" isn\'t trusted' in refusal
+    assert notes == () and bindings == () and block == ""
+
+    embedded = [{"role": "user", "content": "Please use $canvas for a calculator"}]
+    out, refusal, notes, bindings, block = await controller._apply_skill_substitution(
+        embedded
+    )
+    assert out == embedded
+    assert refusal is None
+    assert len(notes) == 1 and "canvas" in notes[0]
+    assert bindings == () and block == ""

@@ -134,6 +134,9 @@ from tldw_chatbook.Widgets.Console.console_review_notes_modal import (
     ConsoleReviewNotesModal,
 )
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+    ConsoleEndpointTemplateModal,
+)
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
     ConsoleSettingsModal,
@@ -1042,6 +1045,12 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         (WorkbenchHelpPanel,),
         ("tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",),
         ("action_show_workbench_help",),
+    ),
+    _ModalLaunchEdge(
+        ConsoleSettingsModal,
+        (ConsoleEndpointTemplateModal,),
+        ("tldw_chatbook/Widgets/Console/console_settings_modal.py",),
+        ("_open_endpoint_template_modal",),
     ),
     # task-18810: the Console workspace browser opens the shared create
     # dialog (`_create_console_workspace`), which itself opens the vendored

@@ -134,8 +134,12 @@ def _drain_from_child_thread(wake, drain) -> None:
 
 def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     """A sub-agent run that finished AFTER its (terminal) parent turn."""
+    from uuid import uuid4
+    chain_id = runs_db.automatic_work.create_chain(
+        conversation_id, root_submission_id=uuid4().hex
+    )
     parent_id = runs_db.create_run(
-        conversation_id=conversation_id, agent_kind="primary"
+        conversation_id=conversation_id, agent_kind="primary", work_chain_id=chain_id
     )
     runs_db.set_status(parent_id, "done", "turn final")
     run_id = runs_db.create_run(
