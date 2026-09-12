@@ -4877,8 +4877,14 @@ class LibraryScreen(BaseAppScreen):
     def _restore_library_notes_focus_identity(self, identity: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> bool:
         return self._notes_controller._restore_library_notes_focus_identity(identity, guard)
 
-    def _restore_library_notes_after_targeted_sync(self, identity: LibraryNotesFocusIdentity) -> None:
-        return self._notes_controller._restore_library_notes_after_targeted_sync(identity)
+    def _restore_library_notes_after_targeted_sync(
+        self,
+        identity: LibraryNotesFocusIdentity,
+        guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> None:
+        return self._notes_controller._restore_library_notes_after_targeted_sync(
+            identity, guard
+        )
 
     def _library_notes_restore_guard_is_current(
         self, guard: _LibraryNotesRestoreGuard | None

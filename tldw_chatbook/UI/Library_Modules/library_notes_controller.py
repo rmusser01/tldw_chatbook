@@ -1957,7 +1957,9 @@ class LibraryNotesController:
             self._library_notes_pending_focus_generation = None
         return restored_exact_target
     def _restore_library_notes_after_targeted_sync(
-        self, identity: LibraryNotesFocusIdentity
+        self,
+        identity: LibraryNotesFocusIdentity,
+        guard: _LibraryNotesRestoreGuard | None = None,
     ) -> None:
         """Recover Notes focus after queued recompose unless a live owner claimed it.
 
@@ -1978,7 +1980,7 @@ class LibraryNotesController:
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which
         # it could be seen sitting outside the canvas.
-        self._restore_library_notes_focus_identity(identity)
+        self._restore_library_notes_focus_identity(identity, guard)
         # Scroll SECOND and deferred. The restore above already attempts it,
         # but at this point the freshly mounted children have not been laid
         # out yet -- the container's max scroll is still 0, so ``scroll_to``
@@ -1987,7 +1989,9 @@ class LibraryNotesController:
         # ``call_after_refresh``, i.e. after a display refresh; re-applying
         # from the same primitive here gives the offset a laid-out container
         # to land in. Idempotent, so the earlier attempt costs nothing.
-        self.call_after_refresh(self._restore_library_notes_scroll_offset, identity)
+        self.call_after_refresh(
+            self._restore_library_notes_scroll_offset, identity, guard
+        )
     def _restore_library_notes_scroll_offset(
         self,
         identity: LibraryNotesFocusIdentity,

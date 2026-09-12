@@ -24665,6 +24665,22 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     strip = screen.query_one("#library-notes-source-strip")
     strip_height = strip.region.height
     assert strip_height == 1
+    database_source = screen.query_one("#library-notes-source-database", Button)
+    files_source = screen.query_one("#library-notes-source-files", Button)
+    assert database_source.label == "Library notes"
+    assert database_source.has_class("-selected")
+    assert database_source.display is True
+    assert database_source.region.width > 0
+    assert database_source.region.height > 0
+    assert strip.content_region.contains_region(database_source.region)
+    assert screen.content_region.contains_region(database_source.region)
+    assert files_source.label == "Folder files"
+    assert not files_source.has_class("-selected")
+    assert files_source.display is True
+    assert files_source.region.width > 0
+    assert files_source.region.height > 0
+    assert strip.content_region.contains_region(files_source.region)
+    assert screen.content_region.contains_region(files_source.region)
     assert not screen.query("#library-chunking-tools")
     shell_height = 14
 
@@ -24684,7 +24700,7 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     assert authority.region.height == 2
     assert notes.content_region.contains_region(authority.region)
     authority_text = getattr(authority.renderable, "plain", str(authority.renderable))
-    assert "Library notes" in authority_text
+    assert not authority_text.startswith("Library notes · ")
     if notes.mode == "loading" and notes.load_state != "failed":
         assert "Loading note…" in authority_text
         assert "Next:" not in authority_text
@@ -24793,9 +24809,10 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-header": 1,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
+                "#library-notes-browse-actions-overflow": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 6,
+                "#library-notes-list": 5,
             },
             "#library-notes-filter",
         ),
@@ -24805,9 +24822,10 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-header": 1,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
+                "#library-notes-browse-actions-overflow": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-empty": 6,
+                "#library-notes-empty": 5,
             },
             "#library-notes-filter-clear",
         ),
@@ -34087,7 +34105,10 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         )
         # TASK-32233 lands Escape in the rail input; TASK-31223 then
         # advertises typing, not printable shortcuts that input swallows.
-        await wait_footer(" typing in field | F6 next pane | esc focus rail")
+        await wait_footer(
+            "esc focus rail |  typing in field |  after esc: / focus search | "
+            "F6 next pane"
+        )
         assert screen.query_one("#library-search-input").has_focus
         assert "esc rail" not in footer_shortcuts()
         assert "ctrl+n new" not in footer_shortcuts()
@@ -34175,7 +34196,12 @@ async def test_notes_footer_registration_preserves_media_route_typing_hints() ->
         screen._register_footer_shortcuts()
         assert screen._footer_shortcut_registration == (
             "library",
-            (("", "typing in field"), ("F6", "next pane"), ("esc", "focus rail")),
+            (
+                ("", "typing in field"),
+                ("esc", "focus rail"),
+                ("", "after esc: / focus search · s select"),
+                ("F6", "next pane"),
+            ),
         )
         assert "typing in field" in screen.query_one(AppFooterStatus).shortcut_text
         assert screen.focused is field and field.is_attached
@@ -34543,6 +34569,7 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
             and context.content_region.contains_region(delete_action.region),
             message="Delete did not become a visible keyboard action.",
         )
+        await pilot.wait_for_scheduled_animations()
         origin_scroll = context.scroll_y
         assert origin_scroll > 0
         snapshot_before = screen._library_note_session.snapshot
@@ -34582,6 +34609,7 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
             and delete_action.has_focus,
             message="Cancel did not restore the initiating Delete action.",
         )
+        await pilot.wait_for_scheduled_animations()
         assert screen._library_note_session.destructive_admission is None
         assert screen._notes_state.confirming_delete is False
         assert screen._notes_state.context is True

@@ -62,6 +62,9 @@ from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from tldw_chatbook.UI.Library_Modules.screen_support_types import (
+    _LibraryNotesRestoreGuard,
+)
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
@@ -1038,6 +1041,31 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         before = self._toolbar_decisions(self._effective_pane_width())
         self._measured_width = width
         if before != self._toolbar_decisions(self._effective_pane_width()):
+            focused = self.app.focused
+            capture_recompose = getattr(
+                self.screen, "_capture_library_notes_recompose_state", None
+            )
+            restore_targeted = getattr(
+                self.screen, "_restore_library_notes_after_targeted_sync", None
+            )
+            if (
+                not self.has_pending_recompose_callback
+                and focused is not None
+                and focused.is_mounted
+                and self in focused.ancestors
+                and callable(capture_recompose)
+                and callable(restore_targeted)
+            ):
+                capture = capture_recompose()
+                if capture is not None:
+                    guard = _LibraryNotesRestoreGuard(
+                        recompose_generation=capture.recompose_generation,
+                        scroll_generation=capture.scroll_generation,
+                        focus_generation=capture.focus_generation,
+                    )
+                    self.queue_after_recompose(
+                        lambda: restore_targeted(capture.focus, guard)
+                    )
             self.refresh(recompose=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
