@@ -20,6 +20,8 @@ Preconditions: root has accepted the design, recorded ADR-157 without modifying 
 
 ### Task 1: Definition identity and real SQLite
 
+- [x] Implemented and independently reviewed: b46807d547, migration evidence repair be709a648f.
+
 Files: Agents/agent_models.py; DB/AgentRuns_DB.py; new DB/migrations/agent_runs_v18_to_v19_definition_wall_seconds.sql; Tests/Agents/test_agent_models.py; Tests/DB/test_agent_runs_db.py.
 
 Add appended optional max_wall_seconds with None default; shared validation rejects bool/invalid/nonfinite/nonpositive values. definition_from_row tolerates missing optional key. Fingerprint conditionally adds normalized float only for present cap, proving pre-field byte compatibility for None. Fresh schema, guarded upgrade, version constant/table and parameterized create/update store nullable REAL. Existing SELECT * row conversion needs no special cast.
@@ -29,6 +31,8 @@ Verification prerequisite: the schema18 baseline has one inherited failure in `t
 Tests first: exact old fingerprint, valid fractional value, int/float fingerprint equivalence, invalid input no-write, file-backed v18->v19/reopen/idempotency and standalone SQL (using real preceding schema). Preserve existing definitions and all existing schema18 data; recovery ownership records are not implemented yet. Update current-version assertions in older migration tests, retaining their structural/data checks. Run only model + AgentRunsDB modules and formatter/linter on changed Python.
 
 ### Task 2: Frozen spawn restriction and retained continuation
+
+- [x] Implemented and independently reviewed: bbfc233aad; qualified targeted runtime/clock evidence is recorded in the task report.
 
 Files: Agents/agent_models.py; Agents/agent_service.py; Agents/fleet_coordinator.py; targeted Agents tests for fleet runtime/coordinator/continuation/automatic child scope.
 
@@ -58,6 +62,6 @@ if resolved is not None and resolved.max_wall_seconds is not None:
 
 Add `definition_wall_seconds: float | None = None` at the end of FleetHandle and RetainedTranscript; extend reserve with a keyword-only default and retain it before child execution can complete. For continuation, minimum the normal budget, any current definition cap and any retained admitted ceiling; preserve None for a never-capped lineage. `_launch_fleet_child` passes coordinator-only metadata to reserve, never into `_run_one` kwargs.
 
-Task 3 adds a compact Input `agents-wall-seconds-input`. Blank maps to None; nonblank parses float then uses shared model validation. Selection fills it, New and generic preset loading clear it. Existing Save errors remain visible and leave the stored row untouched.
+Task 3 adds a compact Input `agents-wall-seconds-input`. Blank maps to None; nonblank parses float then uses shared model validation. Selection fills it, New and generic preset loading clear it. Existing Save errors remain visible and leave the stored row untouched. A float-parse error uses concise field-labeled copy rather than echoing the malformed input. Keep the added row within the already reviewed compact form and verify the actual painted cap field, instructions, enabled switch, preset controls and Save action at both widths.
 
 Each task writes its own exact red/green commands, counts, warnings, changed paths and scoped static evidence. Root commits and independently reviews before the next task. Root performs final acceptance/notes/Done updates through Backlog CLI only after all three slices pass.
