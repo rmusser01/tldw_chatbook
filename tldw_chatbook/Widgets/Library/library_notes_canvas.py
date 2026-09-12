@@ -14,7 +14,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.events import Resize
+from textual.events import Focus, Resize
 from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
@@ -363,9 +363,29 @@ _NOTE_FIELD_TAB_BINDINGS = [
     Binding("shift+tab", "screen.focus_previous", show=False, priority=True),
 ]
 
+#: task-32247: the note body's own keys, on top of the shared Tab pair --
+#: see ``NoteEditorTextArea`` for why Textual supplies neither.
+_NOTE_BODY_BINDINGS = [
+    *_NOTE_FIELD_TAB_BINDINGS,
+    Binding("ctrl+end", "cursor_document_end", "End of note", show=False),
+    Binding("ctrl+home", "cursor_document_start", "Start of note", show=False),
+]
+
 
 class NoteEditorInput(Input):
     """A note field whose Tab moves focus BEFORE the next key is forwarded.
+
+    task-32253: it also does NOT select its content on focus, and parks the
+    caret at the end instead. Textual's ``Input`` default is select-on-focus
+    -- browser behaviour, and right for a query box you are about to
+    replace. It is wrong for the one field on this screen whose content must
+    not be destroyed: live at dev 4a14b3f36f, Shift+Tab out of the body into
+    the Title selected "Ideas for study decks" whole, one "!" replaced it,
+    and autosave committed the loss a second later ("Saved 15:23"). Textual's
+    ``Input`` has no undo, so nothing could bring the title back. The keyword
+    boxes share this class and the same rule for the same reason; the path
+    fields that genuinely WANT select-on-focus are a different widget
+    (task-32251).
 
     task-32106 AC#1: ``Screen.BINDINGS``' ``Binding("tab", "app.focus_next")``
     is not ``priority=True``, so ``Key(tab)`` is posted to the focused
@@ -389,9 +409,33 @@ class NoteEditorInput(Input):
 
     BINDINGS = _NOTE_FIELD_TAB_BINDINGS
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the field with select-on-focus off unless asked otherwise."""
+        kwargs.setdefault("select_on_focus", False)
+        super().__init__(*args, **kwargs)
+
+    def _on_focus(self, event: Focus) -> None:
+        super()._on_focus(event)
+        if not self.select_on_focus:
+            # Textual leaves the caret wherever it was (position 0 on a
+            # fresh field), which reads as "type here and push the title
+            # along". End-of-text is where a reader arriving by Shift+Tab
+            # means to continue.
+            self.action_end()
+
 
 class NoteEditorTextArea(TextArea):
     """The note body, with the same synchronous Tab as the fields around it.
+
+    task-32247: it also carries the document-end and document-start keys.
+    Textual 8.2.8's ``TextArea`` binds ``home``/``end`` to the LINE ends and
+    defines neither a ``ctrl+end`` binding nor a ``cursor_document_end``
+    action at all -- so on a 35 KB note, Ctrl+End (in every encoding: the
+    named key, ``\\x1b[1;5F``, ``\\x1bOF``-style variants all resolve to the
+    one key name ``ctrl+end``) was not swallowed by anything upstream, as
+    the report inferred; there was simply no key to swallow, and typing
+    after it landed at character 0. Editing near the end of a long note was
+    unreachable by keyboard.
 
     The body has the identical defect one widget over (coordinator addendum
     from a peer session): bursting ``hello`` + Tab + ``world`` into it left
@@ -406,7 +450,15 @@ class NoteEditorTextArea(TextArea):
     trusting the default.
     """
 
-    BINDINGS = _NOTE_FIELD_TAB_BINDINGS
+    BINDINGS = _NOTE_BODY_BINDINGS
+
+    def action_cursor_document_end(self) -> None:
+        """Move the caret to the end of the note body."""
+        self.move_cursor(self.document.end)
+
+    def action_cursor_document_start(self) -> None:
+        """Move the caret to the start of the note body."""
+        self.move_cursor((0, 0))
 
 
 @dataclass(frozen=True)
@@ -2263,6 +2315,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="library-canvas-action library-media-action-danger",
                 compact=True,
             )
+            # task-32268: the prompt belongs to the button above it. It used
+            # to compose as a sibling of every region, below the (hidden)
+            # wide utilities and the conflict callout -- live at dev
+            # 4a14b3f36f it painted five rows under Delete and OUTSIDE the
+            # Info border, which closed above it, so the guide's "renders
+            # where Delete was pressed" was not what the screen showed. It is
+            # the next child of Danger now, which is also the only place it
+            # can be: Delete is reachable from Info alone (task-32132), and
+            # ``apply_session_state`` keeps Info open while confirming.
+            yield from self._compose_delete_confirmation()
         yield Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
@@ -2331,6 +2393,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
 
+    def _compose_delete_confirmation(self) -> ComposeResult:
+        """Mount the delete prompt where task-32268 requires it: in Danger."""
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
                 "Delete this note? Undo will be available in the Notes list.",
@@ -2523,8 +2587,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # "delete this note?" painted 14 rows away, under a body editor the
         # user never opened. Info stays put while confirming; only Preview
         # (which never hosts a Delete button) still yields to Edit.
+        # task-32268: the prompt is now a child of Info's Danger section, so
+        # Info has to be the surface whenever it is up -- otherwise a
+        # confirmation could be raised into a hidden pane. In production this
+        # is what already happened (Delete is Info-only), and task-32132's
+        # own rule was "Info stays put while confirming"; stating it as a
+        # condition makes the invariant the prompt's placement depends on
+        # explicit rather than incidental.
         show_context = (
-            state.region == "context"
+            (state.region == "context" or confirming_delete)
             and not conflict
             and not bulk_read_only
         )
