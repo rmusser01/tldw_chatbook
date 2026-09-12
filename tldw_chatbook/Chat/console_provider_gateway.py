@@ -3757,11 +3757,17 @@ class ConsoleProviderGateway:
                     execution_key=identity.execution_key,
                     api_key_source=readiness.api_key_source,
                 )
-            llama_base_url = selection.base_url
-            if custom_entry is not None and not (llama_base_url or "").strip():
-                # The session base_url is the endpoint carrier; a blank
-                # session falls back to the entry's config-backed endpoint.
+            if custom_entry is not None:
+                # ADR-146: the entry's base_url is the endpoint authority
+                # for a custom-ep provider -- an edited entry re-resolves
+                # on the next send, so a stale session-pinned URL never
+                # outranks it. No UI path overrides a custom-ep URL (the
+                # settings modal disables the field for custom-ep ids), and
+                # detach converts the provider to the plain family key, so
+                # its URL preservation is unaffected.
                 llama_base_url = custom_entry.base_url
+            else:
+                llama_base_url = selection.base_url
             resolved = await self.resolve_llamacpp(
                 LlamaCppProviderConfig(
                     base_url=llama_base_url or DEFAULT_LLAMACPP_BASE_URL,
@@ -3942,9 +3948,15 @@ class ConsoleProviderGateway:
                 provider_settings,
             )
         else:
+            # ADR-146: for a custom-ep provider the entry's base_url is the
+            # endpoint authority (an edited entry re-resolves on the next
+            # send), so a stale session-pinned URL never outranks the entry;
+            # every other provider keeps session-selection precedence.
             effective_base_url = effective_provider_endpoint(
                 identity.readiness_key,
-                selection.base_url,
+                custom_entry.base_url
+                if custom_entry is not None
+                else selection.base_url,
                 provider_settings,
             )
 
