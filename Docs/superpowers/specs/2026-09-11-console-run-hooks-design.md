@@ -32,8 +32,10 @@ v1 serves three purposes:
   the builtin tool gate. Hooks only add restrictions.
 - SessionStart/SessionEnd/PreCompact events (no clean, well-defined seam yet;
   sessions are lazily created and long-lived).
-- Settings-screen UI. Config-file only in v1; the F9 settings surface follows
-  later if the feature sticks.
+- Settings-screen UI. Config-file only in v1; a dedicated settings
+  sub-screen is **confirmed for the immediately following PR** (user
+  decision 2026-09-11) — this spec's config schema is the contract that
+  sub-screen will edit.
 - Shell command strings. Commands are argv lists only — no shell parsing, no
   injection surface.
 
@@ -236,5 +238,6 @@ patterns):
 ## 11. Future work (explicitly out of v1)
 
 Project-scope hooks behind a trust gate; decision-JSON input rewriting;
-SessionStart/SessionEnd; PreCompact (rewind/summarize seam); settings-screen
-surface; per-session hook overrides.
+SessionStart/SessionEnd; PreCompact (rewind/summarize seam); **dedicated
+settings sub-screen (confirmed follow-up PR, editing the config schema
+defined here)**; per-session hook overrides.
