@@ -115,6 +115,17 @@ just says "No approval is pending.").
 
 ## Features & controls
 
+### Run lifecycle webhooks are bounded and best effort
+
+When `[webhooks]` is enabled, Chatbook can admit signed notifications for
+subscribed run outcomes without waiting for the network request to finish.
+Admission means the notification entered the process-local delivery queue; it
+does not mean the endpoint received it. One delivery may be in progress while
+up to 32 wait in FIFO order. A newer notification is dropped immediately when
+that queue is full, so webhook traffic never blocks run finalization. Delivery
+remains best effort: notifications have no retry or durable outbox and may also
+be lost when the process exits.
+
 ### Approvals — tools ask before they run
 
 Nothing is ever auto-approved, and built-in tools always ask first. When the

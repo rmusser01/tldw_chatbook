@@ -24,10 +24,12 @@ import hashlib
 import hmac
 import json
 import math
+import queue
 import threading
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
-from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger
 
@@ -36,6 +38,7 @@ from ..Utils.egress import EgressBlockedError, check_url_or_raise_async
 try:  # metrics are best-effort; never let their absence break delivery
     from ..Metrics.metrics_logger import log_counter
 except Exception:  # noqa: BLE001
+
     def log_counter(*_args: Any, **_kwargs: Any) -> None:  # type: ignore
         return None
 
@@ -45,6 +48,9 @@ WEBHOOK_SIGNATURE_HEADER = "X-Tldw-Signature"
 WEBHOOK_EVENTS = ("completed", "failed", "needs-approval")
 _DEFAULT_TIMEOUT_SECONDS = 5.0
 _MAX_TIMEOUT_SECONDS = 120.0
+WEBHOOK_DELIVERY_QUEUE_CAPACITY = 32
+WEBHOOK_DELIVERY_IDLE_SECONDS = 30.0
+WEBHOOK_DELIVERY_THREAD_NAME = "run-webhook-delivery"
 
 PostFn = Callable[[str, bytes, Mapping[str, str], float], Awaitable[None]]
 
@@ -54,8 +60,183 @@ class WebhookConfig:
     enabled: bool = False
     url: str = ""
     secret: str = ""
-    events: Tuple[str, ...] = ()
+    events: tuple[str, ...] = ()
     timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+
+
+@dataclass(frozen=True)
+class _WebhookDelivery:
+    config: WebhookConfig
+    event: str
+    run_id: str
+    agent_id: str | None
+    timestamp: str | None
+    extra_ids: Mapping[str, str] | None
+
+
+class _WebhookDeliveryWorker:
+    """Own one lazy, bounded FIFO webhook delivery generation."""
+
+    def __init__(
+        self,
+        *,
+        queue_capacity: int = WEBHOOK_DELIVERY_QUEUE_CAPACITY,
+        idle_seconds: float = WEBHOOK_DELIVERY_IDLE_SECONDS,
+    ) -> None:
+        self._queue: queue.Queue[_WebhookDelivery] = queue.Queue(queue_capacity)
+        self._idle_seconds = idle_seconds
+        self._state_lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._generation = 0
+        self._accepting = False
+
+    def submit(self, delivery: _WebhookDelivery) -> bool:
+        """Admit a copied delivery immediately, or refuse it."""
+        config = delivery.config
+        captured = _WebhookDelivery(
+            config=WebhookConfig(
+                enabled=config.enabled,
+                url=config.url,
+                secret=config.secret,
+                events=tuple(config.events),
+                timeout_seconds=config.timeout_seconds,
+            ),
+            event=delivery.event,
+            run_id=delivery.run_id,
+            agent_id=delivery.agent_id,
+            timestamp=delivery.timestamp,
+            extra_ids=dict(delivery.extra_ids)
+            if delivery.extra_ids is not None
+            else None,
+        )
+        with self._state_lock:
+            if self._thread is None:
+                if not self._start_generation_locked(captured.event):
+                    return False
+            elif not self._accepting:
+                self._record_drop("worker_retiring", captured.event)
+                return False
+            try:
+                self._queue.put_nowait(captured)
+            except queue.Full:
+                self._record_drop("queue_full", captured.event)
+                return False
+            return True
+
+    def _start_generation_locked(self, event: str) -> bool:
+        self._generation += 1
+        generation = self._generation
+        thread = threading.Thread(
+            target=self._run_generation,
+            args=(generation,),
+            name=WEBHOOK_DELIVERY_THREAD_NAME,
+            daemon=True,
+        )
+        self._thread = thread
+        self._accepting = True
+        try:
+            thread.start()
+        except BaseException as exc:  # noqa: BLE001 - startup must fail closed
+            self._thread = None
+            self._accepting = False
+            self._record_start_failure(type(exc).__name__, event)
+            return False
+        return True
+
+    def _run_generation(self, generation: int) -> None:
+        try:
+            with asyncio.Runner() as runner:
+                while True:
+                    try:
+                        delivery = self._queue.get(timeout=self._idle_seconds)
+                    except queue.Empty:
+                        with self._state_lock:
+                            if generation != self._generation:
+                                return
+                            if not self._queue.empty():
+                                continue
+                            self._accepting = False
+                        break
+                    try:
+                        runner.run(
+                            deliver_webhook(
+                                delivery.config,
+                                delivery.event,
+                                delivery.run_id,
+                                agent_id=delivery.agent_id,
+                                timestamp=delivery.timestamp,
+                                extra_ids=delivery.extra_ids,
+                            )
+                        )
+                    except BaseException as exc:  # noqa: BLE001 - contain each item
+                        self._record_delivery_failure(
+                            type(exc).__name__, delivery.event
+                        )
+                    finally:
+                        self._queue.task_done()
+        finally:
+            with self._state_lock:
+                if generation == self._generation:
+                    self._thread = None
+                    self._accepting = False
+
+    @staticmethod
+    def _record_drop(reason: str, event: str) -> None:
+        try:
+            logger.warning("Run webhook delivery was not admitted")
+        except BaseException:  # noqa: BLE001,S110 - diagnostics are best effort
+            pass
+        try:
+            log_counter(
+                "run_webhook_dropped",
+                labels={"reason": reason, "event": _bounded_metric_event(event)},
+            )
+        except BaseException:  # noqa: BLE001,S110 - diagnostics are best effort
+            pass
+
+    @staticmethod
+    def _record_start_failure(exception_type: str, event: str) -> None:
+        try:
+            logger.warning(
+                "Run webhook delivery worker could not start ({})",
+                exception_type,
+            )
+        except BaseException:  # noqa: BLE001,S110 - diagnostics are best effort
+            pass
+        try:
+            log_counter(
+                "run_webhook_dropped",
+                labels={
+                    "reason": "worker_start_failed",
+                    "event": _bounded_metric_event(event),
+                },
+            )
+        except BaseException:  # noqa: BLE001,S110 - diagnostics are best effort
+            pass
+
+    @staticmethod
+    def _record_delivery_failure(exception_type: str, event: str) -> None:
+        try:
+            logger.warning(
+                "Run webhook delivery worker failed ({})",
+                exception_type,
+            )
+        except BaseException:  # noqa: BLE001,S110 - diagnostics are best effort
+            pass
+        try:
+            log_counter(
+                "run_webhook_failed",
+                labels={"event": _bounded_metric_event(event)},
+            )
+        except BaseException:  # noqa: BLE001,S110 - diagnostics are best effort
+            pass
+
+
+def _bounded_metric_event(event: str) -> str:
+    return event if event in WEBHOOK_EVENTS else "other"
+
+
+_WEBHOOK_DELIVERY_WORKER = _WebhookDeliveryWorker()
 
 
 def webhook_config_from_settings(settings: Mapping[str, Any]) -> WebhookConfig:
@@ -95,9 +276,9 @@ def build_webhook_payload(
     event: str,
     run_id: str,
     *,
-    agent_id: Optional[str] = None,
-    timestamp: Optional[str] = None,
-    extra_ids: Optional[Mapping[str, str]] = None,
+    agent_id: str | None = None,
+    timestamp: str | None = None,
+    extra_ids: Mapping[str, str] | None = None,
 ) -> dict:
     """Build a content-free lifecycle payload (AC#3).
 
@@ -139,7 +320,9 @@ def _log_safe_origin(url: str) -> str:
         return "<unparseable-url>"
 
 
-async def _default_post(url: str, body: bytes, headers: Mapping[str, str], timeout: float) -> None:
+async def _default_post(
+    url: str, body: bytes, headers: Mapping[str, str], timeout: float
+) -> None:
     import httpx
 
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -154,10 +337,10 @@ async def deliver_webhook(
     event: str,
     run_id: str,
     *,
-    agent_id: Optional[str] = None,
-    timestamp: Optional[str] = None,
-    extra_ids: Optional[Mapping[str, str]] = None,
-    post_fn: Optional[PostFn] = None,
+    agent_id: str | None = None,
+    timestamp: str | None = None,
+    extra_ids: Mapping[str, str] | None = None,
+    post_fn: PostFn | None = None,
 ) -> bool:
     """Deliver one lifecycle webhook. Returns True iff a POST was made and
     succeeded. Never raises into the caller (AC#4/#5).
@@ -221,37 +404,26 @@ def schedule_run_webhook(
     event: str,
     run_id: str,
     *,
-    agent_id: Optional[str] = None,
-    timestamp: Optional[str] = None,
-    extra_ids: Optional[Mapping[str, str]] = None,
+    agent_id: str | None = None,
+    timestamp: str | None = None,
+    extra_ids: Mapping[str, str] | None = None,
 ) -> bool:
     """Fire-and-forget a lifecycle webhook from ANY context, incl. the sync
     worker thread the agent runtime runs on (AC#4).
 
-    Returns True iff a delivery thread was started (config enabled + endpoint
-    set + event subscribed). Delivery runs on a daemon thread with its own
-    event loop so it can never delay or fail the run; all errors are handled
-    inside ``deliver_webhook``.
+    Returns True iff the delivery was admitted. The bounded daemon worker
+    delivers admitted events in FIFO order without delaying run finalization.
     """
     if not config.enabled or not config.url or event not in config.events:
         return False
 
-    def _runner() -> None:
-        try:
-            asyncio.run(
-                deliver_webhook(
-                    config,
-                    event,
-                    run_id,
-                    agent_id=agent_id,
-                    timestamp=timestamp,
-                    extra_ids=extra_ids,
-                )
-            )
-        except Exception as exc:  # noqa: BLE001 - fire-and-forget, never propagate
-            logger.warning("Run webhook delivery thread failed: {!r}", exc)
-
-    threading.Thread(
-        target=_runner, name=f"run-webhook-{event}", daemon=True
-    ).start()
-    return True
+    return _WEBHOOK_DELIVERY_WORKER.submit(
+        _WebhookDelivery(
+            config=config,
+            event=event,
+            run_id=run_id,
+            agent_id=agent_id,
+            timestamp=timestamp,
+            extra_ids=extra_ids,
+        )
+    )
