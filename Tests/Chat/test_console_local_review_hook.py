@@ -1851,3 +1851,79 @@ def test_approval_requested_fires_with_round_payload():
         "calls": [{"name": "local:__local__:fs_write"}],
         "session_active": True,
     }
+
+
+def test_approval_requested_fires_for_view_detached_round():
+    """A parked round armed with NO Console view anywhere (both bridge
+    seams unwired) still fires ApprovalRequested exactly once, with
+    ``session_active=False`` -- no view exists, so the round's owning
+    session is not the viewed one. Review finding R25: the detached
+    branch announced a toast but fired no event, while the ``elif
+    is_parked:`` branch below it fired -- a detached background round is
+    the notification hook's most valuable case and it got nothing."""
+    import threading
+    import time
+
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    engine = _RecordingHooksEngine()
+    store = ConsoleChatStore()
+    store.ensure_session()  # the active/viewed session
+    background = store.create_session(title="fleet", activate=False)
+    # Detachment is the constructor's own default: neither bridge seam
+    # (`set_pending_approval` / `park_pending_approval`) is wired, so
+    # `_approval_view_is_detached()` is True -- the announce toast is the
+    # only surfacing this round could ever get (the app double below has
+    # no `notify`, so the best-effort announce silently skips).
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=object(),
+        ensure_run_hooks=lambda: engine,
+    )
+    controller.app = _InlineCallFromThreadApp()
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    pending = MCPPendingCall(
+        llm_name="local:__local__:fs_write",
+        server_key="local:__local__",
+        tool_name="fs_write",
+        server_label="Local tools",
+        arguments={"path": "notes.txt"},
+        reason="ask",
+    )
+
+    def _resolve_soon() -> None:
+        # No card mounts and nothing parks (detachment), so the round id
+        # is read from the registered-rounds map itself -- under the same
+        # lock the controller documents for exactly this cross-thread
+        # read (the F2b guard comment on `_approval_state_lock`).
+        round_id = None
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            with controller._approval_state_lock:
+                registered = list(controller._pending_approval_rounds)
+            if registered:
+                round_id = registered[0]
+                break
+            time.sleep(0.01)
+        assert round_id is not None, "round never registered"
+        controller.resolve_pending_approval(
+            {"local:__local__:fs_write": "approve_once"}, round_id=round_id
+        )
+
+    threading.Thread(target=_resolve_soon).start()
+    decisions = controller.request_mcp_approvals(
+        [pending], session_id=background.id
+    )
+
+    assert decisions == {"local:__local__:fs_write": "approve_once"}
+    # Exactly ONE notify for the round even though the detached branch
+    # also runs: the registration-time fire is skipped (`is_parked`), so
+    # the detached branch's fire is the round's only one.
+    assert [event for event, _ in engine.notifications] == ["ApprovalRequested"]
+    _event, kwargs = engine.notifications[0]
+    assert kwargs["session_id"] == background.id
+    assert kwargs["data"] == {
+        "calls": [{"name": "local:__local__:fs_write"}],
+        "session_active": False,
+    }
