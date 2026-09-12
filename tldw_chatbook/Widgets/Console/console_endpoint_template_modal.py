@@ -23,7 +23,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
@@ -48,7 +48,9 @@ from tldw_chatbook.config import (
     AtomicConfigSnapshot,
     apply_settings_mutation_to_cli_config,
 )
+from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.settings_agents_panel import parse_params_text
 
 MODAL_ID = "console-endpoint-template-modal"
 TEMPLATE_PICKER_ID = "endpoint-template-picker"
@@ -56,6 +58,7 @@ NAME_INPUT_ID = "endpoint-template-name"
 FAMILY_SELECT_ID = "endpoint-template-family"
 URL_INPUT_ID = "endpoint-template-url"
 MODELS_INPUT_ID = "endpoint-template-models"
+PARAMS_TEXTAREA_ID = "endpoint-template-params"
 CREATE_BUTTON_ID = "endpoint-template-create"
 CANCEL_BUTTON_ID = "endpoint-template-cancel"
 ERROR_STATIC_ID = "endpoint-template-error"
@@ -314,6 +317,16 @@ class ConsoleEndpointTemplateModal(
         min-height: {MODAL_CONTROL_HEIGHT};
     }}
 
+    ConsoleEndpointTemplateModal #{PARAMS_TEXTAREA_ID} {{
+        height: 5;
+        min-height: 3;
+    }}
+
+    ConsoleEndpointTemplateModal .console-endpoint-template-hint {{
+        color: $text-muted;
+        height: 1;
+    }}
+
     ConsoleEndpointTemplateModal .console-endpoint-template-actions {{
         height: auto;
         min-height: {MODAL_CONTROL_HEIGHT};
@@ -512,6 +525,19 @@ class ConsoleEndpointTemplateModal(
                     id=MODELS_INPUT_ID,
                     classes="console-settings-control",
                 )
+            with Horizontal(classes="console-settings-modal-row"):
+                yield Static(
+                    "Params", classes="console-endpoint-template-label"
+                )
+                yield TextArea(
+                    id=PARAMS_TEXTAREA_ID,
+                    classes="console-settings-control",
+                )
+            yield Static(
+                "Optional sampling params, one key = value per line "
+                "(e.g. temperature = 0.2); empty = none.",
+                classes="console-endpoint-template-hint",
+            )
             yield Static(
                 "",
                 id=ERROR_STATIC_ID,
@@ -562,6 +588,7 @@ class ConsoleEndpointTemplateModal(
 
     @on(Input.Changed)
     @on(Select.Changed)
+    @on(TextArea.Changed)
     def _form_field_changed(self, _event) -> None:
         """Re-validate on every edit so Create reflects the current draft."""
         if (
@@ -632,7 +659,9 @@ class ConsoleEndpointTemplateModal(
         name = self.query_one(f"#{NAME_INPUT_ID}", Input).value.strip()
         family = self._family_value()
         base_url = self.query_one(f"#{URL_INPUT_ID}", Input).value
-        errors = validate_entry(name, family, base_url)
+        params, param_errors = self._parsed_params()
+        errors = validate_entry(name, family, base_url, params=params)
+        errors.extend(param_errors)
         if errors:
             self._show_errors(errors)
             return
@@ -675,6 +704,7 @@ class ConsoleEndpointTemplateModal(
                     ].api_key_env,
                     models=self._parsed_models(),
                     created_from=self._templates[self._active_template_index].provider_id,
+                    params=params_to_tuple(params),
                 )
                 try:
                     outcome = await asyncio.to_thread(
@@ -746,13 +776,27 @@ class ConsoleEndpointTemplateModal(
                 parsed.append(model_id)
         return tuple(parsed)
 
+    def _parsed_params(self) -> tuple[dict[str, object], list[str]]:
+        """Parse the params TextArea draft (``key = value`` per line).
+
+        Returns the parsed mapping plus grammar errors; sampling-key/type
+        validation runs through ``validate_entry(..., params=...)`` so the
+        entry validator stays the single choke point.
+        """
+        return parse_params_text(
+            self.query_one(f"#{PARAMS_TEXTAREA_ID}", TextArea).text
+        )
+
     def _sync_validation(self) -> None:
         """Show inline errors and gate Create on ``validate_entry``."""
+        params, param_errors = self._parsed_params()
         errors = validate_entry(
             self.query_one(f"#{NAME_INPUT_ID}", Input).value.strip(),
             self._family_value(),
             self.query_one(f"#{URL_INPUT_ID}", Input).value,
+            params=params,
         )
+        errors.extend(param_errors)
         self._show_errors(errors)
         try:
             create = self.query_one(f"#{CREATE_BUTTON_ID}", Button)
@@ -797,6 +841,8 @@ class ConsoleEndpointTemplateModal(
             values["api_key_env"] = entry.api_key_env
         if entry.created_from is not None:
             values["created_from"] = entry.created_from
+        if entry.params:
+            values["params"] = params_to_dict(entry.params)
         section[entry.slug] = values
         if not isinstance(raw_section, dict):
             self._app_config["custom_endpoints"] = section
