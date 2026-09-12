@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-12 19:53
+updated_date: 2026-09-12 19:59
 ---
 
 ## Description
@@ -55,6 +55,8 @@ Windows full34713157016/ebe861397 completed:42nativePASS including actual nested
 Test observer correction reviewed: Python-owned sys._current_frames snapshots bounded4x32x64, no source/locals/error text; real fatal handler retained in separate log. Original error mapper observed in3flows with same delegation. Windows F9 test waits3x (backup65→195), nativeconsoleparent900s, mounted225/360s, harness testcase1200s; application admission60s and all production deadlines unchanged. Mounted timeout now retains partialchild output then reraises. Local observer3tests+actualplaintextF9+mountedbackup all5passed51.92s; all6embedded scripts compile; scopedRuff/Bandit0newfindings. Next fixed restore-diagnostic before another fullWindowsrun.
 Windows focused run 34714728661 at d00547813: native 42/42 pass; actual plain F9 backup succeeds, restore fails OSError errno22/winerror123 at publication._validate_installed destination.parent.mkdir. Safe thread sampler produced complete JSON and fatal log empty. Investigating logical root IDs used as native scratch directory names; application deadlines unchanged.
 Scratch-root correction: use existing staging SHA256(root_id) physical naming in installed validation instead of logical colon-containing IDs. Independent review accepted topology/bytes/alias checks unchanged. Regression RED on colon path; assertion adapted to expected existing config relocation to recovered profile. Actual macOS plain F9 passed36.09s. Broader maintenance checks30pass+2 unrelated study alias publication_selector_mismatch failures reproduced using unchanged HEAD publication module in both held modes; logs retained. Bandit0; only unchanged existing unused fcntl Ruff finding. Windows correction verification pending.
+Pre-full-run observer audit found two-profile capture test cancels at55s/outer60s although native Windows one-profile capture was still active at100s. Two-profile restore outer75s also encloses two45s child opens plus actual restore. Correcting only Windows fixture observers to accommodate observed native runtime and nested bounds; production deadlines unchanged. Mounted outer360s is only7s above observed startup38+review90+backup225 allowances and needs headroom.
+Windows observer calibration independently reviewed,8embedded scripts compile, scopedRuff clean, Bandit matches unchanged baseline counts (test asserts and existing subprocess import). Capture watchdog300s inside360s parent; seed180s; two-profile restore600s encloses two135s opens/servicewait150; resume60; mountedouter480. All Windows-only; production limits and assertions unchanged. acb134a73 Linux F9three+two-profile pass, rollback running; macOS firstfour productcases pass, rollback running; Windows focused34715486325 running.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

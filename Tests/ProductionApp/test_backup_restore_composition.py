@@ -178,7 +178,7 @@ def test_actual_mounted_backup_publishes_verified_archive_after_navigation(
         "backup",
         "normal",
         script=_BACKUP,
-        timeout=360 if sys.platform == "win32" else 120,
+        timeout=480 if sys.platform == "win32" else 120,
         installed_package=native_package,
     )
 

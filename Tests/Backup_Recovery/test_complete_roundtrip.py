@@ -336,7 +336,7 @@ from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 async def main():
  app=TldwCli();monitoring=asyncio.create_task(monitor_app(app))
- cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(55,cancel.set)
+ cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(300 if sys.platform=='win32' else 55,cancel.set)
  try:
   selectors=tuple(fixture/label/'config.toml' for label in ('alpha','beta'))
   registry=app.local_chatbook_service.registry_path
@@ -368,7 +368,7 @@ async def main():
   after=app.chachanotes_db.add_note('After capture alpha','Ordinary resumed writer alpha')
   env=os.environ.copy();env['TLDW_CONFIG_PATH']=str(selectors[1])
   with (fixture/'beta-resume.log').open('w') as output:
-   resumed=await asyncio.to_thread(subprocess.run,[sys.executable,str(fixture/'resume.py')],cwd=Path.cwd(),env=env,stdout=output,stderr=subprocess.STDOUT,timeout=20,check=False)
+   resumed=await asyncio.to_thread(subprocess.run,[sys.executable,str(fixture/'resume.py')],cwd=Path.cwd(),env=env,stdout=output,stderr=subprocess.STDOUT,timeout=60 if sys.platform=='win32' else 20,check=False)
   assert resumed.returncode==0,(fixture/'beta-resume.log').read_text()
   after_ids={'alpha':after,'beta':json.loads((fixture/'beta-resumed.json').read_text())['note']}
   assert result.inventory.complete
@@ -578,7 +578,11 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
             + script
             + "\nstop_diagnostics()\n"
         )
-        timeout = 120
+        timeout = 180
+    elif sys.platform == "win32":
+        # Two profiles require a full capture and two sequential native opens.
+        # The capture's cancellation watchdog remains inside its child limit.
+        timeout = 600 if name == "stage2-restore" else 360
     program = root / (name + ".py")
     program.write_text(script, encoding="utf-8")
     output_path = root / (name + ".log")
@@ -1141,14 +1145,14 @@ try:
   profile=argv[argv.index('--recovery-profile')+1]
   output_path=fixture/('stage2-open-'+installed[profile]['label']+'.log')
   with output_path.open('w') as output:
-   result=subprocess.run([sys.executable,'-c',OPEN_CHILD,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=45)
+   result=subprocess.run([sys.executable,'-c',OPEN_CHILD,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=135 if sys.platform=='win32' else 45)
   assert result.returncode==0,output_path.read_text()[-14000:]
   return result.returncode
  subprocess.call=headless
  try:
   for row in rows:
    operation=service.start_open_profile(row['profile_id'])
-   state=service.wait(operation,timeout=50)
+   state=service.wait(operation,timeout=150 if sys.platform=='win32' else 50)
    assert state['state']=='succeeded',dict(state)
    assert state['result']['opened_successfully'] and state['result']['needs_setup'],dict(state)
  finally:subprocess.call=original_call
