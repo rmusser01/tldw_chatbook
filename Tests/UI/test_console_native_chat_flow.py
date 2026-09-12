@@ -4437,6 +4437,14 @@ def _character_card() -> dict:
     }
 
 
+def _persona_profile() -> dict:
+    return {
+        "id": "local-persona-abc",
+        "name": "Archivist",
+        "system_prompt": "Guide {{user}} as {{persona}}.",
+    }
+
+
 _DEFAULT_HANDOFF_VALUE = object()
 
 
@@ -4499,6 +4507,53 @@ def _character_handoff_runtime(
         capture_context=capture_context,
         capture_is_current=capture_is_current,
         resolve_captures=resolve_captures,
+    )
+
+
+def _persona_handoff_runtime(
+    *,
+    active_server_id: str | None = None,
+    profile=_DEFAULT_HANDOFF_VALUE,
+) -> SimpleNamespace:
+    """Persona mirror of `_character_handoff_runtime` with sentinel seams."""
+    scoped_profile = _persona_profile() if profile is _DEFAULT_HANDOFF_VALUE else profile
+    scope_service = SimpleNamespace(
+        get_persona_profile=AsyncMock(return_value=scoped_profile),
+        # The persona flow must never touch the character fetch seam.
+        get_character=AsyncMock(side_effect=AssertionError("character seam touched")),
+    )
+    db = SimpleNamespace(
+        # Personas are authority-free: no local authority lookup either.
+        get_local_authority_id=Mock(return_value="local-authority"),
+    )
+    initial_capture = SimpleNamespace(account="A")
+    authority_context_state = {"current": initial_capture}
+    capture_context = Mock(
+        side_effect=lambda *, expected_server_id: authority_context_state["current"]
+    )
+    capture_is_current = Mock(
+        side_effect=lambda capture: capture is authority_context_state["current"]
+    )
+    resolver = AsyncMock(
+        side_effect=AssertionError("persona flow must not resolve authority")
+    )
+    app = SimpleNamespace(
+        app_config={},
+        active_server_id=active_server_id,
+        chachanotes_db=db,
+        character_persona_scope_service=scope_service,
+        server_context_provider=SimpleNamespace(
+            capture_character_authority_context=capture_context,
+            is_character_authority_context_current=capture_is_current,
+            resolve_character_authority_id=resolver,
+        ),
+    )
+    return SimpleNamespace(
+        app=app,
+        db=db,
+        scope_service=scope_service,
+        resolver=resolver,
+        authority_context_state=authority_context_state,
     )
 
 
@@ -5205,6 +5260,129 @@ async def test_persona_start_chat_does_not_create_character_session(monkeypatch)
     runtime.resolver.assert_not_awaited()
     runtime.scope_service.get_character.assert_not_awaited()
     assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_binds_local_persona_session(monkeypatch):
+    runtime = _persona_handoff_runtime()
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff()
+    )
+
+    assert started is True
+    session = store.session
+    assert session is not None
+    assert session.runtime_backend == "local"
+    assert session.assistant_kind == "persona"
+    assert session.assistant_id == "local-persona-abc"
+    # ADR-037: persona sessions never carry an authority id, local included.
+    assert session.assistant_authority_id is None
+    assert session.assistant_name == "Archivist"
+    assert session.character_name is None
+    assert session.character_ref() is None
+    assert session.persona_system_template == "Guide {{user}} as {{persona}}."
+    assert session.settings is not None
+    # app_config={} -> global display name falls back to "User".
+    assert session.settings.system_prompt == "Guide User as Archivist."
+    # Personas have no greeting: seeding appends no message.
+    assert store.messages == []
+    runtime.scope_service.get_persona_profile.assert_awaited_once_with(
+        "local-persona-abc", mode="local"
+    )
+    runtime.scope_service.get_character.assert_not_awaited()
+    runtime.resolver.assert_not_awaited()
+    runtime.db.get_local_authority_id.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_fails_closed_when_profile_missing(monkeypatch):
+    runtime = _persona_handoff_runtime(profile=None)
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff()
+    )
+
+    assert started is False
+    assert store.session is None
+    assert store.create_kwargs is None
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_fails_closed_when_profile_fetch_raises(monkeypatch):
+    runtime = _persona_handoff_runtime()
+    runtime.scope_service.get_persona_profile.side_effect = RuntimeError("boom")
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff()
+    )
+
+    assert started is False
+    assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_binds_server_persona_without_authority(monkeypatch):
+    runtime = _persona_handoff_runtime(active_server_id="server-1")
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff(
+            runtime_backend="server", active_server_profile_id="server-1"
+        )
+    )
+
+    assert started is True
+    session = store.session
+    assert session.runtime_backend == "server"
+    assert session.assistant_kind == "persona"
+    assert session.assistant_authority_id is None
+    runtime.resolver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_server_fence_flip_mid_fetch_fails_closed(
+    monkeypatch,
+):
+    runtime = _persona_handoff_runtime(active_server_id="server-1")
+
+    async def flip_then_return(*_args, **_kwargs):
+        runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+        return _persona_profile()
+
+    runtime.scope_service.get_persona_profile.side_effect = flip_then_return
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff(
+            runtime_backend="server", active_server_profile_id="server-1"
+        )
+    )
+
+    assert started is False
+    assert store.session is None
+    assert store.create_kwargs is None
+
+
+@pytest.mark.asyncio
+async def test_persona_payload_rejected_by_character_starter_accepted_by_persona_starter(
+    monkeypatch,
+):
+    runtime = _persona_handoff_runtime()
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+    payload = _persona_start_handoff()
+
+    assert await screen._session._start_character_console_session(payload) is False
+    assert await screen._session._start_persona_console_session(payload) is True
 
 
 @pytest.mark.asyncio

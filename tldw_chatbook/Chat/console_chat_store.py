@@ -1023,38 +1023,59 @@ class ConsoleChatStore:
         assistant_id: str,
         assistant_authority_id: str | None,
         character_id: int | None,
-        character_name: str,
+        character_name: str | None,
+        assistant_name: str | None = None,
     ) -> ConsoleChatSession:
         """Atomically replace an untouched initial tab with roleplay identity."""
         if not isinstance(canonical_settings, ConsoleSessionSettings):
             raise TypeError("canonical_settings must be ConsoleSessionSettings.")
         if not isinstance(settings, ConsoleSessionSettings):
             raise TypeError("settings must be ConsoleSessionSettings.")
-        if type(trusted_system_prompt) is not str or not trusted_system_prompt.strip():
-            raise ValueError("Trusted roleplay system prompt must be non-empty text.")
+        if type(trusted_system_prompt) is not str:
+            raise TypeError("Trusted roleplay system prompt must be text.")
         if runtime_backend not in {"local", "server"}:
             raise ValueError("Roleplay runtime backend must be local or server.")
-        if assistant_kind != "character":
-            raise ValueError("Repurposed sessions require character identity.")
+        if assistant_kind not in {"character", "persona"}:
+            raise ValueError("Repurposed sessions require named identity.")
         if type(assistant_id) is not str or not assistant_id:
             raise ValueError("Roleplay assistant id must be non-empty text.")
         if assistant_authority_id is not None and (
             type(assistant_authority_id) is not str or not assistant_authority_id
         ):
             raise ValueError("Roleplay authority id must be non-empty text or None.")
-        if type(character_name) is not str or not character_name.strip():
-            raise ValueError("Roleplay character name must be non-empty text.")
-        if title != f"Chat with {character_name}":
-            raise ValueError("Roleplay title does not match the character identity.")
-        expected_roleplay_settings = replace(
-            canonical_settings,
-            system_prompt=trusted_system_prompt,
-            character_label=character_name,
-        )
+        if assistant_kind == "character":
+            if not trusted_system_prompt.strip():
+                raise ValueError("Trusted roleplay system prompt must be non-empty text.")
+            if type(character_name) is not str or not character_name.strip():
+                raise ValueError("Roleplay character name must be non-empty text.")
+            if title != f"Chat with {character_name}":
+                raise ValueError("Roleplay title does not match the character identity.")
+            expected_roleplay_settings = replace(
+                canonical_settings,
+                system_prompt=trusted_system_prompt,
+                character_label=character_name,
+            )
+        else:
+            # Persona sessions remain authority-free (ADR-037) and never
+            # carry character identity. A blank template keeps the canonical
+            # default prompt (``None``), matching the persona seed contract.
+            if assistant_authority_id is not None:
+                raise ValueError("Persona sessions remain authority-free (ADR-037).")
+            if character_id is not None or character_name is not None:
+                raise ValueError("Persona sessions cannot carry character identity.")
+            if type(assistant_name) is not str or not assistant_name.strip():
+                raise ValueError("Persona name must be non-empty text.")
+            if title != f"Chat with {assistant_name}":
+                raise ValueError("Persona title does not match the persona identity.")
+            expected_roleplay_settings = replace(
+                canonical_settings,
+                system_prompt=trusted_system_prompt or None,
+                character_label="",
+            )
         if settings != expected_roleplay_settings:
             raise ValueError("Roleplay settings contain noncanonical changes.")
         if runtime_backend == "local":
-            if (
+            if assistant_kind == "character" and (
                 type(character_id) is not int
                 or character_id < 1
                 or assistant_id != str(character_id)
@@ -1088,6 +1109,7 @@ class ConsoleChatStore:
         session.assistant_authority_id = assistant_authority_id
         session.character_id = character_id
         session.character_name = character_name
+        session.assistant_name = assistant_name if assistant_kind == "persona" else None
         session.updated_at = proposed_updated_at
         session.identity_revision = proposed_identity_revision
         self._payload_revisions[session_id] = proposed_payload_revision
