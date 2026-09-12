@@ -245,6 +245,17 @@ async def test_the_lookup_does_not_scan_the_note_corpus(notes_scope_service):
     target = await _add(notes_scope_service, "Target", "hub")
     await _add(notes_scope_service, "Linker", f"[t](note://{target})")
 
+    # The plan is only evidence when captured the way production runs it:
+    # ChaChaNotes_DB.py never runs ANALYZE, so no user's database has a
+    # sqlite_stat1 and the planner works from default estimates
+    # (scripts/check_index_plan_pins.py, TASK-21593).
+    assert _connection(notes_scope_service).execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+    ).fetchone() is None, (
+        "this fixture must reproduce the no-stats production state; a plan "
+        "captured with sqlite_stat1 present is not the plan users run"
+    )
+
     plan = [
         str(row["detail"])
         for row in _connection(notes_scope_service).execute(
