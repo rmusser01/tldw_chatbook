@@ -266,6 +266,7 @@ from .settings_provider_view_model import (
     CustomEndpointReferenceStore,
     ProviderPickerGroup,
     SettingsOverviewPresentation,
+    build_entry_edit_mutation,
     build_provider_picker_groups,
     build_settings_overview,
     conversations_referencing_endpoint,
@@ -2258,22 +2259,6 @@ def _fold_long_tokens(text: str, limit: int = _FOLD_TOKEN_LIMIT) -> str:
         return "\n  ".join(pack(segments))
 
     return re.sub(r"\S+", fold_token, text)
-
-
-def _custom_endpoint_normalized_url(family: str, base_url: str) -> str:
-    """Normalize a custom endpoint URL per family (registry loader mirror).
-
-    Same rules as ``custom_endpoint_registry._normalize_base_url`` and the
-    endpoint template modal: llama.cpp URLs go through
-    ``normalize_llamacpp_base_url``; every other family strips whitespace
-    and trailing slashes.
-    """
-    raw = str(base_url or "").strip()
-    if family == "llama_cpp":
-        from ...Chat.console_session_settings import normalize_llamacpp_base_url
-
-        return normalize_llamacpp_base_url(raw)
-    return raw.rstrip("/")
 
 
 class SettingsCategorySearchInput(Input):
@@ -16616,27 +16601,34 @@ class SettingsScreen(BaseAppScreen):
         if errors:
             self._set_static_text("#settings-cep-edit-error", errors[0])
             return
+        try:
+            # The shared seam validates the credential reference through
+            # input_validation, family-normalizes the URL, and requests
+            # removal of a cleared ``api_key_env`` key (config saves merge,
+            # so an omitted key would silently keep the old reference).
+            mutation, delete_keys = build_entry_edit_mutation(
+                entry, base_url, env_var, models_raw
+            )
+        except ValueError as error:
+            self._set_static_text("#settings-cep-edit-error", str(error))
+            return
         self._set_static_text("#settings-cep-edit-error", "")
-        models: list[str] = []
-        for part in models_raw.split(","):
-            model_id = part.strip()
-            if model_id and model_id not in models:
-                models.append(model_id)
-        updated = replace(
-            entry,
-            base_url=_custom_endpoint_normalized_url(entry.family, base_url),
-            api_key_env=env_var or None,
-            models=tuple(models),
-        )
         self._custom_endpoints_persist_worker(
             f"Saved endpoint '{slug}'; existing conversations re-resolve on "
             "their next send.",
-            build_entry_mutation(updated),
+            mutation,
+            delete_keys,
         )
 
     @on(Button.Pressed)
     def handle_custom_endpoints_button_pressed(self, event: Button.Pressed) -> None:
-        """Dispatch the Custom endpoints panel actions (image-gen pattern)."""
+        """Dispatch the Custom endpoints panel actions (image-gen pattern).
+
+        Args:
+            event: The button press; only ids starting with
+                ``settings-cep-`` are consumed, every other press is left
+                untouched for the screen's other handlers.
+        """
         button_id = str(getattr(event.button, "id", "") or "")
         if not button_id.startswith("settings-cep-"):
             return
@@ -16687,11 +16679,28 @@ class SettingsScreen(BaseAppScreen):
     def _custom_endpoint_convert_requested(self, slot_id: str) -> None:
         self._custom_endpoints_convert_worker(slot_id)
 
-    @work(thread=True)
-    def _custom_endpoints_persist_worker(self, caption: str, mutation: dict) -> None:
-        """Write one entry mutation off the event loop (task-15470 shape)."""
+    # The four mutation workers share one exclusive group (the
+    # settings-save-image-gen pattern): repeated clicks cannot overlap
+    # endpoint creation, deletion, detachment, or persistence.
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
+    def _custom_endpoints_persist_worker(
+        self,
+        caption: str,
+        mutation: dict,
+        delete_keys: dict[str, tuple[str, ...]] | None = None,
+    ) -> None:
+        """Write one entry mutation off the event loop (task-15470 shape).
+
+        Args:
+            caption: Success status reported through
+                ``_custom_endpoints_report``.
+            mutation: Section values from ``build_entry_mutation`` /
+                ``build_entry_edit_mutation``.
+            delete_keys: Optional per-section key removals applied in the
+                same atomic mutation (e.g. a cleared ``api_key_env``).
+        """
         try:
-            saved = save_settings_to_cli_config(mutation)
+            saved = save_settings_to_cli_config(mutation, delete_keys=delete_keys)
         except Exception:
             logger.warning("Failed to persist a custom endpoint mutation.")
             saved = False
@@ -16703,7 +16712,7 @@ class SettingsScreen(BaseAppScreen):
                 "Could not save the endpoint; it was left unchanged.",
             )
 
-    @work(thread=True)
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
     def _custom_endpoints_delete_worker(self, slug: str) -> None:
         """Delete an unreferenced entry off the event loop."""
         try:
@@ -16723,7 +16732,7 @@ class SettingsScreen(BaseAppScreen):
             self._custom_endpoints_report, f"Deleted endpoint '{slug}'."
         )
 
-    @work(thread=True)
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
     def _custom_endpoints_detach_worker(self, slug: str) -> None:
         """Detach referencing conversations, then delete, off the event loop."""
         try:
@@ -16746,7 +16755,7 @@ class SettingsScreen(BaseAppScreen):
             f"are now conversation-only -- and deleted '{slug}'.",
         )
 
-    @work(thread=True)
+    @work(exclusive=True, group="settings-custom-endpoints", thread=True)
     def _custom_endpoints_convert_worker(self, slot_id: str) -> None:
         """Create a named endpoint from a built-in slot off the event loop."""
         try:

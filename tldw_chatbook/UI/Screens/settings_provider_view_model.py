@@ -9,12 +9,14 @@ from ...Chat.console_provider_endpoints import (
     first_configured_endpoint,
     safe_endpoint_display,
 )
+from ...Chat.console_session_settings import normalize_llamacpp_base_url
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
     CustomEndpointEntry,
     build_entry_mutation,
     derive_slug,
     family_execution_key,
+    family_normalizes_like_llama,
     load_custom_endpoints,
     split_custom_endpoint_id,
     validate_entry,
@@ -26,6 +28,7 @@ from ...config import (
     normalize_provider_config_key,
     save_settings_to_cli_config,
 )
+from ...Utils.input_validation import validate_env_var_reference
 
 logger = logging.getLogger(__name__)
 
@@ -97,15 +100,30 @@ class CustomEndpointReferenceStore(Protocol):
     store invariant (payload revisions, user-work marks).
     """
 
-    def sessions(self) -> Sequence[CustomEndpointSession]: ...
+    def sessions(self) -> Sequence[CustomEndpointSession]:
+        """Return every live session, newest-last creation order."""
 
-    def session_settings(
-        self, session_id: str
-    ) -> CustomEndpointSessionSettings | None: ...
+    def session_settings(self, session_id: str) -> CustomEndpointSessionSettings | None:
+        """Return the session's current settings, or None when unknown.
 
-    def replace_session_settings(
-        self, session_id: str, settings: Any
-    ) -> object: ...
+        Args:
+            session_id: Store-assigned session id.
+
+        Returns:
+            The session's live settings snapshot, or None when the store
+            does not know the id.
+        """
+
+    def replace_session_settings(self, session_id: str, settings: Any) -> object:
+        """Wholesale-replace one session's settings, preserving invariants.
+
+        Args:
+            session_id: Store-assigned session id.
+            settings: The frozen replacement settings snapshot.
+
+        Returns:
+            The store's mutation result token (shape defined by the store).
+        """
 
 
 _PRIMARY_OVERVIEW_ROWS = (
@@ -389,6 +407,83 @@ def detach_and_delete_entry(
             f"Could not delete custom endpoint '{slug}' from config; it "
             "remains on disk."
         )
+
+
+def _family_normalized_url(family: str, base_url: str) -> str:
+    """Return ``base_url`` family-normalized (registry loader mirror).
+
+    Same rules as ``custom_endpoint_registry._normalize_base_url`` and the
+    endpoint template modal: llama.cpp URLs go through
+    ``normalize_llamacpp_base_url``; every other family strips whitespace and
+    trailing slashes.
+
+    Args:
+        family: One of :data:`ENDPOINT_FAMILIES`.
+        base_url: Raw candidate URL.
+
+    Returns:
+        The family-normalized URL string.
+    """
+    raw = str(base_url or "").strip()
+    if family_normalizes_like_llama(family):
+        return normalize_llamacpp_base_url(raw)
+    return raw.rstrip("/")
+
+
+def build_entry_edit_mutation(
+    entry: CustomEndpointEntry,
+    base_url: str,
+    api_key_env: str,
+    models_text: str,
+) -> tuple[dict[str, dict[str, object]], dict[str, tuple[str, ...]] | None]:
+    """Build the atomic save mutation for one endpoint edit (F9 Edit form).
+
+    Family-normalizes the URL, validates the credential reference through
+    the shared input-validation module, and parses the comma-separated model
+    list (blanks and duplicates dropped). Because config saves merge
+    supplied values into the existing table, clearing the credential
+    reference must be requested explicitly: when the edited entry carries
+    no ``api_key_env``, the returned ``delete_keys`` removes the key from
+    the persisted section in the same atomic mutation.
+
+    Args:
+        entry: The currently loaded registry entry being edited.
+        base_url: Raw Base URL form value (already ``validate_entry``-checked
+            by the caller).
+        api_key_env: Raw Env var form value; blank means "no credential
+            reference".
+        models_text: Raw comma-separated model ids form value.
+
+    Returns:
+        ``(mutation, delete_keys)`` for
+        ``save_settings_to_cli_config(mutation, delete_keys=delete_keys)``;
+        ``delete_keys`` is None when the key needs no removal.
+
+    Raises:
+        ValueError: The credential reference is non-blank but is not a
+            well-formed environment-variable name.
+    """
+    env_var = str(api_key_env or "").strip()
+    if env_var and not validate_env_var_reference(env_var):
+        raise ValueError(
+            "Credential variable names may contain only letters, digits, and "
+            "underscores, and must not start with a digit."
+        )
+    models: list[str] = []
+    for part in str(models_text or "").split(","):
+        model_id = part.strip()
+        if model_id and model_id not in models:
+            models.append(model_id)
+    updated = replace(
+        entry,
+        base_url=_family_normalized_url(entry.family, base_url),
+        api_key_env=env_var or None,
+        models=tuple(models),
+    )
+    delete_keys: dict[str, tuple[str, ...]] | None = None
+    if updated.api_key_env is None:
+        delete_keys = {f"custom_endpoints.{entry.slug}": ("api_key_env",)}
+    return build_entry_mutation(updated), delete_keys
 
 
 def convert_slot_to_named_endpoint(
