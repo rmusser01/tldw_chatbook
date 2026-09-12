@@ -59,8 +59,10 @@ ordinary-entry check. Verify those existing paths with receipt regressions.
 ## Verification
 
 First add a mounted deterministic regression using the actual retry timer
-callback: capture that callback, give the real Retry widget focus, and invoke
-the callback before yielding to DescendantFocus. Assert the same Retry object
+callback: capture that callback, use synchronous `Screen.set_focus` to give
+the real attached Retry widget focus, assert it is the live focus owner, and
+invoke the callback before yielding to DescendantFocus. `Widget.focus()` is
+deferred and cannot establish that ordering. Assert the same Retry object
 still owns focus and the old request is disarmed. Observe the intended focus
 failure on unchanged runtime before implementing the guard.
 
