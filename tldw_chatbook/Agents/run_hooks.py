@@ -132,11 +132,12 @@ class _Decision:
 def _decide(event: str, proc: subprocess.CompletedProcess) -> _Decision:
     """Map a finished hook process to a deny/pass/context decision.
 
-    Ruling R12: when stdout parses as a JSON object containing a "decision"
-    key, that literal decision is the hook's whole opinion — the exit code is
-    suppressed entirely. deny/block map to their denial; allow or any other
-    value is a no-opinion (ignored + logged). The exit-2 shorthand applies
-    only when no decision key was parsed.
+    Ruling R12 (refined): when stdout parses as a JSON object containing a
+    "decision" key, that literal decision wins over the exit-2 shorthand —
+    deny/block map to their denial; allow or any other value is a no-opinion
+    (ignored + logged). A decision key suppresses only the shorthand: crash
+    exits (non-zero, non-2) still fail closed on PreToolUse regardless of
+    parsed stdout.
 
     Only UserPromptSubmit (fail-open, stdout-as-context) and PreToolUse
     (fail-closed) have decision semantics; every other event is pass-through.
@@ -168,18 +169,23 @@ def _decide(event: str, proc: subprocess.CompletedProcess) -> _Decision:
                            proc.returncode)
         return _Decision(context=_truncate(stdout.strip()))
     if event == "PreToolUse":
-        if has_decision:
-            if decision_value == "deny":
-                reason = str(parsed.get("reason") or stderr or "denied by hook")
-                return _Decision(denied=True, reason=_truncate(reason))
-            logger.warning("run-hooks: PreToolUse hook decision {!r} ignored (deny-only); "
-                           "exit code {} suppressed", decision_value, proc.returncode)
-            return _Decision()
-        if proc.returncode == 2:
+        if has_decision and decision_value == "deny":
+            reason = str(parsed.get("reason") or stderr or "denied by hook")
+            return _Decision(denied=True, reason=_truncate(reason))
+        if not has_decision and proc.returncode == 2:
             reason = str((parsed or {}).get("reason") or stderr or "denied by hook")
             return _Decision(denied=True, reason=_truncate(reason))
-        if proc.returncode != 0:
+        if proc.returncode not in (0, 2):
+            # Crash exits fail closed even when stdout parsed as an allow/other
+            # decision (ruling R12 refined): a decision key suppresses only the
+            # exit-2 shorthand, never the fail-closed crash path.
             return _Decision(denied=True, reason=f"hook failed (exit {proc.returncode}); failing closed")
+        if has_decision:
+            # allow/other decision with a clean or shorthand-suppressed exit:
+            # no-opinion, logged.
+            logger.warning("run-hooks: PreToolUse hook decision {!r} ignored (deny-only; "
+                           "exit {})", decision_value, proc.returncode)
+            return _Decision()
         if stdout.strip():
             # Clean pass, but the hook tried to speak the decision protocol and
             # we could not parse it — surface that instead of silently ignoring.

@@ -205,6 +205,15 @@ class TestFire:
             f"expected WARNING for ignored allow decision, got: "
             f"{[(r.levelname, r.getMessage()) for r in caplog.records]}")
 
+    def test_pretooluse_allow_with_crash_exit_fails_closed(self):
+        # R12 refined: a parsed decision key suppresses only the exit-2
+        # shorthand — a crash exit (non-zero, non-2) still fails closed.
+        code = ("import sys; print(__import__('json').dumps({'decision': 'allow'})); "
+                "sys.exit(1)")
+        eng = _engine(HookSpec("PreToolUse", (sys.executable, "-c", code)))
+        out = eng.fire("PreToolUse", session_id="s", data={"tool_name": "t"})
+        assert out.blocked is True and "failing closed" in out.reason
+
     def test_userpromptsubmit_deny_word_is_not_block(self):
         code = "print(__import__('json').dumps({'decision': 'deny'}))"
         eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c", code)))
