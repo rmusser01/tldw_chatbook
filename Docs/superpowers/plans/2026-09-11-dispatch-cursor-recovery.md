@@ -62,3 +62,32 @@ requires POSIX filesystem guards (`persona_visual_publication_denied` reproduced
 against an isolated snapshot). Its library does not write dispatch checkpoints or
 conversation cursors. Collections lifecycle-lock creation and bundled tiktoken hash
 errors are separate failures; neither explains the pre-existing cursor mismatch.
+
+
+## PR review follow-up
+
+All six Qodo findings are addressed. Branch creation, ancestor editing, and
+subtree deletion now check durable dispatch ownership under the same immediate
+transaction as their writes, before runtime publication. Sibling failure rolls
+back its runtime node; voice recovery selection returns False on cursor refusal.
+Post-commit Sync v2 projection stays outside the branch transaction. Deleted or
+missing conversations retain the documented False cursor result.
+
+Recovery integration tests use a closing in-memory SQLite fixture, fixed complete
+SQL statements, and transaction-managed deliberate corruption. Isolated helper
+tests cover read-only/write decisions, malformed ancestry and competing owners
+without initializing the application schema or store.
+
+Diagnostic statement review found only the intended bounded quarantine error code,
+the constant pending-dispatch warning, and revised wording of the existing cursor
+exception diagnostic. No new content, secret, path, URL, or sink destination was
+introduced. Regenerate the diagnostic inventory with this review recorded.
+
+
+Review verification: 27 new recovery tests pass. Across the targeted dispatch,
+branch-tree, edit/resend, regeneration and voice files, 197 tests pass and seven
+fail; all seven also fail on unchanged dev at fb74902e2b. These are the two
+previously recorded dispatch/queue expectations plus five edit/regenerate tests
+with outdated fake persistence, substitution signatures, and selection expectations.
+New tests pass Ruff check and formatting; the modified production files have the
+same 262 pre-existing Ruff findings as dev, with no added findings.

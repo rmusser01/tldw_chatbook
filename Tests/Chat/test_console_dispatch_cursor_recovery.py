@@ -8,7 +8,6 @@ from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
     _insert,
-    _raw_semantic_corruption,
     _restored_store,
     _start,
     _NoReplayGateway,
@@ -18,8 +17,30 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleDispatchRecoveryKind
 from tldw_chatbook.DB.ChaChaNotes_DB import InputError
 
 
-def _stranded(tmp_path):
-    db, conversation_id, repository = _database(tmp_path / "stranded.sqlite")
+@pytest.fixture
+def database():
+    result = _database(":memory:")
+    try:
+        yield result
+    finally:
+        result[0].close_connection()
+
+
+def _raw_semantic_corruption(db, sql, params):
+    connection = db.get_connection()
+    authorization = db._semantic_mutation_authorization_for_coordinator(connection)
+    connection.create_function("console_semantic_mutation_authorized", 2, lambda *_: 1)
+    try:
+        with db.transaction(immediate=True) as cursor:
+            cursor.execute(sql, params)
+    finally:
+        connection.create_function(
+            "console_semantic_mutation_authorized", 2, authorization._sqlite_authorized
+        )
+
+
+def _stranded(database):
+    db, conversation_id, repository = database
     greeting = db.add_message(
         {
             "conversation_id": conversation_id,
@@ -40,8 +61,8 @@ def _stranded(tmp_path):
 
 
 @pytest.mark.parametrize("clear", [False, True])
-def test_cursor_writer_cannot_strand_unresolved_dispatch(tmp_path, clear):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_cursor_writer_cannot_strand_unresolved_dispatch(database, clear):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     with pytest.raises(InputError, match="dispatch"):
         db.set_conversation_active_leaf(conversation_id, None if clear else greeting)
     assert (
@@ -51,8 +72,8 @@ def test_cursor_writer_cannot_strand_unresolved_dispatch(tmp_path, clear):
     assert repository.reconcile_for_session(conversation_id).checkpoint == checkpoint
 
 
-def test_restore_repairs_old_cursor_and_publishes_same_pending_turn(tmp_path):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_restore_repairs_old_cursor_and_publishes_same_pending_turn(database):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     with db.transaction() as cursor:
         cursor.execute(
             "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
@@ -76,8 +97,8 @@ def test_restore_repairs_old_cursor_and_publishes_same_pending_turn(tmp_path):
 
 
 @pytest.mark.parametrize("corruption", ["version", "parent", "payload"])
-def test_invalid_stranded_owner_is_not_repaired(tmp_path, corruption):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_invalid_stranded_owner_is_not_repaired(database, corruption):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     with db.transaction() as cursor:
         cursor.execute(
             "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
@@ -88,23 +109,24 @@ def test_invalid_stranded_owner_is_not_repaired(tmp_path, corruption):
                 "UPDATE console_dispatch_checkpoints SET frozen_authority_json='{}'"
             )
     if corruption != "payload":
-        assignment = (
-            "version=2" if corruption == "version" else "parent_message_id=NULL"
+        statement = (
+            "UPDATE messages SET version=2 WHERE id=?"
+            if corruption == "version"
+            else "UPDATE messages SET parent_message_id=NULL WHERE id=?"
         )
         _raw_semantic_corruption(
             db,
-            f"UPDATE messages SET {assignment} WHERE id=?",
+            statement,
             (checkpoint.assistant_message_id,),
         )
-        db.get_connection().commit()
     recovery = repository.reconcile_for_session(conversation_id)
     assert recovery.kind is ConsoleDispatchRecoveryKind.QUARANTINED
     assert recovery.actions == ()
     assert db.get_conversation_active_leaf(conversation_id) == greeting
 
 
-def test_store_rejected_navigation_keeps_runtime_and_database_cursor(tmp_path):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_store_rejected_navigation_keeps_runtime_and_database_cursor(database):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     store, session_id = _restored_store(db, conversation_id)
     with pytest.raises(RuntimeError, match="cursor"):
         store.set_active_leaf(session_id, greeting)
@@ -118,9 +140,9 @@ def test_store_rejected_navigation_keeps_runtime_and_database_cursor(tmp_path):
 @pytest.mark.parametrize("started", [False, True])
 @pytest.mark.asyncio
 async def test_repaired_owner_can_be_discarded_without_provider_replay(
-    tmp_path, started
+    database, started
 ):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     if started:
         checkpoint = _start(repository, checkpoint)
     with db.transaction() as cursor:
@@ -149,8 +171,8 @@ async def test_repaired_owner_can_be_discarded_without_provider_replay(
     assert db.get_conversation_active_leaf(conversation_id) == greeting
 
 
-def test_repair_rereads_owner_after_read_pass(tmp_path, monkeypatch):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_repair_rereads_owner_after_read_pass(database, monkeypatch):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     with db.transaction() as cursor:
         cursor.execute(
             "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
@@ -166,7 +188,6 @@ def test_repair_rereads_owner_after_read_pass(tmp_path, monkeypatch):
                 "UPDATE messages SET version=2 WHERE id=?",
                 (checkpoint.assistant_message_id,),
             )
-            db.get_connection().commit()
         return result
 
     monkeypatch.setattr(repository, "_reconcile_pass", change_between_passes)
@@ -175,8 +196,8 @@ def test_repair_rereads_owner_after_read_pass(tmp_path, monkeypatch):
     assert db.get_conversation_active_leaf(conversation_id) == greeting
 
 
-def test_repair_write_failure_retains_checkpoint_and_cursor(tmp_path):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_repair_write_failure_retains_checkpoint_and_cursor(database):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     with db.transaction() as cursor:
         cursor.execute(
             "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
@@ -197,8 +218,8 @@ def test_repair_write_failure_retains_checkpoint_and_cursor(tmp_path):
     )
 
 
-def test_before_first_rewind_cannot_strand_pending_turn(tmp_path):
-    db, conversation_id, repository = _database(tmp_path / "before.sqlite")
+def test_before_first_rewind_cannot_strand_pending_turn(database):
+    db, conversation_id, repository = database
     checkpoint = _insert(db, repository, _acceptance(conversation_id))
     store, session_id = _restored_store(db, conversation_id)
     assert store.set_active_path_before(session_id, checkpoint.user_message_id) is False
@@ -210,8 +231,8 @@ def test_before_first_rewind_cannot_strand_pending_turn(tmp_path):
 
 
 @pytest.mark.parametrize("problem", ["cycle", "competing_owner"])
-def test_repair_rejects_ambiguous_ancestry(tmp_path, problem):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_repair_rejects_ambiguous_ancestry(database, problem):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     with db.transaction() as cursor:
         cursor.execute(
             "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
@@ -229,13 +250,86 @@ def test_repair_rejects_ambiguous_ancestry(tmp_path, problem):
             "UPDATE messages SET assistant_generation_state='accepted' WHERE id=?",
             (greeting,),
         )
-    db.get_connection().commit()
     recovery = repository.reconcile_for_session(conversation_id)
     assert recovery.kind is ConsoleDispatchRecoveryKind.QUARANTINED
     assert db.get_conversation_active_leaf(conversation_id) == greeting
 
 
-def test_cursor_can_stay_on_pending_owner_path(tmp_path):
-    db, conversation_id, repository, greeting, checkpoint = _stranded(tmp_path)
+def test_cursor_can_stay_on_pending_owner_path(database):
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
     db.set_conversation_active_leaf(conversation_id, checkpoint.assistant_message_id)
     assert repository.reconcile_for_session(conversation_id).checkpoint == checkpoint
+
+
+@pytest.mark.parametrize("action", ["sibling", "delete", "edit"])
+def test_pending_dispatch_blocks_branch_mutation_without_side_effects(database, action):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
+    store, session_id = _restored_store(db, conversation_id)
+    before = store.messages_for_session(session_id)
+    with pytest.raises((RuntimeError, ValueError), match="dispatch"):
+        if action == "sibling":
+            store.create_sibling(
+                greeting, role=ConsoleMessageRole.USER, content="fork", persist=True
+            )
+        elif action == "delete":
+            store.delete_message(greeting)
+        else:
+            store.update_message_content(greeting, "changed")
+    assert store.messages_for_session(session_id) == before
+    assert db.get_message_by_id(greeting)["content"] == "greeting"
+    assert db.get_message_by_id(greeting)["deleted"] == 0
+    assert (
+        db.get_conversation_active_leaf(conversation_id)
+        == checkpoint.assistant_message_id
+    )
+    assert repository.reconcile_for_session(conversation_id).checkpoint == checkpoint
+    with db.transaction() as cursor:
+        assert cursor.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 3
+
+
+def test_deleted_conversation_cursor_returns_false_with_retained_checkpoint(database):
+    db, conversation_id, _, _, _ = _stranded(database)
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE conversations SET deleted=1 WHERE id=?", (conversation_id,)
+        )
+    assert (
+        db.set_conversation_active_cursor(
+            conversation_id, active_leaf_message_id=None, before_message_id=None
+        )
+        is False
+    )
+
+
+def test_voice_recovery_selection_preserves_cursor_when_dispatch_refuses(database):
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        ConsoleVoicePromotionLease,
+        ResolvedVoicePromotionDestination,
+    )
+
+    db, conversation_id, repository, greeting, checkpoint = _stranded(database)
+    store, session_id = _restored_store(db, conversation_id)
+    incarnation = store._settings_session_incarnations[session_id]
+    lease = ConsoleVoicePromotionLease(
+        "lease",
+        session_id,
+        incarnation,
+        1,
+        "promotion",
+        checkpoint.assistant_message_id,
+        ResolvedVoicePromotionDestination(
+            session_id,
+            incarnation,
+            conversation_id,
+            checkpoint.assistant_message_id,
+            True,
+        ),
+    )
+    store._voice_promotion_leases[session_id] = lease
+    store._voice_promotion_contexts[session_id] = object()
+    assert store.select_voice_promotion_recovery_leaf(lease, greeting) is False
+    assert store.active_leaf(session_id) == checkpoint.assistant_message_id
+    assert repository.reconcile_for_session(conversation_id).checkpoint == checkpoint
+    assert session_id not in store._voice_promotion_selection_decisions

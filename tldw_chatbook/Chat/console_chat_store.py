@@ -10778,22 +10778,22 @@ class ConsoleChatStore:
         self._set_message_attachments(message, tuple(attachments))
         previous_updated_at = self._sessions[session_id].updated_at
         previous_active_leaf = self._active_leaf_by_session[session_id]
-        self._sessions[session_id].updated_at = _utc_now_iso()
-        self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
-        # Retarget the active leaf and rematerialize the active-path view
-        # BEFORE persisting so the Sync v2 sequence helper (which walks the
-        # active-path VIEW) sees the new node on-path and emits its real
-        # on-path ordinal, not ``None``. This intentionally does NOT route
-        # through ``set_active_leaf``, whose bundled ordering also writes the
-        # DB active-leaf pointer -- that pointer write must happen AFTER
-        # persistence to capture the node's real ``persisted_message_id``.
-        self._active_leaf_by_session[session_id] = message.id
-        self._recompute_active_path(session_id)
         try:
-            if persist:
-                self._persist_new_message_or_defer(
-                    session_id=session_id, message=message
+            with self._dispatch_branch_mutation(session_id):
+                self._sessions[session_id].updated_at = _utc_now_iso()
+                self._register_tree_node(
+                    session_id, message, parent_native_id=parent_native_id
                 )
+                self._active_leaf_by_session[session_id] = message.id
+                self._recompute_active_path(session_id)
+                if persist:
+                    self._persist_new_message_or_defer(
+                        session_id=session_id, message=message, enqueue_sync=False
+                    )
+                if not self._persist_active_leaf(session_id, message.id):
+                    raise ValueError(
+                        "Resolve pending dispatch before changing conversation branches."
+                    )
         except Exception:
             self._rollback_new_tree_node(
                 session_id,
@@ -10802,10 +10802,8 @@ class ConsoleChatStore:
                 previous_updated_at=previous_updated_at,
             )
             raise
-        # Write-through the DB active-leaf pointer now that (for persist=True)
-        # the node owns a persisted id. For the persist=False path this mirrors
-        # the old ``set_active_leaf`` call with a still-``None`` id, which is fine.
-        self._persist_active_leaf(session_id, message.id)
+        if persist:
+            self._enqueue_sync_v2_message_if_ready(message)
         self._bump_payload_revision(session_id)
         self._bump_conversation_context_epoch(session_id)
         return self._snapshot(message)
@@ -12038,14 +12036,25 @@ class ConsoleChatStore:
             candidate.provider_continuation_warning = None
             candidate.provider_continuation_remote = False
             candidate.provider_continuation_actions_enabled = True
-        persisted = self._persist_existing_message(
-            candidate,
-            force_metadata_write=provenance_cleared,
-            clear_generation_provenance=generation_cleared,
-        )
+        with self._dispatch_branch_mutation(session_id):
+            persisted = self._persist_existing_message(
+                candidate,
+                force_metadata_write=provenance_cleared,
+                clear_generation_provenance=generation_cleared,
+                enqueue_sync=False,
+            )
+            if (
+                persisted
+                and on_active_path
+                and descendant_ids
+                and content != previous_content
+            ):
+                if not self._persist_active_leaf(session_id, message.id):
+                    raise ValueError("Resolve pending dispatch before editing this message.")
         if not persisted:
             return self._snapshot(message)
 
+        self._enqueue_sync_v2_message_if_ready(candidate)
         # The durable write is the commit point.  Only now may the live store
         # expose the replacement or advance any process-local invalidation fence.
         self._nodes_by_session[session_id][message.id] = candidate
@@ -13321,12 +13330,23 @@ class ConsoleChatStore:
         parent_native_id = self._native_parent_by_message.get(message_id)
         on_active_path = message_id in self.active_path_message_ids(session_id)
         subtree_ids = self._subtree_ids(session_id, message_id)
+        if self.persistence is None or message.persisted_message_id is None:
+            with self._dispatch_branch_mutation(session_id):
+                if on_active_path and not self._persist_active_leaf(
+                    session_id, parent_native_id
+                ):
+                    raise ValueError("Resolve pending dispatch before deleting this message.")
         tombstones: list[dict[str, Any]] = []
         if self.persistence is not None and message.persisted_message_id is not None:
             deleter = getattr(self.persistence, "delete_message_subtree", None)
             if not callable(deleter):
                 raise RuntimeError("Message deletion could not be persisted.")
-            tombstones = deleter(message_id=message.persisted_message_id)
+            with self._dispatch_branch_mutation(session_id):
+                tombstones = deleter(message_id=message.persisted_message_id)
+                if on_active_path and not self._persist_active_leaf(
+                    session_id, parent_native_id
+                ):
+                    raise ValueError("Resolve pending dispatch before deleting this message.")
             self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
@@ -13361,7 +13381,6 @@ class ConsoleChatStore:
         self._purge_tool_markers(session_id, set(subtree_ids))
         if on_active_path:
             self._active_leaf_by_session[session_id] = parent_native_id
-            self._persist_active_leaf(session_id, parent_native_id)
         self._recompute_active_path(session_id)
         self._bump_payload_revision(session_id)
         if on_active_path:
@@ -15375,7 +15394,8 @@ class ConsoleChatStore:
             self._voice_promotion_selection_decisions[lease.session_id] = decision
 
         try:
-            self._persist_active_leaf(lease.session_id, message_id)
+            if not self._persist_active_leaf(lease.session_id, message_id):
+                return False
             with self._voice_promotion_lock:
                 if (
                     self._voice_promotion_selection_decisions.get(lease.session_id)
@@ -18873,6 +18893,7 @@ class ConsoleChatStore:
         message: ConsoleChatMessage,
         terminal_receipt_id: str | None = None,
         terminal_outcome: str | None = None,
+        enqueue_sync: bool = True,
     ) -> None:
         if self.persistence is None:
             return
@@ -18889,6 +18910,7 @@ class ConsoleChatStore:
             message=message,
             terminal_receipt_id=terminal_receipt_id,
             terminal_outcome=terminal_outcome,
+            enqueue_sync=enqueue_sync,
         )
 
     def register_provider_trace_settlement(
@@ -19445,6 +19467,7 @@ class ConsoleChatStore:
         terminal_persistence: bool = False,
         terminal_receipt_id: str | None = None,
         terminal_outcome: str | None = None,
+        enqueue_sync: bool = True,
     ) -> bool:
         if self.persistence is None:
             return False
@@ -19674,7 +19697,8 @@ class ConsoleChatStore:
         else:
             if message.id == self._active_leaf_by_session.get(session_id):
                 self._persist_active_leaf(session_id, message.id)
-            self._enqueue_sync_v2_message_if_ready(message)
+            if enqueue_sync:
+                self._enqueue_sync_v2_message_if_ready(message)
         # Trajectory sidecar (schema v38): every persisted Console message
         # gets a user/assistant row in the LOCAL-ONLY sidecar, batched with
         # any tool rows stashed while this row was still streaming.
@@ -21578,6 +21602,31 @@ class ConsoleChatStore:
             if not children:
                 return current
             current = children[-1]
+
+    @contextmanager
+    def _dispatch_branch_mutation(self, session_id: str | None):
+        """Keep branch edits atomic with admission of a durable dispatch owner.
+
+        Refuse before inserting siblings, editing ancestors, or tombstoning a
+        subtree. Hold the write transaction through the durable branch changes so
+        another connection cannot accept a send between this check and mutation.
+        """
+        session = self._sessions.get(session_id)
+        conversation_id = session.persisted_conversation_id if session is not None else None
+        db = getattr(self.persistence, "db", None)
+        if conversation_id is None or db is None:
+            yield
+            return
+        with db.transaction(immediate=True) as cursor:
+            pending = cursor.execute(
+                "SELECT 1 FROM console_dispatch_checkpoints WHERE conversation_id = ? LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if pending is not None:
+                raise ValueError(
+                    "Resolve pending dispatch before changing conversation branches."
+                )
+            yield
 
     def _persist_active_leaf(
         self,

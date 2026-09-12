@@ -12527,6 +12527,11 @@ UPDATE db_schema_version
             InputError: The cursor would leave an unresolved dispatch owner off path.
         """
         with self.transaction(immediate=True) as conn:
+            if conn.execute(
+                "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone() is None:
+                return False
             # A view cursor is not dispatch authority. Never let a stale view
             # strand the exact durable send which still owns this conversation.
             stranded = conn.execute(
