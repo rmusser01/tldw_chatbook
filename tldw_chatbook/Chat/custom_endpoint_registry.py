@@ -32,12 +32,31 @@ ENDPOINT_FAMILIES = frozenset({"llama_cpp", "openai_compatible", "ollama"})
 SLUG_PATTERN = re.compile(r"^[a-z0-9-]{1,64}$")
 
 _MAX_DISPLAY_NAME_LENGTH = 80
-_MAX_SLUG_COLLISION_SUFFIX = 99
+#: Suffix search runs ``-2`` .. ``-9999`` (4-digit suffixes) before giving up.
+_MAX_SLUG_COLLISION_SUFFIX = 9999
 _DISPLAY_NAME_REQUIRED_COPY = "Display name is required."
 _DISPLAY_NAME_TOO_LONG_COPY = (
     f"Display name must be {_MAX_DISPLAY_NAME_LENGTH} characters or fewer."
 )
 _INVALID_BASE_URL_COPY = "Base URL must be a valid http(s) URL."
+_SLUG_COLLISION_COPY = "That name is already in use; choose another."
+
+
+class CustomEndpointSlugError(ValueError):
+    """A display name could not derive a slug that avoids ``existing_slugs``.
+
+    Subclasses :class:`ValueError` so the F9 convert worker (and any other
+    ``except ValueError`` boundary) surfaces ``str(exc)`` -- the collision
+    copy -- in user-facing status surfaces as-is.
+
+    Args:
+        message: User-facing collision copy carried by ``str(exc)``;
+            defaults to the standard name-in-use message and may be
+            overridden by callers with context-specific copy.
+    """
+
+    def __init__(self, message: str = _SLUG_COLLISION_COPY) -> None:
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -247,16 +266,24 @@ def derive_slug(display_name: str, existing_slugs: Collection[str]) -> str:
     """Derive a unique slug from a display name.
 
     Lowercases, maps each run of non-``[a-z0-9]`` characters to a single
-    ``-``, trims leading/trailing ``-``, and appends ``-2`` .. ``-99`` on
-    collision with ``existing_slugs``.
+    ``-``, trims leading/trailing ``-``, and appends ``-2`` .. ``-9999`` on
+    collision with ``existing_slugs``. Long bases are stem-truncated so
+    each suffix always fits whole inside the 64-char :data:`SLUG_PATTERN`
+    contract (clamping the assembled candidate instead would shear the
+    suffix off a long base and reject creatable names).
 
     Args:
         display_name: User-facing name to derive from.
         existing_slugs: Slugs already taken.
 
     Returns:
-        The derived slug (unmodified base when every suffixed candidate
-        ``-2`` .. ``-99`` is taken).
+        The derived slug, unique against ``existing_slugs``.
+
+    Raises:
+        CustomEndpointSlugError: Every candidate -- the bare base and all
+            suffixed stem forms -- collides with ``existing_slugs``.
+            Returning a colliding slug here would make the creation path
+            overwrite an existing entry's config section.
     """
     base = re.sub(r"[^a-z0-9]+", "-", display_name.lower()).strip("-")
     # SLUG_PATTERN contract: 1..64 chars of [a-z0-9-]. A punctuation-only
@@ -270,10 +297,13 @@ def derive_slug(display_name: str, existing_slugs: Collection[str]) -> str:
     if SLUG_PATTERN.fullmatch(base) and base not in existing_slugs:
         return base
     for suffix in range(2, _MAX_SLUG_COLLISION_SUFFIX + 1):
-        candidate = f"{base}-{suffix}"[:64].rstrip("-")
+        suffix_text = f"-{suffix}"
+        # Truncate the stem before appending so the suffix survives whole:
+        # the base starts with an alphanumeric, so the stem cannot empty out.
+        candidate = f"{base[: 64 - len(suffix_text)].rstrip('-')}{suffix_text}"
         if SLUG_PATTERN.fullmatch(candidate) and candidate not in existing_slugs:
             return candidate
-    return base
+    raise CustomEndpointSlugError()
 
 
 def build_entry_mutation(
