@@ -1,0 +1,27 @@
+# Chatterbox CUDA qualification
+
+The corrected installed wheel passed the registered Chatterbox subprocess path on the RTX 3090. [Run 03](runs/chatterbox-cuda-03/evidence.json) contains seven complete successful clips: default-voice Speech Lab, trusted Console warmup, successor, three repeats, and a separate synthetic-reference Lab audition. Stop during `t3.inference` produced no audio. All seven streams reached Logi sink 55. Human listening confirmation remains pending.
+
+## Source and runtime
+
+[Fixed-wheel identity](provenance/fixed-wheel-identity.json) verifies all 2,352 Python files across source, wheel and installed package. Wheel SHA256 is `c5c34683c44a132ec2c7b1d2820c8bbf8c7fc6ced72cdfdaa40ed97db15b88ca`; only `TTS/backends/chatterbox.py` differs from base commit `8ab21ecaf3`, implementing TASK-32494's retained initialization/close ownership. These receipts qualify that source, not a later rebased head. The [installed startup-close probe](runs/chatterbox-fixed-startup-close/result.json) also passed with no pending tasks and [exit 0](provenance/post-fixed-validation.json).
+
+The runtime used Python 3.12.8, Chatterbox 0.1.7, Torch 2.6.0+cu124, Transformers 5.2.0 and NumPy 1.26.4. The [freeze](provenance/chatterbox-freeze.txt) and child receipts preserve versions and module hashes. Every parameter of `t3`, `s3gen` and `ve` was `torch.float32` on `cuda:0`. [Five model files](provenance/chatterbox-assets.json) are pinned to `ResembleAI/chatterbox` revision `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18`.
+
+The [synthetic reference](provenance/synthetic-reference.json) derives from the real Kokoro CUDA `af_heart` validation clip, with no human speaker. Baseline requests used `default`. The final Lab phase used the existing reference picker callback and `custom` selector; the child's original generation call consumed the matching selected-reference hash. No catalog entry or audio result was substituted. ADR-028 and ADR-051 distinguish this legacy Chatterbox path from audio.cpp's typed clone-reference profile contract.
+
+## Cancellation, playback and cleanup
+
+The task-owned [launcher and recipes](recipes/README.md.txt) execute the original installed `chatterbox_process.py` and observe its original loader, inner `t3.inference`/`s3gen.inference`, and audio delivery. CUDA barriers separate host return from native completion; post-delivery allocator samples come from the child. Outer reference preprocessing alone cannot satisfy inference overlap.
+
+Stop overlapped `t3.inference` and returned after 0.137 seconds. Production cancellation terminated and reaped child 977232. The receipt records later NVIDIA PID disappearance before settlement and successor admission; it does not claim a natural synchronized return for the interrupted call or prove GPU release at the earlier Stop-return timestamp. The three repeat samples each held 3,258,446,848 allocated bytes and 3,596,615,680 reserved bytes, with cumulative peaks recorded separately. This is finite retention evidence, not proof of long-duration leak freedom.
+
+[Routing](provenance/chatterbox-cuda-03-routing-summary.json) shows two ffplay and five PortAudio/Pulse streams, all on Logi sink 55. [Final observations](provenance/chatterbox-cuda-03-process-exit.json) show parent 977064 and children 977232/977750 absent, runtime exit 0, no NVIDIA compute processes and no sink inputs. All cleanup counters are zero. [Host-after evidence](provenance/host-after.json) confirms the user's configuration and default sink remained unchanged.
+
+## Full content and retained failures
+
+[Whisper medium](runs/chatterbox-cuda-03/content-medium.json) passed all seven complete recordings, including the reference audition, with exact normalized text and ordered beginning/middle/end anchors. [Whisper small](runs/chatterbox-cuda-03/content.json) passed six and transcribed the third repeat's opening as “Sylph or Compass.” Both reports bind the same runtime receipt and identical per-clip audio hashes; neither expected text nor recordings changed. The discrepancy remains a recognizer disagreement requiring human listening, not a proven synthesis defect or an erased failure.
+
+[Run 01](runs/chatterbox-cuda-01/evidence.json) executed CUDA but failed because the harness requested unsupported global voice stem `synthetic`; the UI selected `default`. [Run 02](runs/chatterbox-cuda-02/evidence.json) passed six default-voice clips before the lifecycle fix and remains separate from corrected-source evidence. The [initialization preflight](runs/chatterbox-load-preflight/result.json) incorrectly treated nonblocking initialization as readiness; its [forced termination](runs/chatterbox-load-preflight/termination.json) is retained. Controlled reproductions established TASK-32494's detached-startup race without establishing the precise cause of that preflight shutdown hang.
+
+[The manifest](package-manifest.json) contains 56 byte-preserving copies verified against their recorded hashes. Models, wheels, audio, private profiles and raw device observations remain under `/home/ml-user/tts-linux-cuda-20260912` on the authorized host. This qualifies bounded English WAV delivery through mounted Lab and trusted Console handlers; full-shell navigation, acoustic quality, other voices/formats and human listening remain outside the evidence. TASK-32158 criterion 2 stays open for listening confirmation. Existing ADR-023 and speech ADR-039/040 apply; no new ADR was required.

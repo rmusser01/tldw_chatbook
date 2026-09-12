@@ -1,4 +1,4 @@
-"""Opt-in local Kokoro playback/cancellation evidence; imports are inert.
+"""Task-owned Chatterbox subprocess CUDA qualification; imports are inert.
 
 See Docs/Development/TTS/Live_Validation.md. Run serially with other audio work.
 The public process bounds a private worker; a forced exit is never a cleanup pass.
@@ -13,7 +13,6 @@ import importlib.metadata
 import json
 import math
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -35,144 +34,14 @@ DEFAULT_TEXT = (
     "This complete reply ends with amber sunrise."
 )
 DEFAULT_ANCHORS = ["silver compass", "quiet orchard", "amber sunrise"]
-VOICE_LANGUAGES = {
-    "a": "en-us",
-    "b": "en-gb",
-    "e": "es",
-    "f": "fr",
-    "h": "hi",
-    "i": "it",
-    "p": "pt-br",
-    "j": "ja",
-    "z": "zh",
-}
-
-
-def build_parser() -> argparse.ArgumentParser:
-    """Build the inert command-line parser.
-
-    Returns:
-        A parser for explicit assets, runtime selection and playback admission."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--engine", choices=("pytorch", "onnx"), required=True)
-    parser.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
-    parser.add_argument("--model", type=Path, required=True)
-    parser.add_argument("--voice", required=True)
-    parser.add_argument("--voice-dir", type=Path)
-    parser.add_argument("--voices", type=Path, help="ONNX voices binary")
-    parser.add_argument("--language", help="Must match the selected voice's language")
-    parser.add_argument("--format", choices=("wav", "mp3"), default="wav")
-    parser.add_argument("--speed", type=float, default=1.0)
-    parser.add_argument(
-        "--text-file", type=Path, help="UTF-8 text; keep language segments short"
-    )
-    parser.add_argument("--cancel-text-file", type=Path)
-    parser.add_argument("--scenarios", default="playback,cancel,repeat")
-    parser.add_argument("--repeats", type=int, default=6)
-    parser.add_argument("--phase-timeout", type=float, default=300)
-    parser.add_argument("--cleanup-timeout", type=float, default=60)
-    parser.add_argument("--run-timeout", type=float, default=1800)
-    parser.add_argument("--expected-package-root", type=Path, required=True)
-    parser.add_argument(
-        "--output", type=Path, required=True, help="New private run directory"
-    )
-    parser.add_argument(
-        "--play-audio",
-        action="store_true",
-        help="Explicitly enable real device playback",
-    )
-    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
-    return parser
-
-
-def validate_args(args: argparse.Namespace) -> None:
-    """Reject unsafe or incomplete invocations before creating a run/profile.
-
-    Args:
-        args: Parsed options, updated in place with centrally validated paths.
-
-    Raises:
-        ValueError: Admission, assets, paths or worker ownership are invalid.
-        OSError: A required local path cannot be inspected."""
-    if not args.play_audio:
-        raise ValueError("Real device playback requires --play-audio")
-    if not 1 <= args.repeats <= 12:
-        raise ValueError("repeats must be between 1 and 12")
-    for name in ("phase_timeout", "cleanup_timeout", "run_timeout", "speed"):
-        value = getattr(args, name)
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError(f"{name} must be finite and positive")
-    if args.run_timeout > 7200 or args.speed > 4:
-        raise ValueError(
-            "Run timeout cannot exceed 7200 seconds; speed cannot exceed 4"
-        )
-    scenarios = args.scenarios.split(",")
-    if not scenarios or any(
-        item not in {"playback", "cancel", "repeat"} for item in scenarios
-    ):
-        raise ValueError("Unknown scenario; choose playback,cancel,repeat")
-    if not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", args.voice):
-        raise ValueError("voice must be a local Kokoro voice name")
-    language = VOICE_LANGUAGES.get(args.voice[0])
-    if language is None or (args.language and args.language.lower() != language):
-        raise ValueError("language must match the selected voice prefix")
-    args.language = language
-    from tldw_chatbook.Utils.path_validation import validate_path_simple
-
-    for name in (
-        "model",
-        "voice_dir",
-        "voices",
-        "text_file",
-        "cancel_text_file",
-        "expected_package_root",
-    ):
-        value = getattr(args, name)
-        if value is not None:
-            validated = validate_path_simple(value.expanduser(), require_exists=True)
-            setattr(args, name, validated.resolve())
-    for name in ("voice_dir", "expected_package_root"):
-        value = getattr(args, name)
-        if value is not None and not value.is_dir():
-            raise ValueError(f"{name} must be an existing directory")
-    output = validate_path_simple(args.output.expanduser(), probe_existing=False)
-    if output.is_symlink() or (os.path.lexists(output) and not args.worker):
-        raise ValueError(f"Output already exists or is a symlink: {output}")
-    if not output.parent.is_dir() or (args.worker and not output.is_dir()):
-        raise ValueError(
-            "Output requires an existing parent and a real worker directory"
-        )
-    args.output = output.parent.resolve() / output.name
-    required = [args.model, args.expected_package_root / "__init__.py"]
-    if args.engine == "pytorch":
-        if args.voice_dir is None:
-            raise ValueError("PyTorch requires --voice-dir")
-        required += [
-            args.model.with_name("config.json"),
-            args.voice_dir / f"{args.voice}.pt",
-        ]
-    else:
-        if args.device != "cpu" or args.voices is None:
-            raise ValueError("ONNX requires --device cpu and --voices")
-        required.append(args.voices)
-    required += [value for value in (args.text_file, args.cancel_text_file) if value]
-    for path in required:
-        validated = validate_path_simple(path)
-        if not validated.is_file():
-            raise ValueError(f"Required local asset is missing: {validated}")
-    if args.worker and os.environ.get("TLDW_LIVE_VALIDATION_WORKER") != str(
-        args.output
-    ):
-        raise ValueError("Private worker must be started by this command")
-    for name in ("text_file", "cancel_text_file"):
-        path = getattr(args, name)
-        if path and (
-            path.stat().st_size > 32000
-            or not 1 <= len(path.read_text().strip()) <= 8000
-        ):
-            raise ValueError(
-                "Text must contain 1–8000 characters (at most 32000 UTF-8 bytes)"
-            )
+# Admit only this task-owned sibling helper directory even under python -I.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from chatterbox_observation import (
+    ChildObservations,
+    build_parser,
+    select_lab_reference,
+    validate_args,
+)
 
 
 def check_package_root(actual: Path, expected: Path) -> None:
@@ -533,25 +402,14 @@ def setup_environment(root: Path) -> None:
     )
 
 
-def check_backend_assets(backend: Any, args: argparse.Namespace) -> None:
-    """Reject ambient overrides and fallback before loading any native model.
-
-    Args:
-        backend: Constructed Kokoro backend before model initialization.
-        args: Admitted explicit engine and local asset paths.
-
-    Raises:
-        ValueError: The backend engine or asset paths differ from admission."""
-    if backend.use_onnx != (args.engine == "onnx"):
-        raise ValueError("Backend selected a different inference engine")
-    paths = {"model": (backend.model_path, args.model)}
-    if args.engine == "onnx":
-        paths["voices"] = (backend.voices_json, args.voices)
-    else:
-        paths["voice directory"] = (backend.voice_dir, args.voice_dir)
-    for label, (actual, expected) in paths.items():
-        if actual is None or Path(actual).resolve() != expected.resolve():
-            raise ValueError(f"Backend selected a different {label}")
+def check_backend_assets(backend, args):
+    if (
+        backend.device != "cuda"
+        or backend.voice_dir.resolve() != (args.output / "voices").resolve()
+    ):
+        raise ValueError(
+            "Registered backend selected an unqualified device/reference root"
+        )
 
 
 def _deny_network(event, arguments):
@@ -636,37 +494,30 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
     from loguru import logger
 
     root = args.output
+    voices = root / "voices"
+    voices.mkdir(mode=0o700, exist_ok=True)
+    reference_path = None
+    if args.reference_voice is not None:
+        reference_path = voices / f"{args.reference_voice}.wav"
+        shutil.copyfile(
+            args.reference_dir / f"{args.reference_voice}.wav", reference_path
+        )
     app_tts = {
-        "default_provider": "kokoro",
+        "default_provider": "chatterbox",
         "default_model_mode": "exact",
-        "default_model": "kokoro",
+        "default_model": "chatterbox",
         "default_voice_mode": "exact",
         "default_voice": args.voice,
         "default_format": args.format,
-        "default_speed": args.speed,
-        "KOKORO_USE_ONNX": args.engine == "onnx",
-        "KOKORO_DEVICE_DEFAULT": args.device,
-        "KOKORO_ENABLE_VOICE_MIXING": False,
-        "KOKORO_VOICE_BLENDS_DIR": str(root / "blends"),
+        "default_speed": 1.0,
+        "CHATTERBOX_DEVICE": "cuda",
+        "CHATTERBOX_VOICE_DIR": str(voices),
+        "CHATTERBOX_RANDOM_SEED": 42,
+        "CHATTERBOX_VALIDATE_WHISPER": False,
     }
-    assets = [args.model]
-    if args.engine == "pytorch":
-        app_tts.update(
-            KOKORO_PT_MODEL_PATH_DEFAULT=str(args.model),
-            KOKORO_VOICE_DIR_PT=str(args.voice_dir),
-        )
-        assets += [
-            args.model.with_name("config.json"),
-            args.voice_dir / f"{args.voice}.pt",
-        ]
-    else:
-        app_tts.update(
-            KOKORO_ONNX_MODEL_PATH_DEFAULT=str(args.model),
-            KOKORO_ONNX_VOICES_JSON_DEFAULT=str(args.voices),
-            KOKORO_VOICE_DIR_PT=str(root / "unused-pytorch-voices"),
-            KOKORO_PT_MODEL_PATH_DEFAULT=str(root / "unused-pytorch-model.pth"),
-        )
-        assets.append(args.voices)
+    assets = sorted(voices.glob("*.wav"))
+    evidence["model_cache"] = str(args.model_cache)
+
     configuration = {
         "general": {"users_name": "tts_live_validation"},
         "paths": {"data_dir": str(root / "data")},
@@ -711,8 +562,8 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             "numpy",
             "sounddevice",
             "soundfile",
-            "kokoro",
-            "kokoro-onnx",
+            "chatterbox-tts",
+            "transformers",
             "torch",
             "onnxruntime",
             "misaki",
@@ -720,13 +571,8 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             "en-core-web-sm",
         )
     )
+    # CUDA belongs to actual child processes. Parent RSS is sampled separately.
     cuda_device = None
-    if args.engine == "pytorch":
-        import torch
-
-        evidence["pytorch_device"] = pytorch_device_provenance(torch, args.device)
-        if args.device == "cuda":
-            cuda_device = evidence["pytorch_device"]["device"]
 
     import numpy as np
     import sounddevice as sd
@@ -759,7 +605,9 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
     )
     from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
     from tldw_chatbook.TTS.audio_player import PlaybackState, get_audio_player
-    from tldw_chatbook.TTS.backends.kokoro import KokoroTTSBackend
+    from tldw_chatbook.TTS.backends.chatterbox import (
+        ChatterboxTTSBackend as ProviderBackend,
+    )
     from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
     from tldw_chatbook.TTS.TTS_Generation import (
         bind_tts_service,
@@ -781,7 +629,12 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
     evidence["output_device"] = dict(sd.query_devices(kind="output"))
     evidence["memory_before_model"] = memory_snapshot(cuda_device=cuda_device)
 
+    children = ChildObservations(
+        root, package, lambda: current[0], evidence, write_evidence
+    )
+
     def checkpoint():
+        children.sync()
         with lock:
             write_evidence(root / "evidence.json", evidence)
 
@@ -809,7 +662,10 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
         deadline = time.monotonic() + (
             args.phase_timeout if seconds is None else seconds
         )
-        while not predicate():
+        while True:
+            children.sync()
+            if predicate():
+                break
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"Deadline exceeded: {label}")
             await asyncio.sleep(0.01)
@@ -831,7 +687,7 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             studio = StudioTTSPreferencesSnapshot()
             global_preferences = service.preferences_snapshot()
             self.pane = SpeechPlaygroundPane(
-                provider="kokoro",
+                provider="chatterbox",
                 studio_preferences=studio,
                 global_preferences=global_preferences,
                 axis_defaults=_seed_axis_defaults(studio, global_preferences),
@@ -921,8 +777,11 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
     player = get_audio_player()
 
     def resources():
+        children.sync()
         calls = [call for row in evidence["phases"] for call in row["native_calls"]]
         return {
+            "child_delivery_pending": children.pending_delivery(),
+            "child_gpu_release_pending": children.pending_gpu_release(),
             "generation_owner": int(handler._console_generation_owner is not None),
             "stream_owner": int(handler._active_stream_playback_owner is not None),
             "file_owner": int(handler._active_file_playback_owner is not None),
@@ -968,9 +827,10 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             settled_at=time.monotonic(),
             resources_at_settlement=state,
             memory=memory,
+            child_memory=children.settled_memory(),
         )
 
-    original_initialize = KokoroTTSBackend.initialize
+    original_initialize = ProviderBackend.initialize
 
     async def initialize(backend):
         if not any(item is backend for item in backends):
@@ -978,23 +838,11 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
         check_backend_assets(backend, args)
         await original_initialize(backend)
         check_backend_assets(backend, args)
-        if args.engine == "pytorch":
-            loaded = Path(backend.kokoro_model_pt.model_path).resolve()
-            if loaded != args.model:
-                raise ValueError(
-                    "Actual PyTorch checkpoint differs from supplied model"
-                )
-        evidence.setdefault("backend_assets", []).append(
-            {"model": str(Path(backend.model_path).resolve()), "engine": args.engine}
-        )
 
-    original_pytorch_initialize = KokoroTTSBackend._initialize_pytorch
+    original_spawn = asyncio.create_subprocess_exec
 
-    async def initialize_pytorch(backend):
-        # ONNX can switch to PyTorch inside load_model, before initialize returns.
-        # Reject that path before its loader can visit any fallback checkpoint.
-        check_backend_assets(backend, args)
-        await original_pytorch_initialize(backend)
+    async def spawn(*positional, **keywords):
+        return await children.launch(original_spawn, *positional, **keywords)
 
     original_player = player.play
 
@@ -1178,83 +1026,21 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
         checkpoint()
 
     with ExitStack() as observers:
+        observers.enter_context(patch.object(ProviderBackend, "initialize", initialize))
         observers.enter_context(
-            patch.object(KokoroTTSBackend, "initialize", initialize)
+            patch.object(
+                ProviderBackend,
+                "_initialize_sync",
+                side_effect=ValueError(
+                    "Unobserved in-process fallback is not admitted by subprocess qualification"
+                ),
+            )
         )
-        observers.enter_context(
-            patch.object(KokoroTTSBackend, "_initialize_pytorch", initialize_pytorch)
-        )
+        observers.enter_context(patch.object(asyncio, "create_subprocess_exec", spawn))
         observers.enter_context(patch.object(player, "play", play))
         observers.enter_context(patch.object(events_module, "StreamingPcmSink", sink))
         observers.enter_context(patch.object(sd, "OutputStream", output_stream))
-        if args.engine == "pytorch":
-            import spacy
-            import torch
 
-            if args.language.startswith("en-") and not spacy.util.is_package(
-                "en_core_web_sm"
-            ):
-                raise ValueError(
-                    "Install English language assets explicitly before running the harness"
-                )
-            observers.enter_context(
-                patch(
-                    "spacy.cli.download",
-                    side_effect=RuntimeError("Runtime language downloads are disabled"),
-                )
-            )
-            torch.set_num_threads(6)
-            from kokoro import KModel
-
-            original_forward = KModel.forward
-
-            def forward(model, *positional, **keywords):
-                row = current[0]
-                details = {
-                    "request_id": row["id"],
-                    "class": type(model).__module__ + "." + type(model).__name__,
-                    "device": str(model.device),
-                    "speed": positional[2]
-                    if len(positional) > 2
-                    else keywords.get("speed", 1),
-                    "fourier_module": type(model.decoder.generator.stft).__name__,
-                }
-                return observe_pytorch_native(
-                    original_forward,
-                    row["native_calls"],
-                    details,
-                    lock=lock,
-                    expected_device=evidence["pytorch_device"]["device"],
-                    torch=torch,
-                )(model, *positional, **keywords)
-
-            observers.enter_context(patch.object(KModel, "forward", forward))
-        else:
-            import onnxruntime
-
-            original_run = onnxruntime.InferenceSession.run
-
-            def infer(model, *positional, **keywords):
-                row = current[0]
-                inputs = (
-                    positional[1] if len(positional) > 1 else keywords["input_feed"]
-                )
-                details = {
-                    "request_id": row["id"],
-                    "class": type(model).__module__ + "." + type(model).__name__,
-                    "execution_providers": model.get_providers(),
-                    "model_path": str(model._model_path),
-                    "speed_input": np.asarray(inputs.get("speed")).tolist(),
-                }
-                if Path(model._model_path).resolve() != args.model:
-                    raise ValueError("Observed ONNX session loaded a different model")
-                return observe_native(
-                    original_run, row["native_calls"], details, lock=lock
-                )(model, *positional, **keywords)
-
-            observers.enter_context(
-                patch.object(onnxruntime.InferenceSession, "run", infer)
-            )
         evidence["runtime_files"] = {
             name: {
                 "path": str(Path(module.__file__).resolve()),
@@ -1263,10 +1049,7 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             for name, module in list(sys.modules.items())
             if name
             in {
-                "kokoro.model",
-                "torch._C",
-                "kokoro_onnx",
-                "onnxruntime.capi.onnxruntime_pybind11_state",
+                "tldw_chatbook.TTS.backends.chatterbox",
             }
             and getattr(module, "__file__", None)
         }
@@ -1283,7 +1066,7 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
                 )
                 if "playback" in args.scenarios:
                     row = phase("speech-lab")
-                    if args.language != "en-us":
+                    if args.language != "en":
                         host.pane.query_one(
                             "#tts-language-select", Select
                         ).value = args.language
@@ -1364,6 +1147,9 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
                     cancelled["stop_returned_at"] = time.monotonic()
                     await quiescent(cancelled)
                     validate_cancellation(cancelled)
+                    cancelled["cancellation_boundary"] = (
+                        "Production Stop terminates and reaps the registered child. Interrupted native calls require both child reap and NVIDIA compute PID disappearance; this does not claim a natural CUDA synchronized return."
+                    )
                     if (
                         stop_outcomes != [True]
                         or cancelled["states"] != ["stopped"]
@@ -1388,6 +1174,90 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
                         row = phase(f"console-repeat-{index + 1:02d}")
                         await submit(row)
                         await complete(row)
+                if reference_path is not None:
+                    row = phase("speech-lab-reference")
+                    row["reference_audio"] = {
+                        "path": str(reference_path),
+                        "sha256": sha256(reference_path),
+                    }
+                    select_lab_reference(host.pane, reference_path)
+                    host.pane.query_one("#tts-text-input", TextArea).text = text
+                    await pilot.pause()
+                    request_count = len(host.requests)
+                    notice_count = len(host.notices)
+                    host.pane.query_one("#tts-generate-btn", Button).press()
+                    await wait_until(
+                        lambda: len(host.requests) > request_count,
+                        "Lab reference request admission",
+                    )
+                    request = host.requests[-1]
+                    expected_voice = f"custom:{reference_path}"
+                    if request.voice_id != expected_voice:
+                        raise ValueError(
+                            "Lab reference selection did not reach the admitted request"
+                        )
+                    row["request"] = {
+                        "operation_id": request.operation_id,
+                        "model_id": request.model_id,
+                        "voice_id": request.voice_id,
+                        "speed": request.speed,
+                    }
+                    await wait_until(
+                        lambda: (
+                            getattr(
+                                host.lab_handler._current_playground_artifact,
+                                "operation_id",
+                                None,
+                            )
+                            == request.operation_id
+                            or any(
+                                notice.get("severity") == "error"
+                                for notice in host.notices[notice_count:]
+                            )
+                        ),
+                        "exact Lab reference artifact",
+                    )
+                    if (
+                        getattr(
+                            host.lab_handler._current_playground_artifact,
+                            "operation_id",
+                            None,
+                        )
+                        != request.operation_id
+                    ):
+                        raise ValueError("Lab reference generation failed")
+                    await wait_until(
+                        lambda: (
+                            not host.pane.query_one("#audio-play-btn", Button).disabled
+                        ),
+                        "Lab reference Play enabled",
+                    )
+                    host.pane.query_one("#audio-play-btn", Button).press()
+                    await complete(row, lab=True)
+                    children.sync()
+                    generations = [
+                        generation
+                        for _, child in children.children
+                        for generation in child.get("observations", {}).get(
+                            "generate_calls", []
+                        )
+                    ]
+                    matching = [
+                        generation
+                        for generation in generations
+                        if generation.get("reference_audio", {}).get("path")
+                        == str(reference_path)
+                    ]
+                    if not matching or any(
+                        generation["reference_audio"]["sha256"]
+                        != row["reference_audio"]["sha256"]
+                        for generation in matching
+                    ):
+                        raise ValueError(
+                            "Actual child generation did not consume the exact Lab reference"
+                        )
+                    row["reference_native_verified"] = True
+                    checkpoint()
             evidence["status"] = "runtime_passed_content_pending"
         finally:
             cleanup_errors = []
@@ -1415,6 +1285,11 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
                 )
             player.cleanup()
             reset_tts_service_binding(expected=service)
+            await wait_until(
+                lambda: not any(children.final_resources().values()),
+                "child process and CUDA context release",
+                args.cleanup_timeout,
+            )
             evidence.update(
                 cleanup_errors=cleanup_errors,
                 final_resources=resources(),
@@ -1428,6 +1303,8 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             )
             if cleanup_errors or any(evidence["final_resources"].values()):
                 evidence["status"] = "failed_cleanup"
+            checkpoint()
+            evidence["final_resources"].update(children.final_resources())
             checkpoint()
             assert_quiescent(evidence["final_resources"])
             if cleanup_errors or not evidence["source_unchanged"]:
@@ -1455,9 +1332,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(str(error))
     if args.worker:
         setup_environment(args.output)
+        os.environ["HF_HUB_CACHE"] = str(args.model_cache)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(args.model_cache)
+        os.environ["MPLCONFIGDIR"] = str(args.output / "cache/matplotlib")
+        os.environ["NUMBA_CACHE_DIR"] = str(args.output / "cache/numba")
         sys.addaudithook(_deny_network)
         evidence = {
             "schema_version": 1,
+            "upstream_runner_sha256": "1b827c23dca7799177861c246b910bacce3167a65c2690586260aaddef062818",
+            "injection_scope": "Task-owned child launcher executes the installed original chatterbox_process.py with observed original from_pretrained/generate and audio delivery. Production backend, child protocol and audio results unchanged.",
             "status": "running",
             "pid": os.getpid(),
             "started_utc": datetime.now(UTC).isoformat(),

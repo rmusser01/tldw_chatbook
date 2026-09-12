@@ -202,26 +202,37 @@ class ChatterboxTTSBackend(TTSBackendBase):
         self._generation_lock = asyncio.Lock()
         self._initialized = False
         self._initializing = False
+        self._closing = False
+        self._initialization_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
 
     async def initialize(self):
         """Initialize the Chatterbox backend using isolated process"""
+        if self._closing:
+            return
         if not self.deps_available:
             logger.warning(
                 "ChatterboxTTSBackend: Dependencies not available. Please install with: pip install chatterbox-tts torchaudio"
             )
             return
 
-        if self._initialized or self._initializing:
+        if self._initialized or (
+            self._initialization_task is not None
+            and not self._initialization_task.done()
+        ):
             return
 
         self._initializing = True
         # Run initialization in background to avoid blocking UI
-        asyncio.create_task(self._initialize_isolated_process())
+        self._initialization_task = asyncio.create_task(
+            self._initialize_isolated_process()
+        )
 
     async def _initialize_isolated_process(self):
         """Initialize Chatterbox in an isolated subprocess"""
         async with self._process_lock:
-            if self._initialized:
+            if self._initialized or self._closing:
+                self._initializing = False
                 return
 
             try:
@@ -232,42 +243,51 @@ class ChatterboxTTSBackend(TTSBackendBase):
                         f"Chatterbox process wrapper not found at {wrapper_path}"
                     )
                     # Fall back to the old method in background
-                    asyncio.create_task(asyncio.to_thread(self._initialize_sync))
+                    await join_retained_task(
+                        asyncio.create_task(asyncio.to_thread(self._initialize_sync))
+                    )
                     return
 
                 logger.info(
                     f"Starting Chatterbox in isolated process on {self.device}..."
                 )
 
-                # Start the subprocess with pipe for stdout
-                # Set a larger limit for the StreamReader to handle base64-encoded audio
-                # 10MB should handle most audio files even with base64 overhead
-                self.process = await asyncio.create_subprocess_exec(
-                    sys.executable,
-                    str(wrapper_path),
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,  # Use pipe for communication
-                    stderr=asyncio.subprocess.DEVNULL,  # Still suppress stderr
-                    limit=10 * 1024 * 1024,  # 10MB limit for StreamReader
-                    env={
-                        **os.environ,
-                        "PYTHONUNBUFFERED": "1",  # Ensure unbuffered output
-                    },
+                # Retain process acquisition so cancellation cannot lose a late child.
+                await join_retained_task(
+                    asyncio.create_task(self._spawn_isolated_process(wrapper_path))
                 )
+                if self._closing:
+                    return
 
                 # Send initialization command
                 await self._send_command(
                     {"command": "initialize", "device": self.device}
                 )
 
-                # Start a background task to wait for initialization
-                asyncio.create_task(self._wait_for_initialization())
+                await self._wait_for_initialization()
 
             except Exception as e:
                 logger.error(f"Failed to initialize Chatterbox process: {e}")
-                logger.info("Falling back to in-process initialization")
-                # Fall back to the old method in background
-                asyncio.create_task(asyncio.to_thread(self._initialize_sync))
+                await self._discard_process()
+                if not self._closing:
+                    logger.info("Falling back to in-process initialization")
+                    await join_retained_task(
+                        asyncio.create_task(asyncio.to_thread(self._initialize_sync))
+                    )
+            finally:
+                self._initializing = False
+
+    async def _spawn_isolated_process(self, wrapper_path: Path) -> None:
+        """Publish the acquired child inside the retained acquisition task."""
+        self.process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(wrapper_path),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            limit=10 * 1024 * 1024,  # Allow base64-encoded audio responses.
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
 
     async def _send_command(self, command: Dict[str, Any]):
         """Send command to subprocess"""
@@ -297,6 +317,8 @@ class ChatterboxTTSBackend(TTSBackendBase):
                             f"Chatterbox init warning: {response.get('message')}"
                         )
                     elif response.get("type") == "success":
+                        if self._closing:
+                            return
                         logger.info("Chatterbox process initialized successfully")
                         self._initialized = True
                         self._initializing = False
@@ -323,9 +345,7 @@ class ChatterboxTTSBackend(TTSBackendBase):
             self._initialized = False
             self._initializing = False
             # Clean up the process
-            if self.process:
-                self.process.terminate()
-                self.process = None
+            await self._discard_process()
 
     async def _read_response(self, timeout: float = 10) -> Dict[str, Any]:
         """Read response from subprocess via stdout pipe"""
@@ -1008,9 +1028,11 @@ class ChatterboxTTSBackend(TTSBackendBase):
 
             # Now wait for initialization to complete
             start_time = asyncio.get_event_loop().time()
-            while (self._initializing or not self._initialized) and (
-                asyncio.get_event_loop().time() - start_time
-            ) < 60:
+            while (
+                not self._closing
+                and (self._initializing or not self._initialized)
+                and (asyncio.get_event_loop().time() - start_time) < 60
+            ):
                 await asyncio.sleep(0.1)
                 # Check if process died
                 if (
@@ -1550,7 +1572,18 @@ class ChatterboxTTSBackend(TTSBackendBase):
         raise ValueError("All generation strategies failed")
 
     async def close(self):
-        """Wait for owned inference before releasing its model and process."""
+        """Join owned initialization and inference before releasing resources."""
+        self._closing = True
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_owned_resources())
+        await join_retained_task(self._close_task)
+
+    async def _close_owned_resources(self) -> None:
+        """Cancel readiness, retaining native loading and child acquisition."""
+        if self._initialization_task is not None:
+            self._initialization_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await join_retained_task(self._initialization_task)
         async with self._generation_lock:
             await self._close_resources()
 
@@ -1566,22 +1599,14 @@ class ChatterboxTTSBackend(TTSBackendBase):
             except Exception:
                 pass
 
-            # Terminate if still running
-            if self.process.returncode is None:
-                self.process.terminate()
-                try:
-                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
-                except TimeoutError:
-                    self.process.kill()
-                    await self.process.wait()
-
-            self.process = None
-            self._initialized = False
+            await self._discard_process()
 
         # Clean up model if needed (only if not using process)
         if self.model is not None and self.model != "process":
             del self.model
-            self.model = None
+        self.model = None
+        self._initialized = False
+        self._initializing = False
 
         # Clean up transcription service
         if self.transcription_service is not None:

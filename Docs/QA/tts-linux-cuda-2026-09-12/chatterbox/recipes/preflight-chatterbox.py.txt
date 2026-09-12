@@ -1,0 +1,22 @@
+from pathlib import Path
+import asyncio,json,os,runpy,subprocess,time
+root=Path('/home/ml-user/tts-linux-cuda-20260912');run=root/'runs/chatterbox-load-preflight';run.mkdir(mode=0o700)
+runner=runpy.run_path(str(root/'validate_live_tts.py'))
+runner['setup_environment'](run)
+os.environ['HF_HUB_CACHE']=str(root/'cache/huggingface/hub');os.environ['HUGGINGFACE_HUB_CACHE']=os.environ['HF_HUB_CACHE'];os.environ['MPLCONFIGDIR']=str(run/'cache/matplotlib')
+import toml
+(run/'profile/config.toml').write_text(toml.dumps({'paths':{'data_dir':str(run/'data')},'first_run':{'setup_completed':True}}))
+from tldw_chatbook.TTS.backends.chatterbox import ChatterboxTTSBackend
+async def main():
+ backend=ChatterboxTTSBackend({'CHATTERBOX_DEVICE':'cuda','CHATTERBOX_VOICE_DIR':str(run/'voices'),'CHATTERBOX_VALIDATE_WHISPER':False})
+ report={'scope':'Registered child initialization and cleanup only; no synthesis or playback claim','started_at':time.monotonic()}
+ try:
+  await asyncio.wait_for(backend.initialize(),120)
+  assert backend._initialized and backend.process is not None
+  report.update(initialized=True,child_pid=backend.process.pid,nvidia_compute=subprocess.check_output(['nvidia-smi','--query-compute-apps=pid,process_name,used_memory','--format=csv,noheader'],text=True))
+ finally:
+  await asyncio.wait_for(backend.close(),30)
+  report['finished_at']=time.monotonic();report['process_detached']=backend.process is None
+  (run/'result.json').write_text(json.dumps(report,indent=2)+'\n')
+ print(report)
+asyncio.run(main())

@@ -1,0 +1,6 @@
+#!/bin/bash
+set -eu
+root=/home/ml-user/tts-linux-cuda-20260912
+export UV_CACHE_DIR="$root/cache/uv" UV_PYTHON_INSTALL_DIR="$root/python"
+/home/ml-user/.local/bin/uv build --wheel --python "$root/venv-chatterbox-py312/bin/python" --out-dir "$root/wheels-fixed" "$root/source"
+/home/ml-user/.local/bin/uv pip install --python "$root/venv-chatterbox-py312/bin/python" --reinstall --no-deps "$root"/wheels-fixed/*.whl

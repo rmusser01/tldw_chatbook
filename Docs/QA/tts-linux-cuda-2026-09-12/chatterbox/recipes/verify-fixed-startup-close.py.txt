@@ -1,0 +1,26 @@
+from pathlib import Path
+import asyncio,json,os,runpy,time
+root=Path('/home/ml-user/tts-linux-cuda-20260912');run=root/'runs/chatterbox-fixed-startup-close';run.mkdir(mode=0o700)
+runner=runpy.run_path(str(root/'validate_live_tts.py'));runner['setup_environment'](run)
+os.environ['HF_HUB_CACHE']=str(root/'cache/huggingface/hub')
+import toml
+(run/'profile/config.toml').write_text(toml.dumps({'paths':{'data_dir':str(run/'data')},'first_run':{'setup_completed':True}}))
+from tldw_chatbook.TTS.backends.chatterbox import ChatterboxTTSBackend
+async def main():
+ backend=ChatterboxTTSBackend({'CHATTERBOX_DEVICE':'cuda','CHATTERBOX_VOICE_DIR':str(run/'voices'),'CHATTERBOX_VALIDATE_WHISPER':False})
+ report={'scope':'Real installed backend queued initialization then close; intentionally no synthesis or playback','started_at':time.monotonic()}
+ await backend.initialize()
+ report['initialize_returned_at']=time.monotonic()
+ await backend.close()
+ report['close_returned_at']=time.monotonic()
+ for _ in range(3):await asyncio.sleep(0)
+ assert backend.process is None and backend.model is None
+ assert not backend._initializing and not backend._initialized
+ assert backend._initialization_task.done() and backend._close_task.done()
+ await backend.initialize()
+ await backend.close()
+ assert backend.process is None and not backend._initializing
+ report.update(status='startup_close_passed',pending_tasks=[t.get_name() for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()],finished_at=time.monotonic())
+ assert not report['pending_tasks']
+ (run/'result.json').write_text(json.dumps(report,indent=2)+'\n');print(report)
+asyncio.run(main())

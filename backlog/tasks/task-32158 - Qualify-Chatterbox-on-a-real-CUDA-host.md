@@ -1,9 +1,11 @@
 ---
 id: TASK-32158
 title: Qualify Chatterbox on a real CUDA host
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-09 05:51'
+updated_date: '2026-09-12 16:04'
 labels: []
 dependencies: []
 ---
@@ -16,7 +18,24 @@ Chatterbox CPU and MPS qualification leaves the CUDA-specific loading, inference
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A provisioned NVIDIA host initializes the registered Chatterbox runtime with exact model and CUDA device provenance.
+- [x] #1 A provisioned NVIDIA host initializes the registered Chatterbox runtime with exact model and CUDA device provenance.
 - [ ] #2 Real Lab and repeated Console clips play completely, including the supported synthetic-reference path, with independent content evidence.
-- [ ] #3 Cancellation during CUDA inference joins native work before cleanup, successor requests succeed, and bounded repeated runs record settled device memory and ownership.
+- [x] #3 Cancellation during CUDA inference joins native work before cleanup, successor requests succeed, and bounded repeated runs record settled device memory and ownership.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. ADR path: N/A; existing ADR-023 and speech ADR-039/040 apply. Reason: real qualification of existing CUDA execution, without changing provider ownership or supported model contracts.
+1. Use task-owned Python/CUDA environment and pin registered Chatterbox model plus synthetic reference provenance.
+2. Exercise real mounted Lab and trusted Console generation, complete physical Logi output and independent full-content ASR.
+3. Observe actual CUDA inference-overlap Stop, joined ownership/device work, successor and repeated settled memory.
+4. Preserve failure attempts and exact source/runtime/assets, verify cleanup, and close only evidenced acceptance criteria.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Qualified the registered Chatterbox subprocess on RTX 3090 with Python 3.12.8, Chatterbox 0.1.7 and Torch 2.6.0+cu124. Run 03 uses base 8ab21ecaf3 plus TASK-32494; all 2,352 source/wheel/installed Python files match and every t3/s3gen/ve parameter is float32 on cuda:0. Seven successful WAV clips cover default Lab, trusted Console warmup/successor/three repeats, and the supported synthetic-reference Lab picker. All seven streams routed to Logi sink 55. Stop overlapped real t3.inference; production terminated/reaped the child and NVIDIA PID disappearance was observed before settlement/successor, without claiming natural native return or earlier GPU-release timing. Repeated allocated/reserved memory was stable and final processes/GPU/audio owners cleared.
+Whisper medium passed all seven unchanged recordings. The original Whisper-small 6/7 report retains its “Sylph or Compass” discrepancy on repeat 03; no text or audio was rewritten. AC2 remains open for human listening confirmation. Failed setup/preflight and pre-fix run 02 remain preserved; later rebased source needs separate runtime evidence. QA and 56 verified copied records: Docs/QA/tts-linux-cuda-2026-09-12/chatterbox/README.md. User configuration/default sink were unchanged. ADR required: no; existing ADR-023 and speech ADR-039/040 apply. Task remains In Progress.
+<!-- SECTION:NOTES:END -->
