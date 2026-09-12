@@ -10,6 +10,82 @@ import pytest
 from Tests.Backup_Recovery.admission_diagnostics import _observe
 
 
+def test_cpu_sample_is_current_process_only_bounded_and_numeric(monkeypatch):
+    import psutil
+
+    from Tests.Backup_Recovery.admission_diagnostics import _own_cpu_sample
+
+    def current_process():
+        return SimpleNamespace(
+            cpu_times=lambda: SimpleNamespace(user=120.0, system=30.0),
+            threads=lambda: [
+                SimpleNamespace(
+                    id=index,
+                    user_time=float(index),
+                    system_time=0.5,
+                    private_value="must-not-appear",
+                )
+                for index in range(45)
+            ],
+        )
+
+    monkeypatch.setattr(psutil, "Process", current_process)
+    monkeypatch.setattr(threading, "enumerate", lambda: [SimpleNamespace(native_id=44)])
+    sample = _own_cpu_sample()
+    assert sample["thread_count"] == 45 and len(sample["threads"]) == 32
+    assert sample["threads"][0] == {
+        "id": 44,
+        "user_s": 44.0,
+        "system_s": 0.5,
+        "python_thread": True,
+    }
+    assert sample["user_s"] == 120.0 and sample["system_s"] == 30.0
+    assert sample["monotonic_ns"] > 0
+    assert "must-not-appear" not in json.dumps(sample)
+
+
+def test_group_only_observer_keeps_native_methods_unwrapped(tmp_path):
+    from Tests.Backup_Recovery.admission_diagnostics import observe_admission
+    from tldw_chatbook.Utils.windows_files import _Native
+
+    originals = {
+        name: _Native.__dict__[name]
+        for name in ("open_handle", "ntfs", "security", "sid_string")
+    }
+    path = tmp_path / "timing.log"
+    stop = observe_admission(path, native_calls=False)
+    try:
+        assert all(_Native.__dict__[name] is value for name, value in originals.items())
+    finally:
+        stop()
+    record = json.loads(path.read_text())
+    assert set(record["calls"]) == {"_groups", "_tokens"}
+    assert 1 <= len(record["cpu_samples"]) <= 12
+
+
+def test_cpu_sample_reports_unavailable_threads_without_fabricating_zero(monkeypatch):
+    import psutil
+
+    from Tests.Backup_Recovery.admission_diagnostics import _own_cpu_sample
+
+    def denied():
+        raise psutil.AccessDenied(msg="synthetic-private-message")
+
+    monkeypatch.setattr(
+        psutil,
+        "Process",
+        lambda: SimpleNamespace(
+            cpu_times=lambda: SimpleNamespace(user=1.0, system=2.0),
+            threads=denied,
+        ),
+    )
+    sample = _own_cpu_sample()
+    assert sample["thread_count"] is None and sample["threads"] == []
+    assert sample["thread_error"] == "AccessDenied"
+    assert sample["user_s"] == 1.0 and sample["system_s"] == 2.0
+    assert "synthetic-private-message" not in json.dumps(sample)
+
+
 def test_admission_timing_preserves_results_errors_and_method_identity(tmp_path):
     private_value = "synthetic-private-value"
     failure = ValueError(private_value)

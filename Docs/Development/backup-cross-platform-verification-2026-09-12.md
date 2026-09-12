@@ -4,6 +4,27 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Windows [34724659597](https://github.com/rmusser01/tldw_chatbook/actions/runs/34724659597)
+at `3b4a348889c808d821b9a183bc60ea9725ddc56d` passes native 294/294,
+all three F9 modes, installed two-profile and support 53. Replacement and rollback
+still fail with real `AdmissionTimeout` after final root validation. Product totals
+are 57 passed, two failed, no skips; all 116 artifact hashes and seven installed
+receipts verified. The blocking wait did not resolve the admission delay.
+The same production revision passes the complete actual macOS suite (F9 three:
+88.32 seconds; two-profile: 53.44 seconds; combined replacement/rollback: 191.70
+seconds) and Linux SSH suite (69 reader/admission checks: 16.01 seconds; F9 three:
+112.15 seconds; two-profile: 68.24 seconds; combined: 276.60 seconds). Linux public
+source SHA256: `9206be22c7aa1a410958c048746d637661277c3cc05cbb8a820aa01a804e3035`.
+
+The next test-only replacement diagnostic samples current-process/native-thread
+CPU every five seconds using the existing psutil dependency. Only numeric IDs,
+CPU times and Python-thread association are retained: top 32 threads and last 12
+samples. Unavailable thread data is explicit, never reported as zero. Group/token
+timing remains, with native-call wrappers disabled. Three regression failures
+preceded the passing ten-case diagnostic suite; Ruff/Bandit and embedded-child
+compilation pass. A fixed workflow choice runs the one shared failing replacement
+case. No production code, assertions or deadlines change in this diagnostic.
+
 Observer-free Windows [34723928412](https://github.com/rmusser01/tldw_chatbook/actions/runs/34723928412)
 at `4810bfddaedaf7e29f68ee9f5d707418f6bf3ec6` passes native 294/294 and
 product 55/57, with no skips. The same five groups pass, but replacement/rollback

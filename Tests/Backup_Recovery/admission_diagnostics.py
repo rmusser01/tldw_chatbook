@@ -13,7 +13,9 @@ from pathlib import Path
 from Tests.Backup_Recovery.thread_diagnostics import _write
 
 
-def observe_admission(path: Path, *, interval: float = 5) -> Callable[[], None]:
+def observe_admission(
+    path: Path, *, interval: float = 5, native_calls: bool = True
+) -> Callable[[], None]:
     """Aggregate real call durations and root counts without changing outcomes."""
     from tldw_chatbook.Backup_Recovery.admission import Admission
     from tldw_chatbook.Utils.windows_files import _Native
@@ -21,12 +23,50 @@ def observe_admission(path: Path, *, interval: float = 5) -> Callable[[], None]:
     return _observe(
         Path(path),
         [(Admission, name) for name in ("_groups", "_tokens")]
-        + [
-            (_Native, name)
-            for name in ("open_handle", "ntfs", "security", "sid_string")
-        ],
+        + (
+            [
+                (_Native, name)
+                for name in ("open_handle", "ntfs", "security", "sid_string")
+            ]
+            if native_calls
+            else []
+        ),
         interval=interval,
     )
+
+
+def _own_cpu_sample() -> dict:
+    """Sample only this process, retaining bounded numeric native-thread data."""
+    import psutil
+
+    process = psutil.Process()
+    times = process.cpu_times()
+    thread_error = None
+    try:
+        threads = process.threads()
+    except psutil.AccessDenied:
+        threads = []
+        thread_error = "AccessDenied"
+    python_threads = {thread.native_id for thread in threading.enumerate()}
+    busiest = sorted(
+        threads, key=lambda thread: thread.user_time + thread.system_time, reverse=True
+    )[:32]
+    return {
+        "monotonic_ns": time.monotonic_ns(),
+        "user_s": times.user,
+        "system_s": times.system,
+        "thread_count": len(threads) if thread_error is None else None,
+        "thread_error": thread_error,
+        "threads": [
+            {
+                "id": thread.id,
+                "user_s": thread.user_time,
+                "system_s": thread.system_time,
+                "python_thread": thread.id in python_threads,
+            }
+            for thread in busiest
+        ],
+    }
 
 
 def _observe(
@@ -37,6 +77,7 @@ def _observe(
     lock, stopping = threading.Lock(), threading.Event()
     local = threading.local()
     metrics, groups, originals, failures = {}, [], [], []
+    cpu_samples = []
 
     def instrument(owner, name):
         original = owner.__dict__[name]
@@ -79,6 +120,7 @@ def _observe(
                     detail = {"metadata_unavailable": 1}
                 frame = sys._getframe(1)
                 detail.update(
+                    thread_id=threading.get_native_id(),
                     caller={
                         "file": Path(frame.f_code.co_filename).name[:128],
                         "function": frame.f_code.co_name[:128],
@@ -151,9 +193,16 @@ def _observe(
         setattr(owner, name, measured)
 
     def write():
+        cpu_samples.append(_own_cpu_sample())
+        del cpu_samples[:-12]
         with lock:
             snapshot = copy.deepcopy(
-                {"inclusive_wall_times": 1, "calls": metrics, "groups": groups}
+                {
+                    "inclusive_wall_times": 1,
+                    "calls": metrics,
+                    "groups": groups,
+                    "cpu_samples": cpu_samples,
+                }
             )
         for group in snapshot["groups"]:
             if not group["completed"]:
