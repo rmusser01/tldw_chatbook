@@ -1418,6 +1418,11 @@ class MCPInspector(Vertical):
         are the least band-friendly content at ~100 cols -- WITHOUT
         touching the persisted `advanced_visible` preference (widget
         state only; leaving compact never re-expands it for you).
+
+        Args:
+            compact: True when the workbench entered compact layout
+                (<120 cols); False is accepted for call-shape symmetry and
+                does nothing.
         """
         if not compact:
             return
@@ -1426,6 +1431,12 @@ class MCPInspector(Vertical):
         except NoMatches:
             return
         if not collapsible.collapsed:
+            # Qodo #2621 #1: `collapsed` is reactive -- a bare assignment
+            # posts a Toggled the handler treats as a REAL user toggle
+            # (preference write + armed-run disarm). Sync the handler's
+            # last-seen tracker FIRST so its no-change guard drops this
+            # programmatic echo exactly like a mount echo.
+            self._advanced_last_collapsed = True
             collapsible.collapsed = True
 
     def _advanced_object_label(self) -> str:

@@ -356,6 +356,19 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         scope_ref_value: str | None,
         agent_snapshot: ReadinessSnapshot | None = None,
     ) -> None:
+        """Re-sync every rail input and row from the workbench's state.
+
+        Args:
+            source: "local" or "server" -- drives the scope selects.
+            snapshots: The SERVER rows (the Agent tools row never rides
+                in here; it has its own parameter).
+            selected_server_key: The selected row's key, or None for the
+                "All servers" row.
+            scope_options/scope_value/scope_ref_options/scope_ref_value:
+                The Server-source scope selects' options and values.
+            agent_snapshot: The Agent tools row's snapshot (ADR-148), or
+                None to omit the section entirely (server source).
+        """
         self.source = source
         self.snapshots = snapshots
         self.selected_server_key = selected_server_key
@@ -677,7 +690,11 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         """F2: move the selection one row (clamped), posting the same
         `ServerSelected` a row click posts, then focus the new row's
         button after the resync-triggered recompose so the next press
-        lands without the user re-focusing."""
+        lands without the user re-focusing.
+
+        Args:
+            delta: -1 for up/`k`, +1 for down/`j`; clamped at both ends.
+        """
         keys = self._row_keys
         if not keys:
             return

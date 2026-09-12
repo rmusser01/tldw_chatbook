@@ -1139,9 +1139,15 @@ class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
 
     def flash_hint(self, text: str) -> None:
         """ADR-150 Wave F: one transient hint line under the legend (the
-        spec's 'existing hint Static' -- not a toast). Lives until the
-        next `update_matrix` rebuilds `_legend_extras`, the same
-        next-ordinary-render-clears contract the mutation echo uses."""
+        spec's 'existing hint Static' -- not a toast).
+
+        Args:
+            text: The hint sentence. Appended to the current legend extras
+                and rendered immediately; lives until the next
+                `update_matrix` rebuilds `_legend_extras` -- the same
+                next-ordinary-render-clears contract the mutation echo
+                uses.
+        """
         self._legend_extras = [line for line in self._legend_extras if line] + [text]
         self._render_legend()
 

@@ -664,6 +664,14 @@ def agent_tools_readiness(*, enabled: bool) -> ReadinessSnapshot:
     Not a server: nothing connects to it and no client launches it -- the
     state is purely whether the `[console] local_tools_enabled` master
     switch registers the workspace/web/Watchlists/built-in agent tools.
+
+    Args:
+        enabled: Whether the local-tools master switch currently registers
+            the agent catalog.
+
+    Returns:
+        A `ReadinessSnapshot` keyed `AGENT_TOOLS_SERVER_KEY` ("agent:builtin")
+        -- READY when enabled, OFF_OPT_IN otherwise.
     """
     if enabled:
         state = ReadinessState.READY

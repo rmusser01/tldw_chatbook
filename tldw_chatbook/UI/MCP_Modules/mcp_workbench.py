@@ -1380,6 +1380,10 @@ class MCPWorkbench(Container):
                         if isinstance(r, Mapping) and r.get("profile_id")
                     }
         else:
+            # ADR-148 Wave D: the Agent tools row is a local-source concept
+            # (Qodo #2621 #3: without this clear, switching to the Server
+            # source keeps rendering/resolving the Agent tools row).
+            self._agent_snapshot = None
             target_store = getattr(service, "target_store", None)
             if target_store is not None:
                 snapshots.extend(
@@ -3379,154 +3383,6 @@ class MCPWorkbench(Container):
         async with self._sync_children_lock:
             await self._sync_permissions_mode(echo=echo)
 
-    def on_mcp_permissions_mode_bulk_state_requested(
-        self, event: MCPPermissionsMode.BulkStateRequested
-    ) -> None:
-        """ADR-150 Wave F: dispatch one bulk-set (shift+space) in the
-        background -- the canvas computed the visible scope and the next
-        state; this executes it as N ordinary single writes."""
-        event.stop()
-        self.run_worker(
-            self._apply_bulk_tool_states(
-                event.server_key,
-                list(event.tool_names),
-                event.new_state,
-                event.profile_context,
-            ),
-            group="mcp-perm-bulk",
-            exclusive=True,
-        )
-
-    def on_mcp_permissions_mode_bulk_clear_requested(
-        self, event: MCPPermissionsMode.BulkClearRequested
-    ) -> None:
-        """ADR-150 Wave F: dispatch one bulk-clear (C) -- same worker path
-        with a None state; the canvas sent only rows that hold an
-        override."""
-        event.stop()
-        self.run_worker(
-            self._apply_bulk_tool_states(
-                event.server_key,
-                list(event.tool_names),
-                None,
-                event.profile_context,
-            ),
-            group="mcp-perm-bulk",
-            exclusive=True,
-        )
-
-    async def _apply_bulk_tool_states(
-        self,
-        server_key: str,
-        tool_names: list[str],
-        new_state: str | None,
-        context: PermissionProfileContext | None,
-    ) -> None:
-        """ADR-150 Wave F: apply one state (None = clear) to a server's
-        tool rows as N ordinary, individually profile-scoped
-        `set_tool_state` calls -- no batch store API (ADR-150), per-row
-        audit logging unchanged. Raw-shell rows are skipped (their
-        two-state projection makes a generic write a lie) and the skip is
-        named in the echo. First failure stops the batch with the
-        service's own reason; each write is independent and idempotent,
-        so a partial batch stands."""
-        context = self._validate_profile_context(context)
-        if context is None:
-            return
-        service = self._service()
-        if service is None or not tool_names:
-            return
-        label = ""
-        written = 0
-        skipped_raw_shell = 0
-        try:
-            for tool_name in tool_names:
-                if _is_raw_shell_tool(server_key, tool_name):
-                    skipped_raw_shell += 1
-                    continue
-                tool = self._tool_for(server_key, tool_name)
-                if (
-                    new_state == "allow"
-                    and tool is None
-                    and server_key not in HASH_FREE_SERVER_KEYS
-                ):
-                    # Same vanished-tool guard a single press hits -- count
-                    # it as skipped rather than aborting the batch.
-                    skipped_raw_shell += 1
-                    continue
-                if not label:
-                    label = next(
-                        (
-                            tool.server_label
-                            for tool in self._last_hub_tools
-                            if tool.server_key == server_key
-                        ),
-                        server_key,
-                    )
-                # Per-write context: each write changes the profile digest,
-                # so the NEXT write must carry a freshly captured one (the
-                # single-press path never hits this -- it writes once and
-                # re-captures only for the re-render). Re-deriving from the
-                # inventory reads the store once per row -- bounded by the
-                # visible row count. Selection moved mid-batch -> the same
-                # stale toast a single press gives, partial writes stand.
-                _, _, write_context = self._tool_policy_inventory()
-                if (
-                    write_context is None
-                    or write_context.profile_id != context.profile_id
-                    or write_context.selector_generation
-                    != context.selector_generation
-                ):
-                    self.app.notify(
-                        _toast(
-                            "Tool policy profile changed. Refresh and try again."
-                        ),
-                        severity="warning",
-                    )
-                    return
-                self._call_profile_scoped(
-                    service.set_tool_state,
-                    server_key,
-                    tool_name,
-                    new_state,
-                    context=write_context,
-                    tool=tool,
-                )
-                written += 1
-        except Exception as exc:
-            logger.warning(
-                "{}",
-                _safe_diagnostic_message("MCP bulk permission update failed", exc),
-            )
-            if _is_stale_profile_error(exc):
-                self.app.notify(
-                    _toast("Tool policy profile changed. Refresh and try again."),
-                    severity="warning",
-                )
-            else:
-                reason = (
-                    str(exc).strip().splitlines()[0][:140]
-                    if str(exc).strip()
-                    else type(exc).__name__
-                )
-                self.app.notify(
-                    _toast(f"Permission update failed: {reason}"),
-                    severity="error",
-                )
-            return
-        echo_parts = []
-        if new_state is None:
-            echo_parts.append(f"{label}: {written} visible overrides cleared")
-        else:
-            echo_parts.append(
-                f"{label}: {written} tools → {_cycled_ui_label(new_state)}"
-            )
-        if skipped_raw_shell:
-            echo_parts.append(f"{skipped_raw_shell} skipped (raw shell)")
-        echo = " · ".join(echo_parts) + " · "
-        async with self._sync_children_lock:
-            await self._sync_permissions_mode(echo=echo)
-
     async def _show_selected_detail(
         self, canvas: MCPServersMode, selected: ReadinessSnapshot | None
     ) -> None:
@@ -3583,6 +3439,222 @@ class MCPWorkbench(Container):
         )
 
     # -- modes & view state ---------------------------------------------------
+
+    def on_mcp_permissions_mode_bulk_state_requested(
+        self, event: MCPPermissionsMode.BulkStateRequested
+    ) -> None:
+        """ADR-150 Wave F: dispatch one bulk-set (shift+space) in the
+        background -- the canvas computed the visible scope and the next
+        state; this executes it as N ordinary single writes.
+
+        Args:
+            event: The canvas message carrying the server key, its
+                visible tool names, the resolved next state, and the
+                profile authority captured at gesture time.
+        """
+        event.stop()
+        self.run_worker(
+            self._apply_bulk_tool_states(
+                event.server_key,
+                list(event.tool_names),
+                event.new_state,
+                event.profile_context,
+            ),
+            group="mcp-perm-bulk",
+            exclusive=True,
+        )
+
+    def on_mcp_permissions_mode_bulk_clear_requested(
+        self, event: MCPPermissionsMode.BulkClearRequested
+    ) -> None:
+        """ADR-150 Wave F: dispatch one bulk-clear (C) -- same worker path
+        with a None state; the canvas sent only rows that hold an
+        override.
+
+        Args:
+            event: The canvas message carrying the server key, its
+                overridden visible tool names, and the profile authority
+                captured at gesture time.
+        """
+        event.stop()
+        self.run_worker(
+            self._apply_bulk_tool_states(
+                event.server_key,
+                list(event.tool_names),
+                None,
+                event.profile_context,
+            ),
+            group="mcp-perm-bulk",
+            exclusive=True,
+        )
+
+    async def _apply_bulk_tool_states(
+        self,
+        server_key: str,
+        tool_names: list[str],
+        new_state: str | None,
+        context: PermissionProfileContext | None,
+    ) -> None:
+        """ADR-150 Wave F: apply one state (None = clear) to a server's
+        tool rows as N ordinary, individually profile-scoped
+        `set_tool_state` calls -- no batch store API (ADR-150), per-row
+        audit logging unchanged.
+
+        Args:
+            server_key: The owning server whose visible rows were sent.
+            tool_names: The canvas-computed visible tool names for it.
+            new_state: The state to write, or None to clear the override.
+            context: The profile authority captured at gesture time;
+                validated once, then re-derived per write (each write
+                changes the profile digest).
+
+        Raw-shell rows are skipped (their two-state projection makes a
+        generic write a lie) and named in the echo; rows whose Allow
+        target has dropped out of the catalog are skipped separately.
+        On a mid-batch failure the already-written rows are still made
+        visible (Qodo #2621 #2): the resync runs, THEN the reason toast;
+        a selection change mid-batch stops with the stale toast the same
+        way. The single-press path's inspector-refresh contract (Minor 3)
+        applies here too (Qodo #2621 #9).
+        """
+        context = self._validate_profile_context(context)
+        if context is None:
+            return
+        service = self._service()
+        if service is None or not tool_names:
+            return
+        # Qodo #2621 #11: resolve the label up front -- the echo must name
+        # the server even when every row is skipped.
+        label = next(
+            (
+                tool.server_label
+                for tool in self._last_hub_tools
+                if tool.server_key == server_key
+            ),
+            server_key,
+        )
+        written = 0
+        skipped_raw_shell = 0
+        skipped_unavailable = 0
+        selection_moved = False
+        failure: Exception | None = None
+        try:
+            for tool_name in tool_names:
+                if _is_raw_shell_tool(server_key, tool_name):
+                    skipped_raw_shell += 1
+                    continue
+                tool = self._tool_for(server_key, tool_name)
+                if (
+                    new_state == "allow"
+                    and tool is None
+                    and server_key not in HASH_FREE_SERVER_KEYS
+                ):
+                    # Qodo #2621 #10: a vanished Allow target is NOT a raw
+                    # shell row -- count it separately so the echo never
+                    # calls an ordinary tool "raw shell".
+                    skipped_unavailable += 1
+                    continue
+                # Per-write context: each write changes the profile digest,
+                # so the NEXT write must carry a freshly captured one (the
+                # single-press path never hits this -- it writes once and
+                # re-captures only for the re-render). Selection moved
+                # mid-batch -> the same stale toast a single press gives;
+                # partial writes stand and are rendered below.
+                _, _, write_context = self._tool_policy_inventory()
+                if (
+                    write_context is None
+                    or write_context.profile_id != context.profile_id
+                    or write_context.selector_generation
+                    != context.selector_generation
+                ):
+                    selection_moved = True
+                    break
+                self._call_profile_scoped(
+                    service.set_tool_state,
+                    server_key,
+                    tool_name,
+                    new_state,
+                    context=write_context,
+                    tool=tool,
+                )
+                written += 1
+        except Exception as exc:
+            failure = exc
+
+        if written:
+            # Qodo #2621 #2: partial batches are real state -- render them
+            # before any toast, on every exit path below.
+            async with self._sync_children_lock:
+                await self._sync_permissions_mode(echo=None)
+            # Qodo #2621 #9: an open inspector permission block for an
+            # affected tool refreshes too (the single-press path's own
+            # Minor 3 contract).
+            inspector = self.query_one(MCPInspector)
+            current = inspector.current_permission_tool
+            if current is not None and current.server_key == server_key:
+                refreshed = self._tool_for(server_key, current.name)
+                successor = self._successor_profile_context(context)
+                if refreshed is not None and successor is not None:
+                    await inspector.show_permission(
+                        refreshed,
+                        self._effective_for_display(refreshed),
+                        cascade=self._cascade_for_tool(refreshed),
+                        profile_context=successor,
+                    )
+        if selection_moved:
+            self.app.notify(
+                _toast("Tool policy profile changed. Refresh and try again."),
+                severity="warning",
+            )
+            return
+        if failure is not None:
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP bulk permission update failed", failure
+                ),
+            )
+            if _is_stale_profile_error(failure):
+                self.app.notify(
+                    _toast("Tool policy profile changed. Refresh and try again."),
+                    severity="warning",
+                )
+            else:
+                reason = (
+                    str(failure).strip().splitlines()[0][:140]
+                    if str(failure).strip()
+                    else type(failure).__name__
+                )
+                self.app.notify(
+                    _toast(f"Permission update failed: {reason}"),
+                    severity="error",
+                )
+            return
+        if not written and (skipped_raw_shell or skipped_unavailable):
+            # Nothing landed and nothing can -- say so without a fake echo.
+            self.app.notify(
+                _toast(
+                    f"{label}: nothing to update · "
+                    f"{skipped_raw_shell} raw shell · "
+                    f"{skipped_unavailable} unavailable"
+                ),
+                severity="information",
+            )
+            return
+        echo_parts = []
+        if new_state is None:
+            echo_parts.append(f"{label}: {written} visible overrides cleared")
+        else:
+            echo_parts.append(
+                f"{label}: {written} tools → {_cycled_ui_label(new_state)}"
+            )
+        if skipped_raw_shell:
+            echo_parts.append(f"{skipped_raw_shell} skipped (raw shell)")
+        if skipped_unavailable:
+            echo_parts.append(f"{skipped_unavailable} unavailable")
+        echo = " · ".join(echo_parts) + " · "
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode(echo=echo)
 
     def set_mode(self, mode: str) -> None:
         if mode not in MCP_HUB_MODES:
