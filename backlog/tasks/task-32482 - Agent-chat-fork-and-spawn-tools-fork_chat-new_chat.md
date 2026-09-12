@@ -20,15 +20,52 @@ Let a Console agent prepare parallel-workstream chats for the user: fork_chat co
 - [x] #2 Agent can create a fresh chat with title and instructions via a confirmed tool call
 - [x] #3 Every creation requires explicit user approval by default with per-tool session-scoped remember and fail-closed behavior when no UI or on cancel or timeout
 - [x] #4 Opening prompt lands as a composer draft the user sends and survives app restart via conversation metadata
-- [ ] #5 New chats appear in the same workspace without switching the active session and a toast announces them
+- [x] #5 New chats appear in the same workspace without switching the active session and a toast announces them
 - [x] #6 Forks of character-bound chats refuse agent instructions and ephemeral or empty sources return clear tool errors
 - [x] #7 Tool schemas are advertised to primary agents only while sub-agent runs are unchanged
-- [ ] #8 Workspace listing shows created chats under whichever mechanism governs it
+- [x] #8 Workspace listing shows created chats under whichever mechanism governs it
 - [x] #9 Tests cover fork helper semantics (remap, lineage, atomicity, uncapped copy) and confirm rounds (allow, deny, remember, fail-closed, park)
 - [x] #10 User docs updated for both tools
 <!-- AC:END -->
 
 ## Implementation Notes
+
+### Live verification — PASSED (2026-09-12, post-dev-rebase)
+
+Full walkthrough on the rebased branch, real terminal (tmux), real local
+llama.cpp endpoint (Gemma-4-26B), isolated scratch profile:
+
+- Agent called fork_chat itself (schema advertised, in-loop dispatch).
+- Confirm card rendered with full enrichment: proposed title, "Copies 2
+  messages from '<source title>'", requesting run id, full opening-prompt body.
+- Allow executed the creation in the BACKGROUND: source session stayed
+  active; "UAT fork" appeared as a tab and in the conversations/workspace
+  listing; the model received the success JSON and reported the fork.
+- Verbatim copy landed (lineage columns set, console_agent_handoff draft
+  persisted); the draft appeared in the fork's composer, cursor in place.
+- Divergence: sending in the fork left the source's message count unchanged.
+- Restart: the fork chat and its copied message persisted.
+
+Live defects found and fixed during the UAT (each with regression tests):
+1. Plan flags rode a preview call instead of the real run_reply request plan.
+2. LoopDeps chat-create population was lost in the rebase (dispatch fell to
+   the allow-list: "Tool not permitted").
+3. The copy failed on the in-flight EMPTY assistant placeholder row the
+   submit path echoes before the first token (add_message refuses
+   contentless re-inserts mid-turn) -- copy now skips contentless scaffold
+   rows and the fork leaf falls back to the last copied message.
+4. A resolved card lingered and re-appeared on session switch: the unified
+   decision projection's early returns bypassed our standalone card
+   registry (teardown now pushes the head/None directly; session
+   reprojection runs our remount before delegating).
+
+Environment notes for future runs: the first send on a fresh scratch profile
+intercepts on the project-instruction folder modal (disable with `d`), and
+`LLAMA_CPP_API_KEY` must be set even for a keyless local endpoint. Sends can
+stall in this headless-ish environment's personal-context bootstrap (dev's
+own CONSOLE_PRE_PROVIDER_SETUP_BUDGET comment documents the traced Keychain
+case); retrying the turn proceeds.
+
 ### Rebase onto dev (2026-09-12)
 
 Rebased onto origin/dev after the provider-routing PR (#2635) and six later PRs
