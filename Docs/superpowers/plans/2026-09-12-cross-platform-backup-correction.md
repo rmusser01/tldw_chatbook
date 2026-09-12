@@ -15,18 +15,18 @@ Record real Linux product failure and native Windows runner failure. Map calls t
 private paths, locking, identity, flush and exclusive publication.
 
 ## Stage 2 — Platform operations
-Status: In Progress. Linux operations verified; Windows native fixes reviewed and integration active.
+Status: In Progress. Linux and macOS operations verified; Windows adapter reviewed, runner ownership refusal under diagnosis.
 Windows implementer owns new platform adapter modules and Windows primitive tests.
 Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: In Progress. Linux full flows pass at5b7e60d96; macOS F9 regression passes; Windows baseline reproduced and fixes awaiting native run.
+Status: In Progress. Linux and macOS full product flows pass at7d1019190; Windows34707982570 stopped in fixture startup. Next run separates native operations and records anonymous ancestor permission evidence.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.
 
 ## Stage 4 — Review and PR evidence
-Status: Not Started.
+Status: In Progress. Native adapter, integration and SQLite snapshot reviews addressed; PR updated with actual incomplete Windows status.
 Independent review of changed boundaries and evidence; targeted static/Bandit
 checks; update existing PR2642 with exact results and platform support.

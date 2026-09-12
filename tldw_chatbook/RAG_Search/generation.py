@@ -1,5 +1,6 @@
 """Local generation readiness; queries never load models or construct source owners."""
 
+import stat
 import threading
 import weakref
 from contextlib import ExitStack, contextmanager
@@ -16,6 +17,7 @@ from tldw_chatbook.Backup_Recovery.activation import (
 from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
 from tldw_chatbook.Backup_Recovery.rag_projection_lifetime import participant
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Utils.platform_files import fcntl, os
 
 from . import recovery
 
@@ -77,8 +79,6 @@ def _persist_dependencies(store, lease, paths):
         # Ordinary unqualified platforms retain only live dependency observations.
         # This branch never grants native recovery/readiness qualification.
         return paths
-    import fcntl
-
     from tldw_chatbook.Backup_Recovery.native_files import create_private_directory
 
     directory = root / "projection-dependencies"
@@ -87,15 +87,39 @@ def _persist_dependencies(store, lease, paths):
             create_private_directory(directory)
         except FileExistsError:
             pass
-        with _private(directory) as parent:
-            # The stable private directory serializes only this small publication.
+        with _private(directory) as parent, ExitStack() as locks:
+            lock = parent
+            if os.name == "nt":
+                # Windows byte locks require a regular file. Never unlink this
+                # stable name: independent publishers must lock the same object.
+                lock = os.open(
+                    ".publication.lock",
+                    os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    0o600,
+                    dir_fd=parent,
+                )
+                locks.callback(os.close, lock)
+                info = os.fstat(lock)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077
+                    or info.st_nlink != 1
+                ):
+                    raise ValueError("projection_dependency_lock_unsafe")
             # Contention refuses before indexing; no admission acquisition occurs here.
-            fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if os.name == "nt":
+                named = os.stat(
+                    ".publication.lock", dir_fd=parent, follow_symlinks=False
+                )
+                if (named.st_dev, named.st_ino) != (info.st_dev, info.st_ino):
+                    raise ValueError("projection_dependency_lock_changed")
             return _publish_dependencies(store, lease, paths, directory, parent)
 
 
 def _publish_dependencies(store, lease, paths, directory, parent):
-    """Publish a bounded union while the caller holds the native directory lock."""
+    """Publish a bounded union while the caller holds the native publication lock."""
     import json
 
     from tldw_chatbook.Backup_Recovery.control_records import (
