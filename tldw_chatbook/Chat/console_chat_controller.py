@@ -2965,7 +2965,7 @@ def build_raw_shell_review_hook(
 
 
 def build_combined_review_hook(
-    hooks: list[Callable[[list["ToolCall"]], dict[str, str]]],
+    hooks: list[Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]],
 ) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Fan one batch through every provider's hook; merge verdict maps.
 
@@ -26202,20 +26202,27 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, failed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
+        denial_terminal = getattr(outcome, "denial_count", 0) > 0
         if runtime_written is not None and runtime_written.status in {
             "pending",
             "streaming",
         }:
-            appended_copy = self._without_duplicated_summary(
-                visible_copy, wrapup_summary, runtime_written.content
-            )
-            self.store.append_stream_chunk(
-                runtime_written.id, f"\n\n{appended_copy}"
-            )
+            if not denial_terminal:
+                appended_copy = self._without_duplicated_summary(
+                    visible_copy, wrapup_summary, runtime_written.content
+                )
+                self.store.append_stream_chunk(
+                    runtime_written.id, f"\n\n{appended_copy}"
+                )
             failed = self.store.mark_message_failed(runtime_written.id)
         else:
-            failed = self._append_failed_assistant(session_id, visible_copy)
+            failed = self._append_failed_assistant(
+                session_id,
+                "Agent response failed." if denial_terminal else visible_copy,
+            )
         self._record_run_assistant_message(run_id, failed)
+        if denial_terminal:
+            self._append_failure_system_row(session_id, visible_copy)
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
             session_id=session_id,

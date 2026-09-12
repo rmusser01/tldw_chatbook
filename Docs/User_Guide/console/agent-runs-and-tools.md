@@ -2038,6 +2038,14 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   recent turns are trimmed tends to redo work it already did and end
   `stuck`, which is worse than overflowing the window. Turn it on for a
   model you trust to search its own run log. No Settings UI switch.
+- **`[agents] denial_circuit_breaker_limit`** defaults to `3`; explicit `0`
+  disables it. A run stops before its next model request when a completed
+  tool batch ends with that many consecutive user-denied or permission-Off
+  calls. Approved, successful, and other non-denial results reset the streak,
+  so an approved tail can keep a mixed batch running. The message reports the
+  observed count, which can exceed the limit in one batch. Each child and each
+  new or resumed run starts its own count. Review the denial reasons or
+  rephrase, then retry.
 - **`[agents] max_live_subagents`** in `config.toml` — how many sub-agents
   of one conversation may run at once, counting any still working from an
   earlier message (default 3; `1` disables the fleet). No

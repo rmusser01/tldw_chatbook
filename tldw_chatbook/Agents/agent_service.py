@@ -7219,8 +7219,8 @@ class AgentService:
             comment for the misfiling this fixed.
 
             Args:
-                record_type: ``"model"``, ``"tool_call"``, or
-                    ``"tool_result"`` (``_emit_record``'s own vocabulary;
+                record_type: ``"model"``, ``"tool_call"``, ``"tool_result"``,
+                    or ``"error"`` (``_emit_record``'s own vocabulary;
                     ``"spawn"`` is not currently emitted -- a spawn's
                     dispatch is captured as an ordinary ``tool_call``/
                     ``tool_result`` pair like any other tool).

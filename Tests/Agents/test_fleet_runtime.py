@@ -45,6 +45,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     RUN_RUNNING,
+    RUN_STUCK,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
     SPAWN_TOOL_NAME,
@@ -55,6 +56,7 @@ from tldw_chatbook.Agents.agent_models import (
     RunBudget,
     ToolCatalogEntry,
     ToolResult,
+    ToolReviewDecision,
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_service import AgentService
@@ -442,6 +444,72 @@ def test_two_children_run_concurrently_and_wait_collects_both(db):
     }
     children = [row for row in db.list_runs("c") if row["agent_kind"] == "subagent"]
     assert {row["spawn_event_id"] for row in children} == spawn_events
+
+
+def test_denial_breaker_sticks_one_child_while_sibling_and_supervisor_finish(db):
+    sibling_entered = threading.Event()
+    release_sibling = threading.Event()
+    holder = {}
+
+    def deny_calculator(calls, _run_id):
+        return {
+            call.call_id or call.name: ToolReviewDecision("denied", "denied")
+            for call in calls
+            if call.name == "calculator"
+        }
+
+    def release_after_isolation_is_visible():
+        assert sibling_entered.wait(_JOIN_TIMEOUT)
+        coordinator = holder["coordinator"]
+        _wait_until(
+            lambda: any(
+                handle.status == RUN_STUCK for handle in coordinator.snapshot()
+            ),
+            "denying child never became stuck",
+        )
+        statuses = {handle.task: handle.status for handle in coordinator.snapshot()}
+        assert statuses["denying child"] == RUN_STUCK
+        assert statuses["gated sibling"] == RUN_RUNNING
+        release_sibling.set()
+        return fence(WAIT_AGENTS_TOOL_NAME, {})
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "denying child"}),
+            fence(SPAWN_TOOL_NAME, {"task": "gated sibling"}),
+            release_after_isolation_is_visible,
+            "supervisor done",
+        ],
+        {
+            "denying child": [
+                fence("calculator", {"expression": "1+1"}),
+                fence("calculator", {"expression": "2+2"}),
+                fence("calculator", {"expression": "3+3"}),
+                "must not run",
+            ],
+            "gated sibling": [_gated_child(sibling_entered, release_sibling, "done")],
+        },
+        review_tool_calls=deny_calculator,
+        allow_unconsumed=True,
+    )
+    holder["coordinator"] = coordinator
+    try:
+        run_id, outcome = service.run_turn(
+            conversation_id="c-denial-isolation",
+            messages=[{"role": "user", "content": "delegate"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+    finally:
+        release_sibling.set()
+        join_fleet_children(service)
+
+    assert outcome.status == RUN_DONE and outcome.denial_count == 0
+    assert db.get_run(run_id)["status"] == RUN_DONE
+    statuses = {handle.task: handle.status for handle in coordinator.snapshot()}
+    assert statuses == {"denying child": RUN_STUCK, "gated sibling": RUN_DONE}
+    assert len(chat.child_calls["denying child"]) == 3
 
 
 def test_parent_and_fleet_child_share_todo_store_for_concurrent_creates(db, tmp_path):
