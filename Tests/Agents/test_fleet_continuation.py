@@ -37,6 +37,7 @@ The plan-mandated reds live here:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 
@@ -1203,6 +1204,7 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
             name="helper",
             description="a helper",
             instructions="Original instructions.",
+            max_wall_seconds=0.75,
         )
     )
     holder: dict = {}
@@ -1222,24 +1224,62 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
             resume,
             fence(WAIT_AGENTS_TOOL_NAME, {}),
             "turn two answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn three answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn four answer",
         ],
-        {"helper task": ["helper done", "resumed helper done"]},
+        {
+            "helper task": [
+                "helper done",
+                "resumed helper done",
+                "resumed again",
+                "resumed after removal",
+            ]
+        },
     )
+    controlled_clock = [10.0]
+    service.clock = lambda: controlled_clock[0]
     run1, outcome1 = _run(service)
     assert outcome1.status == RUN_DONE
     finished = _finished_child(coordinator)
     holder["handle_id"] = finished.handle_id
     _await_retained(coordinator, finished.handle_id)
+    # Move beyond the original run's admitted deadline. A continuation that
+    # reused that deadline would be stuck before its first model call; the
+    # successful resumed row below proves a fresh per-run allowance.
+    controlled_clock[0] = 100.0
 
     updated = AgentDefinition(
         name="helper",
         description="a helper",
         instructions="Updated instructions.",
+        max_wall_seconds=0.25,
     )
     db.update_agent_definition(definition_id, updated)
+    real_list_definitions = db.list_agent_definitions
+    resume_roster_reads = 0
+
+    def freeze_resume_roster_then_mutate(*args, **kwargs):
+        nonlocal resume_roster_reads
+        resume_roster_reads += 1
+        if resume_roster_reads > 1:
+            raise AssertionError("continuation re-read definitions after planning")
+        frozen = real_list_definitions(*args, **kwargs)
+        db.update_agent_definition(
+            definition_id,
+            dataclasses.replace(updated, max_wall_seconds=9.0),
+        )
+        return frozen
+
+    db.list_agent_definitions = freeze_resume_roster_then_mutate
 
     run2, outcome2 = _run(service)
     assert outcome2.status == RUN_DONE
+    assert resume_roster_reads == 1
+    db.list_agent_definitions = real_list_definitions
 
     resumed_system = chat.child_calls["helper task"][1]["messages_payload"][0][
         "content"
@@ -1247,23 +1287,57 @@ def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
     assert "Updated instructions." in resumed_system
     assert "Original instructions." not in resumed_system
 
+    second = next(
+        handle
+        for handle in coordinator.snapshot()
+        if handle.run_id is not None and handle.run_id != finished.run_id
+    )
+    holder["handle_id"] = second.handle_id
+    _await_retained(coordinator, second.handle_id)
+    db.update_agent_definition(
+        definition_id,
+        dataclasses.replace(updated, max_wall_seconds=9.0),
+    )
+    controlled_clock[0] = 200.0
+    _run3, outcome3 = _run(service)
+    assert outcome3.status == RUN_DONE
+
+    third = max(coordinator.snapshot(), key=lambda handle: handle.started_at)
+    holder["handle_id"] = third.handle_id
+    _await_retained(coordinator, third.handle_id)
+    db.update_agent_definition(
+        definition_id,
+        dataclasses.replace(updated, max_wall_seconds=None),
+    )
+    controlled_clock[0] = 300.0
+    _run4, outcome4 = _run(service)
+    assert outcome4.status == RUN_DONE
+
     rows = _subagent_rows(db)
-    assert len(rows) == 2
+    assert len(rows) == 4
     old_row = next(r for r in rows if r["resumed_from_run_id"] is None)
-    new_row = next(r for r in rows if r["resumed_from_run_id"] is not None)
+    new_row = next(r for r in rows if r["resumed_from_run_id"] == old_row["id"])
+    newest_row = next(r for r in rows if r["resumed_from_run_id"] == new_row["id"])
+    final_row = next(r for r in rows if r["resumed_from_run_id"] == newest_row["id"])
     assert new_row["agent_definition"] == "helper"
     assert new_row["definition_fingerprint"] == definition_fingerprint(updated)
     assert new_row["definition_fingerprint"] != old_row["definition_fingerprint"]
+    assert old_row["budget"]["max_wall_seconds"] == 0.75
+    assert new_row["budget"]["max_wall_seconds"] == 0.25
+    assert newest_row["budget"]["max_wall_seconds"] == 0.25
+    assert final_row["budget"]["max_wall_seconds"] == 0.25
+    assert all(row["status"] == RUN_DONE for row in rows)
 
 
-def test_a_deleted_definition_refuses_the_resume_and_suggests_a_fresh_spawn(db):
+@pytest.mark.parametrize("remove_mode", ["deleted", "disabled"])
+def test_an_unavailable_definition_refuses_resume_and_suggests_fresh_spawn(
+    db, remove_mode
+):
     """Ruling #1's other half: a deleted/disabled definition refuses
     clearly -- silent downgrade to a generic child would be the only
     WRONG option."""
     definition_id = db.create_agent_definition(
-        AgentDefinition(
-            name="helper", description="a helper", instructions="Help."
-        )
+        AgentDefinition(name="helper", description="a helper", instructions="Help.")
     )
     holder: dict = {}
 
@@ -1290,7 +1364,18 @@ def test_a_deleted_definition_refuses_the_resume_and_suggests_a_fresh_spawn(db):
     holder["handle_id"] = finished.handle_id
     _await_retained(coordinator, finished.handle_id)
 
-    db.soft_delete_agent_definition(definition_id)
+    if remove_mode == "deleted":
+        db.soft_delete_agent_definition(definition_id)
+    else:
+        db.update_agent_definition(
+            definition_id,
+            AgentDefinition(
+                name="helper",
+                description="a helper",
+                instructions="Help.",
+                enabled=False,
+            ),
+        )
 
     run2, outcome2 = _run(service)
     assert outcome2.status == RUN_DONE

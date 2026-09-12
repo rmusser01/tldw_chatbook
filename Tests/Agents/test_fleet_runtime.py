@@ -1661,6 +1661,41 @@ def test_a_threaded_childs_wall_clock_ceiling_respects_a_config_override(
     assert child["budget"]["max_wall_seconds"] == 77.0
 
 
+@pytest.mark.parametrize(
+    ("definition_cap", "expected"),
+    [(10.0, 10.0), (90.0, 77.0), (None, 77.0)],
+)
+def test_named_definition_cap_only_narrows_threaded_baseline(
+    db, monkeypatch, definition_cap, expected
+):
+    pin_agent_settings(monkeypatch, child_max_wall_seconds="77.0")
+    db.create_agent_definition(
+        AgentDefinition(
+            name="bounded",
+            description="Bounded.",
+            instructions="Work.",
+            max_wall_seconds=definition_cap,
+        )
+    )
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "child", "agent": "bounded"}), "done"],
+        {"child": ["child done"]},
+    )
+    try:
+        service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        join_fleet_children(service)
+        child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+        assert child["budget"]["max_wall_seconds"] == expected
+    finally:
+        join_fleet_children(service)
+
+
 def test_a_threaded_childs_other_budget_fields_still_inherit_the_parents(db):
     """`contain_child_budget`'s own "everything but wall clock and
     subagent count is unchanged" half, end to end through the real
@@ -1735,10 +1770,21 @@ def test_an_inline_childs_budget_still_clamps_to_the_parents_remainder(
             max_steps=10, max_model_turns=10, max_subagents=1, max_wall_seconds=100.0
         ),
     )
+    db.create_agent_definition(
+        AgentDefinition(
+            name="inline-helper",
+            description="Inline helper.",
+            instructions="Help inline.",
+            max_wall_seconds=200.0,
+        )
+    )
     service, _chat = make_inline_service(
         db,
         [
-            fence(SPAWN_TOOL_NAME, {"task": "child task"}),
+            fence(
+                SPAWN_TOOL_NAME,
+                {"task": "child task", "agent": "inline-helper"},
+            ),
             "sub answer",  # consumed by the child, INLINE and in order
             "handled",
         ],
@@ -3698,6 +3744,146 @@ def test_agent_definitions_are_loaded_once_per_turn(db):
     assert db.count_subagent_runs("c") == 2
     assert len(calls) == 1, f"roster re-read {len(calls)} times in one turn"
     assert calls[0][1] == {"enabled_only": True}
+
+
+def test_named_spawn_uses_frozen_subsecond_definition_cap_after_db_mutation(db):
+    definition_id = db.create_agent_definition(
+        AgentDefinition(
+            name="researcher",
+            description="Searches.",
+            instructions="Cite sources.",
+            max_wall_seconds=0.25,
+        )
+    )
+    real = db.list_agent_definitions
+    calls = 0
+
+    def freeze_then_mutate(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise AssertionError("definition roster was re-read after planning")
+        frozen = real(*args, **kwargs)
+        db.update_agent_definition(
+            definition_id,
+            AgentDefinition(
+                name="researcher",
+                description="Searches.",
+                instructions="Changed after planning.",
+                max_wall_seconds=9.0,
+            ),
+        )
+        return frozen
+
+    db.list_agent_definitions = freeze_then_mutate
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "bounded", "agent": "researcher"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"bounded": ["answer"]},
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    child = next(row for row in db.list_runs("c") if row["agent_kind"] == "subagent")
+    assert child["budget"]["max_wall_seconds"] == 0.25
+    assert calls == 1
+
+
+def test_subsecond_definition_cap_stops_real_child_at_next_loop_boundary(db):
+    db.create_agent_definition(
+        AgentDefinition(
+            name="bounded",
+            description="Bounded.",
+            instructions="Work briefly.",
+            max_wall_seconds=0.05,
+        )
+    )
+
+    def exceed_cap():
+        time.sleep(0.08)
+        return fence("calculator", {"expression": "6*7"})
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "bounded task", "agent": "bounded"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"bounded task": [exceed_cap, "must not be requested"]},
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        join_fleet_children(service)
+        child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
+        assert outcome.status == RUN_DONE
+        assert child["budget"]["max_wall_seconds"] == 0.05
+        assert child["status"] == RUN_STUCK
+        assert coordinator.snapshot()[0].status == RUN_STUCK
+    finally:
+        join_fleet_children(service)
+
+
+def test_capped_child_times_out_without_narrowing_uncapped_sibling(db):
+    db.create_agent_definition(
+        AgentDefinition(
+            name="bounded",
+            description="Bounded.",
+            instructions="Work briefly.",
+            max_wall_seconds=0.05,
+        )
+    )
+
+    def exceed_cap():
+        time.sleep(0.08)
+        return fence("calculator", {"expression": "6*7"})
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow", "agent": "bounded"}),
+            fence(SPAWN_TOOL_NAME, {"task": "sibling"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "done",
+        ],
+        {"slow": [exceed_cap, "unused"], "sibling": ["sibling done"]},
+    )
+    try:
+        service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        join_fleet_children(service)
+        rows = {
+            r["task"]: r for r in db.list_runs("c") if r["agent_kind"] == "subagent"
+        }
+        assert rows["slow"]["status"] == RUN_STUCK
+        assert rows["slow"]["budget"]["max_wall_seconds"] == 0.05
+        assert rows["sibling"]["status"] == RUN_DONE
+        assert (
+            rows["sibling"]["budget"]["max_wall_seconds"]
+            == agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS
+        )
+        assert {h.status for h in coordinator.snapshot()} == {RUN_DONE, RUN_STUCK}
+    finally:
+        join_fleet_children(service)
 
 
 @pytest.mark.parametrize(

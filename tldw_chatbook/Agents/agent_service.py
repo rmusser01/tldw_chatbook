@@ -5036,6 +5036,8 @@ class AgentService:
             agent_name: "str | None",
             child_kwargs: dict,
             isolation: "str | None" = None,
+            *,
+            definition_wall_seconds: float | None = None,
         ) -> "tuple[FleetHandle | None, ToolResult | None]":
             """spawn's reserve -> Event -> thread -> handle tail, shared.
 
@@ -5058,7 +5060,10 @@ class AgentService:
             try:
                 # -- FLEET path: register, launch, return a handle.
                 handle = fleet.reserve(
-                    task=spawn_task, agent=agent_name, isolation=isolation
+                    task=spawn_task,
+                    agent=agent_name,
+                    isolation=isolation,
+                    definition_wall_seconds=definition_wall_seconds,
                 )
                 if handle is None:
                     # At the live cap. Unlike a budget refusal this is
@@ -5544,6 +5549,13 @@ class AgentService:
                 child_budget = contain_child_budget(
                     config.budget, child_max_wall_seconds
                 )
+            if resolved is not None and resolved.max_wall_seconds is not None:
+                child_budget = dataclasses.replace(
+                    child_budget,
+                    max_wall_seconds=min(
+                        child_budget.max_wall_seconds, resolved.max_wall_seconds
+                    ),
+                )
             # Q6/Task-12: an explicit override (a skill's own narrowed
             # allow-list -- builtins + local tool names, intersect-only so
             # a skill narrows but never grants; see SkillRunner.run)
@@ -5806,6 +5818,11 @@ class AgentService:
                 (resolved.name if resolved else None),
                 child_kwargs,
                 isolation,
+                definition_wall_seconds=(
+                    child_budget.max_wall_seconds
+                    if resolved is not None and resolved.max_wall_seconds is not None
+                    else None
+                ),
             )
             if failure is not None:
                 return failure
@@ -6105,6 +6122,21 @@ class AgentService:
                 _setting(CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS)
             )
             child_budget = contain_child_budget(config.budget, child_max_wall_seconds)
+            definition_bounds = [
+                bound
+                for bound in (
+                    resolved.max_wall_seconds if resolved is not None else None,
+                    retained.definition_wall_seconds,
+                )
+                if bound is not None
+            ]
+            if definition_bounds:
+                child_budget = dataclasses.replace(
+                    child_budget,
+                    max_wall_seconds=min(
+                        child_budget.max_wall_seconds, *definition_bounds
+                    ),
+                )
             # Composition mirrors spawn's default path exactly (inherit
             # minus the spawn tool and any skill-tool names; a resolved
             # definition APPENDS instructions and INTERSECTS the
@@ -6216,6 +6248,9 @@ class AgentService:
                 # provider, admit failure) already covers every way that
                 # can fail.
                 retained.isolation,
+                definition_wall_seconds=(
+                    child_budget.max_wall_seconds if definition_bounds else None
+                ),
             )
             if failure is not None:
                 return failure
