@@ -15,7 +15,11 @@ supersedes its pending-integration and remaining-work labels.
   copy, real persistence, sibling isolation and resumed-run verification
   (`49b5569676`, `762941cec0`, `e85c7d16c3`, `a56f534fd4`, `86f2a79e76`).
   Their task notes contain scoped test results and evidence qualifications.
-- **In progress:** TASK-18923 live per-run usage. TASK-13154.5/.6/.7 Settings
+- **In progress:** TASK-18923 live per-run usage. The service/adapter/bridge
+  backend is implemented and independently reviewed (`16c10faca7`,
+  `2f39215549`, `ca9418b33a`), including exact child attribution, explicit
+  provider provenance and terminal bookkeeping containment. UI rendering remains
+  to implement; the task is not complete. TASK-13154.5/.6/.7 Settings
   resource ownership/tool-filter feedback, starter presets and definition wall
   caps follow; parent TASK-13154 reconciliation remains open.
 - **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
