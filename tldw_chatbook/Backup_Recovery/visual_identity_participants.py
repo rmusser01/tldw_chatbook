@@ -4,20 +4,22 @@ These private scopes are ordinary source admission, never capture authority. Fil
 selection is performed by the actual visual producers before any native mutation.
 """
 
-from contextlib import contextmanager
-from dataclasses import dataclass, field, fields, is_dataclass
-from functools import wraps
 import errno
 import json
-import os
-from pathlib import Path
 import stat
 import sys
 import threading
 import time
 import weakref
+from contextlib import contextmanager
+from dataclasses import dataclass, field, fields, is_dataclass
+from functools import wraps
+from pathlib import Path
 
-from . import bootstrap, profile_paths, storage_admission as storage
+from tldw_chatbook.Utils.platform_files import os
+
+from . import bootstrap, profile_paths
+from . import storage_admission as storage
 
 _local = threading.local()
 _sources = weakref.WeakKeyDictionary()
@@ -163,9 +165,10 @@ def db_guard(function):
 
     @wraps(function)
     def guarded(db, *args, **kwargs):
+        from contextlib import nullcontext
+
         from ..DB.ChaChaNotes_DB import CharactersRAGDB
         from .participants import _core_operation
-        from contextlib import nullcontext
 
         with request():
             source = db_source(db) if isinstance(db, CharactersRAGDB) else None
@@ -319,7 +322,7 @@ def candidate_source(value, db, profile):
 
 def _identity(path):
     try:
-        info = path.lstat()
+        info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         return None
     return info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)
@@ -960,10 +963,10 @@ def _dirty(source):
 
 @contextmanager
 def restoring_rows(candidate, assets):
-    from ..UI.Screens.personas_screen import PersonasScreen
     from ..Character_Chat.expression_generation import (
         canonical_visual_identity_reactions,
     )
+    from ..UI.Screens.personas_screen import PersonasScreen
 
     frame = sys._getframe(2)
     actual = PersonasScreen._restore_candidate_reaction_rows

@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import os
 
 # Inspect opcodes only; never unpickle candidate data.
 import pickletools  # nosec B403
@@ -19,6 +18,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.platform_files import os
 
 from .archive_reader import _check, _regular
 from .native_files import create_private_directory, create_private_file
@@ -95,7 +95,7 @@ def validate_groups(items, candidates, parent, cancel, limits, budget):
             if len(group) != 1:
                 raise ValueError("rag_projection_root_incomplete")
             continue
-        sizes = {i.logical_id: candidates[i.logical_id].stat().st_size for i in files}
+        sizes = {i.logical_id: os.stat(candidates[i.logical_id]).st_size for i in files}
         total = sum(sizes.values())
         if (
             total > min(budget, limits.expanded_bytes, _MAX_BYTES)
@@ -172,7 +172,7 @@ def _run_validator(root, cancel, *, byte_budget):
         size = 0
         for path in root.rglob("*"):
             try:
-                info = path.lstat()
+                info = os.stat(path, follow_symlinks=False)
             except FileNotFoundError:
                 continue  # Native journal removal is ordinary replay cleanup.
             if stat.S_ISREG(info.st_mode):
@@ -372,7 +372,7 @@ def _preflight(root):
                     raise ValueError("rag_projection_segment_files_missing")
                 metadata = child / "index_metadata.pickle"
                 if metadata.exists():
-                    if metadata.stat().st_size > 32 * 1024**2:
+                    if os.stat(metadata).st_size > 32 * 1024**2:
                         raise ValueError("rag_projection_metadata_limit")
                     allowed = {
                         "PROTO",

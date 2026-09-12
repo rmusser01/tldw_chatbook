@@ -6,6 +6,41 @@ from tldw_chatbook.Backup_Recovery.capture import compare_scope
 from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
 
 
+def test_manifest_accepts_payload_staged_with_windows_path_spelling(tmp_path):
+    from pathlib import Path, PureWindowsPath
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.capture import _manifest_for
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+
+    class WindowsSpelling(type(Path())):
+        def relative_to(self, *other, **kwargs):
+            return PureWindowsPath(super().relative_to(*other, **kwargs))
+
+    source = tmp_path / "source"
+    source.write_bytes(b"synthetic payload")
+    source.chmod(0o600)
+    (tmp_path / "payload").mkdir()
+    staged = WindowsSpelling(tmp_path / "payload" / "content")
+    staged.write_bytes(source.read_bytes())
+    item = StorageItem("config", "profile:test:config", source, "included", ())
+    result = _manifest_for(
+        Inventory((item,), True, "scope", ()),
+        [(item, staged)],
+        {},
+        {
+            "root": tmp_path,
+            "versions": {},
+            "cancel": Event(),
+            "limits": ArchiveLimits(),
+            "mode": "exclude",
+            "encrypted": False,
+        },
+        (),
+    )
+    assert json.loads(result)["files"][0]["payload"] == "payload/content"
+
+
 def test_capacity_sums_requirements_on_same_actual_volume(tmp_path, monkeypatch):
     import shutil
     from types import SimpleNamespace

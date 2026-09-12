@@ -6,7 +6,6 @@ before using it; owner-only permissions are not a filesystem immutability promis
 
 import hashlib
 import json
-import os
 import shutil
 import stat
 import struct
@@ -19,6 +18,8 @@ from pathlib import Path, PurePosixPath
 from threading import Event
 
 from pydantic import ValidationError
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .archive_models import ArchiveManifest, EncryptedSource, SealedArchive
 from .limits import ArchiveLimits
@@ -515,12 +516,12 @@ def acquire(
                             raise OSError("write_failed")
                         view = view[written:]
             if before != _identity(os.fstat(incoming.fileno())) or before != _identity(
-                source.stat(follow_symlinks=False)
+                os.stat(source, follow_symlinks=False)
             ):
                 raise ValueError("source_changed")
         path = copied
         encrypted_digest = _hash(copied, cancel) if encrypted else None
-        copied_identity = _identity(copied.stat(follow_symlinks=False))
+        copied_identity = _identity(os.stat(copied, follow_symlinks=False))
         if encrypted:
             from .crypto import transform
 
@@ -544,7 +545,7 @@ def acquire(
         provenance = None
         if encrypted:
             if (
-                copied_identity != _identity(copied.stat(follow_symlinks=False))
+                copied_identity != _identity(os.stat(copied, follow_symlinks=False))
                 or _hash(copied, cancel) != encrypted_digest
             ):
                 raise ValueError("encrypted_source_changed")
@@ -659,7 +660,7 @@ def retain_encrypted(
         return EncryptedSource(
             destination,
             source.digest,
-            _identity(destination.stat(follow_symlinks=False)),
+            _identity(os.stat(destination, follow_symlinks=False)),
             sealed.digest,
             source.manifest_digest,
         )

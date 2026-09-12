@@ -9,7 +9,6 @@ import base64
 import binascii
 import hashlib
 import json
-import os
 import re
 import sqlite3
 import stat
@@ -26,6 +25,7 @@ from uuid import uuid4
 import toml
 
 from tldw_chatbook.runtime_policy.server_credentials import RECOVERY_SETUP_REQUIRED
+from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
 from .credential_policies import (
@@ -119,7 +119,7 @@ def _config_server_id(data):
 
 
 def _capture_owned(owner, path, data, staging, material, issues):
-    relative = str(path.relative_to(staging))
+    relative = path.relative_to(staging).as_posix()
     if owner == "mcp.targets":
         for target in _targets(data):
             reference = target.get("auth_reference", "") or ""
@@ -467,7 +467,7 @@ def _staged_path(staging, path):
     staging, path = Path(staging), Path(path)
     if not staging.is_absolute() or staging.resolve() != staging:
         raise ValueError("credential_staging_required")
-    root_info = staging.stat()
+    root_info = os.stat(staging)
     if (
         not stat.S_ISDIR(root_info.st_mode)
         or root_info.st_uid != os.geteuid()
@@ -481,7 +481,7 @@ def _staged_path(staging, path):
         selected = parent if parent.is_absolute() else staging / parent
         if selected.is_symlink():
             raise ValueError("credential_staging_required")
-    info = path.lstat()
+    info = os.stat(path, follow_symlinks=False)
     if (
         not stat.S_ISREG(info.st_mode)
         or info.st_nlink != 1
@@ -694,7 +694,7 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
                                 _capture_record(
                                     {
                                         "kind": "citation",
-                                        "file": str(path.relative_to(staging)),
+                                        "file": path.relative_to(staging).as_posix(),
                                         "service": CITATION_SERVICE,
                                         "username": value,
                                         "remappable": False,
@@ -708,7 +708,7 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
                                 raise TypeError("unsupported_credential_format")
                             _capture_encrypted(
                                 {table: {str(rowid): {column: decoded}}},
-                                str(path.relative_to(staging)),
+                                path.relative_to(staging).as_posix(),
                                 material,
                                 coverage,
                             )
@@ -1067,7 +1067,7 @@ def process_credentials(
                     else:
                         _capture_encrypted(
                             row[key],
-                            str(path.relative_to(staging)),
+                            path.relative_to(staging).as_posix(),
                             material,
                             issues,
                             prefix=prefix,

@@ -2,13 +2,14 @@
 
 import hashlib
 import json
-import os
 import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .archive_models import DependencyGroup, Directory, Owner, Payload, SealedArchive
@@ -248,7 +249,7 @@ def extract_inert(
     report = _encoded(_report(plan))
     work = plan.destination.parent / (".inert-extraction-" + uuid4().hex)
     create_private_directory(work)
-    info = work.stat(follow_symlinks=False)
+    info = os.stat(work, follow_symlinks=False)
     identity = info.st_dev, info.st_ino
     publishing = False
     try:

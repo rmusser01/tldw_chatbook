@@ -2,12 +2,13 @@
 
 import asyncio
 import inspect
-import os
 import threading
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import storage_admission as storage
 from .bootstrap import RecoveryRequired

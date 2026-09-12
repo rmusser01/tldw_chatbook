@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import stat
 import zipfile
 from contextlib import contextmanager
@@ -16,6 +15,8 @@ from dataclasses import replace as _replace
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .archive_writer import write_archive
@@ -118,8 +119,7 @@ def _checked_originals(plan, journal, session):
         if {row.logical_id for row in prepared.safety_sources} != set(
             plan.safety_scope
         ) or any(
-            not _safety_source_matches(row.source)
-            for row in prepared.safety_sources
+            not _safety_source_matches(row.source) for row in prepared.safety_sources
         ):
             raise ValueError("rollback_safety_source_changed")
         previous = [row for row in prepared.artifacts if row.previous is not None]
@@ -162,7 +162,8 @@ def _checked_originals(plan, journal, session):
                 continue
             if not any(
                 _contains_owned_path(
-                    Path(root), _publication_scope_path(item.path, items=plan.target.items)
+                    Path(root),
+                    _publication_scope_path(item.path, items=plan.target.items),
                 )
                 for binding in bindings
                 for root in binding["roots"]
@@ -202,7 +203,7 @@ def _checked_originals(plan, journal, session):
         }
         normalized = []
         for item in entries:
-            info = item.path.lstat()
+            info = os.stat(item.path, follow_symlinks=False)
             ancestors = [
                 path
                 for path in directories
@@ -220,7 +221,7 @@ def _checked_originals(plan, journal, session):
                 meta = FileMetadata(
                     1,
                     directories[root].logical_id,
-                    str(item.path.relative_to(root)) if item.path != root else "",
+                    item.path.relative_to(root).as_posix() if item.path != root else "",
                     directories[item.path.parent].logical_id
                     if item.path.parent in directories
                     else None,
@@ -332,7 +333,7 @@ def capture_verify_rollback(
             adapter = owners.get(item.owner)
             if adapter is None:
                 raise ValueError("rollback_owner_unavailable")
-            info = item.path.stat()
+            info = os.stat(item.path)
             key = (info.st_dev, info.st_ino)
             if key in physical:
                 other, previous = physical[key]
@@ -361,7 +362,7 @@ def capture_verify_rollback(
                 if issues:
                     raise ValueError(issues[0])
             captured[item.logical_id] = (
-                path.stat().st_size,
+                os.stat(path).st_size,
                 reader._hash(path, cancel),
             )
             if policy is None or not policy.schema_sql:
@@ -371,10 +372,10 @@ def capture_verify_rollback(
             staged.append((item, path))
             if item.shared_group:
                 aliases.setdefault(item.shared_group, []).append(item.logical_id)
-            total = sum(path.stat().st_size for _, path in staged)
+            total = sum(os.stat(path).st_size for _, path in staged)
             if (
                 total > limits.expanded_bytes
-                or path.stat().st_size > limits.member_bytes
+                or os.stat(path).st_size > limits.member_bytes
             ):
                 raise ValueError("rollback_capture_limit")
             require_capacity({stage: total, destination.parent: total * 5})
@@ -508,7 +509,10 @@ def capture_verify_rollback(
                 }
             )
         for item in inventory.items:
-            if item.owner != "persona.visual_identity_builtin" or item.status != "included":
+            if (
+                item.owner != "persona.visual_identity_builtin"
+                or item.status != "included"
+            ):
                 continue
             payload = by_id.get(item.logical_id)
             if payload is None or payload.owner_id != item.owner:
@@ -665,10 +669,11 @@ def _first_binding_inventory(plan, selector):
             continue
         previous = approved.get(item.logical_id)
         if previous is None or (
-            item.owner, item.path, item.status, item.dependencies
-        ) != (
-            previous.owner, previous.path, previous.status, previous.dependencies
-        ):
+            item.owner,
+            item.path,
+            item.status,
+            item.dependencies,
+        ) != (previous.owner, previous.path, previous.status, previous.dependencies):
             raise ValueError("replacement_current_scope_changed")
     recheck_targets(plan)
     return current
@@ -733,7 +738,7 @@ def _first_config_container(
             or native_lock
         ):
             raise ValueError("replacement_config_container_unverified")
-        info = item.path.lstat()
+        info = os.stat(item.path, follow_symlinks=False)
         if native_lock:
             valid = (
                 stat.S_ISREG(info.st_mode)
@@ -774,7 +779,8 @@ def _ensure_first_bindings(plan, selectors, root, cancel, *, protected=()):
         inventory = _first_binding_inventory(plan, selector)
         inventories[selector] = inventory
         names_by_selector[selector] = tuple(
-            name for name in _capture_names(authority, inventory)
+            name
+            for name in _capture_names(authority, inventory)
             if name != UNBOUND_NAMESPACE
         )
     registry = bootstrap._registry(root)
@@ -806,7 +812,14 @@ def _ensure_first_bindings(plan, selectors, root, cancel, *, protected=()):
         authority.register(name, (parent,))
         names_by_selector[selector] = tuple(sorted({*names, name}))
         registry = bootstrap._registry(root)
-    names = tuple(sorted({UNBOUND_NAMESPACE, *(name for group in names_by_selector.values() for name in group)}))
+    names = tuple(
+        sorted(
+            {
+                UNBOUND_NAMESPACE,
+                *(name for group in names_by_selector.values() for name in group),
+            }
+        )
+    )
     registry = bootstrap._registry(root)
     if registry is None or any(name not in registry for name in names):
         raise ValueError("replacement_binding_changed")
@@ -856,7 +869,10 @@ def _ensure_first_bindings(plan, selectors, root, cancel, *, protected=()):
                 raise ValueError("replacement_current_scope_changed")
             reader._check(cancel)
             bind_profile(
-                root, selector, names_by_selector[selector], root / "admission",
+                root,
+                selector,
+                names_by_selector[selector],
+                root / "admission",
                 session=session,
             )
         recheck_targets(plan)
@@ -1029,8 +1045,7 @@ def replace(
             {
                 item.path
                 for item in plan.target.items
-                if item.owner == "config"
-                and item.path in config_destinations
+                if item.owner == "config" and item.path in config_destinations
             }
         )
     )
@@ -1046,13 +1061,19 @@ def replace(
         raise ValueError("replacement_local_binding_required")
     if any(
         any(name not in registry for name in row["namespaces"])
-        or row["roots"] != sorted({path for name in row["namespaces"] for path in registry[name]["roots"]})
+        or row["roots"]
+        != sorted(
+            {path for name in row["namespaces"] for path in registry[name]["roots"]}
+        )
         for row in selected
     ):
         raise ValueError("replacement_binding_changed")
     authority = admission_authority(root)
     _register_publication_parents(
-        plan, authority, (root, control_root, candidate, archive.path), document=document
+        plan,
+        authority,
+        (root, control_root, candidate, archive.path),
+        document=document,
     )
     registry = bootstrap._registry(root)
     affected = [path for _, path in (*plan.restore, *plan.retire)]
@@ -1092,7 +1113,7 @@ def replace(
     require_capacity(
         {
             control_root: sum(
-                path.stat().st_size for path in affected if path.is_file()
+                os.stat(path).st_size for path in affected if path.is_file()
             )
             * 5
         }
@@ -1112,7 +1133,10 @@ def replace(
         if reader._hash(proof.path, cancel) != proof.digest:
             raise ValueError("encrypted_retention_changed")
         ciphertext = observe_artifact(proof.path)
-        if reader._identity(proof.path.stat(follow_symlinks=False)) != proof.identity:
+        if (
+            reader._identity(os.stat(proof.path, follow_symlinks=False))
+            != proof.identity
+        ):
             raise ValueError("encrypted_retention_changed")
         incoming = {
             "ciphertext": ciphertext,
@@ -1413,7 +1437,10 @@ def _abort_context(journal, plan, records):
     receipt = _CandidateReceipt.model_validate(records[0].evidence)
     with reader._regular(journal.root / "verified-manifest.json") as stream:
         encoded = stream.read(ArchiveLimits().manifest_bytes + 1)
-    if len(encoded) > ArchiveLimits().manifest_bytes or hashlib.sha256(encoded).hexdigest() != receipt.manifest_digest:
+    if (
+        len(encoded) > ArchiveLimits().manifest_bytes
+        or hashlib.sha256(encoded).hexdigest() != receipt.manifest_digest
+    ):
         raise ValueError("verified_manifest_changed")
     doc = reader._manifest(encoded, ArchiveLimits(), True)
     config_keys = {row.logical_id for row in doc.files if row.owner_id == "config"}
@@ -1497,7 +1524,9 @@ def _abort_prepublication(journal, plan, cancel, *, execute):
         session._check()
         if session._control != root / "admission" or any(
             not any(
-                _contains_owned_path(bound, _publication_scope_path(path, items=plan.target.items))
+                _contains_owned_path(
+                    bound, _publication_scope_path(path, items=plan.target.items)
+                )
                 for bound in session._roots
             )
             for path in (*affected, *map(Path, context.selectors))

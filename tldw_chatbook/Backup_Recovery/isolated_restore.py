@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import subprocess  # nosec B404
 import sys
 from contextlib import nullcontext
 from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
+
+from tldw_chatbook.Utils.platform_files import os
 
 if TYPE_CHECKING:
     from .archive_models import SealedArchive
@@ -113,7 +114,10 @@ def restore_isolated(
         if reader._hash(proof.path, cancel) != proof.digest:
             raise ValueError("encrypted_retention_changed")
         ciphertext = observe_artifact(proof.path)
-        if reader._identity(proof.path.stat(follow_symlinks=False)) != proof.identity:
+        if (
+            reader._identity(os.stat(proof.path, follow_symlinks=False))
+            != proof.identity
+        ):
             raise ValueError("encrypted_retention_changed")
         retained = {
             "ciphertext": ciphertext,

@@ -19,7 +19,7 @@ def _tree_member_id(context, owner: str, root: Path, path: Path) -> str:
     import os
 
     root_id = owner + ":" + hashlib.sha256(os.fsencode(root)).hexdigest()
-    relative = str(path.relative_to(root))
+    relative = path.relative_to(root).as_posix()
     local_id = (
         root_id
         if relative == "."

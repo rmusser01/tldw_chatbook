@@ -10,18 +10,18 @@ review. Root owns Linux implementation, actual product testing, task tracking an
 PR publication. Keep file ownership disjoint until reviewed integration.
 
 ## Stage 1 — Reproduce and map
-Status: In Progress.
+Status: Complete.
 Record real Linux product failure and native Windows runner failure. Map calls to
 private paths, locking, identity, flush and exclusive publication.
 
 ## Stage 2 — Platform operations
-Status: Not Started.
+Status: In Progress. Linux operations verified; Windows native fixes reviewed and integration active.
 Windows implementer owns new platform adapter modules and Windows primitive tests.
 Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: Not Started.
+Status: In Progress. Linux full flows pass at5b7e60d96; macOS F9 regression passes; Windows baseline reproduced and fixes awaiting native run.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.

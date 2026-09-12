@@ -1,13 +1,13 @@
 """Exact settings/definition source selectors; no caller-supplied owner authority."""
 
-import os
+import sys
 from datetime import datetime
 from pathlib import Path
-import sys
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
 from .profile_paths import lexical_path
-
 
 ROUTES = {
     "eval_config",
@@ -135,6 +135,7 @@ def selection(source, route, target):
 def preflight(state, route, attempt):
     """Freeze only theme TOMLs or exact timestamp pet backups under a held pin."""
     import re
+
     from . import storage_admission as storage
 
     directory = state.selected if route == "theme_directory" else state.selected.parent
@@ -156,7 +157,7 @@ def preflight(state, route, attempt):
             info = (
                 os.stat(name, dir_fd=fd, follow_symlinks=False)
                 if state.pinned
-                else path.lstat()
+                else os.stat(path, follow_symlinks=False)
             )
             import stat
 
@@ -184,7 +185,7 @@ def check_members(state):
         info = (
             os.stat(path.name, dir_fd=state.pins[path.parent], follow_symlinks=False)
             if state.pinned
-            else path.lstat()
+            else os.stat(path, follow_symlinks=False)
         )
         if (info.st_dev, info.st_ino) != identity:
             raise bootstrap.RecoveryRequired("raw_entry_identity_changed")
@@ -193,6 +194,7 @@ def check_members(state):
 def pet_operation(function):
     """Bind only JSONStorage's actual methods and its inherited recovery wrapper."""
     from functools import wraps
+
     from . import raw_participants as raw
 
     @wraps(function)

@@ -2,12 +2,13 @@
 
 import hashlib
 import json
-import os
 import shutil
 import zipfile
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .archive_models import SealedArchive
@@ -114,7 +115,10 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
             canonical_ids = {key}
             if owner.owner_id == "mcp.permissions":
                 canonical_ids.add(key + ":bak")
-            if owner.owner_id in {"mcp.local", "mcp.permissions", "mcp.context"} and payload.logical_id not in canonical_ids:
+            if (
+                owner.owner_id in {"mcp.local", "mcp.permissions", "mcp.context"}
+                and payload.logical_id not in canonical_ids
+            ):
                 owner.validate_retained_destination(
                     profile, payload, doc, plan, expected, config_target
                 )
@@ -245,7 +249,9 @@ def _items(doc, plan):
     return result
 
 
-def _validate_dependencies(doc, items, owners, candidate_paths, topology, plan=None, manifest_digest=None):
+def _validate_dependencies(
+    doc, items, owners, candidate_paths, topology, plan=None, manifest_digest=None
+):
     """Check only private candidates; no live maintenance authority is required."""
     from types import MappingProxyType
 
@@ -263,7 +269,9 @@ def _validate_dependencies(doc, items, owners, candidate_paths, topology, plan=N
                 continue  # Fabricated containers carry no source owner data.
             from .later_rollback import validate_snapshot_builtin_restore
 
-            if validate_snapshot_builtin_restore(plan, manifest_digest, item, candidate_paths, topology):
+            if validate_snapshot_builtin_restore(
+                plan, manifest_digest, item, candidate_paths, topology
+            ):
                 continue
             restore_check = getattr(owner, "validate_restore_dependencies", None)
             legacy_check = getattr(owner, "validate_dependencies", None)
@@ -377,7 +385,7 @@ def stage_restore(
     stage = work_root / ("restore-" + uuid4().hex)
     create_private_directory(stage)
     volume_roots = []
-    created_identities = {stage: (stage.stat().st_dev, stage.stat().st_ino)}
+    created_identities = {stage: (os.stat(stage).st_dev, os.stat(stage).st_ino)}
     successful = False
     try:
         limits = ArchiveLimits()
@@ -680,7 +688,7 @@ def stage_restore(
         }
         candidates = {}
         by_volume = {}
-        work_device = stage.stat().st_dev
+        work_device = os.stat(stage).st_dev
         root_candidates = {}
         selected_root_ids = dict(plan.destinations).keys()
         ordered_roots = sorted(
@@ -688,14 +696,14 @@ def stage_restore(
         )
         for root_id, destination in (*ordered_roots, *plan.containers):
             parent = _ancestor(destination.parent)
-            device = parent.stat().st_dev
+            device = os.stat(parent).st_dev
             if device not in by_volume:
                 require_capacity({parent: total})
                 staging_parent = stage if device == work_device else parent
                 private = staging_parent / (".chatbook-restore-" + uuid4().hex)
                 create_private_directory(private)
                 volume_roots.append(private)
-                info = private.stat()
+                info = os.stat(private)
                 created_identities[private] = (info.st_dev, info.st_ino)
                 by_volume[device] = private
             if destination not in root_candidates:
@@ -729,7 +737,7 @@ def stage_restore(
         containers = []
         for key, destination in plan.containers:
             candidate = root_candidates[destination]
-            info = candidate.stat()
+            info = os.stat(candidate)
             containers.append(
                 {
                     "logical_id": key,
@@ -786,8 +794,12 @@ def stage_restore(
             from .later_rollback import _preserved_builtin_validation
 
             retained_items, retained_candidates = _preserved_builtin_validation(
-                plan, doc, hashlib.sha256(archive.manifest_bytes).hexdigest(),
-                stage, session, cancel,
+                plan,
+                doc,
+                hashlib.sha256(archive.manifest_bytes).hexdigest(),
+                stage,
+                session,
+                cancel,
             )
             items.update(retained_items)
             candidate_paths.update(retained_candidates)
@@ -804,7 +816,15 @@ def stage_restore(
             }
         )
         if session is None:
-            _validate_dependencies(doc, items, owners, candidate_paths, topology, plan, hashlib.sha256(archive.manifest_bytes).hexdigest())
+            _validate_dependencies(
+                doc,
+                items,
+                owners,
+                candidate_paths,
+                topology,
+                plan,
+                hashlib.sha256(archive.manifest_bytes).hexdigest(),
+            )
         else:
             from concurrent.futures import ThreadPoolExecutor
 
@@ -824,7 +844,7 @@ def stage_restore(
                 continue
             path = candidates[payload.root_id] / payload.relative_path
             if path.exists():
-                size, digest = path.stat().st_size, reader._hash(path, cancel)
+                size, digest = os.stat(path).st_size, reader._hash(path, cancel)
             else:
                 size, digest = _copy(extracted[payload.logical_id], path, cancel)
             if digest != validated[payload.logical_id]:
@@ -872,7 +892,7 @@ def stage_restore(
             desired, applied = planned_metadata[row["logical_id"]]
             row["desired_metadata"] = desired.model_dump() if desired else None
             row["applied_metadata"] = applied.model_dump()
-            info = Path(row["candidate"]).lstat()
+            info = os.stat(Path(row["candidate"]), follow_symlinks=False)
             row["identity"] = [info.st_dev, info.st_ino, info.st_mode, info.st_mtime_ns]
         recheck_targets(plan)
         reader.verify_sealed(archive, cancel)
@@ -931,7 +951,7 @@ def stage_restore(
     finally:
         if not successful:
             for root in (*volume_roots, stage):
-                info = root.lstat()
+                info = os.stat(root, follow_symlinks=False)
                 if (info.st_dev, info.st_ino) != created_identities[root]:
                     raise ValueError("staging_identity_changed")
                 # Only this operation's pinned-identity private trees are removed.

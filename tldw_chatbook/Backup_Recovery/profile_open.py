@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
 from .activation import ActivationStore, _flush_existing, _private, _write

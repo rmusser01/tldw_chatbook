@@ -7,7 +7,6 @@ helper exit. Callers must supply an owner-private staging directory for decrypt.
 import hashlib
 import io
 import json
-import os
 import stat
 import struct
 import subprocess
@@ -20,6 +19,7 @@ from threading import Event, Lock, Thread
 from typing import BinaryIO
 
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.platform_files import os
 
 _MAX_CONTAINER = 2 * 1024**4
 _BUFFER = 64 * 1024

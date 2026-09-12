@@ -6,10 +6,11 @@ is intentionally ignored: honoring it here would silently select a different pro
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Mapping
+
+from tldw_chatbook.Utils.platform_files import os
 
 
 def lexical_path(value: str | Path) -> Path:

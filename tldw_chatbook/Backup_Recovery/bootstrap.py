@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import stat
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
+
+from tldw_chatbook.Utils.platform_files import os
 
 from ..Utils.private_paths import _open_verified_parent
 from .profile_paths import default_config_path, effective_config_path, lexical_path
@@ -158,7 +159,7 @@ def _control_records(
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Read independent fixed evidence; incomplete paired writes remain fenced."""
     try:
-        if stat.S_ISLNK(root.lstat().st_mode):
+        if stat.S_ISLNK(os.stat(root, follow_symlinks=False).st_mode):
             raise ValueError("bootstrap_linked")
     except FileNotFoundError:
         return [], [], []
@@ -252,13 +253,13 @@ def _records(root: Path) -> tuple[list[dict], list[dict]]:
 def _registry(root: Path) -> dict | None:
     authority = root / "admission"
     try:
-        info = authority.lstat()
+        info = os.stat(authority, follow_symlinks=False)
     except FileNotFoundError:
         return None
     if stat.S_ISLNK(info.st_mode) or info.st_mode & 0o077:
         raise ValueError("authority_unsafe")
     marker = root / "unbound-owner"
-    marker_info = marker.lstat()
+    marker_info = os.stat(marker, follow_symlinks=False)
     if (
         not stat.S_ISREG(marker_info.st_mode)
         or marker_info.st_nlink != 1

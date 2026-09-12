@@ -1,7 +1,6 @@
 """New replacements from authenticated local stored-data recovery snapshots."""
 
 import hashlib
-import os
 import shutil
 import stat
 import tomllib
@@ -9,6 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader, bootstrap
 from .journal import _evidence_digest, _Prepared, _Rollback
@@ -378,7 +379,7 @@ def _preserved_snapshot_members(source, archive, target):
         if set(matches[0].dependencies) != dependencies:
             raise ValueError("local_snapshot_preservation_unverified")
         _ancestor(item.path)
-        info = item.path.lstat()
+        info = os.stat(item.path, follow_symlinks=False)
         if (
             item.status == "included"
             and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1)
@@ -809,7 +810,7 @@ def _created_destination_target(
                         != generation["owners"]
                     ):
                         raise ValueError("local_snapshot_created_scope_unverified")
-            info = item.path.lstat()
+            info = os.stat(item.path, follow_symlinks=False)
             if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != (
                 artifact.candidate.device,
                 artifact.candidate.inode,
@@ -1119,7 +1120,7 @@ def _known_absences(plan, original, prepared, created=None):
             )
         ):
             raise ValueError("local_snapshot_absence_unclassified")
-        info = path.lstat()
+        info = os.stat(path, follow_symlinks=False)
         if (
             artifact.candidate.kind == "directory" and not stat.S_ISDIR(info.st_mode)
         ) or (artifact.candidate.kind == "file" and not stat.S_ISREG(info.st_mode)):
@@ -1142,7 +1143,7 @@ def _known_absences(plan, original, prepared, created=None):
                         or entry.logical_id in plan.safety_scope
                     ):
                         raise ValueError("local_snapshot_absence_unclassified")
-                    child_mode = child.lstat().st_mode
+                    child_mode = os.stat(child, follow_symlinks=False).st_mode
                     if (
                         entry.status == "included" and not stat.S_ISREG(child_mode)
                     ) or (
@@ -1276,7 +1277,7 @@ def preview_rollback(
             raise ValueError("recovery_copy_pending")
         work = ensure_storage(control_root) / ("rollback-preview-" + uuid4().hex)
         create_private_directory(work)
-        identity = (work.stat().st_dev, work.stat().st_ino)
+        identity = (os.stat(work).st_dev, os.stat(work).st_ino)
         try:
             archive = _acquire(entry, proof, work, old_password, cancel)
             return _preview(
@@ -1315,7 +1316,7 @@ def execute_rollback(
             raise ValueError("recovery_copy_pending")
         work = ensure_storage(control_root) / ("later-rollback-" + uuid4().hex)
         create_private_directory(work)
-        identity = (work.stat().st_dev, work.stat().st_ino)
+        identity = (os.stat(work).st_dev, os.stat(work).st_ino)
         candidate = None
         completed = False
         try:

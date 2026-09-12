@@ -8,6 +8,39 @@ from tldw_chatbook.Backup_Recovery.native_platform import _linux_mount_type
 
 
 @pytest.mark.parametrize(
+    "system,filesystem,flags,expected",
+    [
+        ("Windows", "NTFS", 0, True),
+        ("Windows", "NTFS", 0x80000, False),
+        ("Windows", "FAT32", 0, False),
+        ("Darwin", "apfs", 0, True),
+        ("Darwin", "apfs", 1, False),
+        ("Linux", "ext4", 0, True),
+        ("Linux", "ext4", 1, False),
+        ("Linux", "nfs", 0, False),
+    ],
+)
+def test_platform_contract_uses_native_filesystem_not_runtime_patch(
+    system, filesystem, flags, expected
+):
+    from tldw_chatbook.Backup_Recovery.qualification import _platform_contract
+
+    assert (
+        _platform_contract(
+            {
+                "os": system,
+                "release": "test-release",
+                "arch": "test-arch",
+                "python": "test-python",
+                "filesystem": filesystem,
+                "flags": flags,
+            }
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
     "descriptor,mounts",
     [
         ("", ""),

@@ -1,7 +1,8 @@
 """Private recovery control and persistent, disjoint operation working storage."""
 
-import os
 from pathlib import Path
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .bootstrap import _read
 from .control_records import _ensure, _write

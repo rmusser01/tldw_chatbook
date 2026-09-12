@@ -1,20 +1,22 @@
 """Exact Chat_Dictionary_Lib import/export/parser IO; external paths are not inventory."""
 
-from contextlib import ExitStack, closing, contextmanager
-from dataclasses import dataclass
-from functools import wraps
-import os
 import ctypes
 import errno
-from pathlib import Path
 import re
 import shutil
 import stat
 import sys
 import threading
 import weakref
+from contextlib import ExitStack, closing, contextmanager
+from dataclasses import dataclass
+from functools import wraps
+from pathlib import Path
 
-from . import bootstrap, profile_paths, storage_admission as storage
+from tldw_chatbook.Utils.platform_files import os
+
+from . import bootstrap, profile_paths
+from . import storage_admission as storage
 
 ROUTE = "dictionary_files"
 _local = threading.local()
@@ -132,7 +134,7 @@ def pin_inputs(state):
     plan.input_stats = {}
     if plan.output is not None:
         try:
-            info = plan.output.lstat()
+            info = os.stat(plan.output, follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode):
                 raise ValueError("dictionary_output_not_regular")
             plan.destination_identity = (info.st_dev, info.st_ino)
@@ -147,9 +149,9 @@ def pin_inputs(state):
             )
             state.pins[path.parent] = descriptor
         if not state.pinned:
-            info = path.parent.stat()
+            info = os.stat(path.parent)
             state.identities[path.parent] = (info.st_dev, info.st_ino)
-        info = path.stat()
+        info = os.stat(path)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError("dictionary_input_not_regular")
         state.observed_files[path] = (info.st_dev, info.st_ino)
@@ -285,7 +287,8 @@ def _operation(
 
 def folder():
     from .. import config
-    from . import config_participants, raw_participants as raw
+    from . import config_participants
+    from . import raw_participants as raw
 
     plan = _current()
     if plan is not None:
@@ -405,10 +408,11 @@ def exporting(function):
             return None
 
     def invoke(db, dict_id, export_path):
-        from .. import config
-        from .participants import _core_operation
-        from ..DB.ChaChaNotes_DB import CharactersRAGDB
         from contextlib import nullcontext
+
+        from .. import config
+        from ..DB.ChaChaNotes_DB import CharactersRAGDB
+        from .participants import _core_operation
 
         with closing(storage._Acquisition()) as attempt:
             with (
@@ -466,7 +470,7 @@ def opened(path, mode, *, encoding="utf-8"):
             yield stream
             if (
                 _stamp(os.fstat(stream.fileno())) != before
-                or _stamp(path.stat()) != before
+                or _stamp(os.stat(path)) != before
             ):
                 raise bootstrap.RecoveryRequired("dictionary_input_changed")
         return
@@ -513,7 +517,7 @@ def copy_file(source, destination):
 
 def check_destination(plan):
     try:
-        info = plan.output.lstat()
+        info = os.stat(plan.output, follow_symlinks=False)
         identity = (info.st_dev, info.st_ino)
     except FileNotFoundError:
         identity = None

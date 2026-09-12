@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .admission import Admission, AdmissionTimeout, fcntl
 from .bootstrap import (
@@ -161,7 +162,7 @@ def _existing_admission_authority(bootstrap_root):
 def _verify_pending_selector(selector: Path) -> None:
     """Verify existing bytes or genuine absence for a local pre-publication fence."""
     try:
-        selector.lstat()
+        os.stat(selector, follow_symlinks=False)
     except FileNotFoundError:
         pass
     else:
@@ -173,7 +174,7 @@ def _verify_pending_selector(selector: Path) -> None:
     missing = None
     while True:
         try:
-            ancestor.lstat()
+            os.stat(ancestor, follow_symlinks=False)
             break
         except FileNotFoundError:
             missing = ancestor.name
@@ -435,7 +436,13 @@ def _replacement_activation_names(
 
 
 def _bind_activation(
-    bootstrap_root, operation_id, config_selector, generation, owners, session, plan=None
+    bootstrap_root,
+    operation_id,
+    config_selector,
+    generation,
+    owners,
+    session,
+    plan=None,
 ):
     """Install paired generation evidence while exact native maintenance is held.
 
@@ -478,9 +485,13 @@ def _bind_activation(
             journal = Journal(Path(operation["control_root"]), operation_id)
             with pinned_directory(journal.root) as parent:
                 records = journal._records(parent)
-            prepared = _Prepared.model_validate(next(row.evidence for row in records if row.event == "prepared"))
+            prepared = _Prepared.model_validate(
+                next(row.evidence for row in records if row.event == "prepared")
+            )
             if prepared.mode == "replace" and generation == prepared.generation:
-                names = _replacement_activation_names(journal, prepared, records, plan, selected, previous, registry)
+                names = _replacement_activation_names(
+                    journal, prepared, records, plan, selected, previous, registry
+                )
     if (
         registry is None
         or not set(names) <= set(operation["namespaces"])
@@ -705,7 +716,8 @@ def _operation_activation_generation(control, operation_id, witness, selector):
     phase = current_phase(rows) if rolling else rows
     return (
         (
-            prepared.mode == "replace" and bool(prepared.replacement_profiles)
+            prepared.mode == "replace"
+            and bool(prepared.replacement_profiles)
             or prepared.mode == "isolated"
             and rolling is None
             and any(row.config == str(selector) for row in prepared.isolated_profiles)
@@ -752,7 +764,10 @@ def _recover_activation_pairs(journal, prepared, session):
     _finalization_session(session, prepared.publication, prepared)
     pending = _recovery_pending(root, journal, prepared)
     registry = _registry(root)
-    with journal._locked(exclusive=True) as journal_parent, pinned_directory(root) as parent:
+    with (
+        journal._locked(exclusive=True) as journal_parent,
+        pinned_directory(root) as parent,
+    ):
         names = sorted(
             name for name in os.listdir(parent) if name.startswith("activation-update-")
         )
@@ -794,12 +809,23 @@ def _recover_activation_pairs(journal, prepared, session):
                 if (
                     previous["selector"] != update.selector
                     or _replacement_activation_names(
-                        journal, prepared, journal._records(parent=journal_parent), plan,
-                        selector, previous, registry,
-                    ) != after_profile["namespaces"]
-                    or previous["roots"] != sorted({
-                        path for scope in previous["namespaces"] for path in registry[scope]["roots"]
-                    })
+                        journal,
+                        prepared,
+                        journal._records(parent=journal_parent),
+                        plan,
+                        selector,
+                        previous,
+                        registry,
+                    )
+                    != after_profile["namespaces"]
+                    or previous["roots"]
+                    != sorted(
+                        {
+                            path
+                            for scope in previous["namespaces"]
+                            for path in registry[scope]["roots"]
+                        }
+                    )
                 ):
                     raise ValueError("activation_recovery_context_invalid")
                 old = previous.get("activation")

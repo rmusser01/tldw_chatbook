@@ -1,14 +1,16 @@
 """Three source-owned queued jobs; pending registration grants no IO authority."""
 
 import asyncio
-from dataclasses import dataclass
-import os
 import sys
 import threading
 import weakref
+from dataclasses import dataclass
 
-from . import bootstrap, raw_participants as raw, storage_admission as storage
+from tldw_chatbook.Utils.platform_files import os
 
+from . import bootstrap
+from . import raw_participants as raw
+from . import storage_admission as storage
 
 _jobs = weakref.WeakSet()
 

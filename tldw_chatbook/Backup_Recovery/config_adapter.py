@@ -130,7 +130,7 @@ class _History(_RawDeclaration):
         context = discovery_context(config)
         current = context.config_path
         paths = [current.with_suffix(current.suffix + ".bak")]
-        import os
+        from tldw_chatbook.Utils.platform_files import os
 
         from .bootstrap import pinned_directory
 
@@ -640,8 +640,9 @@ class _Generated(_RawDeclaration):
             "video_capacity_lock",
         )
         if lock.status == "included":
-            import os
             import stat
+
+            from tldw_chatbook.Utils.platform_files import os
 
             from .bootstrap import pinned_directory
 
@@ -723,7 +724,7 @@ class _Diagnostics(_RawDeclaration):
         raise ValueError("owner_relocation_unverified:diagnostics.logs")
 
     def discover(self, config):
-        import os
+        from tldw_chatbook.Utils.platform_files import os
 
         from .bootstrap import pinned_directory
 

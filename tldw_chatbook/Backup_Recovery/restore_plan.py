@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import os
 import stat
 import unicodedata
 from collections.abc import Mapping
@@ -10,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from typing import Literal
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .archive_models import Metadata, SealedArchive
 from .archive_reader import _hash, _manifest, verify_sealed
@@ -171,13 +172,13 @@ def _observed(path):
     ancestors = []
     current = ancestor
     while True:
-        info = current.lstat()
+        info = os.stat(current, follow_symlinks=False)
         ancestors.append((str(current), info.st_dev, info.st_ino))
         if current == current.parent:
             break
         current = current.parent
     try:
-        info = path.lstat()
+        info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         return (str(path), ancestors, None)
     if stat.S_ISLNK(info.st_mode) or info.st_nlink != 1 and stat.S_ISREG(info.st_mode):
@@ -422,7 +423,8 @@ def plan_restore(
                 ) and (
                     path != other_path
                     or not (
-                        roots[key].synthetic and roots[other].synthetic
+                        roots[key].synthetic
+                        and roots[other].synthetic
                         or key in shared_roots
                         and shared_roots[key] == shared_roots.get(other)
                     )

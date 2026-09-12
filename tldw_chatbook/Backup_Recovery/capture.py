@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
 
+from tldw_chatbook.Utils.platform_files import os
+
 from .inventory import discover
 from .models import Inventory
 
@@ -112,7 +114,7 @@ def _manifest_for(inventory, staged, aliases, options, issues):
             "dependencies": list(item.dependencies),
             "shared_group": item.shared_group,
         }
-        source_info = item.path.stat()
+        source_info = os.stat(item.path)
         adapter = declarations.get(item.owner)
         policy = adapter.schema_policy() if adapter else None
         owners[item.owner] = {
@@ -129,8 +131,8 @@ def _manifest_for(inventory, staged, aliases, options, issues):
                 "parent_id": parent_id,
                 "relative_path": relative,
                 "owner_id": item.owner,
-                "payload": str(path.relative_to(options["root"])),
-                "size": path.stat().st_size,
+                "payload": path.relative_to(options["root"]).as_posix(),
+                "size": os.stat(path).st_size,
                 "sha256": reader._hash(path, options["cancel"]),
                 "metadata": {
                     "version": 1,
@@ -314,7 +316,6 @@ def _capture_under_maintenance(
     Return occurs before caller releases maintenance, with no packaging/encryption.
     """
     import hashlib
-    import os
     import shutil
     import tempfile
     from dataclasses import replace
@@ -359,7 +360,7 @@ def _capture_under_maintenance(
         item.path is None or item.owner not in adapters for item in entries
     ):
         raise ValueError("capture_owner_unavailable")
-    estimate = sum(item.path.stat().st_size for item in entries)
+    estimate = sum(os.stat(item.path).st_size for item in entries)
     if estimate > budget or len(current.items) + 1 > limits.members:
         raise CaptureReviewRequired(("capture_budget_changed",))
     parent = Path(options.get("staging_parent", Path(tempfile.gettempdir()).resolve()))
@@ -391,7 +392,7 @@ def _capture_under_maintenance(
                     / "payload"
                     / hashlib.sha256(item.logical_id.encode()).hexdigest()
                 )
-                info = item.path.stat()
+                info = os.stat(item.path)
                 key = info.st_dev, info.st_ino
                 adapter = adapters[item.owner]
                 if key in physical:
@@ -438,8 +439,8 @@ def _capture_under_maintenance(
                     validation = validator.validate(path)
                     if validation:
                         raise CaptureReviewRequired(validation)
-                total = sum(candidate.stat().st_size for _, candidate in staged)
-                if total > budget or path.stat().st_size > limits.member_bytes:
+                total = sum(os.stat(candidate).st_size for _, candidate in staged)
+                if total > budget or os.stat(path).st_size > limits.member_bytes:
                     raise CaptureReviewRequired(("capture_budget_changed",))
                 require_capacity(
                     {stage: total, Path(destination): total * (5 if encrypted else 3)}
@@ -470,9 +471,16 @@ def _capture_under_maintenance(
             if selections.temporary_media:
                 from .recovered_media import prepare_temporary_capture
 
-                representation, staged, representation_report = prepare_temporary_capture(
-                    session, final_inventory, staged, stage=stage, cancel=cancel,
-                    limits=limits, byte_budget=budget,
+                representation, staged, representation_report = (
+                    prepare_temporary_capture(
+                        session,
+                        final_inventory,
+                        staged,
+                        stage=stage,
+                        cancel=cancel,
+                        limits=limits,
+                        byte_budget=budget,
+                    )
                 )
             rebound = replace(
                 current, items=tuple(replace(item, path=path) for item, path in staged)
@@ -520,7 +528,7 @@ def _capture_under_maintenance(
                 representation = replace(
                     representation, complete=False, issues=final_inventory.issues
                 )
-            total = sum(path.stat().st_size for _, path in staged)
+            total = sum(os.stat(path).st_size for _, path in staged)
             if total > budget:
                 raise CaptureReviewRequired(("capture_budget_changed",))
             manifest = _manifest_for(

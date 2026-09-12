@@ -7,7 +7,6 @@ or temporary-media resolver is allowed to reinterpret a known reference.
 
 import hashlib
 import json
-import os
 import re
 import sqlite3
 import stat
@@ -18,6 +17,7 @@ from pathlib import Path
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.recovery_sqlite import _validate_sqlite
+from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.Utils.private_paths import (
     _open_verified_parent,
     atomic_private_write_bytes,
@@ -106,7 +106,7 @@ def _read_captured_media(scope, path, limit, cancel):
         if (
             len(payload) > limit
             or _identity(before) != _identity(os.fstat(stream.fileno()))
-            or _identity(before) != _identity(path.stat(follow_symlinks=False))
+            or _identity(before) != _identity(os.stat(path, follow_symlinks=False))
         ):
             raise ValueError("temporary_capture_source_changed")
     return payload
@@ -164,7 +164,7 @@ def materialize_temporary_media(session, root, sources, *, cancel, limits, byte_
         path = lexical_path(source.path)
         if scope.staging not in path.parents or path.resolve() != path:
             raise ValueError("temporary_capture_path_invalid")
-        info = path.stat(follow_symlinks=False)
+        info = os.stat(path, follow_symlinks=False)
         storage._check_capture_file_identity(scope, path, info)
         if info.st_size > min(limits.member_bytes, MAX_PAYLOAD_BYTES):
             raise ValueError("temporary_capture_member_limit")
@@ -180,10 +180,10 @@ def materialize_temporary_media(session, root, sources, *, cancel, limits, byte_
             raise ValueError("recovered_media_privacy_unverified")
     catalog = root / "catalog.sqlite3"
     if catalog.exists():
-        if catalog.stat().st_size > min(limits.member_bytes, byte_budget):
+        if os.stat(catalog).st_size > min(limits.member_bytes, byte_budget):
             raise ValueError("temporary_capture_member_limit")
         storage._check_capture_file_identity(
-            scope, catalog, catalog.stat(follow_symlinks=False)
+            scope, catalog, os.stat(catalog, follow_symlinks=False)
         )
     with closing(
         connect_private_sqlite("recovery.recovered_media", catalog)
@@ -205,7 +205,7 @@ def materialize_temporary_media(session, root, sources, *, cancel, limits, byte_
             if (hashlib.sha256(previous).hexdigest(), len(previous)) != (digest, size):
                 raise ValueError("recovered_payload_missing")
             total += size
-        if total + catalog.stat().st_size > byte_budget:
+        if total + os.stat(catalog).st_size > byte_budget:
             raise ValueError("temporary_capture_byte_limit")
         result = {}
         with connection:
@@ -282,7 +282,7 @@ def materialize_temporary_media(session, root, sources, *, cancel, limits, byte_
             if count + 1 > limits.members or size + catalog_size > byte_budget:
                 raise ValueError("temporary_capture_byte_limit")
         scope.check()
-    if catalog.stat().st_size > limits.member_bytes:
+    if os.stat(catalog).st_size > limits.member_bytes:
         raise ValueError("temporary_capture_member_limit")
     return result
 
@@ -516,7 +516,7 @@ def prepare_temporary_capture(
                     root_id,
                     "file",
                     0o600,
-                    path.stat().st_mtime_ns,
+                    os.stat(path).st_mtime_ns,
                     "private",
                 ),
             )
@@ -1110,7 +1110,7 @@ def list_recovered_media(root: Path, *, limit: int = 50, offset: int = 0):
     finally:
         os.close(parent)
     try:
-        store.db_path.lstat()
+        os.stat(store.db_path, follow_symlinks=False)
     except FileNotFoundError:
         return None
     with _inspect_catalog(store) as connection:

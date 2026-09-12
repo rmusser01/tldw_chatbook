@@ -11,7 +11,6 @@ Reader.verify_sealed instead consumes acquire's internal decrypted ZIP artifact.
 
 import hashlib
 import json
-import os
 import shutil
 import stat
 import zipfile
@@ -19,6 +18,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .archive_models import SealedArchive
@@ -152,7 +153,7 @@ def _package(capture, doc, destination, cancel, limits, stored=()):
                             or digest.hexdigest() != payload.sha256
                             or before != reader._identity(os.fstat(source.fileno()))
                             or before
-                            != reader._identity(path.stat(follow_symlinks=False))
+                            != reader._identity(os.stat(path, follow_symlinks=False))
                         ):
                             raise ValueError("capture_changed")
                 high = {

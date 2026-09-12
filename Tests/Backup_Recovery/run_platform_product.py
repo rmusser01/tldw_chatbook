@@ -20,6 +20,7 @@ from defusedxml import ElementTree as ET
 
 _PRODUCT_TESTS = (
     "Tests/Utils/test_windows_files.py",
+    "Tests/DB/test_private_sqlite_windows_descriptor.py",
     "Tests/Backup_Recovery/test_complete_roundtrip.py::"
     "test_two_captured_profiles_restore_and_open_with_native_content",
     "Tests/Backup_Recovery/test_f9_replacement_workflow.py::"

@@ -6,16 +6,18 @@ Discovery never imports config bootstrap or opens a service-owned database.
 
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
 import json
-import os
-from pathlib import Path
 import stat
 import tomllib
+from dataclasses import replace
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tldw_chatbook.Utils.platform_files import os
+
+from . import profile_paths
 from .models import (
     DISCOVERY_CONTEXT_KEY,
     DiscoveryContext,
@@ -25,7 +27,6 @@ from .models import (
     storage_logical_id,
 )
 from .owner_registry import registered
-from . import profile_paths
 
 
 class _ProfileSelectors(BaseModel):
@@ -100,7 +101,7 @@ UNRESOLVED_OWNERS = (
 
 
 def _identity(path: Path) -> tuple[int, int]:
-    value = path.stat()
+    value = os.stat(path)
     return value.st_dev, value.st_ino
 
 
@@ -128,12 +129,12 @@ def _sqlite_sidecars(declared, adapters):
         # Mirror its capture dispatch; payload names never confer SQLite scope.
         if item.owner == "recovered.media" and item.path.name != "catalog.sqlite3":
             continue
-        main = item.path.lstat()
+        main = os.stat(item.path, follow_symlinks=False)
         for suffix in ("-wal", "-shm"):
             path = item.path.with_name(item.path.name + suffix)
             safe = stat.S_ISREG(main.st_mode) and path not in declared_paths
             try:
-                info = path.lstat()
+                info = os.stat(path, follow_symlinks=False)
             except FileNotFoundError:
                 pass
             else:
@@ -193,7 +194,7 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
             physical.setdefault(identity, []).append(item)
             if item.shared_group:
                 shared.setdefault(item.shared_group, set()).add(identity)
-            mode = item.path.stat().st_mode
+            mode = os.stat(item.path).st_mode
             if (item.status == "included" and not stat.S_ISREG(mode)) or (
                 item.status == "included_directory" and not stat.S_ISDIR(mode)
             ):
@@ -268,6 +269,7 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
                 )
             ):
                 issues.add("dependency_unavailable")
+
     # Approved tree boundaries cover ordinary included descendants. Keep every
     # blocking/excluded/deleted record and explicit physical alias in scope; a
     # new owner, root, coverage choice or shared identity still requires review.
@@ -297,7 +299,14 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
                 str(item.path) if item.path else None,
                 resolved_paths.get(item.logical_id),
                 item.status,
-                tuple(sorted({scope_id(by_id[key]) if key in by_id else key for key in item.dependencies})),
+                tuple(
+                    sorted(
+                        {
+                            scope_id(by_id[key]) if key in by_id else key
+                            for key in item.dependencies
+                        }
+                    )
+                ),
                 item.shared_group,
                 item.deletion_validated,
                 (
@@ -333,7 +342,7 @@ def _source_item(
     required: bool = False,
 ) -> StorageItem:
     try:
-        value = path.lstat()
+        value = os.stat(path, follow_symlinks=False)
         status = (
             "unsupported"
             if stat.S_ISREG(value.st_mode) or stat.S_ISDIR(value.st_mode)
@@ -358,7 +367,7 @@ def _unknown_children(
                     "unknown", prefix + ":linked_root", root, "unavailable", ()
                 ),
             )
-        root.lstat()
+        os.stat(root, follow_symlinks=False)
         return tuple(
             _source_item("unknown", prefix + ":unknown:" + child.name, child)
             for child in sorted(root.iterdir())
@@ -425,7 +434,7 @@ def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
 
     root = default_bootstrap_root()
     try:
-        before = root.lstat()
+        before = os.stat(root, follow_symlinks=False)
     except FileNotFoundError:
         return ()
     except OSError:
@@ -435,7 +444,7 @@ def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
             _control_records(root)  # Strict private/no-follow fixed record reader.
             registry = _registry(root)
             marker = root / "unbound-owner"
-            after = root.lstat()
+            after = os.stat(root, follow_symlinks=False)
             if (
                 registry is None
                 or UNBOUND_NAMESPACE not in registry
@@ -462,7 +471,7 @@ def _service_control_exclusion() -> tuple[StorageItem, ...]:
 
     root = default_control_root().parent
     try:
-        root.lstat()
+        os.stat(root, follow_symlinks=False)
     except FileNotFoundError:
         return ()
     try:

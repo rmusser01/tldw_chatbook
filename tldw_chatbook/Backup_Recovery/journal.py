@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import stat
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -12,6 +11,8 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .admission import Admission, fcntl
 from .archive_models import Metadata

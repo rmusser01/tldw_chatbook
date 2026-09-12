@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import stat
 from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .admission import Admission, fcntl
 from .bootstrap import _read

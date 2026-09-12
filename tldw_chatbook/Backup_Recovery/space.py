@@ -1,9 +1,10 @@
 """Read-only capacity checks, summed independently on each actual volume."""
 
-import os
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .native_files import pinned_directory
 

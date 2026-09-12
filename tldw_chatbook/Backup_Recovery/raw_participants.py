@@ -1,28 +1,30 @@
 """Bounded installed raw-file lifetimes; never recovery/capture authority (ADR-126)."""
 
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from functools import wraps
 import copy
 import inspect
 import io
-import os
-from pathlib import Path
-import stat
 import secrets
+import stat
 import sys
 import threading
 import time
 import weakref
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from functools import wraps
+from pathlib import Path
 
-from . import bootstrap, storage_admission as storage
-from .profile_paths import lexical_path, user_data_dir
-from . import settings_file_participants as settings_files
-from . import config_participants as config_files
+from tldw_chatbook.Utils.platform_files import os
+
+from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
+from . import bootstrap
 from . import chat_source_participants as chat_sources
+from . import config_participants as config_files
 from . import dictionary_file_participants as dictionary_files
 from . import mcp_source_participants as mcp_sources
-from ..Utils.private_paths import _open_verified_parent, _posix_guards_available
+from . import settings_file_participants as settings_files
+from . import storage_admission as storage
+from .profile_paths import lexical_path, user_data_dir
 
 
 @dataclass
@@ -158,11 +160,11 @@ def _participant_state(participant):
 
 
 def _types():
-    from ..Feedback_Interop.local_feedback_service import LocalFeedbackService
     from ..Chat_Grammars_Interop.local_chat_grammars_service import (
         LocalChatGrammarsService,
     )
     from ..Chunking.chunking_templates import ChunkingTemplateManager
+    from ..Feedback_Interop.local_feedback_service import LocalFeedbackService
 
     return {
         LocalFeedbackService: "feedback",
@@ -230,8 +232,8 @@ def _raw_participant(source):
         if not installed:
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     else:
-        from ..Widgets import emoji_picker
         from ..Notes.file_notes_replica import FileNotesReplica
+        from ..Widgets import emoji_picker
 
         types = _types()
         from ..Chat.prompt_history import PromptHistory
@@ -367,7 +369,7 @@ def _check(operation, path=None, *, writing=False):
     # Existing parent aliases are valid only while they resolve to the same
     # positively checked physical directory; leaf aliases remain refused.
     for directory, identity in tuple(state.identities.items()):
-        info = directory.stat()
+        info = os.stat(directory)
         if (info.st_dev, info.st_ino) != identity or not stat.S_ISDIR(info.st_mode):
             raise bootstrap.RecoveryRequired("raw_parent_identity_changed")
     for directory, fd in tuple(state.pins.items()):
@@ -536,7 +538,10 @@ def _scope(
             source, route, template, user_template, selected_read
         )
         if (
-            route in config_files.ROUTES | chat_sources.ROUTES | {dictionary_files.ROUTE, mcp_sources.ROUTE}
+            route
+            in config_files.ROUTES
+            | chat_sources.ROUTES
+            | {dictionary_files.ROUTE, mcp_sources.ROUTE}
             and source in _source_participants
             and not pinned
         ):
@@ -555,7 +560,8 @@ def _scope(
                 "note_templates",
                 "theme_file",
                 "theme_export",
-            } | chat_sources.ROUTES
+            }
+            | chat_sources.ROUTES
             and writing
         ):
             paths += (selected.with_suffix(selected.suffix + ".tmp"),)
@@ -581,7 +587,7 @@ def _scope(
         while not anchor.exists():
             missing.append(anchor)
             anchor = anchor.parent
-        anchor_info = anchor.stat()
+        anchor_info = os.stat(anchor)
         anchor_identity = (anchor_info.st_dev, anchor_info.st_ino)
         # Read paths never create missing directories. Reserve them only when the
         # actual producer has mkdir behavior (template save historically does not).
@@ -604,7 +610,10 @@ def _scope(
                     and base not in directories
                 ):
                     directories += (base,)
-        if route == mcp_sources.ROUTE and mcp_sources.binding(source)[0] == "mcp.history":
+        if (
+            route == mcp_sources.ROUTE
+            and mcp_sources.binding(source)[0] == "mcp.history"
+        ):
             directories += (parent,) if parent not in directories else ()
         if route == "runtime_read":
             directories = ()
@@ -627,8 +636,12 @@ def _scope(
             participant = _raw_participant(source)
             binding = _participant_state(participant)
             if (
-                binding.owner not in {
-                    "chunking.templates", "ui.themes", "config", "chat.dictionaries"
+                binding.owner
+                not in {
+                    "chunking.templates",
+                    "ui.themes",
+                    "config",
+                    "chat.dictionaries",
                 }
                 and binding.selected != selected
             ):
@@ -805,7 +818,7 @@ def _mkdirs(operation):
                 directory.mkdir(mode=0o700)
             except FileExistsError:
                 pass
-            info = directory.lstat()
+            info = os.stat(directory, follow_symlinks=False)
             if not stat.S_ISDIR(info.st_mode):
                 raise bootstrap.RecoveryRequired("raw_parent_identity_changed")
             state.identities[directory] = (info.st_dev, info.st_ino)
@@ -894,7 +907,7 @@ def _replace(operation, temporary, destination):
                         follow_symlinks=False,
                     )
                     if state.pinned
-                    else destination.lstat()
+                    else os.stat(destination, follow_symlinks=False)
                 )
                 identity = (info.st_dev, info.st_ino)
             except FileNotFoundError:
@@ -949,7 +962,7 @@ def _check_temporary_identity(state, temporary):
             temporary.name, dir_fd=state.pins[temporary.parent], follow_symlinks=False
         )
         if state.pinned
-        else temporary.lstat()
+        else os.stat(temporary, follow_symlinks=False)
     )
     if expected is None or (info.st_dev, info.st_ino) != expected:
         state.uncertain = True
@@ -1029,7 +1042,7 @@ def _unlink(operation, path):
     info = (
         os.stat(path.name, dir_fd=parent, follow_symlinks=False)
         if state.pinned
-        else path.lstat()
+        else os.stat(path, follow_symlinks=False)
     )
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("raw_not_regular")
@@ -1037,7 +1050,7 @@ def _unlink(operation, path):
     current = (
         os.stat(path.name, dir_fd=parent, follow_symlinks=False)
         if state.pinned
-        else path.lstat()
+        else os.stat(path, follow_symlinks=False)
     )
     expected = state.observed_files.get(path, (info.st_dev, info.st_ino))
     if (current.st_dev, current.st_ino) != expected:

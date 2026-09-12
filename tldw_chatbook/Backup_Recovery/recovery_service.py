@@ -1,6 +1,5 @@
 """One app-owned worker composes existing local recovery engines."""
 
-import os
 import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +9,8 @@ from pathlib import Path
 from threading import Event, RLock
 from types import MappingProxyType
 from uuid import uuid4
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader
 from .limits import ArchiveLimits
@@ -219,7 +220,7 @@ class RecoveryService:
     def _workspace(self, operation):
         work = ensure_storage(self.control_root) / ("inspection-" + operation)
         create_private_directory(work)
-        info = work.stat(follow_symlinks=False)
+        info = os.stat(work, follow_symlinks=False)
         with self._lock:
             self._workspaces[operation] = work, (info.st_dev, info.st_ino)
         return work
@@ -594,7 +595,7 @@ class RecoveryService:
 
         root = bootstrap.default_bootstrap_root()
         try:
-            root.lstat()
+            os.stat(root, follow_symlinks=False)
         except FileNotFoundError:
             return ()
         pending = []
@@ -794,9 +795,13 @@ class RecoveryService:
 
         selected = bootstrap.effective_config_path()
         unknown = {
-            "config": str(selected), "operation_id": None, "generation": None,
-            "required_owners": None, "pending_owners": None,
-            "requirements_checked": False, "needs_setup": None,
+            "config": str(selected),
+            "operation_id": None,
+            "generation": None,
+            "required_owners": None,
+            "pending_owners": None,
+            "requirements_checked": False,
+            "needs_setup": None,
             "status": "requirements_unavailable",
         }
         try:
@@ -804,31 +809,49 @@ class RecoveryService:
                 witnesses = _witnesses(selected, lease)
                 root, _ = lease.execution_context(selected)
                 _, profiles, _ = bootstrap._control_records(root)
-                profile = next((row for row in profiles if row["selector"] == str(selected)), None)
+                profile = next(
+                    (row for row in profiles if row["selector"] == str(selected)), None
+                )
                 witness = profile.get("activation") if profile else None
                 if witness is None:
                     # No surviving selected-generation evidence is not a claim
                     # that every optional capability is configured or approved.
-                    return MappingProxyType({**unknown, "status": "no_verified_generation"})
+                    return MappingProxyType(
+                        {**unknown, "status": "no_verified_generation"}
+                    )
                 if witness not in witnesses:
                     return MappingProxyType(unknown)
                 required = tuple(witness["owners"])
                 store = ActivationStore(Path(witness["store_root"]))
-                pending = tuple(owner for owner in required if not store.allowed(witness["generation"], owner))
+                pending = tuple(
+                    owner
+                    for owner in required
+                    if not store.allowed(witness["generation"], owner)
+                )
                 checked = _witnesses(selected, lease)
                 _, latest, _ = bootstrap._control_records(root)
                 if (
                     bootstrap.effective_config_path() != selected
                     or checked != witnesses
-                    or next((row for row in latest if row["selector"] == str(selected)), None) != profile
+                    or next(
+                        (row for row in latest if row["selector"] == str(selected)),
+                        None,
+                    )
+                    != profile
                 ):
                     return MappingProxyType(unknown)
-                return MappingProxyType({
-                    "config": str(selected), "operation_id": witness["operation_id"],
-                    "generation": witness["generation"], "required_owners": required,
-                    "pending_owners": pending, "requirements_checked": True,
-                    "needs_setup": bool(pending), "status": "requirements_checked",
-                })
+                return MappingProxyType(
+                    {
+                        "config": str(selected),
+                        "operation_id": witness["operation_id"],
+                        "generation": witness["generation"],
+                        "required_owners": required,
+                        "pending_owners": pending,
+                        "requirements_checked": True,
+                        "needs_setup": bool(pending),
+                        "status": "requirements_checked",
+                    }
+                )
         except (OSError, ValueError, RuntimeError):
             return MappingProxyType(unknown)
 
@@ -856,7 +879,9 @@ class RecoveryService:
             )
             for entry in prepared.isolated_profiles:
                 try:
-                    requirements = profile_requirements(entry.profile_id, self.control_root)
+                    requirements = profile_requirements(
+                        entry.profile_id, self.control_root
+                    )
                 except (OSError, ValueError, RuntimeError):
                     status = "recovery_required"
                     requirements = {
@@ -917,7 +942,9 @@ class RecoveryService:
         if settings["credential_mode"] == "rollback":
             raise ValueError("invalid_backup_credential_mode")
         return preview_capture(
-            config_paths, options=settings, include_known_profiles=include_known_profiles
+            config_paths,
+            options=settings,
+            include_known_profiles=include_known_profiles,
         )
 
     def backup_capability(self, destination, *, options):
@@ -950,10 +977,12 @@ class RecoveryService:
 
         settings, _, _, _ = _capture_options(options)
         inventory = self.preview_backup(
-            config_paths, options=settings, include_known_profiles=include_known_profiles
+            config_paths,
+            options=settings,
+            include_known_profiles=include_known_profiles,
         )
         estimate = sum(
-            item.path.stat().st_size
+            os.stat(item.path).st_size
             for item in inventory.items
             if item.path is not None and item.status == "included"
         )
@@ -997,7 +1026,13 @@ class RecoveryService:
         )
 
     def start_backup(
-        self, config_paths, approved_scope, destination, *, options, password,
+        self,
+        config_paths,
+        approved_scope,
+        destination,
+        *,
+        options,
+        password,
         include_known_profiles=False,
     ):
         """Capture coherently, resume writers, then verify and publish an archive."""
@@ -1029,7 +1064,7 @@ class RecoveryService:
                 cancel=cancel,
                 include_known_profiles=include_known_profiles,
             )
-            info = captured.root.stat(follow_symlinks=False)
+            info = os.stat(captured.root, follow_symlinks=False)
             identity = info.st_dev, info.st_ino
             try:
                 self._update(operation, phase="packaging")

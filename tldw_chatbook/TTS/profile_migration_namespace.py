@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-from tldw_chatbook.TTS.profile_migration_native import (
-    _migration_native,
-    _native_open,
-    _native_close,
-    _native_parent,
-)
-
 import ctypes
 import errno
-import os
 import stat
 import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from tldw_chatbook.TTS.profile_migration_native import (
+    _migration_native,
+    _native_close,
+    _native_open,
+    _native_parent,
+)
 from tldw_chatbook.Utils import private_paths
-
+from tldw_chatbook.Utils.platform_files import os
 
 _LIBC = None if sys.platform == "win32" else ctypes.CDLL(None, use_errno=True)
 _RENAME_NOREPLACE = 1 if sys.platform.startswith("linux") else 0x00000004
@@ -94,6 +92,11 @@ def _rename_noreplace(
     source_leaf: str,
     destination_leaf: str,
 ) -> None:
+    if os.name == "nt":
+        from tldw_chatbook.Utils.windows_files import rename_noreplace
+
+        rename_noreplace(parent_fd, source_leaf, parent_fd, destination_leaf)
+        return
     source = os.fsencode(source_leaf)
     destination = os.fsencode(destination_leaf)
     if sys.platform == "darwin" and hasattr(_LIBC, "renameatx_np"):

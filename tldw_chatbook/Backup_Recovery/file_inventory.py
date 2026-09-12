@@ -1,13 +1,13 @@
 """Bounded metadata enumeration of an exact root, without capture authority."""
 
 import hashlib
-import os
-from pathlib import Path
 import stat
 import sys
 import unicodedata
+from pathlib import Path
 
 from tldw_chatbook.Utils.path_validation import validate_recovery_relative_path
+from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
 from .models import FileMetadata, StorageItem
@@ -24,7 +24,7 @@ def _metadata_supported(fd: int, info: os.stat_result) -> bool:
     macOS ACLs have a native interface separate from listxattr. Linux POSIX ACLs
     are extended attributes. Other platforms remain capability-unavailable.
     """
-    if sys.platform not in {"darwin", "linux"}:
+    if sys.platform not in {"darwin", "linux", "win32"}:
         return False
     if (
         info.st_uid != os.getuid()
@@ -262,7 +262,13 @@ def _inventory_tree(
                     raise ValueError("tree_path_collision")
                 folded[key] = child
             for child in sorted(children):
-                walk(fd, child, str(Path(relative) / child), logical_id, depth + 1)
+                walk(
+                    fd,
+                    child,
+                    (Path(relative) / child).as_posix(),
+                    logical_id,
+                    depth + 1,
+                )
             current = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
             if (info.st_dev, info.st_ino, info.st_mtime_ns) != (
                 current.st_dev,

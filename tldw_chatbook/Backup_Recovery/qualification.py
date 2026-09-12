@@ -210,13 +210,18 @@ def _platform_contract(identity: Mapping[str, str | int]) -> bool:
     execution still checks permissions, pinned objects, volume and every barrier.
     Network/unknown filesystems and read-only POSIX mounts remain unavailable.
     """
+    if _QUALIFICATION_PROTOCOL != 2:
+        return False
     try:
         row = _Identity.model_validate(dict(identity))
     except ValidationError:
         return False
     if row.os == "Linux":
         return row.filesystem == "ext4" and not row.flags & 1
-    # Windows NTFS is enabled with the native adapter and product verification.
+    if row.os == "Darwin":
+        return row.filesystem == "apfs" and not row.flags & 1
+    if row.os == "Windows":
+        return row.filesystem == "NTFS" and not row.flags & 0x80000
     return False
 
 

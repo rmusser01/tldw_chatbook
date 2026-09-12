@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
 from .admission import Admission, fcntl
@@ -155,7 +156,7 @@ def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bo
     selected = lexical_path(path)
     resolved = selected.resolve()
     try:
-        info = selected.stat()
+        info = os.stat(selected)
         inode = f"inode:{info.st_dev}:{info.st_ino}"
     except FileNotFoundError:
         inode = None

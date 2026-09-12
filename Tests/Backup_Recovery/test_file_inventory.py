@@ -5,6 +5,23 @@ import os
 from tldw_chatbook.Backup_Recovery.file_inventory import inventory_tree
 
 
+def test_nested_inventory_serializes_windows_relative_paths(tmp_path, monkeypatch):
+    from pathlib import Path, PureWindowsPath
+
+    from tldw_chatbook.Backup_Recovery import file_inventory
+
+    root = tmp_path / "tree"
+    (root / "nested").mkdir(parents=True)
+    (root / "nested" / "content").write_bytes(b"retained")
+
+    def platform_path(value):
+        return Path(value) if Path(value).is_absolute() else PureWindowsPath(value)
+
+    monkeypatch.setattr(file_inventory, "Path", platform_path)
+    items = file_inventory.inventory_tree(root, owner="assets", external=False)
+    assert [item.metadata.relative_path for item in items] == ["", "nested", "nested/content"]
+
+
 def test_empty_directory_is_an_inventory_item(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -33,20 +50,20 @@ def test_directory_metadata_is_versioned_and_preserves_mode_and_mtime(tmp_path):
 
 
 import ctypes
-from dataclasses import FrozenInstanceError, replace
-from pathlib import Path
 import subprocess
 import sys
+from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Backup_Recovery.inventory import classify_entries, discover
 from tldw_chatbook.Backup_Recovery.models import (
     DISCOVERY_CONTEXT_KEY,
     DiscoveryContext,
     DiscoverySelections,
     StorageItem,
 )
-from tldw_chatbook.Backup_Recovery.inventory import classify_entries, discover
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
 
 
@@ -269,6 +286,7 @@ def test_tts_capture_preserves_real_profile_reference_bytes(tmp_path, monkeypatc
     import sqlite3
     from contextlib import closing
     from threading import Event
+
     from Tests.Backup_Recovery.test_core_owners import application_authority
     from tldw_chatbook.TTS.profile_schema import open_profile_store
     from tldw_chatbook.TTS.recovery import recovery_adapters
@@ -384,6 +402,7 @@ def test_current_history_config_captures_without_secret_decryption(
     tmp_path, monkeypatch
 ):
     from threading import Event
+
     from Tests.Backup_Recovery.test_core_owners import application_authority
     from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
 
@@ -414,11 +433,11 @@ def test_file_factories_return_actual_custom_assets_and_pending_participants(tmp
     from tldw_chatbook.Backup_Recovery.config_adapter import (
         recovery_adapters as config_adapters,
     )
-    from tldw_chatbook.Skills_Interop.recovery import (
-        recovery_adapters as skills_adapters,
-    )
     from tldw_chatbook.Persona_Visual.recovery import (
         recovery_adapters as visual_adapters,
+    )
+    from tldw_chatbook.Skills_Interop.recovery import (
+        recovery_adapters as skills_adapters,
     )
 
     data = tmp_path / "data" / "Ada"
@@ -455,13 +474,14 @@ def test_file_factories_return_actual_custom_assets_and_pending_participants(tmp
 
 def test_installed_model_selection_includes_exact_dependency_closure(tmp_path):
     import hashlib
+
     from Tests.Model_Artifacts.test_service import descriptor
-    from tldw_chatbook.Model_Artifacts.service import (
-        ModelArtifactService,
-        ArtifactRef,
-        ArtifactFile,
-    )
     from tldw_chatbook.Model_Artifacts.recovery import recovery_adapters
+    from tldw_chatbook.Model_Artifacts.service import (
+        ArtifactFile,
+        ArtifactRef,
+        ModelArtifactService,
+    )
 
     data = tmp_path / "data" / "Ada"
     root = data / "models" / "managed"
@@ -564,6 +584,7 @@ def test_installed_model_selection_includes_exact_dependency_closure(tmp_path):
 def test_streamed_digest_count_limit_and_cancel(tmp_path):
     import hashlib
     from threading import Event
+
     from tldw_chatbook.Backup_Recovery.storage_admission import _digest_recovery_file
 
     payload = b"payload" * 400_000
@@ -624,11 +645,11 @@ def test_actual_persona_publication_dependencies_and_missing_retained_assets(
     tmp_path, damage
 ):
     from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
-    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
-    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
-    from tldw_chatbook.Persona_Visual.recovery import recovery_adapters
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.recovery_core import core_adapters
+    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
+    from tldw_chatbook.Persona_Visual.recovery import recovery_adapters
+    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
     data = tmp_path / "data" / "Ada"
     data.mkdir(parents=True)
@@ -713,9 +734,10 @@ def test_actual_persona_publication_dependencies_and_missing_retained_assets(
 
 def test_tts_reference_cohort_requires_actual_matching_physical_identity(tmp_path):
     from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.inventory import _merge_chachanotes_cohort
     from tldw_chatbook.TTS.profile_schema import open_profile_store
     from tldw_chatbook.TTS.recovery import recovery_adapters
-    from tldw_chatbook.Backup_Recovery.inventory import _merge_chachanotes_cohort
 
     source = tmp_path / "tts.db"
     open_profile_store(source).close()
@@ -799,9 +821,10 @@ def test_saved_assets_baseline_temporary_and_diagnostics_opt_in(tmp_path):
 @pytest.fixture
 def installed_model(tmp_path):
     import hashlib
+
     from Tests.Model_Artifacts.test_service import descriptor
-    from tldw_chatbook.Model_Artifacts.service import ModelArtifactService, ArtifactFile
     from tldw_chatbook.Model_Artifacts.recovery import recovery_adapters
+    from tldw_chatbook.Model_Artifacts.service import ArtifactFile, ModelArtifactService
 
     store = ModelArtifactService(tmp_path / "data" / "Ada" / "models" / "managed")
     source = tmp_path / "source"
@@ -870,6 +893,7 @@ def test_selected_model_capture_uses_checked_source_and_preserves_recipe(
     installed_model, tmp_path, monkeypatch, damage
 ):
     from threading import Event
+
     from Tests.Backup_Recovery.test_core_owners import application_authority
     from tldw_chatbook.Backup_Recovery.admission import _local
 
@@ -951,11 +975,12 @@ def test_chat_attachment_adapter_uses_exact_core_blob_cohort(tmp_path, monkeypat
     import sqlite3
     from contextlib import closing
     from threading import Event
+
     from Tests.Backup_Recovery.test_core_owners import application_authority
-    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.DB.recovery_core import core_adapters
     from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
     from tldw_chatbook.Backup_Recovery.inventory import _merge_chachanotes_cohort
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.recovery_core import core_adapters
 
     source = tmp_path / "core.db"
     db = CharactersRAGDB(source, "recovery")
@@ -1010,6 +1035,7 @@ def test_visual_identity_owned_preview_and_exact_staged_references(
     tmp_path, preview, monkeypatch
 ):
     import hashlib
+
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
     from tldw_chatbook.Persona_Visual.recovery import recovery_adapters
@@ -1140,9 +1166,10 @@ def test_selected_tree_never_traverses_siblings_or_expands_empty_selection(tmp_p
 
 def test_actual_builtin_asset_reference_uses_only_installed_package_bytes(tmp_path):
     import hashlib
+
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
     from tldw_chatbook.DB.recovery_core import core_adapters
+    from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
     from tldw_chatbook.Persona_Visual.recovery import recovery_adapters
 
     package_root = Path(__file__).parents[2] / "tldw_chatbook" / "assets"
@@ -1262,11 +1289,12 @@ def test_planned_output_cannot_claim_an_absent_installed_owner_path(tmp_path):
 async def test_remaining_installed_preferences_history_and_chatbooks_are_baseline(
     tmp_path, monkeypatch
 ):
+    from threading import Event
+
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
     from tldw_chatbook.Chat.prompt_history import PromptHistory
     from tldw_chatbook.Chatbooks.local_chatbook_service import LocalChatbookService
-    from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
-    from Tests.Backup_Recovery.test_core_owners import application_authority
-    from threading import Event
 
     data = tmp_path / "data" / "Ada"
     data.mkdir(parents=True)
@@ -1362,8 +1390,8 @@ async def test_remaining_installed_preferences_history_and_chatbooks_are_baselin
 def test_chatbook_scratch_has_exact_producers_cleanup_and_unknown_sibling_refusal(
     tmp_path, monkeypatch
 ):
-    from tldw_chatbook.Chatbooks import chatbook_creator, chatbook_importer
     from tldw_chatbook.Backup_Recovery.config_adapter import recovery_adapters
+    from tldw_chatbook.Chatbooks import chatbook_creator, chatbook_importer
 
     data = tmp_path / "data" / "Ada"
     data.mkdir(parents=True)

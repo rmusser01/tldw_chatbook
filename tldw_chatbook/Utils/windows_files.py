@@ -6,9 +6,9 @@ reparse points. Security metadata is a conservative projection of the actual
 owner SID and DACL, not Windows' synthetic POSIX permission bits. UID 1000 means
 the process token user, UID 0 means SYSTEM/Administrators/TrustedInstaller.
 
-Only local NTFS is supported. All native handles use FILE_WRITE_THROUGH: NTFS
-flushes metadata changes (including rename) made through such handles. Directory
-barriers verify that contract; files additionally use FlushFileBuffers. See:
+Only local NTFS is supported. All native handles use FILE_WRITE_THROUGH. Directory barriers issue normal
+NtFlushBuffersFileEx requests (data, metadata and device synchronization); files
+additionally use FlushFileBuffers. Failures are propagated. See:
 https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-createfilew
 https://learn.microsoft.com/windows/win32/api/winternl/nf-winternl-ntcreatefile
 https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
@@ -105,6 +105,10 @@ class _RenameInfo(C.Structure):
     ]
 
 
+class _FileIdDescriptor(C.Structure):
+    _fields_ = [("size", _U32), ("kind", _U32), ("identifier", C.c_uint64 * 2)]
+
+
 class _Overlapped(C.Structure):
     _fields_ = [
         ("Internal", C.c_size_t),
@@ -140,8 +144,10 @@ def _acl_mode(
 ) -> int:
     """Conservatively project effective public grants; never assume deny order.
 
-    Administrative principals are trusted like POSIX root. Inherit-only ACEs do
-    not apply to this object. Unknown/callback/object ACEs fail privacy closed.
+    Administrative principals are trusted like POSIX root. Public inherit-only
+    grants set privacy exposure bits (044), requiring private leaves to harden
+    before ordinary SQLite/pathlib children can inherit those grants. They do
+    not set destructive ancestor bits (022), since they do not apply here. Unknown/callback/object ACEs fail privacy closed.
     A directory permitting additions alone is sticky-like: outsiders cannot
     remove existing children, so ancestor traversal may safely pin them.
     """
@@ -150,6 +156,13 @@ def _acl_mode(
     public_destructive = False
     for kind, flags, mask, sid in aces:
         if flags & 8:  # INHERIT_ONLY_ACE
+            if (
+                is_directory
+                and kind != 1
+                and sid != current_sid
+                and sid not in _SYSTEM_SIDS
+            ):
+                mode |= 0o044
             continue
         if kind == 1:  # A deny cannot expand access; ignoring it is conservative.
             continue
@@ -192,6 +205,24 @@ class _Native:
         self.advapi = C.WinDLL("advapi32", use_last_error=True)
         self.nt = C.WinDLL("ntdll", use_last_error=True)
         signatures = [
+            (
+                self.kernel,
+                "OpenFileById",
+                [_HANDLE, C.POINTER(_FileIdDescriptor), _U32, _U32, _P, _U32],
+                _HANDLE,
+            ),
+            (
+                self.nt,
+                "NtSetInformationFile",
+                [_HANDLE, C.POINTER(_IOStatus), _P, _U32, _U32],
+                _I32,
+            ),
+            (
+                self.nt,
+                "NtFlushBuffersFileEx",
+                [_HANDLE, _U32, _P, _U32, C.POINTER(_IOStatus)],
+                _I32,
+            ),
             (self.kernel, "CloseHandle", [_HANDLE], _I32),
             (
                 self.kernel,
@@ -503,13 +534,37 @@ class _Native:
 
     @contextlib.contextmanager
     def reopen(self, handle, access):
-        value = self.kernel.ReOpenFile(
-            handle, access, _SHARE_ALL, 0x02000000 | 0x00200000 | 0x80000000
+        """Reopen the live NTFS object by ID, including native directory handles.
+
+        The original handle prevents file-ID reuse. The returned identity is
+        checked before use; no pathname is resolved for rights acquisition.
+        ReOpenFile fails on directories opened with NtCreateFile on supported
+        Windows runners, while OpenFileById explicitly supports directory hints.
+        """
+        before = self.info(handle)
+        descriptor = _FileIdDescriptor(
+            C.sizeof(_FileIdDescriptor),
+            0,
+            (C.c_uint64 * 2)((before.index_high << 32) | before.index_low, 0),
+        )
+        value = self.kernel.OpenFileById(
+            handle,
+            C.byref(descriptor),
+            access | _READ_ATTRIBUTES | _SYNCHRONIZE,
+            _SHARE_ALL,
+            None,
+            0x02000000 | 0x00200000 | 0x80000000,
         )
         if value in {None, C.c_void_p(-1).value}:
             raise C.WinError(C.get_last_error())
         try:
-            self.info(value)
+            after = self.info(value)
+            if (before.volume, before.index_high, before.index_low) != (
+                after.volume,
+                after.index_high,
+                after.index_low,
+            ):
+                raise OSError(errno.ESTALE, "windows_reopen_identity_changed")
             yield value
         finally:
             self.kernel.CloseHandle(value)
@@ -556,6 +611,13 @@ class WindowsOS:
     O_NOFOLLOW = 0x20000000
     O_NONBLOCK = 0x40000000
     O_NOCTTY = 0x08000000
+
+    def __init__(self):
+        # Private storage captures operation identity once for admission guards.
+        # Cache bound methods so repeated lookup preserves that identity.
+        for name, member in type(self).__dict__.items():
+            if callable(member) and not name.startswith("__"):
+                setattr(self, name, member.__get__(self, type(self)))
 
     def __getattr__(self, name):
         return getattr(_os, name)
@@ -652,22 +714,29 @@ class WindowsOS:
         def ns(value):
             return (value - _EPOCH_100NS) * 100
 
-        return SimpleNamespace(
-            st_mode=(_stat.S_IFDIR if info.attributes & _DIRECTORY else _stat.S_IFREG)
-            | mode,
-            st_uid=uid,
-            st_gid=uid,
-            st_dev=info.volume,
-            st_ino=(info.index_high << 32) | info.index_low,
-            st_nlink=info.links,
-            st_size=(info.size_high << 32) | info.size_low,
-            st_atime_ns=ns(basic.accessed),
-            st_mtime_ns=ns(basic.written),
-            st_ctime_ns=ns(basic.changed),
-            st_atime=ns(basic.accessed) / 1e9,
-            st_mtime=ns(basic.written) / 1e9,
-            st_ctime=ns(basic.changed) / 1e9,
-            st_file_attributes=info.attributes,
+        return _os.stat_result(
+            (
+                (_stat.S_IFDIR if info.attributes & _DIRECTORY else _stat.S_IFREG)
+                | mode,
+                (info.index_high << 32) | info.index_low,
+                info.volume,
+                info.links,
+                uid,
+                uid,
+                (info.size_high << 32) | info.size_low,
+                ns(basic.accessed) // 1_000_000_000,
+                ns(basic.written) // 1_000_000_000,
+                ns(basic.changed) // 1_000_000_000,
+            ),
+            {
+                "st_atime": ns(basic.accessed) / 1e9,
+                "st_mtime": ns(basic.written) / 1e9,
+                "st_ctime": ns(basic.changed) / 1e9,
+                "st_atime_ns": ns(basic.accessed),
+                "st_mtime_ns": ns(basic.written),
+                "st_ctime_ns": ns(basic.changed),
+                "st_file_attributes": info.attributes,
+            },
         )
 
     def fchmod(self, fd, mode):
@@ -703,7 +772,11 @@ class WindowsOS:
             if leaf is None:
                 raise PermissionError("cannot_harden_drive_root")
             handle = native.open_handle(leaf, parent=parent, metadata=True)
-        fd = native.crt.open_osfhandle(handle, _os.O_RDONLY | _os.O_BINARY)
+        try:
+            fd = native.crt.open_osfhandle(handle, _os.O_RDONLY | _os.O_BINARY)
+        except BaseException:
+            native.kernel.CloseHandle(handle)
+            raise
         try:
             self.fchmod(fd, mode)
         finally:
@@ -734,8 +807,8 @@ class WindowsOS:
             )
             try:
                 encoded = new_name.encode("utf-16-le")
-                size = _RenameInfo.name.offset + len(encoded)
-                buffer = C.create_string_buffer(max(size, C.sizeof(_RenameInfo)))
+                size = C.sizeof(_RenameInfo) + len(encoded)
+                buffer = C.create_string_buffer(size)
                 info = _RenameInfo.from_buffer(buffer)
                 info.replace, info.root, info.length = (
                     int(replace),
@@ -745,18 +818,17 @@ class WindowsOS:
                 C.memmove(
                     C.addressof(buffer) + _RenameInfo.name.offset, encoded, len(encoded)
                 )
-                if link:
-                    status = _IOStatus()
-                    function = native.nt.NtSetInformationFile
-                    function.argtypes = [_HANDLE, C.POINTER(_IOStatus), _P, _U32, _U32]
-                    function.restype = _I32
-                    native.ntcheck(function(handle, C.byref(status), buffer, size, 11))
-                else:
-                    native.check(
-                        native.kernel.SetFileInformationByHandle(
-                            handle, 3, buffer, size
-                        )
+                status = _IOStatus()
+                native.ntcheck(
+                    native.nt.NtSetInformationFile(
+                        handle,
+                        C.byref(status),
+                        buffer,
+                        size,
+                        11 if link else 10,
                     )
+                )
+
             finally:
                 native.kernel.CloseHandle(handle)
 
@@ -966,25 +1038,23 @@ def rename_noreplace(src_fd: int, src: str, dst_fd: int, dst: str) -> None:
 
 
 def flush_directory(fd: int) -> None:
-    """Verify synchronous NTFS metadata write-through for this directory handle.
+    """Flush directory data/metadata and the device cache with native flags zero.
 
-    Windows does not offer a POSIX directory fsync for unprivileged callers.
-    The boundary instead opens *every* mutating handle FILE_WRITE_THROUGH, which
-    NTFS applies to rename and other metadata operations before returning. This
-    verifies the held directory belongs to that contract, not a swallowed flush.
+    NtFlushBuffersFileEx(normal) documents metadata and storage synchronization.
+    A same-object directory handle obtains FILE_ADD_FILE/ADD_SUBDIRECTORY (the
+    directory meanings of write/append) because read-only handles cannot flush.
+    Neither unsupported native calls nor permission errors become success.
     """
     native, handle = _native(), _native().handle(fd)
     if not native.info(handle).attributes & _DIRECTORY:
         raise OSError(errno.ENOTDIR, "directory_barrier_requires_directory")
     native.ntfs(handle)
-    mode, status = _U32(), _IOStatus()
-    native.ntcheck(
-        native.nt.NtQueryInformationFile(
-            handle, C.byref(status), C.byref(mode), C.sizeof(mode), 16
+    with native.reopen(handle, 2 | 4) as writable:
+        status = _IOStatus()
+        native.ntcheck(
+            native.nt.NtFlushBuffersFileEx(writable, 0, None, 0, C.byref(status))
         )
-    )
-    if not mode.value & _WRITE_THROUGH:
-        raise OSError(errno.ENOTSUP, "directory_handle_missing_write_through")
+        native.ntcheck(C.c_int32(status.Status or 0).value)
 
 
 def flush_file(fd: int) -> None:

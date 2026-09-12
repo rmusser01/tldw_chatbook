@@ -4,19 +4,21 @@ These private scopes are ordinary source admission, never capture authority. Fil
 selection is performed by the actual visual producers before any native mutation.
 """
 
-from contextlib import contextmanager
-from dataclasses import dataclass, field, fields, is_dataclass
-from functools import wraps
 import errno
-import os
-from pathlib import Path
 import stat
 import sys
 import threading
 import time
 import weakref
+from contextlib import contextmanager
+from dataclasses import dataclass, field, fields, is_dataclass
+from functools import wraps
+from pathlib import Path
 
-from . import bootstrap, profile_paths, storage_admission as storage
+from tldw_chatbook.Utils.platform_files import os
+
+from . import bootstrap, profile_paths
+from . import storage_admission as storage
 
 _local = threading.local()
 _sources = weakref.WeakKeyDictionary()
@@ -113,8 +115,8 @@ def source_for(profile):
 
 
 def bind_repository(repository):
-    from ..Persona_Visual.repository import PersonaVisualRepository
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
+    from ..Persona_Visual.repository import PersonaVisualRepository
     from .participants import _repository_participant
 
     if repository in _repositories:
@@ -268,7 +270,7 @@ def candidate_source(value, profile):
 
 def _identity(path):
     try:
-        info = path.lstat()
+        info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         return None
     return info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)

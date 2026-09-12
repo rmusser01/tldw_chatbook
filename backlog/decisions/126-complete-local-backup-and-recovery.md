@@ -8,6 +8,18 @@ Date: 2026-09-07
 (TASK-32495). The existing age v1 format, isolated worker, integrity checks and
 recovery boundaries remain. See the [verification record](../../Docs/Development/backup-python-verification-2026-09-12.md).
 
+2026-09-12 platform correction (TASK-32496), explicitly requested by the user:
+the existing recovery feature must operate on macOS, Linux and Windows. Use the
+[cross-platform correction spec](../../Docs/superpowers/specs/2026-09-12-cross-platform-backup-correction.md).
+Native APFS, ext4 and local NTFS contracts replace exact OS/Python patch matching;
+actual identity acquisition and every operation still enforce supported volumes,
+privacy, containment, no-overwrite publication, locking and persistence barriers.
+POSIX callers retain the standard library operations. Windows callers use a local
+Python ctypes filesystem interface with native handles and ACL checks. No global
+standard-library monkeypatch, new language, archive format or encryption dependency
+is introduced. Real installed product tests on each platform are required before
+claiming completion; native primitive tests alone are insufficient.
+
 Revision: 4 — incorporates the fourth user-requested design review.
 
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)

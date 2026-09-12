@@ -6,7 +6,6 @@ Original Task19 separately owns engine capture and restored retrieval readiness.
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -17,12 +16,13 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path, user_data_dir
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
+from tldw_chatbook.Utils.platform_files import os
 
 
 def _absent(config, owner, path):
     """Distinguish never-created roots from unreadable or aliased parents."""
     try:
-        path.lstat()
+        os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         if not any(parent.is_symlink() for parent in path.parents):
             context = discovery_context(config)

@@ -1,17 +1,19 @@
 """Concrete chat core/sidecar source pairs; never transferable IO authority."""
 
-from contextlib import ExitStack, closing, contextmanager
 import copy
-import os
+import stat
+import sys
+import threading
+import weakref
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
-import sys
-import stat
-import threading
-import weakref
 
-from . import bootstrap, profile_paths, storage_admission as storage
+from tldw_chatbook.Utils.platform_files import os
+
+from . import bootstrap, profile_paths
+from . import storage_admission as storage
 
 ROUTES = {"persona_sidecar", "dictionary_history", "citation_sidecar"}
 _BINDINGS = weakref.WeakKeyDictionary()
@@ -168,10 +170,10 @@ def _install(source, db, config, selected):
 
 
 def build_persona_service(db):
+    from .. import config
     from ..Character_Chat.local_character_persona_service import (
         LocalCharacterPersonaService,
     )
-    from .. import config
 
     with closing(storage._Acquisition()) as attempt:
         selected = config.get_user_data_dir() / "tldw_chatbook_personas.json"
@@ -183,10 +185,10 @@ def build_persona_service(db):
 
 
 def build_dictionary_service(db):
+    from .. import config
     from ..Character_Chat.local_chat_dictionary_service import (
         LocalChatDictionaryService,
     )
-    from .. import config
 
     with closing(storage._Acquisition()) as attempt:
         selected = (
@@ -201,9 +203,9 @@ def build_dictionary_service(db):
 
 def bind_citation_services(service, migration):
     """Bind the concrete factory's already-composed DB/repository relationship."""
+    from .. import config
     from ..Chat.chat_conversation_service import ChatConversationService
     from ..Chat.citation_legacy_migration import CitationLegacyMigrationService
-    from .. import config
 
     with closing(storage._Acquisition()) as attempt:
         selected = config.get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
@@ -458,7 +460,7 @@ def write_text(source, text):
 
 def _sidecar_identity(path, *, writing=False):
     try:
-        info = path.lstat()
+        info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         return None
     if writing and not stat.S_ISREG(info.st_mode):

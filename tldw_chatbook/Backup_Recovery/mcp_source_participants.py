@@ -1,17 +1,19 @@
 """Exact MCP local persistence sources; no transport or execution authority."""
 
-from contextlib import closing, contextmanager
-from dataclasses import dataclass
-from functools import wraps
-import os
-from pathlib import Path
 import secrets
 import stat
 import sys
 import threading
 import weakref
+from contextlib import closing, contextmanager
+from dataclasses import dataclass
+from functools import wraps
+from pathlib import Path
 
-from . import bootstrap, profile_paths, storage_admission as storage
+from tldw_chatbook.Utils.platform_files import os
+
+from . import bootstrap, profile_paths
+from . import storage_admission as storage
 
 ROUTE = "mcp_store"
 _BINDINGS = weakref.WeakKeyDictionary()
@@ -76,8 +78,8 @@ def bind(source):
     source._mcp_persistence_error = None
     config = sys.modules.get("tldw_chatbook.config")
     data = getattr(config, "_CONFIG_CACHE", None)
-    from . import raw_participants as raw
     from ..Utils import private_paths
+    from . import raw_participants as raw
 
     if not raw._pinned_io_available() or (
         owner == "mcp.history"
@@ -91,10 +93,10 @@ def bind(source):
         return
     selected = profile_paths.lexical_path(source.path)
     profile = profile_paths.lexical_path(config._get_effective_config_path())
-    if (
-        config._CONFIG_CACHE_SOURCE == profile
-        and selected
-        == _selected(source, owner, profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf))
+    if config._CONFIG_CACHE_SOURCE == profile and selected == _selected(
+        source,
+        owner,
+        profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf),
     ):
         _BINDINGS[source] = _Binding(cls, config, profile, selected)
 
@@ -125,7 +127,11 @@ def binding(source):
             != bound.profile
             or config._CONFIG_CACHE_SOURCE != bound.profile
             or data is None
-            or _selected(source, owner, profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf))
+            or _selected(
+                source,
+                owner,
+                profile_paths.lexical_path(profile_paths.user_data_dir(data) / leaf),
+            )
             != selected
         ):
             raise bootstrap.RecoveryRequired("mcp_source_selection_changed")
@@ -156,7 +162,7 @@ def _identity(state, path):
         info = (
             os.stat(path.name, dir_fd=state.pins[path.parent], follow_symlinks=False)
             if state.pinned and path.parent in state.pins
-            else path.lstat()
+            else os.stat(path, follow_symlinks=False)
         )
     except FileNotFoundError:
         return None
@@ -286,8 +292,9 @@ def reader(source):
 
 
 def write_json(source, payload):
-    from . import raw_participants as raw
     import json
+
+    from . import raw_participants as raw
 
     operation, state = _operation(source)
     if state.participant is None:

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import stat
 from pathlib import Path
 from threading import Event
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .admission import Admission, fcntl
@@ -130,7 +131,9 @@ def _finalization_session(session, context, prepared):
     def covered(path):
         # Scope comes from native admission, not the inode the operation is
         # replacing. All move/parent/content checks still observe live objects.
-        selected = _publication_scope_path(path, prepared=prepared).resolve(strict=False)
+        selected = _publication_scope_path(path, prepared=prepared).resolve(
+            strict=False
+        )
         return any(
             selected == root or (directory and root in selected.parents)
             for root, directory in session._publication_roots
@@ -241,8 +244,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
             raise ValueError("publication_context_unverified")
         _finalization_session(session, context, prepared)
         if any(
-            not _safety_source_matches(row.source)
-            for row in prepared.safety_sources
+            not _safety_source_matches(row.source) for row in prepared.safety_sources
         ):
             raise ValueError("safety_source_changed")
         committed = records[-1] if records[-1].event == "committed" else None
@@ -373,8 +375,7 @@ def finalize_candidate(candidate: Path, plan: RestorePlan, journal, *, session) 
         ):
             raise ValueError("finalization_activation_changed")
         if any(
-            not _safety_source_matches(row.source)
-            for row in prepared.safety_sources
+            not _safety_source_matches(row.source) for row in prepared.safety_sources
         ):
             raise ValueError("safety_source_changed")
         if prepared.incoming_credentials and not _matches(
@@ -451,7 +452,8 @@ def _pending(journal, context, *, targets=(), durable=False, committed=None, pla
         prepared = _Prepared.model_validate(row.evidence) if row else None
         targets = tuple(
             _publication_scope_path(
-                path, items=plan.target.items if plan is not None and plan.target else (),
+                path,
+                items=plan.target.items if plan is not None and plan.target else (),
                 prepared=prepared,
             )
             for path in targets
@@ -529,7 +531,7 @@ def _descriptor(candidate, plan):
         if not any(root in path.parents for root in roots):
             raise ValueError("candidate_root_mismatch")
         observed = observe_artifact(path)
-        info = path.lstat()
+        info = os.stat(path, follow_symlinks=False)
         if (
             row["identity"]
             != [info.st_dev, info.st_ino, info.st_mode, info.st_mtime_ns]
@@ -663,7 +665,7 @@ def _directory_state(path):
 def _observe_safety_source(path):
     """Observe explicit safety metadata without traversing unselected children."""
     path = Path(path)
-    if not stat.S_ISDIR(path.lstat().st_mode):
+    if not stat.S_ISDIR(os.stat(path, follow_symlinks=False).st_mode):
         return observe_artifact(path, metadata=True)
     state = _directory_state(path)
     return _Object(
@@ -878,13 +880,15 @@ def _rollback_sources(plan, artifacts, owners):
             main = _sidecar_main(row, plan.target.items, owners)
             # Semantic aliases at one declared path share the same live WAL/SHM.
             # A hardlink or another pathname never borrows that path's sidecars.
-            if row.path.exists() and not any(
-                existing.path == row.path for existing in sidecars.values()
-            ) and (
-                main.logical_id == item.logical_id
-                or item.shared_group
-                and main.shared_group == item.shared_group
-                and main.path == item.path
+            if (
+                row.path.exists()
+                and not any(existing.path == row.path for existing in sidecars.values())
+                and (
+                    main.logical_id == item.logical_id
+                    or item.shared_group
+                    and main.shared_group == item.shared_group
+                    and main.path == item.path
+                )
             ):
                 sidecars[row.logical_id] = row
         paths = [item.path, *(row.path for row in sidecars.values())]
@@ -1101,17 +1105,28 @@ def _prepare(
                 if row["action"] == "retire"
             ):
                 continue
-            repeated = next((row for row in rows if row["action"] == "retire" and row["destination"] == str(path)), None)
+            repeated = next(
+                (
+                    row
+                    for row in rows
+                    if row["action"] == "retire" and row["destination"] == str(path)
+                ),
+                None,
+            )
             if repeated is not None:
                 aliases = {item.logical_id: item for item in plan.target.items}
                 left, right = aliases[key], aliases[repeated["logical_id"]]
-                if left.owner != "sqlite.transient" or right.owner != "sqlite.transient":
+                if (
+                    left.owner != "sqlite.transient"
+                    or right.owner != "sqlite.transient"
+                ):
                     raise ValueError("duplicate_retirement_target")
                 left = _sidecar_main(left, plan.target.items, owners)
                 right = _sidecar_main(right, plan.target.items, owners)
                 if left.path != right.path or not (
                     left.logical_id == right.logical_id
-                    or left.shared_group and left.shared_group == right.shared_group
+                    or left.shared_group
+                    and left.shared_group == right.shared_group
                 ):
                     raise ValueError("rollback_sidecar_unclassified")
                 continue
@@ -1145,7 +1160,7 @@ def _prepare(
             requires_owner = False
             projection_roots = []
             try:
-                target.lstat()
+                os.stat(target, follow_symlinks=False)
             except FileNotFoundError:
                 if row["action"] == "retire":
                     raise ValueError("retirement_target_missing") from None
@@ -1157,7 +1172,7 @@ def _prepare(
                 device = previous["device"]
                 if device not in retained_roots:
                     selected = next(
-                        (root for root in roots if root.stat().st_dev == device), None
+                        (root for root in roots if os.stat(root).st_dev == device), None
                     )
                     if selected is None:
                         raise ValueError("retirement_volume_unavailable")
@@ -1195,7 +1210,9 @@ def _prepare(
                     if evidence not in projection_roots:
                         projection_roots.append(evidence)
                 for local_path, local_item in target_items.items():
-                    if local_path is not None and (local_path == target or target in local_path.parents):
+                    if local_path is not None and (
+                        local_path == target or target in local_path.parents
+                    ):
                         main = _sidecar_main(local_item, plan.target.items, owners)
                         local_owner = owners.get(main.owner)
                         if local_owner is None:
@@ -1287,7 +1304,7 @@ def _prepare(
                     directory_metadata.append(intent)
                     if tokenizer is not None:
                         tokenizer_directories[target] = intent
-            info = source.lstat()
+            info = os.stat(source, follow_symlinks=False)
             installed_paths.append(
                 {"path": str(target), "device": info.st_dev, "inode": info.st_ino}
             )
@@ -1396,7 +1413,7 @@ def _archive_object(document, logical_id, *, metadata=False):
         relative = (
             ""
             if row.logical_id == logical_id
-            else "/" + str(Path(row.relative_path).relative_to(base))
+            else "/" + Path(row.relative_path).relative_to(base).as_posix()
         )
         if row.logical_id in directory_ids:
             value = (relative, "directory")
@@ -1525,8 +1542,7 @@ def publish_candidate(
             raise ValueError("publication_context_unverified")
         _pending(journal, context)
         if any(
-            not _safety_source_matches(row.source)
-            for row in prepared.safety_sources
+            not _safety_source_matches(row.source) for row in prepared.safety_sources
         ):
             raise ValueError("safety_source_changed")
         if prepared.incoming_credentials and not _matches(
@@ -1815,7 +1831,7 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                     raise ValueError("installed_objects_changed")
             for row in rows:
                 path = Path(row["destination"])
-                info = path.lstat()
+                info = os.stat(path, follow_symlinks=False)
                 if (info.st_dev, info.st_ino) != expected[str(path)]:
                     raise ValueError("installed_identity_changed")
                 if row["kind"] == "file" and (
@@ -1936,7 +1952,12 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                 from .later_rollback import _preserved_builtin_validation
 
                 retained_items, retained_candidates = _preserved_builtin_validation(
-                    plan, doc, receipt.manifest_digest, work, session, Event(),
+                    plan,
+                    doc,
+                    receipt.manifest_digest,
+                    work,
+                    session,
+                    Event(),
                 )
                 items.update(retained_items)
                 candidates.update(retained_candidates)
@@ -1986,7 +2007,7 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                     )
             verify()
             for row in rows:
-                info = Path(row["destination"]).lstat()
+                info = os.stat(Path(row["destination"]), follow_symlinks=False)
                 applied = row["applied_metadata"]
                 if (
                     stat.S_IMODE(info.st_mode) != applied["mode"]
@@ -2059,7 +2080,14 @@ def _apply_directory_metadata(journal, parent, prepared, item):
 
 
 def _validate_installed_copies(
-    items, candidates, topology, synthetic, owners, raw_configs=None, plan=None, manifest_digest=None
+    items,
+    candidates,
+    topology,
+    synthetic,
+    owners,
+    raw_configs=None,
+    plan=None,
+    manifest_digest=None,
 ):
     """Validate operation-private copies without receiving live native authority."""
     from types import MappingProxyType
@@ -2101,7 +2129,9 @@ def _validate_installed_copies(
                 continue
             from .later_rollback import validate_snapshot_builtin_restore
 
-            if validate_snapshot_builtin_restore(plan, manifest_digest, item, candidates, topology):
+            if validate_snapshot_builtin_restore(
+                plan, manifest_digest, item, candidates, topology
+            ):
                 continue
             validator = getattr(owner, "validate_restore_dependencies", None)
             legacy = getattr(owner, "validate_dependencies", None)

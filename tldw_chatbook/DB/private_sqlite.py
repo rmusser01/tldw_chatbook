@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import errno
 import functools
-import os
 import sqlite3
 import stat
 import sys
@@ -20,6 +19,7 @@ from typing import Any, Callable, Iterator, Mapping, cast
 from urllib.parse import quote
 
 import tldw_chatbook.Utils.private_paths as private_paths
+from tldw_chatbook.Utils.platform_files import os
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     PrivatePathResult,
@@ -28,7 +28,6 @@ from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
 )
-
 
 _SQLITE_CONNECT = sqlite3.connect
 _ORIGINAL_DESCRIPTOR_DUP = os.dup
@@ -1143,7 +1142,7 @@ def _prepare_windows_artifact(
 ) -> bool:
     del writable
     try:
-        file_stat = selected.lstat()
+        file_stat = os.stat(selected, follow_symlinks=False)
     except FileNotFoundError:
         if optional:
             return False
@@ -1301,8 +1300,8 @@ class _SQLiteAdmissionOutcome:
 def _with_storage_admission(function):
     @functools.wraps(function)
     def admitted(owner_id, database, **kwargs):
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
         outcome = kwargs.pop("_admission_outcome", None)
         if outcome is not None and type(outcome) is not _SQLiteAdmissionOutcome:
@@ -1452,6 +1451,66 @@ def _with_storage_admission(function):
     return admitted
 
 
+def _windows_descriptor_snapshot(descriptor: int, before: os.stat_result) -> bytearray:
+    """Copy a frozen main database from its held descriptor, never its pathname.
+
+    The existing profile-artifact ceiling also bounds this Windows-only reader.
+    Deserialization temporarily holds roughly two copies (up to 1152 MiB at the
+    576 MiB ceiling); larger sources fail before allocating. As with immutable
+    POSIX reads, the caller owns exclusion and validation of any WAL sidecars.
+    """
+    from tldw_chatbook.TTS.profile_migration_journal import (
+        MAX_PROFILE_MIGRATION_ARTIFACT_BYTES,
+    )
+
+    if not 100 <= before.st_size <= MAX_PROFILE_MIGRATION_ARTIFACT_BYTES:
+        raise ValueError("descriptor_snapshot_limit")
+    offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+    data = bytearray()
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while len(data) < before.st_size:
+            chunk = os.read(descriptor, min(1024 * 1024, before.st_size - len(data)))
+            if not chunk:
+                raise ValueError("descriptor_snapshot_changed")
+            data.extend(chunk)
+        after = os.fstat(descriptor)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, key) != getattr(after, key) for key in fields):
+            raise ValueError("descriptor_snapshot_changed")
+    finally:
+        os.lseek(descriptor, offset, os.SEEK_SET)
+    if data[:16] != b"SQLite format 3\x00":
+        raise ValueError("descriptor_snapshot_invalid")
+    # deserialize cannot open a WAL-mode image. This immutable main-file view
+    # deliberately ignores WAL, exactly like the existing immutable=1 route;
+    # change only the in-memory header, never the source or its sidecars.
+    if data[18:20] == b"\x02\x02":
+        data[18:20] = b"\x01\x01"
+    return data
+
+
+class _ReadonlyDescriptorMixin:
+    """Keep SQL query-only even when an installed validator adds an authorizer."""
+
+    def set_authorizer(self, callback):
+        def authorize(action, first, second, database, source):
+            if (
+                action == sqlite3.SQLITE_PRAGMA
+                and first.lower() == "query_only"
+                and second is not None
+                and second.lower() not in {"1", "on", "true", "yes"}
+            ):
+                return sqlite3.SQLITE_DENY
+            return (
+                sqlite3.SQLITE_OK
+                if callback is None
+                else callback(action, first, second, database, source)
+            )
+
+        super().set_authorizer(authorize)
+
+
 @_with_storage_admission
 def _connect_registered_sqlite(
     owner_id: str,
@@ -1488,6 +1547,45 @@ def _connect_registered_sqlite(
             or opened.st_nlink != 1
         ):
             raise ValueError("SQLite descriptor must be a regular file")
+        if (
+            _descriptor_outcome is not None
+            and type(_descriptor_outcome) is not _SQLiteDescriptorOutcome
+        ):
+            raise TypeError("invalid_descriptor_outcome")
+        if os.name == "nt":
+            snapshot = _windows_descriptor_snapshot(_verified_descriptor_fd, opened)
+            factory = kwargs.get("factory", sqlite3.Connection)
+            if not isinstance(factory, type) or not issubclass(
+                factory, sqlite3.Connection
+            ):
+                raise ValueError("descriptor_snapshot_requires_connection_factory")
+
+            class WindowsDescriptorConnection(_ReadonlyDescriptorMixin, factory):
+                pass
+
+            if _descriptor_outcome is not None:
+                _descriptor_outcome.connection_pending = True
+            connection = _SQLITE_CONNECT(
+                ":memory:", **{**kwargs, "factory": WindowsDescriptorConnection}
+            )
+            if _descriptor_outcome is not None:
+                _descriptor_outcome.connection = connection
+                _descriptor_outcome.connection_pending = False
+            try:
+                connection.deserialize(snapshot)
+                connection.execute("PRAGMA query_only = ON")
+                connection.set_authorizer(None)
+                connection.execute("SELECT count(*) FROM sqlite_schema").fetchone()
+            except BaseException:
+                if _descriptor_outcome is not None:
+                    _descriptor_outcome.connection_close_attempted = True
+                connection.close()
+                # A factory override may return without closing native SQLite.
+                sqlite3.Connection.close(connection)
+                if _descriptor_outcome is not None:
+                    _descriptor_outcome.connection_closed = True
+                raise
+            return connection
         if _descriptor_outcome is not None:
             if type(_descriptor_outcome) is not _SQLiteDescriptorOutcome:
                 raise TypeError("invalid_descriptor_outcome")
@@ -1525,7 +1623,7 @@ def _connect_registered_sqlite(
             capture_target = _capture_sqlite_target(owner_id, selected)
             if capture_target is not None:
                 if expected_identity is not None and not private_paths._same_identity(
-                    selected.lstat(), expected_identity
+                    os.stat(selected, follow_symlinks=False), expected_identity
                 ):
                     raise ValueError("capture_sqlite_source_changed")
                 selected = capture_target
@@ -1544,7 +1642,7 @@ def _connect_registered_sqlite(
             ),
         )
         if expected_identity is not None:
-            observed_identity = selected.lstat()
+            observed_identity = os.stat(selected, follow_symlinks=False)
             if not private_paths._same_identity(
                 observed_identity,
                 expected_identity,
@@ -1718,7 +1816,10 @@ def connect_private_sqlite_descriptor(
             if (
                 connector is _ORIGINAL_DESCRIPTOR_CONNECTOR
                 and not _native_outcome.connection_pending
-                and _native_outcome.connection is None
+                and (
+                    _native_outcome.connection is None
+                    or _native_outcome.connection_closed
+                )
             ):
                 _native_outcome.connector_pending = False
         raise
@@ -2090,7 +2191,7 @@ def _prepare_source_artifacts(
 def _source_postcondition_holds(source: _PinnedSQLiteSource) -> bool:
     if source.file_fd < 0:
         try:
-            named = source.selected.lstat()
+            named = os.stat(source.selected, follow_symlinks=False)
         except OSError:
             return False
         if private_paths._WINDOWS_PLATFORM:
@@ -2189,7 +2290,7 @@ def _pin_sqlite_source(
             )
             source.identity = os.fstat(source.file_fd)
         else:
-            source.identity = selected.lstat()
+            source.identity = os.stat(selected, follow_symlinks=False)
         _reverify_source(source)
         yield source
     except BaseException as error:
@@ -2208,7 +2309,7 @@ def _private_destination(database: str | os.PathLike[str]) -> Path:
 
 def _existing_entry_stat(selected: Path) -> os.stat_result | None:
     try:
-        return selected.lstat()
+        return os.stat(selected, follow_symlinks=False)
     except FileNotFoundError:
         return None
     except OSError as exc:
@@ -2491,8 +2592,8 @@ def _verify_profile_migration_destination(
     )
     if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
         raise SQLitePrivateDestinationError()
-    parent_stat = selected.parent.lstat()
-    file_stat = selected.lstat()
+    parent_stat = os.stat(selected.parent, follow_symlinks=False)
+    file_stat = os.stat(selected, follow_symlinks=False)
     if (
         not private_paths._same_identity(
             parent_stat,
@@ -2527,7 +2628,7 @@ def _verify_profile_migration_destination(
         raise SQLitePrivateDestinationError()
     opened_path = lexical_path(os.fsdecode(cast(str, main_row[2])))
     verify_trusted_directory(opened_path.parent, allow_shared_sticky=False)
-    if not private_paths._same_identity(opened_path.lstat(), file_stat):
+    if not private_paths._same_identity(os.stat(opened_path, follow_symlinks=False), file_stat):
         raise SQLitePrivateDestinationError()
     parent_fd, leaf = private_paths._open_verified_parent(
         selected,
@@ -2777,7 +2878,7 @@ def open_canonical_profile_migration_destination(
             raise ValueError
         parent_fd, file_fd, file_identity, authority = open_new_or_reused_private_file(
             selected,
-            parent_authority=ParentAuthority(selected.parent.lstat()),
+            parent_authority=ParentAuthority(os.stat(selected.parent, follow_symlinks=False)),
             tombstone_key=tombstone_key,
         )
         connection = _connect_registered_sqlite(
@@ -2850,7 +2951,7 @@ def open_profile_migration_boundary_destination(
         )
         if parent_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             raise ValueError
-        parent_identity = selected.parent.lstat()
+        parent_identity = os.stat(selected.parent, follow_symlinks=False)
         parent_fd, leaf = private_paths._open_verified_parent(
             selected,
             missing_leaf_allowed=True,
@@ -2870,7 +2971,7 @@ def open_profile_migration_boundary_destination(
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        file_identity = selected.lstat()
+        file_identity = os.stat(selected, follow_symlinks=False)
         destination = ProfileMigrationBoundaryDestination(
             _PROFILE_DESTINATION_FACTORY_TOKEN,
             connection=connection,

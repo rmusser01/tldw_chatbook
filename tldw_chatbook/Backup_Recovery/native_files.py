@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-try:
-    import fcntl
-except ImportError:  # Unqualified platforms still expose a capability refusal.
-    fcntl = None
-import os
 import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .native_platform import flush_directory, flush_file, rename_noreplace
 from .qualification import _qualified_identity, native_identity, qualified_for
@@ -23,7 +20,7 @@ def pinned_directory(root: Path) -> Iterator[int]:
         raise OSError("absolute_directory_required")
     if not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY")):
         raise OSError("native_nofollow_unavailable")
-    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    fd = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for component in root.parts[1:]:
             info = os.fstat(fd)

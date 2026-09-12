@@ -1,11 +1,12 @@
 """Explicit access to retained local encrypted rollback copies."""
 
 import hashlib
-import os
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader, bootstrap
 from .admission import fcntl
@@ -89,7 +90,7 @@ def _copy_evidence(journal: Journal):
     )
     path = Path(proof.ciphertext.path)
     try:
-        path.lstat()
+        os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         status = "missing"
     else:

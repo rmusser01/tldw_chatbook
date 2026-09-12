@@ -10,6 +10,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from tldw_chatbook.Utils.platform_files import os
+
 from . import bootstrap, recovered_media
 from .generation_witnesses import _witnesses
 from .profile_paths import database_path, lexical_path, user_data_dir
@@ -30,7 +32,7 @@ class _Source:
 
 
 def _db_identity(path):
-    info = path.lstat()
+    info = os.stat(path, follow_symlinks=False)
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or path.resolve() != path:
         raise ValueError("recovered_message_source_changed")
     return recovered_media._native_identity(info)

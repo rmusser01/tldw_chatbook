@@ -581,16 +581,59 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
     return output_path.read_text(encoding="utf-8")
 
 
+_CHILD_ENVIRONMENT_KEYS = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "GOMODCACHE",
+    "GOCACHE",
+    "GOPROXY",
+    "SYSTEMROOT",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+)
+
+
+def _base_child_environment():
+    """Retain only toolchain and native Windows interpreter requirements."""
+    return {key: os.environ[key] for key in _CHILD_ENVIRONMENT_KEYS if key in os.environ}
+
+
+def test_roundtrip_child_environment_preserves_windows_runtime_without_secrets(
+    monkeypatch,
+):
+    """Nested Windows Python needs system variables but never inherited secrets."""
+    required = (
+        "SYSTEMROOT",
+        "WINDIR",
+        "SYSTEMDRIVE",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+    )
+    for key in required:
+        monkeypatch.setenv(key, "fixture-" + key.lower())
+    monkeypatch.setenv("UNRELATED_SECRET", "must-not-cross-child-boundary")
+
+    environment = _base_child_environment()
+
+    assert {key: environment[key] for key in required} == {
+        key: "fixture-" + key.lower() for key in required
+    }
+    assert "UNRELATED_SECRET" not in environment
+
+
 def _capture_two_profiles(tmp_path):
     """Stage1: A is live, B is closed at capture; this is not restore qualification."""
     root = tmp_path.resolve()
     for name in ("home", "xdg-config", "xdg-data", "cache", "tmp", "shared"):
         (root / name).mkdir(mode=0o700)
-    environment = {
-        key: os.environ[key]
-        for key in ("PATH", "LANG", "LC_ALL", "GOMODCACHE", "GOCACHE", "GOPROXY")
-        if key in os.environ
-    }
+    environment = _base_child_environment()
     environment.update(
         HOME=str(root / "home"),
         USERPROFILE=str(root / "home"),

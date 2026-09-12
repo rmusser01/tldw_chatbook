@@ -6,6 +6,8 @@ import tempfile
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from tldw_chatbook.Utils.platform_files import os
+
 from . import bootstrap
 from .capture import (
     CaptureResult,
@@ -31,7 +33,7 @@ def _selectors(config_paths, *, include_known_profiles=False):
     selected.extend(sorted(row["selector"] for row in profiles))
     canonical = default_config_path()
     try:
-        canonical.lstat()
+        os.stat(canonical, follow_symlinks=False)
     except FileNotFoundError:
         pass
     else:
@@ -163,7 +165,7 @@ def capture(
         CaptureResult(stage_parent / "capture-preflight", inventory, b""), destination
     )
     estimate = sum(
-        item.path.stat().st_size
+        os.stat(item.path).st_size
         for item in inventory.items
         if item.path is not None and item.status == "included"
     )

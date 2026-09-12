@@ -8,13 +8,8 @@ Legacy instance locks and arbitrary external editors do not implement this proto
 
 from __future__ import annotations
 
-try:
-    import fcntl
-except ImportError:  # Unqualified platforms still expose a capability refusal.
-    fcntl = None
 import hashlib
 import math
-import os
 import stat
 import threading
 import time
@@ -24,6 +19,8 @@ from pathlib import Path
 from typing import ContextManager, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from tldw_chatbook.Utils.platform_files import fcntl, os
 
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file
@@ -328,7 +325,7 @@ class Admission:
             resolved = root.resolve(strict=True)
             with pinned_directory(resolved.parent) as parent:
                 info = os.stat(resolved.name, dir_fd=parent, follow_symlinks=False)
-                observed = root.stat()
+                observed = os.stat(root)
                 if (info.st_dev, info.st_ino) != (
                     observed.st_dev,
                     observed.st_ino,
@@ -419,7 +416,7 @@ class Admission:
         """Observe the kind and canonical name of one natively held root."""
         tokens = self._tokens((root,))
         resolved = root.resolve(strict=True)
-        info = root.stat()
+        info = os.stat(root)
         if (
             "path:" + str(resolved) not in tokens
             or f"inode:{info.st_dev}:{info.st_ino}" not in tokens
@@ -578,8 +575,8 @@ class Admission:
                         raise AdmissionError("admission_scope_changed")
                     self._check(deadline, cancel)
                     from .storage_admission import (
-                        _mint_maintenance_session,
                         _failed_capture_holds,
+                        _mint_maintenance_session,
                     )
 
                     recovery_roots = None

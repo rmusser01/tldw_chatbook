@@ -7,15 +7,16 @@ re-enrollment. Native-unqualified ordinary use is distinct from recovery admissi
 
 from __future__ import annotations
 
-import atexit
 import asyncio
-from contextlib import contextmanager
+import atexit
 import sqlite3
-import os
-from pathlib import Path
 import stat
 import threading
 import time
+from contextlib import contextmanager
+from pathlib import Path
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
 from .admission import Admission, AdmissionCancelled, _local
@@ -76,7 +77,7 @@ class _Operation:
             raise bootstrap.RecoveryRequired("operation_provenance_invalid")
         if path is not None:
             selected = lexical_path(path)
-            parent = self.path.parent.stat()
+            parent = os.stat(self.path.parent)
             if (
                 selected != self.path
                 or selected.resolve() != self.resolved_path
@@ -107,7 +108,7 @@ def _check_operation(operation, path=None):
 
 @contextmanager
 def _repository_operation(participant):
-    from .participants import _installed_repositories, _check_core_retirement
+    from .participants import _check_core_retirement, _installed_repositories
 
     previous = getattr(_operation_local, "operation", None)
     with _changed:
@@ -143,7 +144,7 @@ def _repository_operation(participant):
         operation.path = participant.path
         operation.resolved_path = participant.path.resolve()
         try:
-            parent = participant.path.parent.stat()
+            parent = os.stat(participant.path.parent)
         except FileNotFoundError:
             # Preserve the ordinary SQLite private-parent refusal contract.
             from tldw_chatbook.Utils.private_paths import (
@@ -316,7 +317,10 @@ class _LocalPause:
             if hold is None or hold.count != 1 or hold.key != key:
                 raise bootstrap.RecoveryRequired("runtime_native_resources_not_settled")
             self._startup_source = (
-                key, effective_config_path(), hold.names, hold.authority._identity
+                key,
+                effective_config_path(),
+                hold.names,
+                hold.authority._identity,
             )
             _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())
             previous = next(
@@ -325,8 +329,7 @@ class _LocalPause:
             )
             self._startup_roots = (
                 tuple(previous["roots"])
-                if previous is not None
-                and tuple(previous["namespaces"]) == hold.names
+                if previous is not None and tuple(previous["namespaces"]) == hold.names
                 else None
             )
             self._startup_retired = True
@@ -617,14 +620,19 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
     if not stat.S_ISREG(info.st_mode):
         return False
     try:
-        selected_info = resolved_selected.stat()
+        selected_info = os.stat(resolved_selected)
     except FileNotFoundError:
         return False
     return (info.st_dev, info.st_ino) == (selected_info.st_dev, selected_info.st_ino)
 
 
 def _scope(
-    root: Path, selector: Path, path: Path | None, *, startup_attempt=None, authority=None
+    root: Path,
+    selector: Path,
+    path: Path | None,
+    *,
+    startup_attempt=None,
+    authority=None,
 ) -> tuple[str, ...]:
     pending, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
@@ -639,7 +647,9 @@ def _scope(
         ):
             raise bootstrap.RecoveryRequired("startup_scope_changed")
         if pause._startup_roots is not None:
-            previous = next((r for r in profiles if r["selector"] == str(selector)), None)
+            previous = next(
+                (r for r in profiles if r["selector"] == str(selector)), None
+            )
             if (
                 previous is None
                 or tuple(previous["namespaces"]) != pause._startup_source[2]
@@ -738,8 +748,11 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
     with _lock:
         attempt.check(path)
         names = _scope(
-            root, selector, lexical_path(path) if path is not None else None,
-            startup_attempt=attempt, authority=authority,
+            root,
+            selector,
+            lexical_path(path) if path is not None else None,
+            startup_attempt=attempt,
+            authority=authority,
         )
         key = (os.getpid(), str(root))
         hold = _holds.get(key)
@@ -768,8 +781,11 @@ def _acquire_storage(path: Path | None, attempt: _Acquisition) -> StorageLease:
                 raise bootstrap.RecoveryRequired(reason)
             if (
                 _scope(
-                    root, selector, lexical_path(path) if path is not None else None,
-                    startup_attempt=attempt, authority=authority,
+                    root,
+                    selector,
+                    lexical_path(path) if path is not None else None,
+                    startup_attempt=attempt,
+                    authority=authority,
                 )
                 != names
             ):
@@ -894,7 +910,7 @@ class _CaptureScope:
         self.session = session
         self.sources = sources
         self.staging = staging
-        self.staging_identity = staging.stat()
+        self.staging_identity = os.stat(staging)
         self.resources = []
         self.active = True
         self.limits = limits
@@ -909,7 +925,7 @@ class _CaptureScope:
         self.session._check()
         if not self.active or getattr(_local, "capture_scope", None) is not self:
             raise bootstrap.RecoveryRequired("capture_scope_inactive")
-        current = self.staging.stat()
+        current = os.stat(self.staging)
         if (current.st_dev, current.st_ino) != (
             self.staging_identity.st_dev,
             self.staging_identity.st_ino,
@@ -927,7 +943,7 @@ class _CaptureScope:
             if self.sqlite_directory is not None:
                 import shutil
 
-                info = self.sqlite_directory.lstat()
+                info = os.stat(self.sqlite_directory, follow_symlinks=False)
                 if (info.st_dev, info.st_ino) != self.sqlite_directory_identity:
                     raise ValueError("capture_sqlite_staging_changed")
                 shutil.rmtree(self.sqlite_directory)
@@ -989,7 +1005,7 @@ class _CaptureScope:
         expected = self.sqlite_targets.get(target)
         if expected is None:
             return
-        root = self.sqlite_directory.lstat()
+        root = os.stat(self.sqlite_directory, follow_symlinks=False)
         if (root.st_dev, root.st_ino) != self.sqlite_directory_identity:
             raise ValueError("capture_sqlite_staging_changed")
         resources = _CaptureFileDescriptors(self)
@@ -1137,8 +1153,10 @@ class _CaptureScope:
                         or self._sqlite_identity(os.fstat(descriptor)) != expected
                     ):
                         raise ValueError("capture_sqlite_source_changed")
-                    current_parent = target_root.lstat()
-                    current = (target_root / (target.name + suffix)).lstat()
+                    current_parent = os.stat(target_root, follow_symlinks=False)
+                    current = os.stat(
+                        target_root / (target.name + suffix), follow_symlinks=False
+                    )
                     held = os.fstat(output)
                     if (
                         current_parent.st_dev,
@@ -1232,7 +1250,7 @@ class _PreviewScope:
         for suffix in ("", "-wal", "-journal"):
             path = source.with_name(source.name + suffix)
             try:
-                info = path.lstat()
+                info = os.stat(path, follow_symlinks=False)
             except FileNotFoundError:
                 result.append(None)
                 continue
@@ -1447,7 +1465,7 @@ class MaintenanceSession:
             path = lexical_path(item.path)
             if not any(_contains_owned_path(root, path) for root in self._roots):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
-            info = path.stat()
+            info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
                 raise bootstrap.RecoveryRequired("capture_file_not_regular")
             sources.append((path.resolve(strict=True), info.st_dev, info.st_ino))
@@ -1515,7 +1533,7 @@ class MaintenanceSession:
         selected = []
         for source in sources:
             source = lexical_path(source)
-            info = source.stat()
+            info = os.stat(source)
             if not stat.S_ISREG(info.st_mode) or not any(
                 _contains_owned_path(root, source) for root in self._roots
             ):
@@ -1537,7 +1555,9 @@ class MaintenanceSession:
             yield
 
     @contextmanager
-    def _replacement_capture_scope(self, plan, journal, staging, *, limits, byte_budget):
+    def _replacement_capture_scope(
+        self, plan, journal, staging, *, limits, byte_budget
+    ):
         """Bind only rechecked prepared local originals, including damaged config."""
         from .limits import ArchiveLimits
         from .replacement import _checked_originals
@@ -1555,8 +1575,10 @@ class MaintenanceSession:
         selected = []
         for item in inventory.items:
             if item.path is not None and item.path.is_file():
-                info = item.path.stat()
-                selected.append((item.path.resolve(strict=True), info.st_dev, info.st_ino))
+                info = os.stat(item.path)
+                selected.append(
+                    (item.path.resolve(strict=True), info.st_dev, info.st_ino)
+                )
         if not selected:
             raise bootstrap.RecoveryRequired("capture_sources_required")
         with self._capture_bound_sources(tuple(selected), staging, limits, byte_budget):
@@ -1600,8 +1622,14 @@ class MaintenanceSession:
 
 
 def _mint_maintenance_session(
-    roots, all_roots, control, names, control_identity, *,
-    recovery_roots=None, publication_roots=(),
+    roots,
+    all_roots,
+    control,
+    names,
+    control_identity,
+    *,
+    recovery_roots=None,
+    publication_roots=(),
 ):
     session = object.__new__(MaintenanceSession)
     session._roots = tuple(roots)
@@ -1660,7 +1688,7 @@ def _acquire_capture_storage(path: Path, *, owner_id: str, read_only: bool):
     selected = lexical_path(path).resolve()
     if read_only:
         try:
-            info = selected.stat()
+            info = os.stat(selected)
         except FileNotFoundError:
             info = None
         if info is not None and any(
@@ -1671,7 +1699,7 @@ def _acquire_capture_storage(path: Path, *, owner_id: str, read_only: bool):
     if scope.staging not in selected.parents:
         raise bootstrap.RecoveryRequired("capture_path_outside_scope")
     if selected.exists():
-        info = selected.stat()
+        info = os.stat(selected)
         if (
             not stat.S_ISREG(info.st_mode)
             or info.st_nlink != 1
@@ -1818,7 +1846,7 @@ def _staged_credential_path(scope, candidate: Path, *, allow_missing=False):
     if scope.staging not in selected.parents:
         raise bootstrap.RecoveryRequired("capture_path_outside_scope")
     try:
-        info = selected.stat(follow_symlinks=False)
+        info = os.stat(selected, follow_symlinks=False)
     except FileNotFoundError:
         if allow_missing:
             return selected, None
@@ -1875,7 +1903,7 @@ def _write_staged_credential_file(candidate: Path, data: str) -> bool:
                 _, current = _staged_credential_path(
                     scope, selected, allow_missing=True
                 )
-                held_parent, current_parent = os.fstat(parent), selected.parent.stat()
+                held_parent, current_parent = os.fstat(parent), os.stat(selected.parent)
                 current_identity = (
                     None if current is None else (current.st_dev, current.st_ino)
                 )
@@ -2003,7 +2031,7 @@ def _consume_recovery_file(
                 _check_capture_file_identity(scope, selected, after)
                 if private and (after.st_uid != os.geteuid() or after.st_mode & 0o077):
                     raise bootstrap.RecoveryRequired("credential_staging_required")
-                current_parent = selected.parent.stat()
+                current_parent = os.stat(selected.parent)
                 held_parent = os.fstat(parent)
                 if (current_parent.st_dev, current_parent.st_ino) != (
                     held_parent.st_dev,
@@ -2088,13 +2116,13 @@ def copy_capture_file(
                 view = view[count:]
         os.fsync(out)
         scope.check()
-        current_parent = destination.parent.stat()
+        current_parent = os.stat(destination.parent)
         if (current_parent.st_dev, current_parent.st_ino) != (
             destination_parent_identity.st_dev,
             destination_parent_identity.st_ino,
         ):
             raise bootstrap.RecoveryRequired("capture_target_changed")
-        current_target = destination.stat(follow_symlinks=False)
+        current_target = os.stat(destination, follow_symlinks=False)
         held_target = os.fstat(out)
         if (current_target.st_dev, current_target.st_ino) != (
             held_target.st_dev,

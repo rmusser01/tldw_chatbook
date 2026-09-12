@@ -1,11 +1,12 @@
 """Finite admission for the installed Sync and local MCP service calls."""
 
 import asyncio
-import os
 import threading
 import time
 from contextlib import contextmanager
 from functools import wraps
+
+from tldw_chatbook.Utils.platform_files import os
 
 from .bootstrap import RecoveryRequired
 

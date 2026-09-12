@@ -63,8 +63,8 @@ def test_unavailable_complete_backup_refuses_before_worker_allocation(
         service.close()
 
 
-def test_product_facts_are_operation_and_cell_specific(monkeypatch):
-    """Broadening either declaration would authorize an unreviewed operation/cell."""
+def test_product_facts_require_supported_operation_filesystem_and_protocol(monkeypatch):
+    """Runtime patch differences do not replace native filesystem checks."""
     from tldw_chatbook.Backup_Recovery import qualification
 
     assert (
@@ -75,7 +75,10 @@ def test_product_facts_are_operation_and_cell_specific(monkeypatch):
         qualification._source_product_facts("new_replacement", _HOST_IDENTITY)
         == _PRODUCT_FACTS
     )
-    assert not qualification._source_product_facts("complete_capture", _IMAGE_IDENTITY)
+    assert (
+        qualification._source_product_facts("complete_capture", _IMAGE_IDENTITY)
+        == _PRODUCT_FACTS
+    )
     assert (
         qualification._source_product_facts("new_replacement", _IMAGE_IDENTITY)
         == _PRODUCT_FACTS
@@ -84,15 +87,24 @@ def test_product_facts_are_operation_and_cell_specific(monkeypatch):
 
     for field, changed in (
         ("os", "Linux"),
-        ("release", "25.5.1"),
-        ("arch", "x86_64"),
-        ("python", "3.12.12"),
         ("filesystem", "hfs"),
         ("flags", 76583041),
     ):
         identity = {**_HOST_IDENTITY, field: changed}
         assert not qualification._source_product_facts("complete_capture", identity), (
             field
+        )
+
+    for field, changed in (
+        ("release", "25.5.1"),
+        ("arch", "x86_64"),
+        ("python", "3.12.12"),
+    ):
+        assert (
+            qualification._source_product_facts(
+                "complete_capture", {**_HOST_IDENTITY, field: changed}
+            )
+            == _PRODUCT_FACTS
         )
 
     monkeypatch.setattr(qualification, "_QUALIFICATION_PROTOCOL", 3)
@@ -103,6 +115,8 @@ def test_missing_product_fact_keeps_release_gate_closed(monkeypatch):
     """Dropping one reviewed fact must fail the unchanged seven-gate conjunction."""
     from tldw_chatbook.Backup_Recovery import qualification
 
+    # Exercise the retained exact-evidence fallback independently of native contracts.
+    monkeypatch.setattr(qualification, "_platform_contract", lambda _: False)
     cell = (*_HOST_IDENTITY.values(), 2)
     monkeypatch.setattr(
         qualification,
@@ -123,11 +137,11 @@ def test_missing_product_fact_keeps_release_gate_closed(monkeypatch):
     )
 
 
-def test_mixed_image_cell_refuses_complete_but_allows_replacement_facts():
-    """Copying replacement image facts into Complete would broaden availability."""
+def test_every_volume_must_satisfy_the_platform_contract():
+    """One unsupported participating filesystem closes both product flows."""
     from tldw_chatbook.Backup_Recovery import qualification
 
-    identities = (_HOST_IDENTITY, _IMAGE_IDENTITY)
+    identities = (_HOST_IDENTITY, {**_IMAGE_IDENTITY, "filesystem": "unknown"})
     assert qualification._source_product_gates("complete_capture", identities) == (
         False,
         False,
@@ -135,10 +149,10 @@ def test_mixed_image_cell_refuses_complete_but_allows_replacement_facts():
         False,
     )
     assert qualification._source_product_gates("new_replacement", identities) == (
-        True,
-        True,
-        True,
-        True,
+        False,
+        False,
+        False,
+        False,
     )
 
 
@@ -749,7 +763,9 @@ async def test_ui_password_clear_preserves_only_current_worker_association(
         assert password.value == confirmation.value == ""
 
         if user_edits_form:
-            screen.query_one("#backup-destination", Input).value = "/different/output.zip"
+            screen.query_one(
+                "#backup-destination", Input
+            ).value = "/different/output.zip"
             await pilot.pause()
 
         release.set()
@@ -826,7 +842,9 @@ async def test_ui_replacement_password_clear_preserves_only_current_worker_assoc
         assert password.value == confirmation.value == ""
 
         if user_edits_form:
-            screen.query_one("#backup-target-config", Input).value = "/different/config.toml"
+            screen.query_one(
+                "#backup-target-config", Input
+            ).value = "/different/config.toml"
             await pilot.pause()
 
         release.set()

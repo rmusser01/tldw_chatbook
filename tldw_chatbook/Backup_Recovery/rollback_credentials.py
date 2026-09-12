@@ -1,12 +1,13 @@
 """Finite credential-aware candidates for an authenticated local reverse operation."""
 
 import json
-import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from uuid import uuid4
+
+from tldw_chatbook.Utils.platform_files import os
 
 from . import credentials
 from .archive_models import SealedArchive
@@ -97,7 +98,7 @@ def _copy_original(source, destination, cancel):
     from .publication import _installed_metadata
     from .staging import _copy
 
-    before = source.lstat()
+    before = os.stat(source, follow_symlinks=False)
     if stat.S_ISDIR(before.st_mode):
         create_private_directory(destination)
         for name in sorted(os.listdir(source)):
@@ -106,7 +107,7 @@ def _copy_original(source, destination, cancel):
         _copy(source, destination, cancel)
     else:
         raise ValueError("rollback_originals_unverified")
-    info = destination.lstat()
+    info = os.stat(destination, follow_symlinks=False)
     _installed_metadata(
         destination,
         (info.st_dev, info.st_ino),
@@ -250,7 +251,7 @@ def prepare_credentials(material, journal, parent, prepared, plan, cancel):
                 if item.previous.kind == "file"
                 else candidate / Path(reference["target"]).relative_to(item.target)
             )
-            before = leaf.lstat()
+            before = os.stat(leaf, follow_symlinks=False)
             _installed_metadata(
                 leaf,
                 (before.st_dev, before.st_ino),
@@ -280,7 +281,7 @@ def prepare_credentials(material, journal, parent, prepared, plan, cancel):
                 issues = owners[reference["owner"]].validate(leaf)
                 if issues:
                     raise ValueError(issues[0])
-            current = leaf.lstat()
+            current = os.stat(leaf, follow_symlinks=False)
             _installed_metadata(
                 leaf,
                 (current.st_dev, current.st_ino),
@@ -315,12 +316,15 @@ def prepare_credentials(material, journal, parent, prepared, plan, cancel):
 def _restore_copy_directory_metadata(source, target):
     from .publication import _installed_metadata
 
-    if not stat.S_ISDIR(source.lstat().st_mode):
+    if not stat.S_ISDIR(os.stat(source, follow_symlinks=False).st_mode):
         return
     for name in sorted(os.listdir(source)):
-        if stat.S_ISDIR((source / name).lstat().st_mode):
+        if stat.S_ISDIR(os.stat(source / name, follow_symlinks=False).st_mode):
             _restore_copy_directory_metadata(source / name, target / name)
-    info, current = source.lstat(), target.lstat()
+    info, current = (
+        os.stat(source, follow_symlinks=False),
+        os.stat(target, follow_symlinks=False),
+    )
     _installed_metadata(
         target,
         (current.st_dev, current.st_ino),
