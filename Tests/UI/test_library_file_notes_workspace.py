@@ -28,6 +28,13 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 import Tests.UI._optional_module_stubs  # noqa: F401
+from Tests.app_thread_resource_fixtures import (  # noqa: E402
+    close_owned_console_workers as close_owned_console_workers,
+)
+from Tests.console_resource_fixtures import (  # noqa: E402
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
 import tldw_chatbook.UI.Screens.library_screen as library_screen_module  # noqa: E402
 from tldw_chatbook.config import ConfigMutationResult  # noqa: E402
