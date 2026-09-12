@@ -9693,7 +9693,7 @@ class LibraryScreen(BaseAppScreen):
         self._disarm_library_list_entry_focus()
 
     def _focus_library_list_entry_if_current(self, generation: int) -> None:
-        """Apply one semantic Media return only while its arm still owns focus."""
+        """Apply ordinary entry or semantic return while its arm owns focus."""
         if (
             self._library_pending_list_entry_focus
             and generation == self._library_list_entry_focus_generation
@@ -9718,6 +9718,23 @@ class LibraryScreen(BaseAppScreen):
                     # origin disappeared likewise uses its retained first row.
                     self._focus_library_list_entry()
                 return
+            if receipt is None:
+                focused = self.focused
+                row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
+                    self._library_selected_row_id
+                )
+                if (
+                    focused is not None
+                    and focused.is_attached
+                    and focused is not self._library_pending_list_entry_focus_anchor
+                    and focused is not self._library_notes_programmatic_focus_target
+                    and not focused.has_class("library-adaptive-reader-pane-grip")
+                    and not (
+                        row_class is not None and focused.has_class(row_class)
+                    )
+                ):
+                    self._disarm_library_list_entry_focus()
+                    return
             self._focus_library_list_entry()
 
     def _library_media_empty_list_fallback_target(self) -> Widget | None:
