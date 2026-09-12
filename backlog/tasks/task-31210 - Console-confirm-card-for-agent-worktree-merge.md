@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03 11:45'
-updated_date: '2026-09-12 20:16'
+updated_date: '2026-09-12 20:29'
 labels:
   - agents
   - console
@@ -44,4 +44,6 @@ ADR required: yes. ADR path: backlog/decisions/155-agent-worktree-recovery.md. R
 Execution qualification remains open: actual Git2.39.5 temp-repository tests show linked administrative paths can reopen a replaced parent despite both root pins. Only the test-isolation prerequisite has been implemented and independently reviewed (32557b80f2; four affected tests passed). Do not enable the new mutation capability or mark these tasks Done until the execution boundary is redesigned and qualified. See backlog/docs/agent-orchestration-followups-2026-09-12.md for current status.
 
 ADR-158 (backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md) changes only migration order: caps18→19, recovery later19→20 after execution qualification. Recheck actual schema before source edits; all existing authority and definition-policy requirements remain binding.
+
+First execute Docs/superpowers/plans/2026-09-12-agent-worktree-interim-safety.md: refuse unqualified agent-driven creation/merge/discard without shared-tree fallback, align disclosure, and retain checkouts during automatic/failed-start cleanup. This implements the existing unsupported-authority and retention criteria; it does not complete functional recovery.
 <!-- SECTION:PLAN:END -->
