@@ -270,8 +270,14 @@ def _run_hook(spec: HookSpec, payload: dict[str, Any]) -> tuple[HookSpec, _Decis
                                spec.timeout_s)
     took_ms = int((time.monotonic() - started) * 1000)
     if spec.event in BLOCKING_EVENTS:
-        logger.info("run-hooks: event={} hook={} exit={} timed_out={} took_ms={}",
-                    spec.event, cmd0, proc.returncode, timed_out, took_ms)
+        # Ruling R27: blocking fires carry session_id/run_id too -- the
+        # refusal a user saw must be correlatable in the logs the same way
+        # the non-blocking branch's records are (they log no stdout because
+        # a verdict, not output capture, is the record's purpose here).
+        logger.info("run-hooks: event={} session_id={} run_id={} hook={} exit={} "
+                    "timed_out={} took_ms={}",
+                    spec.event, payload.get("session_id"), payload.get("run_id"), cmd0,
+                    proc.returncode, timed_out, took_ms)
     else:
         # Ruling R13: non-blocking events log captured, truncated output at
         # INFO carrying session_id/run_id/hook event for observability.

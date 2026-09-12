@@ -193,6 +193,21 @@ class TestFire:
         assert stop_records, f"no INFO record for the Stop hook: {[r.getMessage() for r in caplog.records]}"
         assert "…[truncated]" in stop_records[0].getMessage()
 
+    def test_blocking_fire_info_record_carries_ids(self, caplog):
+        # Ruling R27: blocking fires' INFO records carry session_id/run_id so
+        # a user-visible refusal is correlatable in the logs the same way the
+        # non-blocking branch's records are.
+        eng = _engine(HookSpec("PreToolUse", (sys.executable, "-c", "pass")))
+        out = eng.fire("PreToolUse", session_id="s-blocking", run_id="r-blocking",
+                       data={"tool_name": "t"})
+        assert out.blocked is False
+        info_records = [r for r in caplog.records
+                        if r.levelname == "INFO" and "event=PreToolUse" in r.getMessage()]
+        assert info_records, (f"no INFO record for the PreToolUse hook: "
+                              f"{[r.getMessage() for r in caplog.records]}")
+        msg = info_records[0].getMessage()
+        assert "session_id=s-blocking" in msg and "run_id=r-blocking" in msg
+
     # --- Ruling R12: a JSON object with a "decision" key suppresses exit codes ---
 
     def test_pretooluse_allow_with_exit2_not_blocked(self, caplog):

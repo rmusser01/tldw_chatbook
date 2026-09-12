@@ -381,7 +381,10 @@ The wake rule from
 [auto-wake](#when-a-background-sub-agent-finishes--auto-wake) applies
 unchanged: machine-origin wake notices never fire `UserPromptSubmit` — only
 sends you typed do. `Stop` and `SubagentStop` fire for wake turns too; they
-report run outcomes, not user input.
+report run outcomes, not user input. One envelope quirk in v1: `Stop`
+carries `run_id` null — the run-state seam it fires from has no run
+identity — so correlate a `Stop` with its run through the same session's
+earlier `PostToolUse`/`SubagentStop` firings.
 
 **Configuring hooks** in `config.toml`:
 
@@ -398,14 +401,15 @@ timeout_s = 10          # optional, default 10
 
 Validation is fail-loud: an unknown event name, a `matcher` on a non-tool
 event, an empty or non-list `command`, or a non-positive `timeout_s` each
-disable that one hook with a logged warning — never a silent no-op. The
-file is re-parsed when its modification time changes, and the master
-`enabled` switch is read fresh on every firing, so setting
-`enabled = false` stops every hook without an app restart. Matching:
-`matcher` is a glob against the tool name (`fs_*`, `mcp__github__*`); no
-matcher means the hook fires for every call. It is only valid on
-`PreToolUse` / `PostToolUse` — the other events have no tool name to
-match, and configuring one there is a validation error.
+disable that one hook with a logged warning — never a silent no-op. Hook
+config is re-validated from the app's loaded configuration on every fire:
+edits land when settings are reloaded/saved (F9 Settings) or the app
+restarts, and flipping `enabled = false` and reloading stops every hook on
+the next fire. Matching: `matcher` is a glob against the tool name
+(`fs_*`, `mcp__github__*`); no matcher means the hook fires for every
+call. It is only valid on `PreToolUse` / `PostToolUse` — the other events
+have no tool name to match, and configuring one there is a validation
+error.
 
 **Verdict rules — hooks can only deny.** Just two events are blocking
 (`UserPromptSubmit`, `PreToolUse`), and neither can *grant* anything: an
@@ -426,13 +430,16 @@ restrictions, never permissions.
   back to you as a refusal and your composer draft is kept. A clean exit 0
   with plain stdout instead *injects* that text (up to the truncation
   budget) as context for the turn — disclosed in the transcript as its own
-  System row naming the hook, never silently merged into your message.
+  System row marked as hook-origin, never silently merged into your
+  message.
   This event **fails open**: a broken hook logs a warning and the send
   proceeds — a misconfigured convenience hook must not brick the composer.
 
 Precedence: stdout that parses as a JSON object with a `decision` key wins
 over the exit code (exit 2 is shorthand for the event's blocking
-decision); unparseable stdout with exit 0 is a clean pass with a warning.
+decision). On `PreToolUse`, unparseable stdout with exit 0 is a clean pass
+with a warning — for `UserPromptSubmit`, plain stdout is the injected
+context itself, not a decision, so it is never treated as one.
 
 **Security posture.**
 
@@ -446,11 +453,14 @@ decision); unparseable stdout with exit 0 is a clean pass with a warning.
   bounds each hook; on timeout the hook *and any children it spawned* are
   killed as one process group (`taskkill /T` on Windows), so a spawning
   script cannot outlive its own deadline.
-- **Truncated payloads.** Prompts, tool args, tool results, and hook
-  stdout/stderr are all capped by one shared budget (4,000 chars) before
-  the child process or the logs see them. Payloads carry session/run ids
-  and tool facts only — never environment variables, config values, or
-  API keys.
+- **Truncated payloads.** Prompts, tool results, and hook
+  stdout/stderr/reasons are all capped by one shared budget (4,000 chars)
+  before the child process or the logs see them. Tool args are the
+  exception: they pass through **verbatim** — they are the model's own
+  tool-call JSON, and a guard hook needs the real body (an `fs_write`
+  content check against a truncated argument string would check nothing).
+  Payloads carry session/run ids and tool facts only — never environment
+  variables, config values, or API keys.
 - **Every execution is logged.** Each firing records the event, session
   and run ids, the hook's exit status, timing, and its captured
   (truncated) stdout/stderr as structured log records.

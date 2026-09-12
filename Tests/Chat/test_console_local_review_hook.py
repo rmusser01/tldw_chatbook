@@ -1847,8 +1847,15 @@ def test_approval_requested_fires_with_round_payload():
     assert [event for event, _ in engine.notifications] == ["ApprovalRequested"]
     _event, kwargs = engine.notifications[0]
     assert kwargs["session_id"] == session.id
+    # Review fix R29: spec §4 promised an args summary per call -- a stable
+    # small args dict serializes to exactly its JSON string.
     assert kwargs["data"] == {
-        "calls": [{"name": "local:__local__:fs_write"}],
+        "calls": [
+            {
+                "name": "local:__local__:fs_write",
+                "args_summary": '{"path": "notes.txt"}',
+            }
+        ],
         "session_active": True,
     }
 
@@ -1923,7 +1930,14 @@ def test_approval_requested_fires_for_view_detached_round():
     assert [event for event, _ in engine.notifications] == ["ApprovalRequested"]
     _event, kwargs = engine.notifications[0]
     assert kwargs["session_id"] == background.id
+    # Review fix R29: args summary present on the detached path too -- the
+    # detached branch builds the same per-call entry as the registration fire.
     assert kwargs["data"] == {
-        "calls": [{"name": "local:__local__:fs_write"}],
+        "calls": [
+            {
+                "name": "local:__local__:fs_write",
+                "args_summary": '{"path": "notes.txt"}',
+            }
+        ],
         "session_active": False,
     }

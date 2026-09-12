@@ -262,3 +262,17 @@ Recorded at implementation close-out (2026-09-12):
   entry (the wake-notice delivery precedent) — never written to the store,
   turn-scoped, gone on the next history rebuild. The auditable record is a
   separate hook-origin SYSTEM transcript row carrying the injected text.
+- **Config liveness (Ruling R26).** §6's "re-parsed when the file's mtime
+  changes (checked per fire, cached between)" did not ship: the engine
+  re-validates the app's *loaded* configuration on every fire, so config
+  edits land when settings are reloaded/saved (F9 Settings) or the app
+  restarts. The kill-switch intent survives — `enabled = false` plus a
+  reload stops every hook on the next fire — but there is no live
+  mtime watch on `config.toml`.
+- **Tool args pass through verbatim (Ruling R28).** §7's "tool args and
+  results are truncated to the payload budget" is half-true as shipped:
+  results (and prompts, hook stdout/stderr, and deny reasons) are capped
+  by the shared budget, but tool args are delivered to the hook
+  untruncated. Args come from the model's own tool-call JSON and a guard
+  hook needs the real body (e.g. an `fs_write` content check); the hook
+  is user-configured and trusted with it.
