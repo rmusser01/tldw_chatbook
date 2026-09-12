@@ -1038,8 +1038,19 @@ def build_default_console_session_settings(
     model: str | None = None,
     *,
     excluded_model_profile_fields: frozenset[str] = frozenset(),
+    extra_sources: Sequence[Mapping[str, object]] = (),
 ) -> ConsoleSessionSettings:
-    """Build default Console settings from chat defaults and provider config."""
+    """Build default Console settings from chat defaults and provider config.
+
+    Args:
+        app_config: The live app configuration snapshot.
+        provider: An explicit provider override, or ``None``.
+        model: An explicit model override, or ``None``.
+        extra_sources: Optional param-name → value mappings slotted between
+            the saved console provider defaults and ``chat_defaults`` in the
+            precedence walk (ADR-147: registry entry params ride this seam).
+            The default ``()`` keeps the source order unchanged.
+    """
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
     )
@@ -1069,7 +1080,9 @@ def build_default_console_session_settings(
         _mapping_value(_mapping_value(app_config, "console"), "provider_defaults"),
         configured_provider,
     )
-    default_sources = (model_profile, saved_defaults, chat_defaults, provider_settings)
+    default_sources = (
+        model_profile, saved_defaults, *extra_sources, chat_defaults, provider_settings
+    )
 
     return ConsoleSessionSettings(
         provider=configured_provider,
