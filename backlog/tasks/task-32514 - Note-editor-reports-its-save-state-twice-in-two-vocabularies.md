@@ -1,5 +1,5 @@
 ---
-id: TASK-32460
+id: TASK-32514
 title: Note editor reports its save state twice, in two vocabularies
 status: To Do
 assignee: []

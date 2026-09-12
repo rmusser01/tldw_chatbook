@@ -1352,4 +1352,4 @@ in Preview/Info. The editor's second, never-displayed Created/Modified/version
 line was removed with it, leaving Info → Properties as its one home. The save
 state was NOT moved onto the strip: it stays on the status line above the mode
 controls, so nothing on screen reports saving twice — moving it is rider
-task-32459.)*
+task-32513.)*

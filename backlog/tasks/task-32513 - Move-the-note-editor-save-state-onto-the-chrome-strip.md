@@ -1,5 +1,5 @@
 ---
-id: TASK-32459
+id: TASK-32513
 title: Move the note editor save state onto the chrome strip
 status: To Do
 assignee: []
