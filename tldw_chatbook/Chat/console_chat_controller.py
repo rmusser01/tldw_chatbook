@@ -15644,16 +15644,10 @@ class ConsoleChatController:
         session: session-keyed teardown could not tell a cancelled child's
         card from its live sibling's.
 
-        Covers BOTH card registries a cancelled child can be holding:
-        ``_pending_approval_rounds`` (tool-call approvals) and
-        ``_pending_skill_script_rounds`` (run_skill_script confirms). The
-        skill-script leg is the wider hazard of the two -- that tool is
-        all-agents scope, its schema is not filtered by
-        ``config.allowed_tools``, and ``console_agent_bridge``'s closure
-        runs the script on the very next line after the confirm returns
-        Allow, with no cancellation checkpoint in between. (Skill-INSTALL
-        confirms are deliberately not swept: ``install_skill`` is wired
-        for the primary agent only, so no sub-agent can arm one.)
+        Covers tool-call approvals, run_skill_script confirms, and ask_user
+        questions. Skill-install and worktree-merge confirms are primary-only
+        and are not swept. The host also fences future arms for the revoked
+        run and these kinds for its lifetime, even when no round exists yet.
 
         Each revoked round is (a) marked ``revoked`` so the waiting thread
         fails closed even if a click lands in its shared decision box
@@ -15668,11 +15662,10 @@ class ConsoleChatController:
         round's own teardown uses, so a sibling round's card is never
         clobbered.
 
-        Thread-safe. Each registry is swept under its own lock, and the
-        two locks are taken SEQUENTIALLY, never nested. ``discard_pending_
-        round`` and both UI clears take those (non-reentrant) locks
-        themselves, so they are deliberately called after every critical
-        section is released.
+        Thread-safe. InterruptRoundHost records the per-kind revocation
+        fences and sweeps the registries under one shared non-reentrant lock.
+        Exact-round payload cleanup and badge/UI callbacks run after that
+        critical section; callbacks may acquire the same lock themselves.
 
         Args:
             run_id: The cancelled/abandoned run whose cards must die. A
@@ -15681,8 +15674,8 @@ class ConsoleChatController:
                 sweeping those would deny cards no run owns.
 
         Returns:
-            How many rounds were revoked across both registries (``0``
-            when the run had none).
+            How many existing rounds were revoked across the swept kinds
+            (``0`` when the run had none; the late-arm fence still persists).
         """
         if not run_id:
             return 0
