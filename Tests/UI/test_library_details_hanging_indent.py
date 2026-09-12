@@ -29,8 +29,6 @@ from tldw_chatbook.Widgets.Library.library_rail import (
     library_hang_details_row,
 )
 
-pytestmark = pytest.mark.asyncio
-
 #: The Details column measured at 235 columns (task-32230's own number,
 #: re-measured live for this task).
 DETAILS_COLUMN_CELLS = 34
@@ -80,6 +78,9 @@ def test_a_row_that_fits_its_width_keeps_the_renderable_it_was_given() -> None:
     assert library_hang_details_row("Status", DETAILS_COLUMN_CELLS) == "Status"
 
 
+# Only the mounted case is async -- a module-level ``pytestmark`` would warn
+# once per sync test in this file (review round 1, F8).
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (60, 24)], ids=("wide", "narrow"))
 async def test_a_wrapped_details_row_paints_its_continuations_indented(size) -> None:
     """Through the product path: mounted, painted, at both supported widths."""
@@ -119,3 +120,54 @@ async def test_a_wrapped_details_row_paints_its_continuations_indented(size) -> 
                 f"continuation line is not hung under the first: {line!r} "
                 f"in {painted!r}"
             )
+
+
+@pytest.mark.asyncio
+async def test_a_row_re_hangs_in_both_directions_as_its_column_changes() -> None:
+    """The resize guard must skip repaints, not updates that change the text.
+
+    ``on_resize`` returns early when the hung form is unchanged (review round
+    1, F3). That guard is exactly the kind that can freeze a row at its first
+    width, so the widening leg is asserted as well as the narrowing one.
+    """
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical
+
+    from tldw_chatbook.Widgets.Library.library_rail import (
+        LibraryDetailsRow,
+        library_dim_label_text,
+    )
+
+    source = library_dim_label_text(
+        "Handoff", "24 items can't be used in Console yet · not in this workspace"
+    )
+
+    class _Host(App):
+        CSS = "#box { width: 36; height: auto; } .row { padding: 0 1; }"
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="box"):
+                yield LibraryDetailsRow(source, id="row", classes="row")
+
+    app = _Host()
+    async with app.run_test(size=(140, 24)) as pilot:
+        row = app.query_one("#row", LibraryDetailsRow)
+        assert row.region.height > 1, row.region
+        assert row.content is source, "the caller's renderable must survive"
+
+        app.query_one("#box").styles.width = 120
+        await pilot.pause()
+        await pilot.pause()
+        assert row.region.height == 1, row.region
+
+        app.query_one("#box").styles.width = 24
+        await pilot.pause()
+        await pilot.pause()
+        assert row.region.height > 1, row.region
+        painted = [
+            line
+            for line in _painted_rows(app, row.region)
+            if line.strip()
+        ]
+        for line in painted[1:]:
+            assert line.startswith(f" {LIBRARY_DETAILS_CONTINUATION_PAD}"), painted

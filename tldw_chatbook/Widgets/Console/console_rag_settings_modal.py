@@ -90,12 +90,14 @@ def console_rag_source_toggle_label(source_type: str, selected: bool) -> str:
     display label itself comes from Library's one label table, so this
     modal never introduces a second source vocabulary.
 
-    task-32303 (user decision: the Library legend is product-wide): these
-    toggles are a selection the user makes, so they wear the checkbox pair
-    from ``library_shell_state`` -- the SAME constants Library's own toggles
-    read, not a second copy of the glyphs. "○" keeps the one meaning
-    task-32235 left it (blocked/disabled), which is why an unchecked source
-    can no longer borrow it.
+    task-32303 (user decision: this modal adopts Library's legend, reading the
+    shared constants): these toggles are a selection the user makes, so they
+    wear the checkbox pair from ``library_shell_state`` -- the SAME constants
+    Library's own toggles read, not a second copy of the glyphs. "○" keeps the
+    one meaning task-32235 left it (blocked/disabled), which is why an
+    unchecked source can no longer borrow it. Scoped to this modal: the
+    per-conversation library-access modal's RADIO pair is still ●/○ (its own
+    decision, task-32464).
 
     Args:
         source_type: A Library source-type identifier.

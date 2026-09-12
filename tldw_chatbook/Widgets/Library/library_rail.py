@@ -90,6 +90,11 @@ def library_dim_label_text(label: str, value: str) -> Text:
 LIBRARY_DETAILS_CONTINUATION_PAD = "  "
 
 
+#: Lazily built, for ``Text.wrap``'s justify/overflow defaults only -- the
+#: width is always passed explicitly.
+_HANG_CONSOLE: Any = None
+
+
 def library_hang_details_row(renderable: Any, width: int) -> Any:
     """Re-wrap one Details row so its continuation lines hang under the first.
 
@@ -106,6 +111,19 @@ def library_hang_details_row(renderable: Any, width: int) -> Any:
     clipped (measured live at 235x52: the first wrapped line showed, the rest
     was blank). The wrap therefore happens here and is handed over as a plain
     ``Text`` with real newlines, which measures correctly.
+
+    Two limits, both measured and both deliberate (review round 1, F5/F7):
+
+    - EVERY line is wrapped at ``width - indent``, including the first, which
+      carries no indent -- so line one gives up two of its 34 cells. A true
+      per-line budget needs a second wrap pass over the remainder (Rich takes
+      one width for the whole ``Text``), which is more machinery than a ragged
+      two cells is worth. The visual contract -- first line at the glyph
+      column, continuations indented under it -- holds either way.
+    - A ``str`` renderable is wrapped as literal text (``Text(renderable)``),
+      so a ``markup=True`` row whose content contains Rich markup would render
+      differently once it wraps. No such row exists today: both ``str`` sites
+      pass ``markup=False``, and the fold cue is 17 cells and never wraps.
 
     Args:
         renderable: The row's own renderable, as its caller passed it.
@@ -137,11 +155,6 @@ def library_hang_details_row(renderable: Any, width: int) -> Any:
     return hung
 
 
-#: Lazily built, for ``Text.wrap``'s justify/overflow defaults only -- the
-#: width is always passed explicitly.
-_HANG_CONSOLE: Any = None
-
-
 class LibraryDetailsRow(Static):
     """A ``.library-details-row`` whose wrapped lines hang under the first.
 
@@ -158,6 +171,9 @@ class LibraryDetailsRow(Static):
     def __init__(self, renderable: Any = "", *args: Any, **kwargs: Any) -> None:
         super().__init__(renderable, *args, **kwargs)
         self._details_source: Any = renderable
+        #: What was last handed to ``Static.update`` -- at construction that is
+        #: the raw renderable, which is also what a fitting row re-hangs to.
+        self._details_painted: Any = renderable
 
     @property
     def content(self) -> Any:
@@ -183,19 +199,29 @@ class LibraryDetailsRow(Static):
             layout: Forwarded to ``Static.update``.
         """
         self._details_source = content
-        super().update(
-            library_hang_details_row(content, self.content_size.width), layout=layout
+        self._details_painted = library_hang_details_row(
+            content, self.content_size.width
         )
+        super().update(self._details_painted, layout=layout)
 
     def on_resize(self, event: Resize) -> None:
-        """Re-hang at the new width.
+        """Re-hang at the new width, but only when the hung text changes.
 
-        No ``super()`` call: Textual dispatches every class's own handler
-        along the MRO, so chaining here would double-fire a mixin's.
+        No ``super().on_resize()``: Textual dispatches every class's own
+        handler along the MRO, so chaining would double-fire a mixin's (and
+        neither ``Static`` nor ``Widget`` defines one to chain to).
+
+        The guard is not cosmetic: ``Static.update`` always calls
+        ``refresh(layout=True)``, and a Resize arrives for height-only changes
+        too -- including the second one this row's own height change provokes
+        -- so without it every rail resize forces a layout pass on all eight
+        rows for byte-identical text (review round 1, F3).
         """
-        super().update(
-            library_hang_details_row(self._details_source, self.content_size.width)
-        )
+        hung = library_hang_details_row(self._details_source, self.content_size.width)
+        if hung == self._details_painted:
+            return
+        self._details_painted = hung
+        super().update(hung)
 
 
 def library_db_size_rows(

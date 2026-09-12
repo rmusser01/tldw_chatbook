@@ -4300,11 +4300,14 @@ class LibraryScreen(BaseAppScreen):
                 # veto, which now says so) -- so the chip names the blocker
                 # rather than promising an exit the key will not make. The
                 # skill editor's own set two branches below is the same idiom.
-                return (
-                    ("/", "focus search"),
-                    ("F6", "next pane"),
-                    ("esc", LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP),
-                )
+                # Spliced, never re-literalled -- the Trash branch's rule above
+                # (review round 1, F2): the constant stays the one definition
+                # of the keys this set shares with it.
+                return tuple(
+                    pair
+                    for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                    if pair[0] != "esc"
+                ) + (("esc", LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP),)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]

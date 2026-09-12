@@ -196,9 +196,9 @@ async def test_modal_shows_one_toggle_per_library_source_with_display_labels():
         await pilot.pause()
         modal = app.screen
 
-        # task-32303 (user decision): the Library glyph legend is
-        # product-wide, so a selection here wears the checkbox pair rather
-        # than the ✓/○ pair whose "○" means blocked/disabled everywhere else.
+        # task-32303 (user decision): this modal adopts the Library glyph
+        # legend, so a selection here wears the checkbox pair rather than the
+        # ✓/○ pair whose "○" means blocked/disabled in Library.
         assert _toggle_labels(modal) == [
             "☑ Notes",
             "☐ Media",
@@ -773,7 +773,8 @@ async def test_the_source_toggles_paint_the_library_legend_at_235_columns():
         assert painted_by_id[f"{prefix}media"] == (
             f"{LIBRARY_GLYPH_UNSELECTED} Media"
         ), painted
-        # "○" keeps one meaning product-wide, so an unchecked source may not
-        # borrow it back, and a selected one is not a settled outcome either.
+        # In THIS modal "○" is not a selection glyph, so an unchecked source
+        # may not borrow it back, and a selected one is not a settled outcome
+        # either. (Console's radio buttons keep ●/○ -- task-32464.)
         assert "○" not in painted, painted
         assert "✓" not in painted, painted

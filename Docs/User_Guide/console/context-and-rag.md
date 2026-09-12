@@ -700,7 +700,7 @@ and is editable: **Search Library** with nothing typed opens the manual
 **Library search** modal, which carries
 the query box plus a toggle per source kind (**☑ Notes**, **☐ Media**,
 **☑ Conversations**, **☐ Prompts** — the same checkbox pair Library uses for a
-selection, with "○" reserved for something you cannot use). Running keeps the edited query/source-kind
+selection). Running keeps the edited query/source-kind
 selection (it also survives leaving and returning to Console); **Cancel**
 discards it. The separate **Library** status chip opens the per-conversation
 access modal described above. Run stays disabled until there is both a query and at least
@@ -1073,6 +1073,7 @@ projection, widget, controller and screen-wiring suites) plus a live
 for the rest.*
 
 *Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
-(task-32303, user decision: the Library glyph legend is product-wide, so the
+(task-32303, user decision: this modal adopts the Library glyph legend, so the
 Library search modal's source toggles paint ☑/☐ from the shared constants
-instead of the ✓/○ pair whose "○" means blocked everywhere else.)*
+instead of the ✓/○ pair. The per-conversation Library access modal's radio
+buttons still use ●/○ — a separate decision, task-32464.)*

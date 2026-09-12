@@ -19,6 +19,9 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService,
     PromptScopeService,
 )
+from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
+    PROMPT_DISCARD_TOOLTIP_BUSY,
+)
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
@@ -146,5 +149,32 @@ async def test_the_prompt_editor_footer_chip_names_the_dirty_blocker(
             chips = screen._footer_shortcut_registration[1]
             assert ("esc", LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP) in chips, chips
             assert ("esc", "back to list") not in chips, chips
+    finally:
+        prompts_db.close_connection()
+
+
+async def test_escape_during_an_in_flight_write_says_so_too(tmp_path) -> None:
+    """Review round 1 (F10): the last state where Escape neither left nor spoke.
+
+    A save/delete worker holds ``_library_prompts_mutation_in_flight``; the
+    guarded exit refused on it before reaching the dirty check, and refused
+    silently. The Discard button already explains this state in its tooltip, so
+    the refusal borrows that copy rather than inventing a second one.
+    """
+    app, prompts_db, prompt_id = _prompts_app(tmp_path)
+    host = LibraryHarness(app)
+    notices: list[str] = []
+
+    try:
+        async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+            screen = await _open_prompt_editor(host, pilot, prompt_id)
+            screen._prompts_state.mutation_in_flight = True
+            app.notify = lambda message, **kwargs: notices.append(str(message))
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert screen._prompts_state.view == "editor", "the refusal must hold"
+            assert notices == [PROMPT_DISCARD_TOOLTIP_BUSY], notices
     finally:
         prompts_db.close_connection()

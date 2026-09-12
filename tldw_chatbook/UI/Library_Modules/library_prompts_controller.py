@@ -3463,6 +3463,14 @@ class LibraryPromptsController:
             ``True`` when the editor was exited; ``False`` on a dirty veto.
         """
         if self._library_prompts_mutation_in_flight:
+            # task-32393 review round 1 (F10): the last state in which Escape
+            # neither left nor spoke. Transient -- one write worker's lifetime
+            # -- but indistinguishable from a dead key while it lasts, and the
+            # Discard button already explains this exact state in its tooltip,
+            # so the refusal borrows that copy rather than inventing one.
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(PROMPT_DISCARD_TOOLTIP_BUSY, severity="warning")
             return False
         if not await self._flush_library_prompt_save():
             # task-32393: the veto is deliberate, but it was also SILENT --

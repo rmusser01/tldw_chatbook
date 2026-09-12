@@ -43,7 +43,9 @@ The Library glyph legend (task-32235) moved selection to ☑/☐ and kept ○ fo
 ``LIBRARY_GLYPH_UNSELECTED`` from ``Library/library_shell_state.py`` -- the
 same constants Library's own scope toggles read (``scope_toggle_label``), not a
 second copy of the glyphs -- so a source toggle paints ☑/☐ and "○" keeps the
-one meaning task-32235 left it: blocked or disabled. This modal has no
+one meaning task-32235 left it: blocked or disabled. Scope is this modal, not
+Console as a whole: the per-conversation library-access modal's RADIO pair is
+still ●/○ and is filed as task-32464 (review round 1, F1). This modal has no
 glyph-marked blocked state of its own (its only disabled control is the Run
 button, which carries no marker), so nothing else moved. The function's own
 docstring, which quoted "✓ Notes" / "○ Prompts", follows the change, and so
@@ -69,5 +71,12 @@ the mounted harness stands in for it.
 ## Decision
 
 <!-- SECTION:DECISION:BEGIN -->
-Console RAG adopts Library's legend — product-wide, via the shared constants
+Console RAG adopts Library's legend: the RAG settings modal reads the shared
+constants; Library stays as shipped.
+
+Scope note (review round 1, F1): "adopts the legend" is this modal, not every
+Console surface. `Widgets/Console/console_library_access_modal.py:45,53` still
+paints ○ for an unselected RADIO, which under the Library legend reads as
+blocked; that glyph pair is a separate decision, filed as task-32464 and
+deliberately not touched here.
 <!-- SECTION:DECISION:END -->
