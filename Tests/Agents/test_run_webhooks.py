@@ -36,15 +36,16 @@ def _delivery(run_id: str, *, extra_ids=None) -> _WebhookDelivery:
     )
 
 
-def _join_worker(worker: _WebhookDeliveryWorker, timeout: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        with worker._state_lock:
-            thread = worker._thread
-        if thread is None:
-            return
-        thread.join(min(0.05, max(0.0, deadline - time.monotonic())))
-    raise AssertionError("webhook worker did not retire")
+def _owned_worker_thread(worker: _WebhookDeliveryWorker) -> threading.Thread:
+    with worker._state_lock:
+        thread = worker._thread
+    assert thread is not None
+    return thread
+
+
+def _join_owned_thread(thread: threading.Thread, timeout: float = 2.0) -> None:
+    thread.join(timeout)
+    assert not thread.is_alive(), "owned webhook worker did not exit"
 
 
 # --- bounded reusable delivery worker (TASK-31511) ---
@@ -67,15 +68,18 @@ def test_worker_reuses_one_thread_and_event_loop_without_blocking_submit(monkeyp
 
     monkeypatch.setattr(run_webhooks, "deliver_webhook", held_delivery)
     worker = _WebhookDeliveryWorker(queue_capacity=2, idle_seconds=0.02)
+    owned_thread = None
     try:
         assert worker.submit(_delivery("one")) is True
+        owned_thread = _owned_worker_thread(worker)
         assert entered.wait(1.0)
         started = time.monotonic()
         assert worker.submit(_delivery("two")) is True
         assert time.monotonic() - started < 0.1
     finally:
         release.set()
-        _join_worker(worker)
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
 
     assert [item[2] for item in observed] == ["one", "two"]
     assert len({item[0] for item in observed}) == 1
@@ -110,8 +114,10 @@ def test_capacity_one_refuses_third_delivery_without_exposing_canaries(monkeypat
     )
     worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
     canaries = ("https://secret.example/token", "signing-secret", "run-sensitive")
+    owned_thread = None
     try:
         assert worker.submit(_delivery(canaries[2])) is True
+        owned_thread = _owned_worker_thread(worker)
         assert entered.wait(1.0)
         assert worker.submit(_delivery("waiting")) is True
         assert (
@@ -134,7 +140,8 @@ def test_capacity_one_refuses_third_delivery_without_exposing_canaries(monkeypat
         )
     finally:
         release.set()
-        _join_worker(worker)
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
 
     diagnostic_blob = repr((warnings, metrics))
     assert all(canary not in diagnostic_blob for canary in canaries)
@@ -151,17 +158,29 @@ def test_worker_retires_then_restarts_with_a_new_generation(monkeypatch):
     from tldw_chatbook.Agents import run_webhooks
 
     observed_threads = []
+    release_by_run = {"one": threading.Event(), "two": threading.Event()}
 
     async def record_delivery(config, event, run_id, **kwargs):
         observed_threads.append(threading.current_thread())
+        while not release_by_run[run_id].is_set():
+            await asyncio.sleep(0.005)
         return True
 
     monkeypatch.setattr(run_webhooks, "deliver_webhook", record_delivery)
     worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
-    assert worker.submit(_delivery("one")) is True
-    _join_worker(worker)
-    assert worker.submit(_delivery("two")) is True
-    _join_worker(worker)
+    owned_threads = []
+    try:
+        assert worker.submit(_delivery("one")) is True
+        owned_threads.append(_owned_worker_thread(worker))
+        release_by_run["one"].set()
+        _join_owned_thread(owned_threads[-1])
+        assert worker.submit(_delivery("two")) is True
+        owned_threads.append(_owned_worker_thread(worker))
+    finally:
+        for release in release_by_run.values():
+            release.set()
+        for thread in owned_threads:
+            _join_owned_thread(thread)
     assert len(observed_threads) == 2
     assert observed_threads[0] is not observed_threads[1]
 
@@ -173,6 +192,7 @@ def test_submission_during_runner_close_is_refused_then_restart_succeeds(monkeyp
     real_runner = asyncio.Runner
     closing = threading.Event()
     release_close = threading.Event()
+    release_after = threading.Event()
     delivered = []
 
     class GatedRunner:
@@ -193,21 +213,29 @@ def test_submission_during_runner_close_is_refused_then_restart_succeeds(monkeyp
 
     async def record_delivery(config, event, run_id, **kwargs):
         delivered.append(run_id)
+        if run_id == "after-close":
+            while not release_after.is_set():
+                await asyncio.sleep(0.005)
         return True
 
     monkeypatch.setattr(run_webhooks.asyncio, "Runner", GatedRunner)
     monkeypatch.setattr(run_webhooks, "deliver_webhook", record_delivery)
     worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.01)
+    owned_threads = []
     try:
         assert worker.submit(_delivery("first")) is True
+        owned_threads.append(_owned_worker_thread(worker))
         assert closing.wait(1.0)
         assert worker.submit(_delivery("during-close")) is False
         release_close.set()
-        _join_worker(worker)
+        _join_owned_thread(owned_threads[-1])
         assert worker.submit(_delivery("after-close")) is True
+        owned_threads.append(_owned_worker_thread(worker))
     finally:
         release_close.set()
-        _join_worker(worker)
+        release_after.set()
+        for thread in owned_threads:
+            _join_owned_thread(thread)
     assert delivered == ["first", "after-close"]
 
 
@@ -218,6 +246,7 @@ def test_failed_thread_start_is_sanitized_and_later_submit_recovers(monkeypatch)
     real_thread = threading.Thread
     warnings = []
     delivered = []
+    release = threading.Event()
 
     class FailedThread:
         def __init__(self, *args, **kwargs):
@@ -228,6 +257,8 @@ def test_failed_thread_start_is_sanitized_and_later_submit_recovers(monkeypatch)
 
     async def record_delivery(config, event, run_id, **kwargs):
         delivered.append(run_id)
+        while not release.is_set():
+            await asyncio.sleep(0.005)
         return True
 
     monkeypatch.setattr(
@@ -237,11 +268,17 @@ def test_failed_thread_start_is_sanitized_and_later_submit_recovers(monkeypatch)
     )
     monkeypatch.setattr(run_webhooks.threading, "Thread", FailedThread)
     worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.01)
-    assert worker.submit(_delivery("not-admitted")) is False
-    monkeypatch.setattr(run_webhooks.threading, "Thread", real_thread)
-    monkeypatch.setattr(run_webhooks, "deliver_webhook", record_delivery)
-    assert worker.submit(_delivery("recovered")) is True
-    _join_worker(worker)
+    owned_thread = None
+    try:
+        assert worker.submit(_delivery("not-admitted")) is False
+        monkeypatch.setattr(run_webhooks.threading, "Thread", real_thread)
+        monkeypatch.setattr(run_webhooks, "deliver_webhook", record_delivery)
+        assert worker.submit(_delivery("recovered")) is True
+        owned_thread = _owned_worker_thread(worker)
+    finally:
+        release.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
     assert delivered == ["recovered"]
     assert "run-sensitive" not in repr(warnings)
     assert "secret-url" not in repr(warnings)
@@ -275,8 +312,10 @@ def test_callback_failure_does_not_stop_fifo_and_admission_copies_inputs(monkeyp
         events=mutable_events,  # type: ignore[arg-type]
     )
     worker = _WebhookDeliveryWorker(queue_capacity=2, idle_seconds=0.02)
+    owned_thread = None
     try:
         assert worker.submit(_delivery("held")) is True
+        owned_thread = _owned_worker_thread(worker)
         assert entered.wait(1.0)
         assert (
             worker.submit(
@@ -295,7 +334,8 @@ def test_callback_failure_does_not_stop_fifo_and_admission_copies_inputs(monkeyp
         mutable_ids["workspace_id"] = "mutated"
     finally:
         release.set()
-        _join_worker(worker)
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
     assert observed == [("copied", ("completed",), {"workspace_id": "original"})]
 
 
@@ -323,14 +363,17 @@ def test_diagnostic_failures_do_not_escape_admission_or_stop_fifo(monkeypatch):
     monkeypatch.setattr(run_webhooks.logger, "warning", diagnostic_failure)
     monkeypatch.setattr(run_webhooks, "log_counter", diagnostic_failure)
     worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
+    owned_thread = None
     try:
         assert worker.submit(_delivery("held")) is True
+        owned_thread = _owned_worker_thread(worker)
         assert entered.wait(1.0)
         assert worker.submit(_delivery("waiting")) is True
         assert worker.submit(_delivery("overflow")) is False
     finally:
         release.set()
-        _join_worker(worker)
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
     assert delivered == ["waiting"]
 
 
@@ -355,8 +398,10 @@ def test_worker_metrics_bound_unknown_event_labels(monkeypatch):
         lambda name, **kwargs: metrics.append((name, kwargs)),
     )
     worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
+    owned_thread = None
     try:
         assert worker.submit(_delivery("held")) is True
+        owned_thread = _owned_worker_thread(worker)
         assert entered.wait(1.0)
         assert worker.submit(_delivery("waiting")) is True
         unknown = _WebhookDelivery(
@@ -370,7 +415,8 @@ def test_worker_metrics_bound_unknown_event_labels(monkeypatch):
         assert worker.submit(unknown) is False
     finally:
         release.set()
-        _join_worker(worker)
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
     assert metrics == [
         (
             "run_webhook_dropped",
@@ -604,25 +650,28 @@ def test_scheduler_gates_before_spawning_a_thread():
     )
 
 
-def test_scheduler_delivers_when_enabled():
+def test_scheduler_delivers_when_enabled(monkeypatch):
     """The scheduler starts a delivery that reaches the endpoint (AC#1)."""
     import time
 
     from tldw_chatbook.Agents import run_webhooks
 
     delivered = {"ok": False}
+    release = threading.Event()
 
     async def allowed(url, **k):
         return None
 
-    real_check = run_webhooks.check_url_or_raise_async
-    run_webhooks.check_url_or_raise_async = allowed
-    orig_post = run_webhooks._default_post
-
     async def fake_post(url, body, headers, timeout):
         delivered["ok"] = True
+        while not release.is_set():
+            await asyncio.sleep(0.005)
 
-    run_webhooks._default_post = fake_post
+    worker = _WebhookDeliveryWorker(queue_capacity=1, idle_seconds=0.02)
+    monkeypatch.setattr(run_webhooks, "check_url_or_raise_async", allowed)
+    monkeypatch.setattr(run_webhooks, "_default_post", fake_post)
+    monkeypatch.setattr(run_webhooks, "_WEBHOOK_DELIVERY_WORKER", worker)
+    owned_thread = None
     try:
         started = run_webhooks.schedule_run_webhook(
             WebhookConfig(
@@ -632,13 +681,15 @@ def test_scheduler_delivers_when_enabled():
             "run-1",
         )
         assert started is True
+        owned_thread = _owned_worker_thread(worker)
         for _ in range(50):
             if delivered["ok"]:
                 break
             time.sleep(0.02)
     finally:
-        run_webhooks.check_url_or_raise_async = real_check
-        run_webhooks._default_post = orig_post
+        release.set()
+        if owned_thread is not None:
+            _join_owned_thread(owned_thread)
     assert delivered["ok"] is True
 
 
