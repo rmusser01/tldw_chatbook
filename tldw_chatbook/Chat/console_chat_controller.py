@@ -27300,27 +27300,35 @@ class ConsoleChatController:
         return fallback
 
     def _resolved_system_prompt(self, session_id: str | None) -> str | None:
-        """Resolve a trusted character system template for the current identity."""
+        """Resolve the trusted identity system template for the session kind."""
         if session_id is None:
             return self.system_prompt
         session = next(
             (candidate for candidate in self.store.sessions() if candidate.id == session_id),
             None,
         )
+        if session is None:
+            return self.system_prompt
+        if session.assistant_kind == "character":
+            name = session.character_name
+            template = session.character_system_template
+        elif session.assistant_kind == "persona":
+            name = session.assistant_name
+            template = session.persona_system_template
+        else:
+            return self.system_prompt
         if (
-            session is None
-            or session.assistant_kind != "character"
-            or not isinstance(session.character_name, str)
-            or not session.character_name.strip()
-            or not isinstance(session.character_system_template, str)
-            or not session.character_system_template.strip()
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(template, str)
+            or not template.strip()
         ):
             return self.system_prompt
         context = self._presentation_context_for(session_id)
         return expand_character_template(
-            session.character_system_template,
+            template,
             user_name=context.user_name,
-            character_name=session.character_name.strip(),
+            character_name=name.strip(),
         )
 
     def _character_emote_authority(

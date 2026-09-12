@@ -4674,8 +4674,10 @@ class ConsoleSessionController:
             "persona_memory_mode": session.persona_memory_mode,
             "character_id": session.local_character_id(),
             "character_name": session.character_name,
+            "assistant_name": session.assistant_name,
             "user_display_name_override": session.user_display_name_override,
             "character_system_template": session.character_system_template,
+            "persona_system_template": session.persona_system_template,
             "identity_revision": session.identity_revision,
             # Temporary conversations: without this key a temporary chat
             # comes back as a persisting one after any screen navigation,
@@ -4805,6 +4807,9 @@ class ConsoleSessionController:
         raw_character_name = raw_session.get("character_name")
         if raw_character_name is not None:
             session_kwargs["character_name"] = str(raw_character_name)
+        raw_assistant_name = raw_session.get("assistant_name")
+        if raw_assistant_name is not None:
+            session_kwargs["assistant_name"] = str(raw_assistant_name)
         raw_user_display_name_override = raw_session.get("user_display_name_override")
         try:
             session_kwargs["user_display_name_override"] = normalize_chat_display_name(
@@ -4817,6 +4822,12 @@ class ConsoleSessionController:
         session_kwargs["character_system_template"] = (
             raw_character_system_template
             if isinstance(raw_character_system_template, str)
+            else None
+        )
+        raw_persona_system_template = raw_session.get("persona_system_template")
+        session_kwargs["persona_system_template"] = (
+            raw_persona_system_template
+            if isinstance(raw_persona_system_template, str)
             else None
         )
         raw_identity_revision = raw_session.get("identity_revision")
@@ -4837,6 +4848,14 @@ class ConsoleSessionController:
         session_kwargs["project_instruction_state"] = decode_project_context_json(
             encoded_project_state
         )
+        # One-name invariant (ADR-149): a session shows exactly one identity
+        # label, keyed by kind. A contradictory payload keeps only the
+        # kind-appropriate field. Legacy payloads predate `assistant_name`,
+        # so the else-branch pop is a no-op for them.
+        if session_kwargs.get("assistant_kind") == "persona":
+            session_kwargs.pop("character_name", None)
+        else:
+            session_kwargs.pop("assistant_name", None)
         return ConsoleChatSession(**session_kwargs)
 
     def _build_console_project_instruction_display_state(

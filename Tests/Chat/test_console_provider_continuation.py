@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ContinuationDurabilityResult,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
@@ -1305,3 +1306,48 @@ def test_ephemeral_event_writes_no_checkpoint_and_offers_no_recovery() -> None:
         )
     finally:
         database.close_connection()
+
+
+def test_resolved_system_prompt_re_expands_persona_template() -> None:
+    """The send path re-expands the trusted persona template per turn."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        settings=ConsoleSessionSettings(
+            provider="anthropic", model="claude-3-haiku"
+        ),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    store.seed_persona_roleplay(
+        session.id,
+        system_template="Guide {{user}} as {{persona}}.",
+        global_default="Rowan",
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+
+    # The bare controller is constructed without a `global_user_display_name`
+    # accessor, so the constructor default (`lambda: "User"`, line 1760)
+    # applies and the per-turn re-expansion uses "User" — not the seed-time
+    # "Rowan". This pins that send-time expansion always wins.
+    assert (
+        controller._resolved_system_prompt(session.id)
+        == "Guide User as Archivist."
+    )
+
+
+def test_resolved_system_prompt_leaves_generic_sessions_untouched() -> None:
+    """Non-identity sessions keep the controller's configured prompt."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat",
+        settings=ConsoleSessionSettings(
+            provider="anthropic", model="claude-3-haiku"
+        ),
+    )
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), system_prompt="Base prompt."
+    )
+
+    assert controller._resolved_system_prompt(session.id) == "Base prompt."
