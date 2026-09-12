@@ -65,6 +65,6 @@ Files: `Widgets/Library/library_file_notes_git_panel.py`,
 `Tests/UI/test_library_file_notes_git.py`,
 `Docs/User_Guide/library/file-notes.md`.
 
-Residual (rider task-32475): the entry-focus rule can still take focus from
+Residual (rider task-32511): the entry-focus rule can still take focus from
 a chosen in-panel control when the anchor is hidden off the repair path.
 <!-- SECTION:NOTES:END -->

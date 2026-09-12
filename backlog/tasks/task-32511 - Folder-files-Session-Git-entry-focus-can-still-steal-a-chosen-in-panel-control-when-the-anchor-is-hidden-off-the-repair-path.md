@@ -1,5 +1,5 @@
 ---
-id: TASK-32475
+id: TASK-32511
 title: >-
   Folder files Session Git: entry focus can still steal a chosen in-panel
   control when the anchor is hidden off the repair path
