@@ -13310,8 +13310,11 @@ class ConsoleChatController:
         # Registered before the timeout config read so sweeps and
         # `pending_*` readers see the round across that (lock-taking) call;
         # `run_round` re-registers the same object, harmlessly.
-        with self._approval_state_lock:
-            self._pending_approval_rounds[round_id] = round_state
+        if not self._interrupt_host.register_round("approval", round_id, round_state):
+            self._record_cancelled_approval_decisions(list(unique_keys), call_by_key)
+            denied = ApprovalDecisions({key: "deny" for key in unique_keys})
+            denied.unresolved_keys = frozenset(unique_keys)
+            return denied
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = (
             time.monotonic() + timeout_seconds
@@ -13356,18 +13359,23 @@ class ConsoleChatController:
         result: dict[str, dict[str, str]] = {}
 
         def _on_outcome(outcome: str) -> None:
-            if outcome == "revoked":
+            # Commit the whole batch under the sweep lock. Cancellation can
+            # win before this snapshot, but cannot retract a completed one.
+            with self._approval_state_lock:
+                revoked = outcome == "revoked" or bool(round_state.get("revoked"))
+                if revoked:
+                    unresolved_keys.update(unique_keys)
+                    result["map"] = {key: "deny" for key in unique_keys}
+                else:
+                    for key in unique_keys:
+                        decisions.setdefault(key, "deny")
+                    result["map"] = {
+                        key: decisions.get(key, "deny") for key in unique_keys
+                    }
+            if revoked:
                 self._record_cancelled_approval_decisions(
                     list(unique_keys), call_by_key
                 )
-                # Same as cancellation: the card was pulled, so NO key here
-                # carries a user decision.
-                unresolved_keys.update(unique_keys)
-                result["map"] = {key: "deny" for key in unique_keys}
-                return
-            for key in unique_keys:
-                decisions.setdefault(key, "deny")
-            result["map"] = {key: decisions.get(key, "deny") for key in unique_keys}
 
         def _announce_if_detached() -> bool:
             # Sampled after the park, at the same moment the pre-host body
@@ -15763,9 +15771,9 @@ class ConsoleChatController:
     def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's ``run_skill_script`` confirms closed.
 
-        Registry work only, under ``_pending_skill_script_lock`` and then
-        (sequentially, never nested) ``_approval_state_lock`` for the
-        retained-payload slot.
+        The host fences and sweeps under its shared lock, then removes only
+        each swept round's retained payload. Same-session siblings retain
+        their own round-keyed payloads through revocation and teardown.
 
         Args:
             run_id: The cancelled/abandoned run.
@@ -16030,8 +16038,10 @@ class ConsoleChatController:
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
-        with self._pending_skill_script_lock:
-            self._pending_skill_script_rounds[request_id] = script_round_state
+        if not self._interrupt_host.register_round(
+            "skill_script", request_id, script_round_state
+        ):
+            return {"allow": False, "remember": False}
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
             if self.skill_script_confirm_timeout_seconds is not None

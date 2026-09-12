@@ -208,6 +208,11 @@ class InterruptRoundHost:
         self.registries: dict[str, dict[str, dict[str, Any]]] = {
             kind: {} for kind in KIND_SETTER_ATTRS
         }
+        # Host-lifetime fences: logical completion cannot prove that an
+        # abandoned provider daemon will never reach its approval fallback.
+        self._revoked_runs: dict[str, set[str]] = {
+            kind: set() for kind in KIND_SETTER_ATTRS
+        }
         #: Per-kind hook run on the UI thread after a head payload is pushed,
         #: whichever path pushed it (teardown promotion, revocation sweep,
         #: activation, attach). Approvals register their ADR-090 permission
@@ -491,12 +496,43 @@ class InterruptRoundHost:
                 f"Pending-round attention hook failed for {kind}"
             )
 
+    def register_round(
+        self,
+        kind: str,
+        round_id: str,
+        state: dict[str, Any],
+        *,
+        check_revoked: bool = True,
+    ) -> bool:
+        """Admit a round atomically with its owner's revocation fence.
+
+        Shared by early controller admission and the host lifecycle. A refused
+        preregistration is removed only when it belongs to this exact state.
+        """
+        with self.lock:
+            registry = self.registries[kind]
+            run_id = state.get("run_id")
+            if check_revoked and (
+                state.get("revoked") or run_id in self._revoked_runs[kind]
+            ):
+                state["revoked"] = True
+                if registry.get(round_id) is state:
+                    registry.pop(round_id)
+                return False
+            warn_unowned = (
+                check_revoked and not run_id and registry.get(round_id) is not state
+            )
+            registry[round_id] = state
+        if warn_unowned:
+            logger.warning("Arming a revocable interrupt round without a run owner")
+        return True
+
     def revoke_for_run(
         self,
         run_id: str,
         stamps: dict[str, Callable[[dict[str, Any]], None]],
     ) -> dict[str, list[tuple[str, str | None]]]:
-        """Fail every armed round owned by ``run_id`` closed, per kind (task-31384).
+        """Fence future arms and fail armed rounds owned by ``run_id`` closed.
 
         Each swept round is marked ``revoked``, stamped closed by its
         kind's callable (approvals deny every undecided key; a skill
@@ -519,6 +555,7 @@ class InterruptRoundHost:
             return swept
         with self.lock:
             for kind, stamp in stamps.items():
+                self._revoked_runs[kind].add(run_id)
                 registry = self.registries[kind]
                 for round_id, state in list(registry.items()):
                     if state.get("run_id") != run_id:
@@ -634,14 +671,7 @@ class InterruptRoundHost:
             ``"decided"``, ``"cancelled"``, ``"timeout"`` or ``"revoked"``.
         """
         event: threading.Event = state["event"]
-        with self.lock:
-            # A bridge may pre-register its state before its timeout config
-            # read; a revocation sweep in that window pops and stamps it.
-            # Never write such a state back, park it, or mount its card.
-            revoked_early = check_revoked and bool(state.get("revoked"))
-            if not revoked_early:
-                self.registries[kind][round_id] = state
-        if revoked_early:
+        if not self.register_round(kind, round_id, state, check_revoked=check_revoked):
             if on_outcome is not None:
                 on_outcome("revoked")
             return "revoked"

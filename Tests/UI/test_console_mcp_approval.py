@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from loguru import logger
 from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -4191,13 +4192,13 @@ def test_revoking_an_unknown_run_is_a_zero_return_noop():
     results: dict[str, dict[str, str]] = {}
     worker = _arm_round(
         controller,
-        run_id=RUN_A,
+        run_id=RUN_B,
         session_id=session_id,
         llm_name="mcp__srv__tool",
         results=results,
     )
     time.sleep(0.15)
-    round_a = _round_id_for(controller, RUN_A)
+    round_a = _round_id_for(controller, RUN_B)
 
     assert controller.revoke_approval_rounds_for_run("run-nobody") == 0
     # An empty/absent run id must never match the rounds armed outside any
@@ -4212,7 +4213,7 @@ def test_revoking_an_unknown_run_is_a_zero_return_noop():
         {"mcp__srv__tool": "approve_once"}, round_id=round_a
     )
     worker.join(timeout=3.0)
-    assert results[RUN_A] == {"mcp__srv__tool": "approve_once"}
+    assert results[RUN_B] == {"mcp__srv__tool": "approve_once"}
 
 
 def test_a_decision_landing_after_a_revoke_cannot_reopen_the_round():
@@ -4841,3 +4842,382 @@ async def test_a_route_with_nothing_pending_can_decline_to_warn():
             # on it.
             assert screen._route_console_pending_approval_focus() is False
             assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+
+
+# TASK-13215: delayed fallback admission and atomic verdict commitment.
+class _RevocationApp:
+    def call_from_thread(self, callback, *args, **kwargs):
+        return callback(*args, **kwargs)
+
+    def notify(self, *_args, **_kwargs):
+        pass
+
+
+def _revocation_controller():
+    store = ConsoleChatStore()
+    ctrl = ConsoleChatController(store=store, provider_gateway=object())
+    ctrl.app = _RevocationApp()
+    ctrl._maybe_fire_permission_summary = lambda _payload: None
+    ctrl.mcp_approval_timeout_seconds = lambda: 0
+    ctrl.skill_script_confirm_timeout_seconds = lambda: 0
+    sid = store.create_session(title="Probe").id
+    store.switch_session(sid)
+    return ctrl, sid
+
+
+def _revocation_pending():
+    return MCPPendingCall(
+        llm_name="mcp__probe__tool",
+        server_key="probe:probe",
+        tool_name="tool",
+        server_label="Probe",
+        arguments={},
+        reason="ask",
+    )
+
+
+def _revocation_auto_answer(ctrl, kind, answer=True):
+    mounted = []
+
+    def setter(payload):
+        if payload is None:
+            return
+        mounted.append(payload)
+        if kind == "approval":
+            ctrl.resolve_pending_approval(
+                {
+                    row.get("call_id") or row["llm_name"]: "approve_once"
+                    if answer
+                    else "deny"
+                    for row in payload["calls"]
+                },
+                round_id=payload["round_id"],
+            )
+        else:
+            ctrl.resolve_pending_skill_script(
+                answer, answer, request_id=payload["request_id"]
+            )
+
+    setattr(
+        ctrl,
+        "set_pending_approval" if kind == "approval" else "set_pending_skill_script",
+        setter,
+    )
+    return mounted
+
+
+def _revocation_request(ctrl, sid, kind):
+    if kind == "approval":
+        return ctrl.request_mcp_approvals([_revocation_pending()], session_id=sid)
+    return ctrl.request_skill_script_confirm(
+        {"skill_name": "demo", "script_path": "demo.py"}, session_id=sid
+    )
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_post_revoke_arm_denies_without_mounting(kind):
+    ctrl, sid = _revocation_controller()
+    mounted = _revocation_auto_answer(ctrl, kind)
+    assert ctrl.revoke_approval_rounds_for_run("already-revoked") == 0
+    with use_run_id("already-revoked"):
+        result = _revocation_request(ctrl, sid, kind)
+    assert mounted == []
+    assert not ctrl._interrupt_host.registries[kind]
+    assert not ctrl._interrupt_host.payloads[kind]
+    assert not ctrl._pending_approvals
+    assert result == (
+        {"mcp__probe__tool": "deny"}
+        if kind == "approval"
+        else {"allow": False, "remember": False}
+    )
+    if kind == "approval":
+        assert result.unresolved_keys == frozenset({"mcp__probe__tool"})
+    with use_run_id("unrelated-sibling"):
+        sibling = _revocation_request(ctrl, sid, kind)
+    assert mounted
+    assert sibling == (
+        {"mcp__probe__tool": "approve_once"}
+        if kind == "approval"
+        else {"allow": True, "remember": True}
+    )
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_empty_run_owner_warns_once_without_payload_content(kind):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, kind)
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        with use_run_id(""):
+            result = _revocation_request(ctrl, sid, kind)
+    finally:
+        logger.remove(sink)
+    assert len(messages) == 1, messages
+    assert "without a run owner" in messages[0]
+    assert "demo" not in messages[0] and "probe" not in messages[0]
+
+    assert result == (
+        {"mcp__probe__tool": "approve_once"}
+        if kind == "approval"
+        else {"allow": True, "remember": True}
+    )
+
+
+def test_revoke_after_result_snapshot_but_before_unregister_returns_cached_allow(
+    monkeypatch,
+):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    original = ctrl._interrupt_host.run_round
+    observed = {}
+
+    def wrapped(*args, **kwargs):
+        on_outcome = kwargs["on_outcome"]
+
+        def after_snapshot(outcome):
+            on_outcome(outcome)
+            observed["count"] = ctrl.revoke_approval_rounds_for_run("run-return-gap")
+            observed["state_decisions"] = dict(args[3]["decisions"])
+
+        kwargs["on_outcome"] = after_snapshot
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ctrl._interrupt_host, "run_round", wrapped)
+    with use_run_id("run-return-gap"):
+        result = _revocation_request(ctrl, sid, "approval")
+    assert (
+        observed["count"] == 1
+    )  # Still registered, but the result snapshot already won.
+    assert observed["state_decisions"] == {"mcp__probe__tool": "deny"}
+    assert result == {"mcp__probe__tool": "approve_once"}
+
+
+def test_revoke_before_result_snapshot_returns_deny(monkeypatch):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    original = ctrl._interrupt_host.run_round
+    observed = {}
+
+    def wrapped(*args, **kwargs):
+        on_outcome = kwargs["on_outcome"]
+
+        def before_snapshot(outcome):
+            observed["count"] = ctrl.revoke_approval_rounds_for_run("run-read-gap")
+            on_outcome(outcome)
+
+        kwargs["on_outcome"] = before_snapshot
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ctrl._interrupt_host, "run_round", wrapped)
+    with use_run_id("run-read-gap"):
+        result = _revocation_request(ctrl, sid, "approval")
+    assert observed["count"] == 1
+    assert result == {"mcp__probe__tool": "deny"}
+    assert result.unresolved_keys == frozenset({"mcp__probe__tool"})
+
+
+def test_local_provider_refuses_write_after_revoke_then_arm(tmp_path):
+    ctrl, sid = _revocation_controller()
+    mounted = _revocation_auto_answer(ctrl, "approval")
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        allow_write=True,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+        approval_callback=lambda rows: ctrl.request_mcp_approvals(rows, session_id=sid),
+    )
+    assert ctrl.revoke_approval_rounds_for_run("revoked-local-writer") == 0
+    with use_run_id("revoked-local-writer"):
+        result = provider.invoke(
+            "local:fs_write", {"path": "probe.txt", "content": "late write"}
+        )
+    assert mounted == []
+    assert not result.ok, result
+    assert not (tmp_path / "probe.txt").exists()
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+def test_revoked_arm_is_refused_before_configuration_read(kind):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, kind)
+    assert ctrl.revoke_approval_rounds_for_run("late-config") == 0
+    observed = []
+
+    def configuration():
+        observed.append(dict(ctrl._interrupt_host.registries[kind]))
+        return 0
+
+    if kind == "approval":
+        ctrl.mcp_approval_timeout_seconds = configuration
+    else:
+        ctrl.skill_script_confirm_timeout_seconds = configuration
+    with use_run_id("late-config"):
+        _revocation_request(ctrl, sid, kind)
+    assert all(not registry for registry in observed)
+
+
+def test_revocation_cannot_split_a_batch_snapshot(monkeypatch):
+    ctrl, sid = _revocation_controller()
+    _revocation_auto_answer(ctrl, "approval")
+    host = ctrl._interrupt_host
+    disposition = threading.Event()
+    finished = threading.Event()
+    observed = {}
+    original_lock = host.lock
+
+    class ContentionLock:
+        def __enter__(self):
+            if threading.current_thread().name == "snapshot-revoker":
+                acquired = original_lock.acquire(blocking=False)
+                observed["blocked"] = not acquired
+                disposition.set()
+                if not acquired:
+                    original_lock.acquire()
+            else:
+                original_lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            original_lock.release()
+
+    lock = ContentionLock()
+    monkeypatch.setattr(host, "lock", lock)
+    monkeypatch.setattr(ctrl, "_approval_state_lock", lock)
+
+    def revoke():
+        observed["count"] = ctrl.revoke_approval_rounds_for_run("batch-read-gap")
+        finished.set()
+
+    revoker = threading.Thread(target=revoke, name="snapshot-revoker", daemon=True)
+
+    class ReadGap(dict):
+        fired = False
+
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            if key == "first" and not self.fired:
+                self.fired = True
+                revoker.start()
+                assert disposition.wait(3), "revoker never attempted the shared lock"
+                if not observed["blocked"]:
+                    assert finished.wait(3), "unlocked revocation failed to finish"
+            return value
+
+    original = host.run_round
+
+    def wrapped(*args, **kwargs):
+        callback = kwargs["on_outcome"]
+        cells = dict(zip(callback.__code__.co_freevars, callback.__closure__))
+        shared = ReadGap(cells["decisions"].cell_contents)
+        cells["decisions"].cell_contents = shared
+        args[3]["decisions"] = shared
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(host, "run_round", wrapped)
+    calls = [
+        MCPPendingCall(
+            llm_name=name,
+            server_key="probe:probe",
+            tool_name=name,
+            server_label="Probe",
+            arguments={},
+            reason="ask",
+        )
+        for name in ("first", "second")
+    ]
+    try:
+        with use_run_id("batch-read-gap"):
+            result = ctrl.request_mcp_approvals(calls, session_id=sid)
+    finally:
+        if revoker.ident is not None:
+            revoker.join(3)
+    assert not revoker.is_alive()
+    assert finished.is_set()
+    assert result == {"first": "approve_once", "second": "approve_once"}
+    assert not result.unresolved_keys
+
+
+@pytest.mark.parametrize("kind", ["approval", "skill_script"])
+@pytest.mark.parametrize("ending", ["revoke", "teardown"])
+def test_sibling_payload_remounts_after_round_ends(kind, ending, monkeypatch):
+    ctrl, sid = _revocation_controller()
+    host = ctrl._interrupt_host
+    mounted = []
+    setattr(
+        ctrl,
+        "set_pending_approval" if kind == "approval" else "set_pending_skill_script",
+        mounted.append,
+    )
+    ready = {run: threading.Event() for run in ("first-run", "sibling-run")}
+    results = {}
+    original = host.run_round
+
+    def wrapped(*args, **kwargs):
+        before_wait = kwargs.get("before_wait")
+
+        def entered():
+            if before_wait is not None:
+                before_wait()
+            ready[args[3]["run_id"]].set()
+
+        kwargs["before_wait"] = entered
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(host, "run_round", wrapped)
+
+    def request(run):
+        with use_run_id(run):
+            results[run] = _revocation_request(ctrl, sid, kind)
+
+    workers = []
+    try:
+        for run, entered in ready.items():
+            worker = threading.Thread(target=request, args=(run,), daemon=True)
+            workers.append(worker)
+            worker.start()
+            assert entered.wait(3)
+        ids = {state["run_id"]: rid for rid, state in host.registries[kind].items()}
+        sibling_id = ids["sibling-run"]
+        sibling_payload = host.payloads[kind][sibling_id]
+        if ending == "revoke":
+            assert ctrl.revoke_approval_rounds_for_run("first-run") == 1
+        elif kind == "approval":
+            ctrl.resolve_pending_approval(
+                {"mcp__probe__tool": "deny"}, round_id=ids["first-run"]
+            )
+        else:
+            ctrl.resolve_pending_skill_script(False, False, request_id=ids["first-run"])
+        workers[0].join(3)
+        assert not workers[0].is_alive()
+        assert host.payloads[kind][sibling_id] is sibling_payload
+        assert ctrl._pending_approvals[sid] == {sibling_id}
+        other = ctrl.store.create_session(title="Away").id
+        ctrl.switch_session(other)
+        assert mounted[-1] is None
+        ctrl.switch_session(sid)
+        id_key = "round_id" if kind == "approval" else "request_id"
+        assert mounted[-1][id_key] == sibling_id
+        if kind == "approval":
+            ctrl.resolve_pending_approval(
+                {"mcp__probe__tool": "approve_once"}, round_id=mounted[-1][id_key]
+            )
+        else:
+            ctrl.resolve_pending_skill_script(
+                True, False, request_id=mounted[-1][id_key]
+            )
+        workers[1].join(3)
+        assert not workers[1].is_alive()
+        assert results["sibling-run"] == (
+            {"mcp__probe__tool": "approve_once"}
+            if kind == "approval"
+            else {"allow": True, "remember": False}
+        )
+        assert not host.registries[kind] and not host.payloads[kind]
+        assert not ctrl._pending_approvals
+    finally:
+        for run in ready:
+            ctrl.revoke_approval_rounds_for_run(run)
+        for worker in workers:
+            worker.join(3)
