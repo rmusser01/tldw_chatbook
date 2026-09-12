@@ -485,3 +485,33 @@ class RunHooksEngine:
             return verdicts
 
         return review
+
+    def post_tool_dep(self, *, session_id: str) -> Callable[[str, str, dict, str, bool], None]:
+        """Build the runtime's ``post_tool_call`` dep for one Console session.
+
+        The dep is fired by the dispatch loop (``LoopDeps.post_tool_call``,
+        threaded through ``AgentService``) at its run-log capture point,
+        ONLY for calls that actually dispatched (verdict ``"proceed"``) —
+        a review refusal fires nothing. It receives the STILL-UNCAPPED
+        result content; truncation to the payload budget happens here, so
+        the runtime layer stays free of budget knowledge. Built on
+        ``notify``, so the dep returns immediately and a slow hook never
+        stalls a dispatch.
+
+        Args:
+            session_id: The Console session the fired events belong to
+                (closed over; the runtime call site has no session identity).
+
+        Returns:
+            The ``(tool_name, call_id, args, content, ok) -> None`` callable
+            to install as the run's ``post_tool_call`` dep.
+        """
+
+        def post_tool_call(tool_name: str, call_id: str, args: dict,
+                           content: str, ok: bool) -> None:
+            self.notify("PostToolUse", session_id=session_id,
+                        data={"tool_name": tool_name, "tool_args": args,
+                              "tool_result": _truncate(content),
+                              "is_error": not ok})
+
+        return post_tool_call

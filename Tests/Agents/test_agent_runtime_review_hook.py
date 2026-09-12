@@ -103,6 +103,7 @@ def test_loop_deps_review_tool_calls_defaults_to_none():
     assert deps.prepare_tool_calls is None
     assert deps.project_instruction_payload_state is None
     assert deps.on_ephemeral_runtime_warning is None
+    assert deps.post_tool_call is None
 
 
 # --- hook receives the full batch before any dispatch ------------------
@@ -617,3 +618,103 @@ def test_name_keyed_verdicts_still_apply_to_every_matching_call():
 
     assert out.status == RUN_DONE
     assert invoked == [], f"name-keyed deny leaked {invoked} through"
+
+
+# --- post_tool_call dep: run-hooks PostToolUse fire point ----------------
+
+
+def test_post_tool_call_dep_fires_only_on_dispatched_calls():
+    """Refused calls fire nothing; dispatched calls carry name/call_id/args/content.
+
+    The dep fires at the dispatch capture point (immediately after the
+    run-log tool_result record) ONLY for calls whose verdict was "proceed" --
+    a review refusal never reaches dispatch, so it never fires. The payload
+    carries the STILL-UNCAPPED content (the engine-side dep truncates to its
+    own budget; this content exceeds the 16k result budget to prove it).
+    """
+    calls = [
+        ToolCall(name="calculator", args={"v": 1}, call_id="idA"),
+        ToolCall(name="echo", args={"v": 2}, call_id="idB"),
+    ]
+    fired = []
+
+    def review(batch):
+        return {"calculator": "Blocked: not this one"}
+
+    full_result = "full result " * 1500  # 18k chars > the 16k budget cap
+
+    def invoke(call):
+        assert call.name == "echo", "a refused call must never dispatch"
+        return ToolResult(ok=True, content=full_result)
+
+    turns = [_native_turn(calls), ModelTurn(text="done")]
+    deps = make_deps(turns, invoke=invoke, review=review)
+    deps.post_tool_call = lambda *payload: fired.append(payload)
+    out = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC], deps)
+
+    assert out.status == RUN_DONE
+    assert len(fired) == 1, f"exactly one firing (the proceeded call): {fired}"
+    tool_name, call_id, args, content, ok = fired[0]
+    assert tool_name == "echo"
+    assert call_id == "idB"
+    assert args == {"v": 2}
+    assert content == full_result  # uncapped: budget truncation happens later
+    assert ok is True
+
+
+def test_post_tool_call_dep_absent_is_byte_identical():
+    """No dep wired: dispatch behavior unchanged (the no-dep production path)."""
+    calls = [ToolCall(name="echo", args={"v": 2}, call_id="idB")]
+    invoked = []
+
+    def invoke(call):
+        invoked.append(call.name)
+        return ToolResult(ok=True, content="ok")
+
+    turns = [_native_turn(calls), ModelTurn(text="done")]
+    out = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "go"}],
+        [CALC],
+        make_deps(turns, invoke=invoke),
+    )
+    assert out.status == RUN_DONE
+    assert invoked == ["echo"]
+    result_steps = [s.result for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps == ["ok"]
+
+
+def test_agent_service_threads_post_tool_call_into_loop_deps(db):
+    """The service ctor param reaches LoopDeps unchanged (one level up)."""
+    fired = []
+    chat = ScriptedChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [native_call("calculator", {"expression": "2+2"}, "a")],
+            },
+            "done",
+        ]
+    )
+    service = AgentService(
+        db=db,
+        registry=_registry(),
+        chat_call=chat,
+        post_tool_call=lambda *payload: fired.append(payload),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=SVC_CFG,
+        api_endpoint="openai",
+        should_cancel=lambda: False,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert len(fired) == 1, f"the dispatched call fired once: {fired}"
+    tool_name, call_id, args, content, ok = fired[0]
+    assert tool_name == "calculator"
+    assert call_id == "a"
+    assert args == {"expression": "2+2"}
+    assert ok is True
+    assert content  # the builtin's real result text (copy not pinned)

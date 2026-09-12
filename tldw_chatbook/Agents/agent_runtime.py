@@ -483,6 +483,15 @@ class LoopDeps:
     # `None` (the default) means the run is not wired for it and a call by
     # that name falls through to the generic deps.invoke_tool path.
     run_skill_script: Callable[[str, str, list[str]], ToolResult] | None = None
+    # post_tool_call: run-hooks PostToolUse (the `run_skill_script` dep
+    # pattern). Fired at the dispatch capture point -- immediately after the
+    # run-log tool_result record, BEFORE budget truncation -- ONLY for calls
+    # that actually dispatched (verdict == "proceed"); review refusals fire
+    # nothing. Receives (tool_name, call_id, args, content, ok) with the
+    # still-UNCAPPED content; the engine-side dep truncates to its own
+    # payload budget, so this layer never knows the budget. `None` (the
+    # default) is a no-op: behavior is byte-identical to pre-hooks runs.
+    post_tool_call: Callable[[str, str, dict, str, bool], None] | None = None
     # search_run_log: the seventh runtime tool (run-log query). Wired ONLY
     # for the top-level agent (agent_kind == primary), like install_skill:
     # a depth-1 child has max_subagents clamped to 0, so its "subtree" is
@@ -2966,6 +2975,21 @@ def run_agent_loop(
                     status=record_status,
                     call_id=call.call_id,
                 )
+                # run-hooks PostToolUse (same capture point as the record
+                # above): ONLY dispatched calls fire -- the verdict guard
+                # also keeps `result` safe to read (assigned this iteration
+                # only on the proceed path). `full_content` is pre-truncation.
+                if deps.post_tool_call is not None and verdict == "proceed":
+                    try:
+                        deps.post_tool_call(
+                            call.name, call.call_id, call.args,
+                            full_content, result.ok,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - dep must never break a run
+                        logger.warning(
+                            "post_tool_call consumer raised (exception_type={})",
+                            type(exc).__name__,
+                        )
             else:
                 record_number = _emit_record(
                     deps,
@@ -2975,6 +2999,21 @@ def run_agent_loop(
                     status=record_status,
                     call_id=call.call_id,
                 )
+                # Same fire point on the non-continuation path: `content` is
+                # still FULL here (the truncation reassignment below is what
+                # caps it), and the verdict guard both excludes refusals and
+                # makes `result` safe to read.
+                if deps.post_tool_call is not None and verdict == "proceed":
+                    try:
+                        deps.post_tool_call(
+                            call.name, call.call_id, call.args,
+                            content, result.ok,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - dep must never break a run
+                        logger.warning(
+                            "post_tool_call consumer raised (exception_type={})",
+                            type(exc).__name__,
+                        )
                 content = _truncate_tool_result(
                     content,
                     budget.max_tool_result_chars,

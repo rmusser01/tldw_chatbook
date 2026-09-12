@@ -3368,6 +3368,12 @@ class ConsoleRuntime:
             change_tracker=change_tracker if change_tracker.available else None,
             buddy_sink=self.persona_buddy_sink,
             change_finalization_coordinator=change_coordinator,
+            # run-hooks (Task 5): hand the bridge this runtime's engine
+            # accessor so per-turn fire sites (PostToolUse today; PreToolUse
+            # and the settle events in later tasks) resolve the app-owned
+            # singleton through the same runtime a mounted Console uses --
+            # never a view, so headless wake runs reach it identically.
+            ensure_run_hooks=self.ensure_run_hooks,
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO

@@ -1959,6 +1959,7 @@ class AgentService:
         | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
+        post_tool_call: Callable[[str, str, dict, str, bool], None] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         run_log_request_plan: RunLogRequestPlan | None = None,
         fleet_coordinator: FleetCoordinator | None = None,
@@ -2114,6 +2115,14 @@ class AgentService:
         # see the schema-pin comment in _run_one for the rationale. `None`
         # (the default) means the run is not wired for it.
         self._run_skill_script_tool = run_skill_script_tool
+        # run-hooks PostToolUse (Task 5): the bridge supplies
+        # `engine.post_tool_dep(session_id=...)` -- ONLY when a run-hooks
+        # engine exists -- and every LoopDeps this service builds (primary
+        # and sub-agent alike) fires it at the dispatch capture point for
+        # calls that actually dispatched. `None` (the default, and every
+        # pre-hooks caller) means the loop never fires PostToolUse: behavior
+        # is byte-identical to before this seam existed.
+        self._post_tool_call = post_tool_call
         # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
         # per service instance -- `bind()` latches permanently (see its own
         # docstring), so a writer built here in __init__ and reused across
@@ -7638,6 +7647,7 @@ class AgentService:
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,
+            post_tool_call=self._post_tool_call,
             search_run_log=(
                 search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
             ),

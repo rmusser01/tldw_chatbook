@@ -473,3 +473,43 @@ class TestWrapReview:
             return {c.name: "proceed" for c in calls}
 
         assert eng.wrap_review(inner, session_id="s") is inner
+
+
+# ---------------------------------------------------------------------------
+# Task 5: PostToolUse runtime dep (post_tool_dep)
+# ---------------------------------------------------------------------------
+
+
+class TestPostToolDep:
+    """The runtime dep the dispatch loop fires at its capture point.
+
+    The dep receives FULL (uncapped) content — the engine truncates here, to
+    the payload budget — and speaks notify(), so a slow hook never stalls a
+    dispatch. It is built per session (session_id closes over) and handed to
+    ``AgentService(post_tool_call=...)`` only when an engine exists.
+    """
+
+    def test_dep_fires_notify_with_full_payload(self):
+        fired = []
+        eng = _engine(HookSpec("PostToolUse", (sys.executable, "-c", "pass")))
+        dep = eng.post_tool_dep(session_id="s")
+        # intercept notify to observe without racing the executor
+        eng.notify = lambda event, **kw: fired.append((event, kw))
+        dep("fs_write", "call-1", {"path": "x"}, "full result " * 1000, True)
+        event, kw = fired[0]
+        assert event == "PostToolUse"
+        assert kw["session_id"] == "s"
+        assert kw["data"]["tool_name"] == "fs_write"
+        assert kw["data"]["tool_args"] == {"path": "x"}
+        assert len(kw["data"]["tool_result"]) <= HOOK_IO_BUDGET_CHARS
+        assert kw["data"]["is_error"] is False
+
+    def test_dep_inverts_ok_into_is_error(self):
+        fired = []
+        eng = _engine()
+        dep = eng.post_tool_dep(session_id="s")
+        eng.notify = lambda event, **kw: fired.append((event, kw))
+        dep("fs_read", "call-2", {}, "ERROR: boom", False)
+        _event, kw = fired[0]
+        assert kw["data"]["is_error"] is True
+        assert kw["data"]["tool_result"] == "ERROR: boom"
