@@ -49,6 +49,24 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
 )
 
 
+@pytest.fixture
+def scratch_cli_config(tmp_path, monkeypatch):
+    """Point config at a throwaway file so internal-prompt resolution never
+    reads the host config (TASK-32479: trusted_optimizer_instructions now
+    resolves prompt_improvement.rewrite through the Internal_Prompts
+    registry, which consults [internal_prompts] overrides)."""
+    from tldw_chatbook import config
+    from tldw_chatbook.Internal_Prompts import resolver
+
+    config_file = tmp_path / "config.toml"
+    config_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_file))
+    config.load_settings(force_reload=True)
+    resolver._warned_ids.clear()
+    yield
+    resolver._warned_ids.clear()
+
+
 class FakeAuxiliaryGateway:
     """Capture the real Task 10 request contract without inventing another seam."""
 
@@ -605,6 +623,7 @@ async def test_adversarial_source_is_only_an_exact_json_value_in_last_message() 
 @pytest.mark.parametrize("mode", ["auto", "review"])
 async def test_trusted_prompt_uses_default_rewrite_template_and_never_answers_source(
     mode: str,
+    scratch_cli_config,
 ) -> None:
     gateway = FakeAuxiliaryGateway([_rewrite_response("Better")])
 
@@ -632,7 +651,9 @@ async def test_trusted_prompt_uses_default_rewrite_template_and_never_answers_so
         assert required in trusted
 
 
-def test_trusted_optimizer_instructions_keep_recipe_mode_and_reject_unknown() -> None:
+def test_trusted_optimizer_instructions_keep_recipe_mode_and_reject_unknown(
+    scratch_cli_config,
+) -> None:
     recipe = trusted_optimizer_instructions("recipe")
 
     assert "You optimize prompts for another model." in recipe
