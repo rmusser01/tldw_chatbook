@@ -173,7 +173,7 @@ from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...Agents.fleet_coordinator import FleetHandle
-    from ...Chat.console_agent_bridge import SubAgentSummary
+    from ...Chat.console_agent_bridge import AgentLiveSnapshot, SubAgentSummary
     from ...Chat.console_chat_models import ConsoleChatMessage
     from ...Chat.console_rail_state import ConsoleRailState
     from ..Screens.chat_screen import ChatScreen
@@ -603,7 +603,10 @@ def _live_usage_label(usage: Any) -> str:
 
 
 def _fleet_row_from_handle(
-    handle: "FleetHandle", *, now: float, live_snapshot: Any = None
+    handle: "FleetHandle",
+    *,
+    now: float,
+    live_snapshot: AgentLiveSnapshot | None = None,
 ) -> InspectorSectionRow:
     """Build one fleet row from a LIVE ``FleetCoordinator`` handle.
 
@@ -624,11 +627,11 @@ def _fleet_row_from_handle(
     for a stale row would just make ``AgentService.cancel_subagent`` no-op
     silently on press.
 
-    The secondary line's trailing token segment (PR2b Task 5) reads
-    ``handle.total_tokens`` -- 0, and so omitted, until ``FleetCoordinator.
-    finish()`` records the child's real ``RunOutcome.total_tokens`` spend;
-    a still-running child's spend is not final, so nothing is shown for it
-    rather than a partial, growing-then-frozen number.
+    While the child is active, ``live_snapshot.turn_usage`` may append the
+    current model call's output-token scalar. That live value clears at the
+    call boundary and is separate from final budget accounting.
+    ``handle.total_tokens`` remains 0 (and omitted) until ``FleetCoordinator.
+    finish()`` records the child's final ``RunOutcome.total_tokens`` spend.
     """
     status = handle.status or "running"
     glyph = _AGENT_STATUS_GLYPHS.get(status, "●")
