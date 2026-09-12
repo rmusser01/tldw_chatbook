@@ -275,14 +275,23 @@ _BUNDLE = (
     / "css"
     / "tldw_cli_modular.tcss"
 )
+# TASK-25812 split the per-screen rules out of the boot bundle: the speech
+# disclosure/modal styles the "real styles" tests verify now live in the
+# sheet SettingsScreen itself attaches via CSS_PATH, not in _BUNDLE.
+_SETTINGS_SHEET = (
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "screen_agentic_settings.tcss"
+)
 
 
 class _StyledDestinationHarness(DestinationHarness):
-    CSS_PATH = _BUNDLE
+    CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
 
 
 class _StyledPanelHarness(_PanelHarness):
-    CSS_PATH = _BUNDLE
+    CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
 
 
 def test_speech_tts_is_a_first_class_core_settings_category() -> None:
@@ -299,6 +308,7 @@ def test_speech_tts_is_a_first_class_core_settings_category() -> None:
     assert SettingsCategoryId.SPEECH_TTS in dict(screen._category_groups())["Core"]
 
 
+@pytest.mark.loopback_network
 @pytest.mark.asyncio
 async def test_production_settings_actions_cross_the_pushed_screen_boundary(
     monkeypatch: pytest.MonkeyPatch,
@@ -337,6 +347,9 @@ async def test_production_settings_actions_cross_the_pushed_screen_boundary(
     app = _build_test_app(configured_default="settings")
 
     async with app.run_test(size=(190, 55)) as pilot:
+        # Factory apps boot the 7s animated splash (app.py's splash reads
+        # ship enabled); any keypress skips it so Settings mounts promptly.
+        await pilot.press("space")
         for _ in range(200):
             if isinstance(app.screen, SettingsScreen):
                 break
@@ -2281,9 +2294,11 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     async with host.run_test(size=(190, 55)) as pilot:
         screen = await _open_speech_tts(host, pilot)
         screen.query_one("#settings-speech-model-value", Select).value = "tts-1"
-        await pilot.click("#settings-speech-restore-defaults")
+        # press() not pilot.click: the actions row sits below the fold at
+        # this size and these tests verify routing, not hit regions.
+        screen.query_one("#settings-speech-restore-defaults", Button).press()
         await pilot.pause()
-        await pilot.click("#settings-speech-revert")
+        screen.query_one("#settings-speech-revert", Button).press()
         await pilot.pause()
 
     assert calls == []
@@ -3284,7 +3299,7 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
 
 @pytest.mark.asyncio
 async def test_production_bundle_applies_speech_disclosure_styles() -> None:
-    bundled_css = _BUNDLE.read_text(encoding="utf-8")
+    sheet_css = _SETTINGS_SHEET.read_text(encoding="utf-8")
     for selector in (
         "#settings-speech-details,\n#settings-speech-scope-inspector",
         "#settings-speech-details > CollapsibleTitle,\n"
@@ -3292,10 +3307,12 @@ async def test_production_bundle_applies_speech_disclosure_styles() -> None:
         "#settings-speech-details > Contents,\n"
         "#settings-speech-scope-inspector > Contents",
     ):
-        assert selector in bundled_css
+        assert selector in sheet_css
 
     app = _StyledPanelHarness(configure_provider="audio_cpp")
-    assert Path(app.CSS_PATH).resolve() == _BUNDLE.resolve()
+    assert _SETTINGS_SHEET.resolve() in [
+        Path(sheet).resolve() for sheet in app.CSS_PATH
+    ]
 
     async with app.run_test(size=(120, 40)):
         details = app.query_one("#settings-speech-details", Collapsible)
@@ -3443,7 +3460,12 @@ async def test_speech_shortcuts_defer_to_focused_text_entry_and_resume_after_blu
 @pytest.mark.asyncio
 async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
-    async with host.run_test(size=(190, 55)) as pilot:
+    # Tall enough that the actions row is genuinely on-screen: this test
+    # exercises the real hit-tested mouse path from a focused field, so the
+    # buttons must be clickable, not pressed programmatically. (The panel
+    # mounts ~115 rows; at the usual (190, 55) the actions sit below nested
+    # folds and scroll_visible cannot reach them.)
+    async with host.run_test(size=(190, 130)) as pilot:
         screen = await _open_speech_tts(host, pilot)
         panel = screen.query_one(
             "#settings-speech-tts-panel",
@@ -3467,15 +3489,22 @@ async def test_speech_save_and_revert_clicks_work_while_a_field_is_focused() -> 
         )
         panel.request_save = request_save
         panel.revert_to_saved = revert_to_saved
+        # Let the provider-change rebuild's focus restoration finish (it
+        # re-asserts the pre-change focus after the card swap) before the
+        # endpoint takes focus, so the clicks below really start focused.
+        await pilot.pause(0.5)
         endpoint = screen.query_one("#settings-speech-openai-base-url", Input)
 
         endpoint.focus()
+        await pilot.pause()
+        assert pilot.app.focused is endpoint
         await pilot.click("#settings-speech-save")
         request_save.assert_called_once_with()
 
         endpoint.focus()
-        await pilot.click("#settings-speech-revert")
         await pilot.pause()
+        assert pilot.app.focused is endpoint
+        await pilot.click("#settings-speech-revert")
         revert_to_saved.assert_awaited_once_with()
 
 
