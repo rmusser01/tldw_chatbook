@@ -165,10 +165,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: test can assert on the protocol rather than on a string literal.
 CONSOLE_RUNTIME_ATTR = "console_runtime"
 
-#: Distinguishes "never asked" from a latched `None` on slots whose `None`
-#: is itself a real answer (`_run_hooks_engine`: "no [hooks] configured").
-#: The other ensure_* slots can use a plain `None` because `None` is their
-#: only "not built" state; the run-hooks engine has two.
+#: Marks "no engine built yet" for `_run_hooks_engine`. Unlike the other
+#: ensure_* slots it cannot use a plain `None` marker: `ensure_run_hooks`
+#: ANSWERS `None` per call while unconfigured (Ruling R17) rather than
+#: storing it, so `None` cannot also mean "never built". An engine, once
+#: built, latches for the app lifetime (spec section 4 singleton).
 _UNSET = object()
 
 #: Where a runtime hides when the app object cannot hold one (a `None` app,
@@ -1013,10 +1014,11 @@ class ConsoleRuntime:
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
             getattr(app, "persona_buddy_controller", None)
         )
-        #: The app-owned run-hooks engine, `None` when no `[hooks]` are
-        #: configured, `_UNSET` until first asked (`ensure_run_hooks`).
-        #: `None` is a latched answer here, not a "not built" marker --
-        #: hence the sentinel.
+        #: The app-owned run-hooks engine, `_UNSET` until one is BUILT --
+        #: and then latched for the app lifetime (spec section 4
+        #: singleton). "No [hooks] configured" is never stored: it is a
+        #: per-call `None` answer that `ensure_run_hooks` re-decides
+        #: while unconfigured (Ruling R17), hence the sentinel.
         self._run_hooks_engine: Any = _UNSET
         #: The view (a `ChatScreen`) currently attached, or `None` while the
         #: runtime is VIEWLESS -- which is now a real, supported state, not
@@ -1107,9 +1109,9 @@ class ConsoleRuntime:
     def run_hooks_engine(self) -> "RunHooksEngine | None":
         """The built run-hooks engine, or `None`.
 
-        `None` covers both "nothing has asked yet" and "asked, and no
-        `[hooks]` are configured" -- the property is a peek, not the
-        latch; `ensure_run_hooks` is the one that decides.
+        `None` covers "nothing built yet" and "unconfigured" alike -- the
+        property is a peek, not the latch; `ensure_run_hooks` is the one
+        that decides (and, while unconfigured, keeps re-deciding, R17).
         """
         engine = self._run_hooks_engine
         return None if engine is _UNSET else engine
@@ -3509,20 +3511,26 @@ class ConsoleRuntime:
         Spec 2026-09-11 section 4: ONE engine per app lifetime, owned here
         so headless (viewless) wake runs reach it through the same runtime
         a mounted Console does -- nothing below reads the view. `None`
-        means NO ``[hooks]`` are configured and is a real, latched answer:
-        every fire site skips entirely on `None` rather than firing an
-        empty-config engine.
+        means NO ``[hooks]`` are configured and every fire site skips
+        entirely on it rather than firing an empty-config engine.
 
-        The engine is built only when the CURRENT config parses to at
-        least one hook. Once built (or latched `None`) the decision never
-        revisits: hook edits apply through the engine's live config
-        provider, which re-reads the app's `app_config` attribute on every
-        fire (the app REASSIGNS that attribute on a settings reload, so
-        the provider must fetch it per call, never capture the dict).
+        Two different latching rules meet here:
+
+        - An ENGINE instance, once built, latches for the app lifetime
+          (the section 4 singleton): later calls return it unchanged, and
+          hook edits travel through its live config provider, which
+          re-reads the app's `app_config` attribute on every fire (the
+          app REASSIGNS that attribute on a settings reload, so the
+          provider fetches it per call, never captures the dict).
+        - The `None` answer does NOT latch (Ruling R17): while
+          unconfigured, every call re-runs the same cheap
+          `load_hooks_config` parse the engine itself runs per fire, so
+          the first-ever ``[hooks]`` entry a mid-session settings reload
+          delivers is detected and built without an app restart.
 
         Returns:
             The runtime's `RunHooksEngine`, or `None` when no ``[hooks]``
-            are configured.
+            are configured (re-checked on the next call).
         """
         if self._run_hooks_engine is not _UNSET:
             return self._run_hooks_engine
@@ -3547,7 +3555,9 @@ class ConsoleRuntime:
             # (empty = app cwd): the confinement-root concept local tools
             # already use, not a new one. Session/workspace binding roots
             # are resolved per turn by the send path, which is the only
-            # place a session id exists to resolve them with.
+            # place a session id exists to resolve them with -- and fire
+            # sites pass theirs through the engine's per-fire `cwd`
+            # override (Ruling R18) when they have one.
             console = current_app_config().get("console")
             root = (
                 str(console.get("workspace_root", "") or "").strip()
@@ -3558,9 +3568,10 @@ class ConsoleRuntime:
 
         if load_hooks_config(current_app_config()).hooks:
             self._run_hooks_engine = RunHooksEngine(config_provider, cwd_provider)
-        else:
-            self._run_hooks_engine = None
-        return self._run_hooks_engine
+            return self._run_hooks_engine
+        # Unconfigured stays _UNSET on purpose: `None` is a per-call
+        # answer, not a stored one, so the next call re-decides (R17).
+        return None
 
     # -- the view seam -----------------------------------------------------
 

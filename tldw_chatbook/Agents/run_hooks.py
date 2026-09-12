@@ -326,25 +326,40 @@ class RunHooksEngine:
         return matched
 
     def _payload(self, event: str, session_id: str, run_id: str | None,
-                 data: dict[str, Any]) -> dict[str, Any]:
+                 data: dict[str, Any], cwd: str | None = None) -> dict[str, Any]:
         return {
             "hook_event": event,
             "session_id": session_id,
             "run_id": run_id,
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "cwd": self._cwd_provider(),
+            # Ruling R18: a fire-site-supplied cwd (the session's bound
+            # workspace root, when one exists) overrides the provider's
+            # app-level fallback; None keeps the provider value.
+            "cwd": cwd if cwd is not None else self._cwd_provider(),
             "data": data,
         }
 
     def fire(self, event: str, *, session_id: str, run_id: str | None = None,
-             data: dict[str, Any] | None = None) -> HookOutcome:
+             data: dict[str, Any] | None = None,
+             cwd: str | None = None) -> HookOutcome:
         """Run matching hooks and return the combined outcome. Never raises.
 
         Engine-level failures degrade per spec: PreToolUse fails closed, every
         other event is logged and dropped (fail-open).
+
+        Args:
+            event: Lifecycle event name (a HOOK_EVENTS member).
+            session_id: The Console session the fire belongs to.
+            run_id: The agent run id, when one is in flight.
+            data: Event payload data (``tool_name``/``tool_args`` for tool
+                events, ``prompt`` for UserPromptSubmit, ...).
+            cwd: Fire-site override for the payload's ``cwd`` (Ruling R18) —
+                the session's bound workspace root when one is resolvable.
+                ``None`` falls back to the engine's cwd_provider.
         """
         try:
-            return self._fire(event, session_id=session_id, run_id=run_id, data=data)
+            return self._fire(event, session_id=session_id, run_id=run_id,
+                              data=data, cwd=cwd)
         except Exception as exc:  # noqa: BLE001 - engine must never raise to callers
             logger.warning("run-hooks: fire({}) engine error: {}", event, exc)
             if event == "PreToolUse":
@@ -352,7 +367,7 @@ class RunHooksEngine:
             return HookOutcome()
 
     def _fire(self, event: str, *, session_id: str, run_id: str | None,
-              data: dict[str, Any] | None) -> HookOutcome:
+              data: dict[str, Any] | None, cwd: str | None = None) -> HookOutcome:
         tool_name: str | None = None
         if isinstance(data, dict):
             candidate = data.get("tool_name")
@@ -361,7 +376,8 @@ class RunHooksEngine:
         specs = self._matching(event, tool_name)
         if not specs:
             return HookOutcome()
-        payload = self._payload(event, session_id, run_id, data if isinstance(data, dict) else {})
+        payload = self._payload(event, session_id, run_id,
+                                data if isinstance(data, dict) else {}, cwd)
         if event in BLOCKING_EVENTS:
             futures = {self._pool.submit(_run_hook, spec, payload): spec for spec in specs}
             results = self._results_from_futures(futures)
@@ -408,9 +424,11 @@ class RunHooksEngine:
                 context = decision.context
         return HookOutcome(context=context)
 
-    async def fire_async(self, event: str, **kwargs: Any) -> HookOutcome:
+    async def fire_async(self, event: str, *, cwd: str | None = None,
+                         **kwargs: Any) -> HookOutcome:
+        """Async face of `fire` (same args plus the R18 `cwd` override)."""
         try:
-            return await asyncio.to_thread(self.fire, event, **kwargs)
+            return await asyncio.to_thread(self.fire, event, cwd=cwd, **kwargs)
         except Exception as exc:  # noqa: BLE001 - engine must never raise to callers
             # fire() already never raises; this guards to_thread machinery and
             # argument-binding errors from the in-thread call site. Degrade with
@@ -420,11 +438,15 @@ class RunHooksEngine:
                 return HookOutcome(blocked=True, reason="hooks engine error; failing closed")
             return HookOutcome()
 
-    def notify(self, event: str, **kwargs: Any) -> None:
-        """Fire-and-forget: returns immediately, outcome is logged and dropped."""
+    def notify(self, event: str, *, cwd: str | None = None,
+               **kwargs: Any) -> None:
+        """Fire-and-forget: returns immediately, outcome is logged and dropped.
+
+        `cwd` is the R18 fire-site override, passed through to the payload.
+        """
         def _run() -> None:
             try:
-                self.fire(event, **kwargs)
+                self.fire(event, cwd=cwd, **kwargs)
             except Exception as exc:  # noqa: BLE001 - defensive; fire already never raises
                 logger.warning("run-hooks: notify {} failed: {}", event, exc)
 

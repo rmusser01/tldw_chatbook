@@ -687,20 +687,47 @@ def _pre_tool_use_hook() -> dict:
     return {"event": "PreToolUse", "command": ["/bin/true"]}
 
 
-def test_ensure_run_hooks_is_idempotent_and_none_without_config():
-    """No ``[hooks]`` configured -> ``None`` (not an empty engine), latched.
+def test_ensure_run_hooks_is_none_without_config_until_hooks_appear():
+    """No ``[hooks]`` configured -> ``None``, and that answer is LIVE.
 
-    ``None`` is the contract every later fire site skips on, so it must be
-    the answer both when the app exposes no config at all (``app=None``,
-    the headless double shape) and when the loaded config simply has no
-    ``[hooks]`` table -- and repeat calls must keep returning the same
-    answer rather than re-probing (one engine decision per app lifetime).
+    ``None`` is the contract every later fire site skips on -- but it is
+    NOT latched (Ruling R17): while unconfigured, every call re-runs the
+    same cheap parse the engine itself runs per fire, so the first-ever
+    ``[hooks]`` entry a mid-session settings reload delivers takes effect
+    without an app restart. Once an ENGINE is built it latches for the
+    app lifetime (spec section 4 singleton) -- that half lives in the
+    next test.
     """
     runtime = ConsoleRuntime(app=None)
     assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None  # still no config to find
+
+    app = _HooksApp(hooks_section=None)
+    runtime = ConsoleRuntime(app=app)
+    assert runtime.ensure_run_hooks() is None
     assert runtime.ensure_run_hooks() is None
 
-    runtime = ConsoleRuntime(app=_HooksApp(hooks_section=None))
+    app.app_config["hooks"] = {"enabled": True, "hook": [_pre_tool_use_hook()]}
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None, (
+        "the first-ever [hooks] entry arrived mid-session and stayed "
+        "inert -- presence must re-detect while unconfigured (R17)"
+    )
+    assert runtime.ensure_run_hooks() is engine  # built now: identity latches
+
+
+@pytest.mark.asyncio
+async def test_ensure_run_hooks_builds_nothing_after_dispose():
+    """The dispose path is unchanged by R17: quit latches, builds nothing.
+
+    Even a configured app double must get `None` (never a fresh engine,
+    never the sentinel) once the runtime is disposed -- the same
+    build-nothing contract every other ensure_* here keeps at app exit.
+    """
+    runtime = ConsoleRuntime(
+        app=_HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    )
+    await runtime.dispose()
     assert runtime.ensure_run_hooks() is None
     assert runtime.ensure_run_hooks() is None
 

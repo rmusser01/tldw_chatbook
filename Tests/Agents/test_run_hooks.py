@@ -338,6 +338,60 @@ class TestNotify:
         assert marker.exists()
 
 
+class TestCwdOverride:
+    """Ruling R18: a fire-site ``cwd`` beats the engine's provider fallback.
+
+    Tasks 6-8 pass the session's bound workspace root here; the provider's
+    app-level ``[console] workspace_root``-or-app-cwd answer is only the
+    fallback for fires with no session root to name.
+    """
+
+    def _payload_dumping_engine(self, tmp_path, provider_cwd):
+        # Both cwds must be REAL directories: _run_hook spawns the hook
+        # process with cwd=payload["cwd"], and Popen ENOENTs on a fake path.
+        payload_file = tmp_path / "hook_payload.json"
+        code = ("import json, sys; p = json.load(sys.stdin); "
+                "open(%r, 'w').write(json.dumps(p))" % str(payload_file))
+        cfg = RunHooksConfig(enabled=True, hooks=(
+            HookSpec("Stop", (sys.executable, "-c", code)),))
+        eng = RunHooksEngine(lambda: cfg, lambda: provider_cwd)
+        return eng, payload_file
+
+    def test_fire_with_cwd_override_carries_it_in_the_payload(self, tmp_path):
+        session_root = tmp_path / "session-root"
+        session_root.mkdir()
+        eng, payload_file = self._payload_dumping_engine(
+            tmp_path, str(tmp_path / "provider-root"))
+        eng.fire("Stop", session_id="s", cwd=str(session_root))
+        assert json.loads(payload_file.read_text())["cwd"] == str(session_root)
+
+    def test_fire_without_override_falls_back_to_the_provider(self, tmp_path):
+        provider_root = tmp_path / "provider-root"
+        provider_root.mkdir()
+        eng, payload_file = self._payload_dumping_engine(tmp_path, str(provider_root))
+        eng.fire("Stop", session_id="s")
+        assert json.loads(payload_file.read_text())["cwd"] == str(provider_root)
+
+    def test_fire_async_cwd_override(self, tmp_path):
+        session_root = tmp_path / "async-root"
+        session_root.mkdir()
+        eng, payload_file = self._payload_dumping_engine(
+            tmp_path, str(tmp_path / "provider-root"))
+        asyncio.run(eng.fire_async("Stop", session_id="s", cwd=str(session_root)))
+        assert json.loads(payload_file.read_text())["cwd"] == str(session_root)
+
+    def test_notify_cwd_override(self, tmp_path):
+        session_root = tmp_path / "notify-root"
+        session_root.mkdir()
+        eng, payload_file = self._payload_dumping_engine(
+            tmp_path, str(tmp_path / "provider-root"))
+        eng.notify("Stop", session_id="s", cwd=str(session_root))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not payload_file.exists():
+            time.sleep(0.05)
+        assert json.loads(payload_file.read_text())["cwd"] == str(session_root)
+
+
 class TestPoolIsolation:
     def test_blocking_fire_not_delayed_by_queued_notify_hooks(self):
         # Ruling R14: blocking-event hook executions must never queue behind
