@@ -23,8 +23,11 @@ supersedes its pending-integration and remaining-work labels.
   Provider/local labels, zero omission, current-call reset and existing timer
   ownership are verified; final accounting is unchanged. Scope and warning
   qualifications are in the task notes.
-- **In progress:** TASK-13154.5/.6/.7 Settings resource ownership/tool-filter
-  feedback, starter presets and definition wall caps. Parent TASK-13154
+- **Settings ownership and feedback done:** TASK-13154.5 closes only panel-owned
+  connections and explains filtered runtime tools after Save (`97c3bce2e0`,
+  `1b9cff9776`). Independent review, real held-connection tests and wide/narrow
+  painted checks passed.
+- **In progress:** TASK-13154.6/.7 starter presets and definition wall caps. Parent TASK-13154
   reconciliation and the combined branch review remain open.
 - **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
   and prior-turn recovery. A real temporary-repository race demonstrated that

@@ -28,8 +28,8 @@ Reason: restore existing resource ownership and extend existing editable form te
 
 **Interfaces:** Preserve _form_definition() returning AgentDefinition. Add a small pure ordered tool parser returning (stored_tools, omitted_runtime_tools). All omitted names come from the finite RUNTIME_TOOL_NAMES vocabulary, so the notice is bounded without hiding names.
 
-- [ ] Run the current Settings test module as baseline. Add a real file-backed owned-DB teardown test: derive the panel DB from a temporary saved profile path, capture its actual held SQLite connection before mounting, remove the panel, and require connection.execute("SELECT 1") to raise sqlite3.ProgrammingError. A spy on close alone is insufficient. Repeat mount/removal three times; prove each owned connection closed. Inject a separate caller-owned DB and prove the same held connection remains usable after teardown. Close every test-owned DB in finally, including the existing runs_db fixture.
-- [ ] Observe the owned teardown test fail before production edits. Record ownership on construction and close once from the existing Textual unmount lifecycle, on the UI thread that owns the connection:
+- [x] Run the current Settings test module as baseline. Add a real file-backed owned-DB teardown test: derive the panel DB from a temporary saved profile path, capture its actual held SQLite connection before mounting, remove the panel, and require connection.execute("SELECT 1") to raise sqlite3.ProgrammingError. A spy on close alone is insufficient. Repeat mount/removal three times; prove each owned connection closed. Inject a separate caller-owned DB and prove the same held connection remains usable after teardown. Close every test-owned DB in finally, including the existing runs_db fixture.
+- [x] Observe the owned teardown test fail before production edits. Record ownership on construction and close once from the existing Textual unmount lifecycle, on the UI thread that owns the connection:
 
 ```python
 self._owns_runs_db = runs_db is None and self._runs_db is not None
@@ -42,8 +42,8 @@ def on_unmount(self) -> None:
             db.close()
 ```
 
-- [ ] Add a mounted Save regression entering `fs_read, spawn_subagent, fs_read, spawn_subagent, wait_agents`. Assert only fs_read is stored; the visible status names both omitted runtime tools exactly once. Cover all-runtime input with an explicit notice that no filter remains and parent tools are inherited, and the existing greater-than-20 enabled-definition warning so a reload cannot erase the omission notice. Assert the painted status has nonzero geometry under bundled CSS.
-- [ ] Parse requested names once in Save and retain compatibility for direct _form_definition callers:
+- [x] Add a mounted Save regression entering `fs_read, spawn_subagent, fs_read, spawn_subagent, wait_agents`. Assert only fs_read is stored; the visible status names both omitted runtime tools exactly once. Cover all-runtime input with an explicit notice that no filter remains and parent tools are inherited, and the existing greater-than-20 enabled-definition warning so a reload cannot erase the omission notice. Assert the painted status has nonzero geometry under bundled CSS.
+- [x] Parse requested names once in Save and retain compatibility for direct _form_definition callers:
 
 ```python
 requested = tuple(dict.fromkeys(n.strip() for n in raw.split(',') if n.strip()))
@@ -56,7 +56,9 @@ if omitted:
 ```
 
 Pass the already-parsed stored tuple into _form_definition via an optional keyword, or use an equally small compatibility-preserving helper. Surface the notice after awaited list reload. Factor the existing enabled-count warning once and combine it with this successful notice when needed; no reading rendered text to reconstruct state. Error/duplicate paths keep their existing copy and never claim Save succeeded. Use literal-safe Static rendering for any user-controlled name/status content touched here.
-- [ ] Run Tests/UI/test_settings_agents_category.py; record real teardown, save/validation/delete/preset behavior and any warnings. Verify changed-line Ruff/format and whitespace. Update task notes but leave status In Progress pending independent review. Root commits and reviews before Task 2.
+- [x] Run Tests/UI/test_settings_agents_category.py; record real teardown, save/validation/delete/preset behavior and any warnings. Verify changed-line Ruff/format and whitespace. Update task notes but leave status In Progress pending independent review. Root commits and reviews before Task 2.
+
+Task 1 complete in 97c3bce2e0 and 1b9cff9776 with independent review and scoped artifact-write fix review clean. Baseline 11-pass evidence was reused, not rerun; new ownership/all-runtime RED was behavioral, combined-warning initial RED had invalid test data and was corrected. Final 15-case module and subsequent 2-case painted checks passed with inherited dependency warning, exact scoped static and whitespace checks green. Actual held connections verify ownership; root inspected both rendered widths. Prior tool outputs are saved with their provenance limits. TASK-13154.5 is Done; Task 2 remains open.
 
 ### Task 2: Complete editable starter presets (TASK-13154.6)
 
