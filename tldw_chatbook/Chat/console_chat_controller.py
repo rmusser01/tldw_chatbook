@@ -14061,6 +14061,11 @@ class ConsoleChatController:
 
     def _reproject_pending_decision_for_session(self, session_id: str) -> None:
         """Re-derive one session through the unified or legacy card seams."""
+        # ADR-150: the chat-create card rides its OWN standalone registry
+        # (pre-host design), so it must re-derive BEFORE the unified
+        # decision projection's early return -- otherwise a resolved card
+        # lingers on every session switch (live-UAT defect).
+        self._remount_parked_chat_create(session_id)
         if self.set_pending_decision is not None:
             self.project_pending_decision_for_active_session()
             return
@@ -14070,7 +14075,6 @@ class ConsoleChatController:
             )
         self._remount_parked_skill_install(session_id)
         self._remount_parked_skill_script(session_id)
-        self._remount_parked_chat_create(session_id)
 
     def active_session_changed(self) -> None:
         """Pause stale heads and derive the newly active session's head."""
@@ -16724,11 +16728,22 @@ class ConsoleChatController:
             # for the session active WHEN THE CALLBACK RUNS; a
             # session-attributed round keeps its exact-match owning id.
             try:
-                self._remount_head(
-                    self._parked_chat_create_payloads,
-                    self.set_pending_chat_create,
-                    owning_session_id if session_id is not None else None,
+                # Live-UAT fix: `_remount_head` early-returns into the
+                # decision-projection system when `set_pending_decision`
+                # is wired and would never clear OUR standalone map's
+                # payload, leaving a resolved card re-appearing on every
+                # re-render. Push the head (or None) directly instead.
+                target_session = (
+                    owning_session_id
+                    if session_id is not None
+                    else (self.store.active_session_id or "")
                 )
+                if target_session == (self.store.active_session_id or ""):
+                    self._marshal_pending_chat_create(
+                        self._head_round_payload(
+                            self._parked_chat_create_payloads, target_session
+                        )
+                    )
             except Exception:  # noqa: BLE001 -- suppress teardown-time errors
                 logger.opt(exception=True).debug(
                     "Failed to marshal chat-create remount during teardown"
