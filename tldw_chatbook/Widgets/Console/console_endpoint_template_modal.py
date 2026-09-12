@@ -71,6 +71,9 @@ INVALID_SLUG_COPY = (
     "Enter a display name containing letters or numbers to derive an id."
 )
 MODAL_CONTROL_HEIGHT = 3
+#: Bounded attempts to (re-)derive a slug against a freshly loaded registry
+#: when a concurrent create takes the derived slug before our write lands.
+_CREATE_DERIVE_ATTEMPTS = 3
 _LLAMA_FAMILY_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 _OLLAMA_FAMILY_PROVIDER_KEYS = frozenset({"ollama", "local_ollama"})
 
@@ -431,7 +434,16 @@ class ConsoleEndpointTemplateModal(
 
     @on(Button.Pressed, f"#{CREATE_BUTTON_ID}")
     async def _create(self, event: Button.Pressed) -> None:
-        """Persist the validated entry, announce it, and dismiss with its id."""
+        """Persist the validated entry, announce it, and dismiss with its id.
+
+        Immediately before the atomic write the registry is re-loaded and
+        the slug re-derived when a concurrent same-process create took it
+        since derivation (bounded to :data:`_CREATE_DERIVE_ATTEMPTS`);
+        exhaustion surfaces the same inline name-in-use error as
+        ``derive_slug`` itself. The residual cross-process TOCTOU window
+        belongs to the config writer -- this closes the practical
+        same-process window.
+        """
         event.stop()
         if self._create_in_flight:
             return
@@ -442,43 +454,61 @@ class ConsoleEndpointTemplateModal(
         if errors:
             self._show_errors(errors)
             return
-        try:
-            slug = derive_slug(name, load_custom_endpoints(self._app_config).keys())
-        except CustomEndpointSlugError as error:
-            # Every derivable slug is taken: surface the collision inline
-            # instead of persisting an entry that would overwrite an
-            # existing slug's config section.
-            self._show_errors([str(error)])
-            return
-        if not SLUG_PATTERN.fullmatch(slug):
-            # A name with no alphanumeric characters derives an empty slug.
-            self._show_errors([INVALID_SLUG_COPY])
-            return
-        entry = CustomEndpointEntry(
-            slug=slug,
-            display_name=name,
-            family=family,
-            base_url=_normalized_base_url(family, base_url),
-            models=self._parsed_models(),
-            created_from=self._templates[self._active_template_index].provider_id,
-        )
         self._create_in_flight = True
         create_button = self.query_one(f"#{CREATE_BUTTON_ID}", Button)
         create_button.disabled = True
+        entry: CustomEndpointEntry | None = None
+        error_copy: str | None = None
+        saved = False
         try:
-            saved = await asyncio.to_thread(
-                save_settings_to_cli_config, build_entry_mutation(entry)
-            )
-        except Exception:
-            saved = False
+            for _attempt in range(_CREATE_DERIVE_ATTEMPTS):
+                try:
+                    slug = derive_slug(
+                        name, load_custom_endpoints(self._app_config).keys()
+                    )
+                except CustomEndpointSlugError as error:
+                    # Every derivable slug is taken: surface the collision
+                    # inline instead of persisting an entry that would
+                    # overwrite an existing slug's config section.
+                    error_copy = str(error)
+                    break
+                if not SLUG_PATTERN.fullmatch(slug):
+                    # A name with no alphanumeric characters derives an empty slug.
+                    error_copy = INVALID_SLUG_COPY
+                    break
+                # Re-load immediately before the atomic write: a concurrent
+                # same-process create may have taken this slug since the
+                # derivation above, so re-derive against the fresh slug set.
+                if slug in load_custom_endpoints(self._app_config):
+                    continue
+                entry = CustomEndpointEntry(
+                    slug=slug,
+                    display_name=name,
+                    family=family,
+                    base_url=_normalized_base_url(family, base_url),
+                    models=self._parsed_models(),
+                    created_from=self._templates[self._active_template_index].provider_id,
+                )
+                try:
+                    saved = await asyncio.to_thread(
+                        save_settings_to_cli_config, build_entry_mutation(entry)
+                    )
+                except Exception:
+                    saved = False
+                break
         finally:
             self._create_in_flight = False
         if not saved:
             create_button.disabled = False
-            self._show_errors([SAVE_FAILED_COPY])
+            if entry is None:
+                # Derivation never survived to a write: a slug error or a
+                # concurrent create took every bounded attempt.
+                self._show_errors([error_copy or str(CustomEndpointSlugError())])
+            else:
+                self._show_errors([SAVE_FAILED_COPY])
             return
         self._mirror_entry_into_app_config(entry)
-        provider_id = f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}"
+        provider_id = f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}"
         self._announce_created(provider_id)
         self.dismiss(provider_id)
 
