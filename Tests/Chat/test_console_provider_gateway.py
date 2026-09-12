@@ -5212,6 +5212,68 @@ async def test_stream_signal_omission_preserves_yielded_types_and_text() -> None
 
 
 @pytest.mark.asyncio
+async def test_stream_emission_observer_reports_fallback_then_genuine_provenance() -> (
+    None
+):
+    def fake_chat_api_call(**_kwargs):
+        return iter(({"unexpected": "junk"}, "real"))
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    provenance = []
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hi"}],
+            emission_observer=provenance.append,
+        )
+    ]
+
+    assert chunks == [UNSUPPORTED_PROVIDER_RESPONSE_COPY, "real"]
+    assert provenance == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_stream_emission_observer_failure_does_not_change_stream() -> None:
+    calls = 0
+
+    def fail_observer(_synthetic: bool) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("private")
+
+    def fake_chat_api_call(**_kwargs):
+        return iter(("one", "two"))
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hi"}],
+            emission_observer=fail_observer,
+        )
+    ]
+
+    assert chunks == ["one", "two"]
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_synthetic_fallback_suppression_leaves_stream_signal_unset() -> None:
     def fake_chat_api_call(**_kwargs):
         return {"choices": [{"message": {}}]}

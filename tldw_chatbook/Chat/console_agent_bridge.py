@@ -3517,6 +3517,14 @@ class _StreamingModelAdapter:
                 stream_kwargs.pop("tools", None)
             if gateway_signals is not None:
                 stream_kwargs["signals"] = gateway_signals
+            emission_synthetic: bool | None = None
+
+            def observe_emission(synthetic: bool) -> None:
+                nonlocal emission_synthetic
+                emission_synthetic = synthetic
+
+            if isinstance(self._gateway, ConsoleProviderGateway):
+                stream_kwargs["emission_observer"] = observe_emission
             owner_session_id = self._store.session_id_for_message(
                 self._assistant_message_id
             )
@@ -3547,6 +3555,8 @@ class _StreamingModelAdapter:
                 _stall_timeout_seconds(),
                 provider=call_resolution.provider,
             ):
+                synthetic = emission_synthetic is True
+                emission_synthetic = None
                 if terminal_metadata is not None:
                     raise ValueError("Provider terminal metadata must be final.")
                 if isinstance(
@@ -3596,7 +3606,12 @@ class _StreamingModelAdapter:
                         break
                     continue
                 visible = gate.feed(chunk)
-                if isinstance(chunk, str) and chunk and attributed is not None:
+                if (
+                    isinstance(chunk, str)
+                    and chunk
+                    and attributed is not None
+                    and not synthetic
+                ):
                     self._emit_live_usage(
                         AgentLiveUsageEvent(
                             "text",
@@ -3728,12 +3743,14 @@ class _StreamingModelAdapter:
         # turn completes with the usage simply missing, and the cause is
         # logged.
         usage: dict[str, Any] | None = None
+        raw_usage_payload: object = (
+            terminal_metadata.usage if terminal_metadata is not None else None
+        )
+        if raw_usage_payload is None and call_signals is not None:
+            raw_usage_payload = call_signals.usage_snapshot()
         try:
-            usage_payload = (
-                terminal_metadata.usage if terminal_metadata is not None else None
-            )
             usage = _openai_usage_from_provider_call(
-                usage_payload,
+                raw_usage_payload,
                 provider=call_resolution.provider,
                 model=call_resolution.model or "",
             )
@@ -3752,19 +3769,19 @@ class _StreamingModelAdapter:
             )
         if usage is not None:
             response["usage"] = usage
-            if attributed is not None:
-                provider_count = self._provider_output_count(usage)
-                if provider_count is not None:
-                    self._emit_live_usage(
-                        AgentLiveUsageEvent(
-                            "provider_usage",
-                            usage_run_id,
-                            usage_agent_kind,
-                            usage_sequence,
-                            time.monotonic(),
-                            provider_output_tokens=provider_count,
-                        )
+        if attributed is not None:
+            provider_count = self._provider_output_count(raw_usage_payload)
+            if provider_count is not None:
+                self._emit_live_usage(
+                    AgentLiveUsageEvent(
+                        "provider_usage",
+                        usage_run_id,
+                        usage_agent_kind,
+                        usage_sequence,
+                        time.monotonic(),
+                        provider_output_tokens=provider_count,
                     )
+                )
         call_envelope = call_capture.settle(
             "stopped" if stream_cut() else "complete"
         ).envelope
@@ -4897,6 +4914,7 @@ class ConsoleAgentBridge:
         self._live_usage_lock = threading.Lock()
         self._live_turn_usage: dict[str, _LiveTurnUsageAccumulator] = {}
         self._live_usage_owners: dict[str, tuple[str, str, str]] = {}
+        self._live_usage_closed = False
         self._raw_shell_marker_lock = threading.Lock()
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
@@ -8133,6 +8151,7 @@ class ConsoleAgentBridge:
                 self._message_store.close()
             self._fleet_coordinators.clear()
         with self._live_usage_lock:
+            self._live_usage_closed = True
             self._live_turn_usage.clear()
             self._live_usage_owners.clear()
 
@@ -8460,9 +8479,9 @@ class ConsoleAgentBridge:
                 on its ``FleetHandle``/its ``agent_runs`` row.
 
         Returns:
-            That run's last published snapshot, or ``None`` when this
-            bridge has never seen a step for it (never ran here, ran in a
-            previous process, or its slot has since been pruned).
+            That run's last published step snapshot, or a running snapshot
+            carrying pre-step live usage. Returns ``None`` when neither is
+            available in this process or the slot has since been pruned.
         """
         snapshot = (self._live.get(conversation_id) or {}).get(run_id)
         usage = self._live_usage_snapshot(run_id, conversation_id=conversation_id)
@@ -8483,6 +8502,13 @@ class ConsoleAgentBridge:
                 owner is None or owner[0] != conversation_id
             ):
                 return None
+            if (
+                conversation_id is not None
+                and owner is not None
+                and owner[1] == AGENT_KIND_PRIMARY
+                and self._live_primary_keys.get(conversation_id) != owner[2]
+            ):
+                return None
             accumulator = self._live_turn_usage.get(run_id)
             return accumulator.published if accumulator is not None else None
 
@@ -8497,13 +8523,15 @@ class ConsoleAgentBridge:
     ):
         owner = (conversation_id, agent_kind, primary_live_key)
         with self._live_usage_lock:
-            self._live_usage_owners[run_id] = owner
+            registered = not self._live_usage_closed
+            if registered:
+                self._live_usage_owners[run_id] = owner
         try:
             with adapter.run_scope(run_id, agent_kind):
                 yield
         finally:
             with self._live_usage_lock:
-                if self._live_usage_owners.get(run_id) == owner:
+                if registered and self._live_usage_owners.get(run_id) == owner:
                     self._live_usage_owners.pop(run_id, None)
                     self._live_turn_usage.pop(run_id, None)
 
@@ -8530,11 +8558,17 @@ class ConsoleAgentBridge:
     ) -> None:
         """Fold a content-bearing event into bounded scalar active-run state."""
         with self._live_usage_lock:
+            if self._live_usage_closed:
+                return
             owner = self._live_usage_owners.get(event.run_id)
             if (
                 owner is None
                 or owner[0] != conversation_id
                 or owner[1] != event.agent_kind
+                or (
+                    event.agent_kind == AGENT_KIND_PRIMARY
+                    and self._live_primary_keys.get(conversation_id) != owner[2]
+                )
             ):
                 return
             current = self._live_turn_usage.get(event.run_id)
@@ -8633,9 +8667,6 @@ class ConsoleAgentBridge:
         reason `prune_terminal` is not: this turn's own children must stay
         readable until it ends.
         """
-        slots = self._live.get(conversation_id)
-        if not slots:
-            return
         keep = {
             handle.run_id
             for handle in self._conversation_fleet_handles(conversation_id)
@@ -8644,9 +8675,22 @@ class ConsoleAgentBridge:
         primary_key = self._live_primary_keys.get(conversation_id)
         if primary_key is not None:
             keep.add(primary_key)
-        for key in [k for k in slots if k not in keep]:
-            slots.pop(key, None)
-            self._clear_live_usage(key)
+        slots = self._live.get(conversation_id)
+        if slots:
+            for key in [k for k in slots if k not in keep]:
+                slots.pop(key, None)
+                self._clear_live_usage(key)
+        with self._live_usage_lock:
+            for run_id, owner in list(self._live_usage_owners.items()):
+                if owner[0] != conversation_id:
+                    continue
+                owner_is_current_primary = (
+                    owner[1] == AGENT_KIND_PRIMARY and owner[2] == primary_key
+                )
+                if owner_is_current_primary or run_id in keep:
+                    continue
+                self._live_usage_owners.pop(run_id, None)
+                self._live_turn_usage.pop(run_id, None)
 
     def fleet_snapshot(self, conversation_id: str) -> list[FleetHandle]:
         """Read-only view of the REAL, live fleet for one conversation.
