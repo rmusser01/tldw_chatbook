@@ -59,6 +59,10 @@ LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
     list_comfort_width=64,
     list_grows=True,
+    # task-32389: task-32217's rule -- an empty work pane hands its columns
+    # to the list -- applied below the 64-column floor too. Live at 60x24
+    # the notes reader laid out 32/18 with nothing in the work pane.
+    list_first_when_empty=True,
 )
 LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=30)
 LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
@@ -267,6 +271,12 @@ LIBRARY_CANVAS_KIND_NOTES = "notes"
 LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS = frozenset(
     {LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE}
 )
+
+#: The Notes views that are a whole TASK rather than a second reading
+#: surface (task-32259 AC#2). While one of these is in hand the Items list
+#: it is not about closes to its grip, so the task owns the pane width --
+#: the notes list is not a companion to an import review.
+LIBRARY_NOTES_FULL_CANVAS_VIEWS = frozenset({"import", "lasting_add", "lasting_roots"})
 
 #: The rail rows that land on the Database-Notes route. Named (phase-C task
 #: 2.5) because the rail-switch handler has to ask "is this press LEAVING

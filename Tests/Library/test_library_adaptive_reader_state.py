@@ -758,3 +758,103 @@ def test_reader_has_item_rejects_a_non_boolean(bad_value) -> None:
             MEDIA_PROFILE,
             reader_has_item=bad_value,
         )
+
+
+# -- task-32389: the items priority does not outrank task-32065's rule ----
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        pytest.param(MEDIA_READER_LAYOUT_PROFILE, id="media"),
+        pytest.param(screen_constants.LIBRARY_NOTES_READER_PROFILE, id="notes"),
+    ],
+)
+@pytest.mark.parametrize("width", [48, 56, 60, 63])
+def test_an_items_priority_below_the_floor_still_gives_an_empty_stage_to_the_list(
+    profile, width: int
+) -> None:
+    """task-32389: both profiles that opt into the rule, not just Notes.
+
+    The starved priority branch returns before task-32065's rescue, so an
+    ``items`` priority used to pin the list at its 32-cell floor and hand the
+    rest to a work pane with nothing in it. Media reaches that state in
+    production too (the Trash view resolves with ``priority="items"`` and no
+    item open), which is why the drop is claimed for both profiles rather
+    than scoped to Notes -- review finding F2.
+    """
+    layout = resolve_adaptive_reader_layout(
+        width,
+        AdaptiveReaderLayoutPreferences(),
+        profile,
+        priority="items",
+        reader_has_item=False,
+    )
+
+    preferences = AdaptiveReaderLayoutPreferences()
+    assert layout.items_open is True
+    # The list takes its preferred width, or everything the grips leave when
+    # that is narrower -- never the 32-cell floor with the rest parked in an
+    # empty pane. What is left over is below the work pane's own minimum, so
+    # nothing usable is being held back.
+    assert layout.items_width == min(
+        preferences.items_width, width - 2 * profile.grip_width
+    ), layout
+    assert layout.reader_width < profile.work_min_width, (
+        f"{layout.reader_width} columns are still held by an empty work pane "
+        f"while the list is cut to {layout.items_width}."
+    )
+    if width == 60:
+        # The width the critique ran at, pinned exactly (task-32389 AC#1).
+        assert (layout.items_width, layout.reader_width) == (50, 0)
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        pytest.param(MEDIA_READER_LAYOUT_PROFILE, id="media"),
+        pytest.param(screen_constants.LIBRARY_NOTES_READER_PROFILE, id="notes"),
+    ],
+)
+@pytest.mark.parametrize("width", [48, 56, 60, 63])
+def test_an_items_priority_still_reopens_a_closed_list_below_the_floor(
+    profile, width: int
+) -> None:
+    """Review finding F3: the priority is the pane's only reopen lever.
+
+    task-32065's rescue branch requires ``preferences.items_open``, so
+    dropping the priority for a CLOSED pane discarded the reopen request and
+    left the stage to the empty work pane. Latent in production (every caller
+    flips the preference before resolving) and pinned here because this is a
+    shared resolver.
+    """
+    layout = resolve_adaptive_reader_layout(
+        width,
+        AdaptiveReaderLayoutPreferences(items_open=False),
+        profile,
+        priority="items",
+        reader_has_item=False,
+    )
+
+    assert layout.items_open is True
+    assert layout.items_width >= profile.list_min_width
+
+
+@pytest.mark.parametrize("width", [48, 56, 60, 63])
+def test_an_items_priority_is_untouched_once_the_work_pane_has_something(
+    width: int,
+) -> None:
+    """The drop is gated on an EMPTY work pane; a read item resolves as before."""
+    for profile in (
+        MEDIA_READER_LAYOUT_PROFILE,
+        screen_constants.LIBRARY_NOTES_READER_PROFILE,
+    ):
+        layout = resolve_adaptive_reader_layout(
+            width,
+            AdaptiveReaderLayoutPreferences(),
+            profile,
+            priority="items",
+            reader_has_item=True,
+        )
+        assert layout.priority_pane == "items"
+        assert layout.reader_width > 0

@@ -227,6 +227,30 @@ def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -
     return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
 
 
+def render_preview_source(body: str) -> str:
+    """Return the note body as the Markdown Preview should render it.
+
+    ONE home for the order, because Preview renders from two places -- the
+    compose that mounts the widget and the in-place sync that refreshes it --
+    and the sync's staleness check compares against what compose produced. Two
+    call sites spelling the rewrites differently is a re-render on every sync
+    at best and a stale Preview at worst.
+
+    Args:
+        body: The note's stored Markdown source.
+
+    Returns:
+        The source with imported `[[Title]](note://<id>)` links reduced to
+        their display text (task-32263) and Obsidian callout headers turned
+        into plain blockquote headers (task-32249).
+    """
+    # Lazy, like the parser factory below it: this module is on the Library
+    # route's pre-import path (Tests/Performance/test_screen_preimport_payload_budget.py).
+    from tldw_chatbook.Utils.markdown_parsing import render_obsidian_callouts
+
+    return render_obsidian_callouts(render_note_links(body))
+
+
 def compose_note_row_label(
     title: str,
     *,
@@ -943,6 +967,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 next_action = ""
             elif "failed" in f"{status} {state.transfer_status}".lower():
                 next_action = "Review the error, then keep editing."
+            elif state.presentation == "preview":
+                # task-32249: Preview is read-only, so "changes save
+                # automatically" named a behaviour this surface does not
+                # have. Name the control that gets the reader back to the
+                # one that does.
+                next_action = "Press Edit to change this note."
             elif not state.snapshot.body:
                 # Review F4: "Keep editing" presumes editing has started.
                 # The brief's "Start typing" belongs here -- this is the
@@ -1367,12 +1397,30 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # ``library-toolbar-count`` class (css/components/
                 # _agentic_terminal.tcss's ``width: auto``) rather than a
                 # per-canvas one-off.
-                yield Static(
+                in_row_count = Static(
                     f"{list_state.selected_count} selected",
                     id="library-notes-selected-count",
                     classes="library-toolbar-count library-notes-selection-count",
                     markup=False,
                 )
+                # task-32261 AC#1: this counter costs 11 of the 42 columns a
+                # 100x30 terminal gives the list pane, which is what pushed
+                # "Export selected" off the right edge -- the strip painted
+                # "0 selected  Done  All 10  Clear" and the guide's fifth
+                # action was unreachable.
+                #
+                # Hiding it is only safe because task-32272 made the count a
+                # CLASS the patcher writes to (``library-notes-selection-
+                # count``, above): ``_apply_library_row_toggle`` now updates
+                # every renderer wearing it, hidden ones included, so the
+                # line below this strip tracks the selection instead of
+                # keeping the compose-time number. The first round of this
+                # branch hid the only patched widget and shipped a stale
+                # "0 selected" over a checked row -- pinned now by
+                # ``test_the_compact_select_strip_counts_the_row_the_reader_
+                # just_checked``.
+                in_row_count.display = not self.compact
+                yield in_row_count
                 yield Button(
                     "Done",
                     id="library-notes-select-toggle",
@@ -2269,7 +2317,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             yield Markdown(
-                content,
+                render_preview_source(content),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
@@ -2525,6 +2573,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if database_purpose:
                 database_purpose.first(Static).display = not compact
             rendered_count = len(self.list_state.rows)
+            # task-32261 AC#1: the in-strip counter's compact hide flips on a
+            # breakpoint crossing, like the two labels below -- this method
+            # is the canvas's whole in-place responsive path.
+            in_row_count = self.query("#library-notes-selected-count")
+            if in_row_count:
+                in_row_count.first(Static).display = not compact
             select_all = self.query("#library-notes-select-all")
             if select_all:
                 select_all.first(Button).label = (
@@ -2719,11 +2773,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # hidden Preview stale while typing, then perform one canonical update
         # when Preview becomes the active surface so edits cannot queue an
         # unbounded hidden-render backlog.
+        #
         # task-32263: an imported body stores its links as
         # `[[Title]](note://<id>)` -- a working Obsidian link this module's own
         # parser reads back. Markdown does not know that spelling, so Preview
         # renders the display text and leaves the identifier behind the link.
-        preview_source = render_note_links(snapshot.body)
+        # task-32249: and an Obsidian callout header renders as a callout
+        # rather than printing its `[!note]` marker. Both rewrites run at
+        # compose time too, so the staleness comparison below has to be
+        # against the SAME rendered source -- comparing the raw body would
+        # re-render every sync on any note carrying a link or a callout.
+        preview_source = render_preview_source(snapshot.body)
         if show_preview and preview_body.source != preview_source:
             preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(

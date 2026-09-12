@@ -13443,3 +13443,56 @@ code.
 During Linux CUDA qualification (TASK-32505, 2026-09-12), a Chatterbox preflight incorrectly assumed that awaiting `initialize()` awaited readiness. The API intentionally schedules initialization. Closing immediately afterward exposed a separate defect: queued startup could launch a child after close, an in-flight spawn could publish a late child, and a readiness waiter could restore initialized state after cleanup. Bounded fake-IPC reproductions established those races independently of the preflight's shutdown hang. The 30 existing audio-delivery tests used preinitialized models and did not cover startup ownership; nine focused lifecycle tests now cover queued/in-flight startup, readiness, native fallback, generation waiting for initialization, and repeated or cancelled close.
 
 Preserve a provider's nonblocking startup contract, but test ownership from admission through close. Waiting for a ready fixture before testing cancellation skips the startup boundary that can leak work. A cancelled native-loader await is not evidence that its thread stopped; retain and join that work before claiming closure.
+
+### A Library canvas swallows a harness press while it is hidden — it looks like "the feature never ran" (2026-09-11)
+
+Wave-3 group `layout` (task-32249) added six `LibraryHarness` tests that open a
+seeded note. Exactly one of them failed per run, a different one each time,
+always with `#library-note-body never mounted within 30.0s`. A parametrised
+probe that did nothing but open the note six times in one process reproduced it
+at iteration 3 and printed the state: `view=list`, no selected note, **no
+worker**, and none of the `library_notes_tree_locator_failed` warning the open
+path always logs. The press had not been handled at all.
+
+The cause is `LibraryNotesCanvas.on_button_pressed`, which opens with
+`if not self.display: event.stop(); event.prevent_default(); return`. A harness
+press issued on the frame the row mounts can land in that window. Nothing
+reports it: the guard is deliberate, the event is consumed, and the only symptom
+is a selector that never appears — so it reads as a broken fix, not a lost
+press.
+
+`_wait_for_selector(".library-notes-tree-note-row")` is NOT enough; it answers
+"the row exists", not "the canvas will accept a press". Press until the state
+actually changes:
+
+```python
+for _ in range(20):
+    rows = screen.query(".library-notes-tree-note-row")
+    if rows:
+        rows.first(Button).press()
+    for _ in range(10):
+        await pilot.pause()
+        if screen.query("#library-note-body"):
+            return
+```
+
+Re-pressing is safe precisely because the loop only runs while the view has not
+changed. The file went from 1 failure in every run (43 s) to 12/12 on three
+consecutive runs (15 s). The same guard exists on `LibraryMediaCanvas`, so the
+same flake is available on any harness test that presses a Library row.
+
+### A NameError in the reader-layout derivation presents as "the note never opens" (2026-09-11)
+
+While fixing task-32259 I referenced `LIBRARY_NOTES_FULL_CANVAS_VIEWS` in
+`_library_notes_work_first_preferences` before defining it. Every note-open
+test then failed with the same `#library-note-body never mounted` message as the
+flake above — and with **no traceback anywhere in the pytest output**. The bad
+name sits on the layout-preference path the open sequence runs through, and the
+failure surfaced only as a UI no-op.
+
+The distinguishing evidence is cheap: run one known-good test from a file the
+change did not touch (`test_library_crit9_notes.py::test_the_note_preview_takes_
+the_same_height_the_body_does`) against the same worktree. It passed on
+`origin/dev` and failed on the branch, which located the regression in seconds —
+whereas "the note never opens" is indistinguishable from the harness flake if
+you only look at your own new tests.
