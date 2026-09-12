@@ -487,14 +487,16 @@ def _hook_raised_decision(spec: HookSpec) -> _Decision | None:
     )
 
 
-def _notification_structure_fits(value: Any) -> bool:
+def _notification_structure_fits(
+    value: Any, *, size_budget: int = HOOK_NOTIFY_PAYLOAD_BYTES
+) -> bool:
     """Bound traversal and scalar sizes before JSON allocates encoded chunks.
 
     The size estimate is a lower bound; the encoder still enforces the exact
     escaped size. Scalars are individually bounded, and node/depth limits also
     bound inspection of tiny values, deeply nested inputs, and cycles.
     """
-    remaining = HOOK_NOTIFY_PAYLOAD_BYTES
+    remaining = size_budget
     nodes = 0
 
     def visit(item: Any, depth: int) -> bool:
@@ -530,6 +532,27 @@ def _notification_structure_fits(value: Any) -> bool:
         return remaining >= 0
 
     return visit(value, 0)
+
+
+def summarize_hook_arguments(arguments: Any) -> str:
+    """Serialize small approval arguments without allocating oversized summaries.
+
+    Args:
+        arguments: JSON-compatible approval arguments, never coerced with str().
+
+    Returns:
+        Complete JSON within the hook text budget, or an explicit omission label.
+    """
+    omitted = "Arguments omitted (too large or unsupported)."
+    try:
+        if not _notification_structure_fits(
+            arguments, size_budget=HOOK_IO_BUDGET_CHARS
+        ):
+            return omitted
+        encoded = json.dumps(arguments)
+        return encoded if len(encoded) <= HOOK_IO_BUDGET_CHARS else omitted
+    except (TypeError, ValueError, OverflowError, RuntimeError):
+        return omitted
 
 
 class RunHooksEngine:

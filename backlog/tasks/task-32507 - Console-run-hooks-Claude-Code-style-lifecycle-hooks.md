@@ -1,10 +1,10 @@
 ---
 id: TASK-32507
 title: Console run hooks (Claude Code-style lifecycle hooks)
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-12 15:39'
-updated_date: '2026-09-12 16:28'
+updated_date: '2026-09-12 16:35'
 labels: []
 dependencies: []
 ---
@@ -17,7 +17,12 @@ User-configured external commands at six Console session/run lifecycle events, p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Six events fire from their seams (UserPromptSubmit wake-exempt, PreToolUse deny-only fail-closed, PostToolUse dispatched-only with run_id, ApprovalRequested exactly-once per round incl. detached, Stop terminal exactly-once incl. queue-chain twin, SubagentStop wrapping settle),Engine: argv-only subprocesses, JSON stdin envelope, deny-only verdicts, per-purpose fail direction, process-group timeout kill, 4000-char budget, never raises,ConsoleRuntime-owned engine singleton, headless-reachable, live config per fire,User-scope [hooks] config with fail-loud validation; user guide + AGENTS.md docs; ADR-148 Accepted
+- [x] #1 Six lifecycle events fire at their production seams, including manual-only prompts, dispatched-only tool results, all approval kinds, queued terminal turns and child settlement.
+- [x] #2 Tool guards preserve per-call refusals through reviewer failure and approval exemptions and cannot grant tool permission.
+- [x] #3 Hook subprocesses use argv and validated cwd, bounded capture and timeout cleanup; notification admission and allocation are bounded.
+- [x] #4 Runtime owns one synchronized engine with live configuration and closes queued and active work at shutdown.
+- [x] #5 Prompt refusal preserves retry input and releases preparation; accepted context and Stop ownership survive durable postcommit failure and recovery.
+- [x] #6 User guide, spec, ADR-148 and review dispositions match verified behavior; targeted tests and derived-artifact checks pass with explicit baseline limitations.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,7 +41,7 @@ Reason: repair the existing hook contract on current dev; amend ADR-148 for the 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Full PR review repaired permission bypasses, bounded subprocess and notification resources, synchronized shutdown ownership, durable prompt-context recovery and lifecycle/approval coverage. ADR-148 amended without a new architecture decision. Posted findings and independent defects are recorded in Docs/superpowers/reviews/2026-09-12-pr-2645-run-hooks.md. Targeted engine (77) and lifecycle (23) tests pass; final rebase, integration and derived-artifact verification remain in progress. Removed obsolete prior completion claims and renumbered colliding task IDs with provenance.
+Implemented all six run-hook events with restriction-only per-call guards, bounded subprocess capture and notification/approval allocation, synchronized shutdown ownership, durable prompt context/recovery, and exactly-once approval/terminal lifecycle coverage. Rebased onto dev 71313cccd8; retained dev appearance implementation/tests. ADR required: no new ADR; amended backlog/decisions/148-console-run-hooks.md. Full dispositions: Docs/superpowers/reviews/2026-09-12-pr-2645-run-hooks.md. Verification: 1061 targeted tests passed with 21 exact-dev baseline failures explicitly excluded; final summary repair passed 131 focused tests. New modules/tests Ruff and formatter, changed-production undefined-name checks and whitespace checks passed. All derived artifacts reproduce including pinned Mermaid assets. Reviewed 28 engine plus six integration diagnostic statements: bounded nonblocking output is intentional under ADR148; metadata excludes raw argv/config/exception content and no sink topology changed. Renumbered colliding PR task IDs to32506/32507 with provenance. Added the fail-closed scheduler-control testing lesson. Independent engine and integration reviews found no remaining blockers. GitHub checks remain the merge gate.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

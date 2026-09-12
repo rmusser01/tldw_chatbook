@@ -1,5 +1,12 @@
 # Console Run Hooks Implementation Plan
 
+> PR #2645 rebase review (2026-09-12): the historical execution ledger below is
+> superseded where noted by ADR-148's review amendment and
+> [the complete review dispositions](../reviews/2026-09-12-pr-2645-run-hooks.md).
+> TASK-32507 tracks final repairs and verification. ADR required: no new ADR;
+> amend `backlog/decisions/148-console-run-hooks.md` for the restriction-only
+> runtime guard and bounded resource/lifecycle ownership contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Claude Code–style lifecycle hooks for Console chat sessions — user-configured external commands fired at six session/run events, with deny-only guardrails.

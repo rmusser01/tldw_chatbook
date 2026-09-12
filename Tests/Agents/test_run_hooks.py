@@ -983,6 +983,22 @@ class TestEngineHardening:
             tracemalloc.stop()
         assert peak < 2 * run_hooks.HOOK_NOTIFY_PAYLOAD_BYTES
 
+    def test_approval_summary_preserves_small_json_and_omits_unsupported_values(self):
+        assert run_hooks.summarize_hook_arguments({"path": "notes.txt"}) == (
+            '{"path": "notes.txt"}'
+        )
+
+        class Unsupported:
+            def __str__(self):
+                raise AssertionError(
+                    "approval summary must never coerce arbitrary objects"
+                )
+
+        for arguments in ({"object": Unsupported()}, {"text": "😀" * 1000}):
+            assert run_hooks.summarize_hook_arguments(arguments) == (
+                "Arguments omitted (too large or unsupported)."
+            )
+
     @pytest.mark.parametrize("shape", ["aggregate", "wide", "deep", "cycle"])
     def test_notify_bounds_structure_before_encoding(self, monkeypatch, shape):
         eng = _engine()

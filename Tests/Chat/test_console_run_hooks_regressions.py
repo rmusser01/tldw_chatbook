@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import tracemalloc
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,38 @@ from Tests.Chat.test_console_chat_controller import (
     _pending_image,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+
+
+@pytest.mark.parametrize("large", [False, True])
+def test_approval_summary_bounds_allocation_and_preserves_small_json(large):
+    hooks = Hooks()
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=object(),
+        ensure_run_hooks=lambda: hooks,
+    )
+    arguments = (
+        {"content": "\\" * (16 * 1024 * 1024)} if large else {"path": "notes.txt"}
+    )
+    payload = {
+        "session_id": session.id,
+        "calls": [{"llm_name": "fs_write", "arguments": arguments}],
+    }
+    tracemalloc.start()
+    try:
+        controller._notify_run_hook_approval("approval", payload, {})
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * 1024 * 1024
+    summary = hooks.notifications[0][1]["data"]["calls"][0]["args_summary"]
+    assert summary == (
+        "Arguments omitted (too large or unsupported)."
+        if large
+        else '{"path": "notes.txt"}'
+    )
 
 
 class Hooks:
