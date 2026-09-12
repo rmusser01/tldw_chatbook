@@ -190,6 +190,9 @@ local contents, and explicitly rebuild derived indexes when required. Missing mo
 files are setup requirements; restore does not automatically download them. Historic
 queued work and old permissions do not authorize replay.
 
+Older chat-context sidecars retain their message relationships and historical
+citation metadata. They keep the app's existing legacy provenance status.
+
 Saved TTS reference audio is retained with its profile and recipe metadata. Loose
 voice catalogs can still contain historical audio paths; their copied WAV files
 need explicit setup before synthesis can use them.
