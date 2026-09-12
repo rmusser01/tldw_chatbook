@@ -83,3 +83,40 @@ ask for an immediate merge. Reuse the existing isolated recovery worktree.
   or retry a rejected unattended mutation without new authorization.
 - [ ] Update TASK-31932 and report precise completed/open gates. Do not claim
   whole-PR readiness from targeted tests or a reviewer status alone.
+
+## Integration checkpoint: aa2834e67a
+
+All 281 commits replayed, ending at f40c3f894f. Recovery ref remains
+`codex/pr2427-pre-aa2834e67a-763a3c7ef7`. Independent Console/Agents and
+Library integration reviews found no critical/important integration loss;
+upstream-added methods and moved-owner call seams were compared explicitly.
+
+Conflict resolutions retain the real-database harness, Select-based Speech
+model control, viewport/focus checks, exact new failure-row identity, both
+Prompts callbacks, upstream Notes scroll state, and stronger Media paint checks.
+The combined Prompts binding census is 44 (upstream footer refresh plus PR
+source-load failure); the first test run exposed the stale 43 assertion.
+Removed one duplicated type-check-only fallback import introduced by replay.
+
+Verification reports:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-aa283-verification.mIxmvqhCQV`.
+First complete seven-file cohort: 231 passed / 1 stale-census failure in
+155.46s; complete corrected Prompts wiring file: 13 passed in 1.13s.
+Native observer at final teardown: 6 descriptors, 0 SQLite-named handles,
+0 instance locks. This is bounded evidence, not closure of other resource gates.
+CSS bundle and all generated sheets reproduce. Task-ID guard passes all 4,025
+task files. Scoped fatal Ruff and diff checks pass. A broad static diagnostic
+also found three pre-existing undefined-name reports in unmodified
+Audio/meeting_owner.py and MCP/local_control_service.py; no unrelated edits.
+
+Reviewed diagnostic statements against both saved PR and incoming dev. The
+Screen's 57 removed diagnostics are from the previously reviewed owner
+extractions; its only addition relative to saved PR is upstream's fixed-string
+rail-collapse debug message (no interpolated content). Regenerated the manifest
+through the existing checker; no sink topology or path-privacy drift.
+
+Before publication, remote dev advanced to 78ef9928bdfcf103d815990865135824611cfde1:
+18 incoming commits / 18 paths, primarily Console capture-note and a Notes import
+picker test. Integrate this bounded delta after running tests reach termination,
+then verify its complete affected regression files. Existing Qodo size-ceiling
+thread remains open; no ceiling changes or completion claims are authorized.

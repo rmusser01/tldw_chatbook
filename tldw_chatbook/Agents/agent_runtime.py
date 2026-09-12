@@ -14,9 +14,6 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
-if TYPE_CHECKING:
-    from .fallback_chain import FallbackRuntime
-
 from loguru import logger
 
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY

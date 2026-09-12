@@ -721,8 +721,10 @@ def test_prompts_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryPromptsController,
     )
 
-    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 43, (
-        f"expected 43 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
+    # The rebase retains both task-32393's footer refresh and the review's
+    # source-load failure callback; each remains an explicitly bound property.
+    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 44, (
+        f"expected 44 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
     )
     unbound = [
         name
