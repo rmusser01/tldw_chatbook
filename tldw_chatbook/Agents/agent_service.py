@@ -1959,7 +1959,8 @@ class AgentService:
         | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
-        post_tool_call: Callable[[str, str, dict, str, bool], None] | None = None,
+        post_tool_call: Callable[[str, str, dict, str, bool, str], None]
+        | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         run_log_request_plan: RunLogRequestPlan | None = None,
         fleet_coordinator: FleetCoordinator | None = None,
@@ -2119,9 +2120,13 @@ class AgentService:
         # `engine.post_tool_dep(session_id=...)` -- ONLY when a run-hooks
         # engine exists -- and every LoopDeps this service builds (primary
         # and sub-agent alike) fires it at the dispatch capture point for
-        # calls that actually dispatched. `None` (the default, and every
-        # pre-hooks caller) means the loop never fires PostToolUse: behavior
-        # is byte-identical to before this seam existed.
+        # calls that actually dispatched. The 6th parameter (R20) is the
+        # FIRING run's id, bound per run in `_run_one` exactly the way the
+        # review hook's run id is bound, so the engine's envelope can
+        # attribute a fleet child's tool use to the child's own run.
+        # `None` (the default, and every pre-hooks caller) means the loop
+        # never fires PostToolUse: behavior is byte-identical to before
+        # this seam existed.
         self._post_tool_call = post_tool_call
         # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
         # per service instance -- `bind()` latches permanently (see its own
@@ -7647,7 +7652,22 @@ class AgentService:
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,
-            post_tool_call=self._post_tool_call,
+            # R20: bind THIS run's id into the dep, mirroring the review
+            # lambda above -- the engine's notify carries it as the
+            # PostToolUse envelope's run_id, so each firing names the run
+            # that dispatched it (a fleet child's own run, not the
+            # session's primary). `None` (the default) stays a true no-op.
+            post_tool_call=(
+                (
+                    lambda name, call_id, tool_args, content, ok: (
+                        self._post_tool_call(
+                            name, call_id, tool_args, content, ok, run_id
+                        )
+                    )
+                )
+                if self._post_tool_call is not None
+                else None
+            ),
             search_run_log=(
                 search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
             ),

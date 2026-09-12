@@ -685,7 +685,13 @@ def test_post_tool_call_dep_absent_is_byte_identical():
 
 
 def test_agent_service_threads_post_tool_call_into_loop_deps(db):
-    """The service ctor param reaches LoopDeps unchanged (one level up)."""
+    """The service ctor param reaches LoopDeps unchanged (one level up).
+
+    R20: the service-level dep takes a 6th arg -- the FIRING run's id --
+    which `_run_one` binds per run exactly the way it binds the review
+    hook's run id, so the engine's PostToolUse envelope can attribute a
+    fleet child's tool use to the child's own run.
+    """
     fired = []
     chat = ScriptedChat(
         [
@@ -702,7 +708,7 @@ def test_agent_service_threads_post_tool_call_into_loop_deps(db):
         chat_call=chat,
         post_tool_call=lambda *payload: fired.append(payload),
     )
-    _run_id, outcome = service.run_turn(
+    run_id, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "go"}],
         config=SVC_CFG,
@@ -712,9 +718,10 @@ def test_agent_service_threads_post_tool_call_into_loop_deps(db):
 
     assert outcome.status == RUN_DONE
     assert len(fired) == 1, f"the dispatched call fired once: {fired}"
-    tool_name, call_id, args, content, ok = fired[0]
+    tool_name, call_id, args, content, ok, fired_run_id = fired[0]
     assert tool_name == "calculator"
     assert call_id == "a"
     assert args == {"expression": "2+2"}
     assert ok is True
     assert content  # the builtin's real result text (copy not pinned)
+    assert fired_run_id == run_id  # R20: the firing run's id, not None

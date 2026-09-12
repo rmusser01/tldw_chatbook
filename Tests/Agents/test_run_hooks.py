@@ -495,10 +495,15 @@ class TestPostToolDep:
         dep = eng.post_tool_dep(session_id="s")
         # intercept notify to observe without racing the executor
         eng.notify = lambda event, **kw: fired.append((event, kw))
-        dep("fs_write", "call-1", {"path": "x"}, "full result " * 1000, True)
+        dep("fs_write", "call-1", {"path": "x"}, "full result " * 1000, True,
+            run_id="run-7")
         event, kw = fired[0]
         assert event == "PostToolUse"
         assert kw["session_id"] == "s"
+        # R20: the envelope's run_id must carry the FIRING run's id (bound
+        # per-run by the service), not stay null like PreToolUse's counterpart
+        # never would.
+        assert kw["run_id"] == "run-7"
         assert kw["data"]["tool_name"] == "fs_write"
         assert kw["data"]["tool_args"] == {"path": "x"}
         assert len(kw["data"]["tool_result"]) <= HOOK_IO_BUDGET_CHARS

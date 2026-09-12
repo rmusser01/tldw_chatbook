@@ -486,7 +486,7 @@ class RunHooksEngine:
 
         return review
 
-    def post_tool_dep(self, *, session_id: str) -> Callable[[str, str, dict, str, bool], None]:
+    def post_tool_dep(self, *, session_id: str) -> Callable[..., None]:
         """Build the runtime's ``post_tool_call`` dep for one Console session.
 
         The dep is fired by the dispatch loop (``LoopDeps.post_tool_call``,
@@ -503,13 +503,19 @@ class RunHooksEngine:
                 (closed over; the runtime call site has no session identity).
 
         Returns:
-            The ``(tool_name, call_id, args, content, ok) -> None`` callable
-            to install as the run's ``post_tool_call`` dep.
+            The ``(tool_name, call_id, args, content, ok, run_id) -> None``
+            callable to install as the service's ``post_tool_call`` dep.
+            The trailing ``run_id`` (R20) is bound per run by the service's
+            ``_run_one`` -- the same per-run lambda binding the review hook
+            gets -- so the envelope's ``run_id`` names the FIRING run (a
+            fleet child's tool use is attributable to the child, not the
+            session's primary). It defaults to ``None`` for direct callers.
         """
 
         def post_tool_call(tool_name: str, call_id: str, args: dict,
-                           content: str, ok: bool) -> None:
-            self.notify("PostToolUse", session_id=session_id,
+                           content: str, ok: bool,
+                           run_id: str | None = None) -> None:
+            self.notify("PostToolUse", session_id=session_id, run_id=run_id,
                         data={"tool_name": tool_name, "tool_args": args,
                               "tool_result": _truncate(content),
                               "is_error": not ok})
