@@ -675,8 +675,10 @@ schema versions 16–18 while preserving dev's indexed steps, spawn identities,
 and activity receipts. Colliding task IDs were reassigned to TASK-32483–32492;
 canonical upstream TASK-3070 records and controller ownership were retained.
 
-PR #2631 is rebased and published, with final independent integration review
-complete. Qodo follow-up fixes await their final review and fresh CI before merge.
+PR #2631 merged into dev as `8ab21ecaf3` on 2026-09-12 UTC, after final
+independent review, resolution of all four Qodo findings, and fresh required CI
+on head `a8d548ecf8`. The [remaining-work inventory](agent-orchestration-followups-2026-09-12.md)
+tracks older orchestration tickets outside this completed 25-item audit scope.
 TASK-32493 is Done: the existing PR fast lane passed all 1,125 cases on a clean
 runner, including the twelve process cases blocked by this host's semaphore
 allocation. The required derived-artifact job also passed on that head. Existing Console architecture debt remains upstream; no ratchet cap was

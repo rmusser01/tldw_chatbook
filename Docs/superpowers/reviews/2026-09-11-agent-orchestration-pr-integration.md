@@ -106,7 +106,12 @@ Qodo's four review threads are resolved and its follow-up report has zero bugs
 and zero rule violations. The published correction passed all 1,125 fast-lane
 tests, the required artifact gate and UI latency CI
 ([run 34671810651](https://github.com/rmusser01/tldw_chatbook/actions/runs/34671810651)).
-The final latest-dev reconciliation must pass its own head checks before merge.
+The final latest-dev reconciliation passed required CI on head `a8d548ecf8`:
+[run 34676445872](https://github.com/rmusser01/tldw_chatbook/actions/runs/34676445872)
+passed all 1,125 fast-lane tests and the derived-artifact gate. PR #2631 merged
+into dev as `8ab21ecaf3` on 2026-09-12 UTC. The
+[follow-up inventory](../../../backlog/docs/agent-orchestration-followups-2026-09-12.md)
+records older open tasks in the same workstream.
 TASK-32493 is Done after clean-runner verification.
 
 ## Qodo review follow-up

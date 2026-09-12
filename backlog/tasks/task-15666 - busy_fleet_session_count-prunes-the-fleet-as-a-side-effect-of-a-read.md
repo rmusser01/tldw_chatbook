@@ -1,11 +1,11 @@
 ---
 id: TASK-15666
 title: busy_fleet_session_count prunes the fleet as a side effect of a read
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-11 21:30'
-updated_date: '2026-09-12 06:41'
+updated_date: '2026-09-12 06:49'
 labels:
   - console
   - agents
@@ -22,10 +22,10 @@ priority: medium
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The busy count is derived without mutating coordinator state
-- [ ] #2 Pruning still happens where it did before (between turns), on the same schedule
-- [ ] #3 A test asserts that taking the busy count leaves the handle set unchanged
-- [ ] #4 Taking the busy count does not remove retained survivor owners; existing lifecycle and rail cleanup still release settled owners.
+- [x] #1 The busy count is derived without mutating coordinator state
+- [x] #2 Pruning still happens where it did before (between turns), on the same schedule
+- [x] #3 A test asserts that taking the busy count leaves the handle set unchanged
+- [x] #4 Taking the busy count does not remove retained survivor owners; existing lifecycle and rail cleanup still release settled owners.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,4 +47,6 @@ Reason: restore the documented read-only fleet snapshot without changing ownersh
 - Extended the real bridge/controller regression to prove both live and terminal busy-count reads preserve retained owners and coordinator handles. The established `live_snapshot()` path still releases settled owners, and terminal coordinator handles remain until next-turn pruning.
 - Updated lifecycle documentation and removed the controller's stale prune-on-read comment. No ADR was added; ADR-129 already defines the lifecycle contract.
 - Targeted verification passes (10 tests). Ruff reports only existing large-file debt: 235 findings versus 237 at `HEAD`, zero findings on changed lines, and the same three files requiring whole-file formatting. `git diff --check` passes. Independent review and final task completion remain with the root task owner.
+
+Independent task review approved spec compliance and code quality on commit 726409de10. Existing ADR-129 applies. Targeted tests: 10 passed; no changed-line Ruff findings and no whitespace errors. Whole-file lint/format debt remains unchanged in scope; no thresholds were raised.
 <!-- SECTION:NOTES:END -->
