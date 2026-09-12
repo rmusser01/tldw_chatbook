@@ -2039,7 +2039,7 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   `stuck`, which is worse than overflowing the window. Turn it on for a
   model you trust to search its own run log. No Settings UI switch.
 - **`[agents] denial_circuit_breaker_limit`** defaults to `3`; explicit `0`
-  disables it. A run stops before its next model request when a completed
+  disables it, and invalid values use `3`. A run stops before its next model request when a completed
   tool batch ends with that many consecutive user-denied or permission-Off
   calls. Approved, successful, and other non-denial results reset the streak,
   so an approved tail can keep a mixed batch running. The message reports the

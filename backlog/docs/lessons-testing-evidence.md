@@ -13439,3 +13439,8 @@ Six approval-card tests still reached a blocking provider-setup modal after the 
 **TASK-18929, 2026-09-12.** Adding exact-call approval metadata initially made a new proceed entry override an id-less same-name refusal; a failing builder regression exposed the accidental dispatch widening. Independent review then found the opposite change: wrapping a raw None stamp made MCP skip its fresh policy/callback gate. Six real invocation cases comparing absent and None-valued stamps across Allow/Off/Ask reproduced three failures before the fix; all81MCP tests passed afterward.
 
 **What to do.** Treat lookup precedence and raw absence as part of the existing permission contract. Settle the original refusal map before adding observational entries, and keep metadata-wrapper presence separate from decision presence. Exercise actual builders and invocation owners with exact/name keys, id-less rows, unanswered choices and malformed stamps; testing the new metadata field alone can miss both broader and narrower permissions.
+
+
+## Verify retries through the runtime that failed (TASK-18929)
+
+During denial-breaker verification, a Console test initially used a real store and controller but disabled the agent runtime for its next submit. That passed while proving only ordinary-chat retry acceptance. Root review corrected the harness to use the real ConsoleAgentBridge with temporary AgentRunsDB, assert the failed state and unchanged partial answer, then observe completion of the next agent submit. The final six-case selection passed. A post-failure retry test must cross the same runtime/admission path whose recovery it claims to verify; a shared controller alone does not establish that boundary.
