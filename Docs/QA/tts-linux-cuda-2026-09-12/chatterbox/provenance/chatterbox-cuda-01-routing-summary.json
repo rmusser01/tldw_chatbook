@@ -1,0 +1,6 @@
+{
+  "sink_name": "alsa_output.usb-Logitech_Logi_USB_Headset_000000000000-00.analog-stereo",
+  "sink_id": 55,
+  "streams": {},
+  "all_observed_streams_routed_to_headset": false
+}

@@ -1,0 +1,27 @@
+{
+  "review": "Independent cuda_review agent plus root checks",
+  "packaged_copies": 28,
+  "packaged_hashes_and_sizes_match": true,
+  "source_python_files_matching_wheel_identity": 2352,
+  "runtime_package_python_files_matching_source": 2343,
+  "runner_sha256": "1b827c23dca7799177861c246b910bacce3167a65c2690586260aaddef062818",
+  "successful_clips": {
+    "kokoro-cuda-01": 6,
+    "kokoro-onnx-01": 6
+  },
+  "full_normalized_text_passes": 12,
+  "strict_cancellation_ordering_passes": 2,
+  "observed_headset_streams": 12,
+  "final_resource_counts_zero": true,
+  "targeted_tests": {
+    "command": "python -m pytest Tests/TTS/test_live_validation_harness.py Tests/TTS/test_live_tts_input_validation.py -q",
+    "passed": 62,
+    "root_runtime_seconds": 1.64
+  },
+  "ruff_check": "passed",
+  "diff_check": "passed",
+  "human_listening_confirmation": "pending",
+  "acoustic_capture": false,
+  "full_shell_navigation": false,
+  "binary_audio_independently_replayed_by_reviewer": false
+}

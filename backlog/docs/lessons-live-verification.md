@@ -2448,6 +2448,15 @@ test suite's profile fixtures; a missing-dependency guard can itself initialize
 configuration before model loading begins. Receipts are retained in
 `Docs/QA/tts-macos-burndown-2026-09-09/review/`.
 
+**PR #2648, 2026-09-12 follow-up.** A stronger final check rejected nine
+installed profile-core files that were missing from the source census: their
+sources live under `packages/tldw_profile_core/src/`, not alongside the app.
+The wheel was correct; the observer's package-root assumption was not. Retaining
+the failed prerequisite, mapping both declared source roots and comparing complete
+sets produced a 2,350-file match in both environments before the final playback
+run. Read packaging source-root mappings before claiming whole-install identity;
+a matching subset of application hashes does not cover separately rooted packages.
+
 ## Discard recovery must survive a completed uncaptured turn
 
 PR #2561 review (2026-09-09) reproduced a missing combination after the

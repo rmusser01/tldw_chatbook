@@ -13405,6 +13405,7 @@ prerequisites when reconstructing reviewed work outside its original checkout.
 ## Isolated subprocess tests need the isolated checkout's import binding
 
 During PR 2631 integration, the shared virtual environment imported the rebased checkout for ordinary pytest calls, but its Python -I helper subprocesses loaded the original shared checkout through that environment's installed package. Newer parent/helper protocols then disagreed. A separate verification environment bound the exact worktree ahead of the existing dependency directory; checking `python -I -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` proved the binding, and all 431 feature and 575 upstream Agent cases passed, including real subprocess/worktree checks. Verify child-process package provenance as well as pytest cwd; do not change a shared editable installation to repair another checkout's tests.
+
 ## A leaked TTS artifact deletes itself during interpreter shutdown, when builtins are gone
 
 **TASK-32013, 2026-09-11.** New `TTSEventHandler` tests that monkeypatched
@@ -13425,3 +13426,9 @@ end) so artifacts are deleted inline while the interpreter is alive.
 When you see "name 'open' is not defined" from secure deletion, look for
 leaked temp artifacts deleted at shutdown, not a bug in the deleting
 code.
+
+## Preinitialized backend fixtures do not establish startup ownership
+
+During Linux CUDA qualification (TASK-32505, 2026-09-12), a Chatterbox preflight incorrectly assumed that awaiting `initialize()` awaited readiness. The API intentionally schedules initialization. Closing immediately afterward exposed a separate defect: queued startup could launch a child after close, an in-flight spawn could publish a late child, and a readiness waiter could restore initialized state after cleanup. Bounded fake-IPC reproductions established those races independently of the preflight's shutdown hang. The 30 existing audio-delivery tests used preinitialized models and did not cover startup ownership; nine focused lifecycle tests now cover queued/in-flight startup, readiness, native fallback, generation waiting for initialization, and repeated or cancelled close.
+
+Preserve a provider's nonblocking startup contract, but test ownership from admission through close. Waiting for a ready fixture before testing cancellation skips the startup boundary that can leak work. A cancelled native-loader await is not evidence that its thread stopped; retain and join that work before claiming closure.

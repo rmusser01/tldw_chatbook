@@ -1,0 +1,36 @@
+{
+  "repo": "ResembleAI/chatterbox",
+  "revision": "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18",
+  "files": [
+    {
+      "name": "ve.safetensors",
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/ve.safetensors",
+      "sha256": "f0921cab452fa278bc25cd23ffd59d36f816d7dc5181dd1bef9751a7fb61f63c",
+      "bytes": 5695784
+    },
+    {
+      "name": "t3_cfg.safetensors",
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/t3_cfg.safetensors",
+      "sha256": "914cb1696f47527fe8852ca8f1fe1fa63cb34f76f9c715e84e067b744dd0da81",
+      "bytes": 2129653744
+    },
+    {
+      "name": "s3gen.safetensors",
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/s3gen.safetensors",
+      "sha256": "2b78103c654207393955e4900aac14a12de8ef25f4b09424f1ef91941f161d4e",
+      "bytes": 1056484620
+    },
+    {
+      "name": "tokenizer.json",
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/tokenizer.json",
+      "sha256": "d71e3a44eabb1784df9a68e9f95b251ecbf1a7af6a9f50835856b2ca9d8c14a5",
+      "bytes": 25470
+    },
+    {
+      "name": "conds.pt",
+      "path": "/home/ml-user/tts-linux-cuda-20260912/cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18/conds.pt",
+      "sha256": "6552d70568833628ba019c6b03459e77fe71ca197d5c560cef9411bee9d87f4e",
+      "bytes": 107374
+    }
+  ]
+}
