@@ -41,6 +41,10 @@ from tldw_chatbook.Chat.console_history_budget import (
     ProviderContinuationSidecar,
     provider_continuation_owner_groups,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    entry_for,
+    split_custom_endpoint_id,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
 from tldw_chatbook.Chat.sampling_params import params_to_dict
@@ -119,7 +123,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
 )
 from .agent_routing import (
+    AgentsRoutingConfig,
     RoutingError,
+    # Same-package private reuse (precedent: `_setting` from .run_log): the
+    # configured-model lookup must NOT grow a third copy here.
+    _configured_model_for,
     load_agents_routing_config,
     resolve_spawn_target,
 )
@@ -637,6 +645,50 @@ def append_personal_context(system_content: str, block: str) -> str:
     return f"{system_content}\n\n{block}"
 
 
+def _spawn_override_targets(
+    app_config: Mapping[str, Any],
+    routing: AgentsRoutingConfig,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Enumerate the allowlisted spawn-override targets for the schema.
+
+    ADR-147 Task 7: when ``spawn_override_enabled`` is on, the master model
+    must be able to pick a VALID target, so the spawn schema enumerates one
+    ``(provider, models)`` pair per allowlisted provider. Identity only --
+    provider ids and model names; base URLs and params never leave this
+    process through the schema. ``provider/glob`` allowlist entries collapse
+    to their provider (globs are NOT expanded; the schema's model
+    description says the master picks from the enumerated models), and a
+    provider listed twice appears once, in first-allowlist order. A
+    ``custom-ep:<slug>`` provider contributes its registry entry's
+    ``models`` (empty when the slug is unknown); any other provider
+    contributes its single configured model from ``api_settings`` when one
+    is set.
+
+    Args:
+        app_config: The app-config mapping (``AgentService._app_config``).
+        routing: The loaded [agents] routing config.
+
+    Returns:
+        ``(provider, models)`` pairs in allowlist order; empty when the
+        allowlist is empty.
+    """
+    targets: list[tuple[str, tuple[str, ...]]] = []
+    seen: set[str] = set()
+    for allowlist_entry in routing.spawn_override_allowlist:
+        provider = allowlist_entry.partition("/")[0]
+        if not provider or provider in seen:
+            continue
+        seen.add(provider)
+        if split_custom_endpoint_id(provider):
+            registry_entry = entry_for(app_config, provider)
+            models = registry_entry.models if registry_entry is not None else ()
+        else:
+            configured = _configured_model_for(app_config, provider)
+            models = (configured,) if configured else ()
+        targets.append((provider, tuple(models)))
+    return tuple(targets)
+
+
 class _ProjectInstructionPayloadError(RuntimeError):
     """Content-free terminal error for a staged row dropped by bounding."""
 
@@ -743,6 +795,8 @@ def build_first_request_schema_plan(
     agent_kind: str = AGENT_KIND_PRIMARY,
     direct_system_prompt: str | None = None,
     discovery_system_prompt: str | None = None,
+    spawn_override_enabled: bool = False,
+    spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
 ) -> FirstRequestSchemaPlan:
     """Choose direct disclosure only when schema share and request both fit.
 
@@ -772,6 +826,11 @@ def build_first_request_schema_plan(
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
         discovery_system_prompt: Prompt used for progressive discovery.
+        spawn_override_enabled: Whether the spawn schema also offers ad-hoc
+            provider/model args ([agents] spawn_override_enabled).
+        spawn_override_targets: Allowlisted ``(provider, models)`` pairs the
+            spawn schema enumerates when the override gate is open;
+            identity-only, from ``_spawn_override_targets``.
 
     Returns:
         A frozen schema plan whose ``request_fits`` flag proves whether any
@@ -797,7 +856,16 @@ def build_first_request_schema_plan(
     ) -> FirstRequestSchemaPlan:
         runtime: list[ToolSchema] = []
         if config.budget.max_subagents > 0:
-            runtime.append(build_spawn_schema(agent_definitions or ()))
+            # ADR-147 Task 7: provider/model override args appear ONLY when
+            # the operator opted in; the enumerated targets let the master
+            # pick a VALID one. With no definitions and the gate closed,
+            # build_spawn_schema returns SPAWN_TOOL_SCHEMA itself -- the
+            # pre-ADR-147 payload stays byte-identical.
+            runtime.append(build_spawn_schema(
+                agent_definitions or (),
+                override_enabled=spawn_override_enabled,
+                override_targets=spawn_override_targets,
+            ))
         if fleet_active and agent_kind == AGENT_KIND_PRIMARY:
             runtime.extend(
                 (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
@@ -4838,6 +4906,18 @@ class AgentService:
 
         schema_plan = first_request_schema_plan
         if schema_plan is None:
+            # ADR-147 Task 7: the master sees provider/model override args
+            # ONLY when the operator opted in ([agents]
+            # spawn_override_enabled); when it does, the schema enumerates
+            # the allowlisted targets so the model can pick a valid one.
+            # Routing config and app config are read HERE, per run (the
+            # impure seam), so a Settings save mid-session takes effect on
+            # the next turn; tool_catalog stays pure schema construction.
+            spawn_routing = (
+                load_agents_routing_config()
+                if config.budget.max_subagents > 0
+                else None
+            )
             schema_plan = build_first_request_schema_plan(
                 self.registry,
                 config.allowed_tools,
@@ -4883,6 +4963,15 @@ class AgentService:
                 agent_kind=agent_kind,
                 progress_available=bool(agent_kind == AGENT_KIND_PRIMARY and (self._message_inbox or (self._fleet and self._fleet.message_inbox))),
                 reporting_available=progress_sender is not None,
+                spawn_override_enabled=bool(
+                    spawn_routing and spawn_routing.spawn_override_enabled
+                ),
+                spawn_override_targets=(
+                    _spawn_override_targets(self._app_config, spawn_routing)
+                    if spawn_routing is not None
+                    and spawn_routing.spawn_override_enabled
+                    else ()
+                ),
             )
         config = dataclasses.replace(config, system_prompt=schema_plan.system_prompt)
         if not schema_plan.request_fits and self.project_instruction_context is None:
