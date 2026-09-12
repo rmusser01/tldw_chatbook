@@ -4,6 +4,25 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Observer-free Windows [34723928412](https://github.com/rmusser01/tldw_chatbook/actions/runs/34723928412)
+at `4810bfddaedaf7e29f68ee9f5d707418f6bf3ec6` passes native 294/294 and
+product 55/57, with no skips. The same five groups pass, but replacement/rollback
+now expose real `AdmissionTimeout` after final root validation, before capture.
+All 114 artifact hashes and seven installed-package receipts match clean source.
+Removing the observer did not resolve Windows maintenance. Its macOS combined
+replacement/later rollback case passes (189.30 seconds).
+
+The remaining indefinite startup waiter still retries the native lock every 10 ms.
+For waits with neither deadline nor cancellation, `_lock` now uses one blocking
+native acquisition, preserving its held descriptor and all subsequent validation.
+Timed/cancellable waits keep their original polling and limits. Existing Windows
+handles are synchronous, matching [LockFileEx's documented wait semantics](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex).
+Two held-gate regressions cover the blocking wait and deleted-root refusal after
+release. Admission/monitor scope passes 46 tests (14.11 seconds), and startup,
+readmission and cancellation scope passes 14 (32.85 seconds). Independent review
+accepted the operation semantics; Windows performance benefit remains unverified.
+Production Bandit has zero findings and Ruff adds none to its existing seven.
+
 Revision `a5843f36e87faf10a42d19953ad02336498b39ea` passes all actual installed
 macOS product cases: three F9 modes (90.90 seconds), two-profile restore/open
 (55.16 seconds), and combined replacement/later rollback (187.14 seconds, tested

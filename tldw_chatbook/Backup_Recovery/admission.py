@@ -164,13 +164,18 @@ class Admission:
     ) -> Iterator[int]:
         fd = self._open(parent, name, os.O_RDWR)
         try:
-            while True:
-                self._check(deadline, cancel)
-                try:
-                    fcntl.flock(fd, mode | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    time.sleep(0.01)
+            if deadline is None and cancel is None:
+                # An intentionally retained, uncancellable waiter can sleep in
+                # the native lock instead of competing with its maintenance owner.
+                fcntl.flock(fd, mode)
+            else:
+                while True:
+                    self._check(deadline, cancel)
+                    try:
+                        fcntl.flock(fd, mode | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        time.sleep(0.01)
             yield fd
         finally:
             os.close(fd)

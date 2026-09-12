@@ -8,6 +8,73 @@ from tldw_chatbook.Backup_Recovery.admission import Admission
 
 
 @pytest.mark.parametrize("remove_root", [False, True])
+def test_uncancellable_busy_gate_wait_uses_native_blocking_lock(
+    tmp_path, monkeypatch, remove_root
+):
+    from tldw_chatbook.Backup_Recovery import admission as module
+
+    root = tmp_path / "source"
+    root.write_bytes(b"original")
+    authority = Admission(tmp_path / "control")
+    authority.register("source", (root,))
+    waiting = Admission(authority.control_root)
+    blocking, entered, done = threading.Event(), threading.Event(), threading.Event()
+    errors, attempts = [], []
+    original_flock = module.fcntl.flock
+    original_open, opened = waiting._open, {}
+    gate_name = waiting._key("source", "gate")
+
+    def open_lock(parent, name, flags):
+        fd = original_open(parent, name, flags)
+        opened[fd] = name
+        return fd
+
+    def flock(fd, operation):
+        if threading.current_thread() is child and opened.get(fd) == gate_name:
+            attempts.append(operation)
+            if not operation & module.fcntl.LOCK_NB:
+                blocking.set()
+        return original_flock(fd, operation)
+
+    def acquire():
+        try:
+            with waiting.normal(("source",)):
+                entered.set()
+        except BaseException as error:  # noqa: BLE001 - report worker errors to test thread.
+            errors.append(error)
+        finally:
+            done.set()
+
+    child = threading.Thread(target=acquire, daemon=True)
+    monkeypatch.setattr(waiting, "_open", open_lock)
+    monkeypatch.setattr(module.fcntl, "flock", flock)
+    try:
+        with (
+            authority._directory() as parent,
+            authority._lock(
+                parent, authority._key("source", "gate"), module.fcntl.LOCK_EX
+            ),
+        ):
+            child.start()
+            assert blocking.wait(5), "unbounded waiter kept polling the native gate"
+            assert not entered.is_set()
+            observed = len(attempts)
+            assert not done.wait(0.2), "waiter entered through a held gate"
+            assert len(attempts) == observed, "blocked native wait kept polling"
+            if remove_root:
+                root.unlink()
+        assert done.wait(5), "native wait did not resume after gate release"
+    finally:
+        child.join(timeout=5)
+    assert not child.is_alive()
+    if remove_root:
+        assert len(errors) == 1 and isinstance(errors[0], FileNotFoundError)
+        assert not entered.is_set()
+    else:
+        assert errors == [] and entered.is_set()
+
+
+@pytest.mark.parametrize("remove_root", [False, True])
 def test_normal_waits_at_closed_requested_gate_before_scanning_roots(
     tmp_path, monkeypatch, remove_root
 ):

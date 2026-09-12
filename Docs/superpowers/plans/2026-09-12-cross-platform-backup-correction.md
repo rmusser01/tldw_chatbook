@@ -21,7 +21,7 @@ Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: In Progress. Windows85d passes all three F9 modes, installed-wheel two-profile, support43 and native42; replacement/rollback seed capture still expires after admission. All117 artifact hashes verified. Linux85d passes the full product suite. macOS85d passes F9/two-profile, with a combined replacement timeout. Candidate ordering a5843f36e preserves native capture validation and alias fallback while avoiding unrelated root walks; actual macOS combined replacement/later rollback passes187.14s. Windows full run34723256876 and same-revision Linux/macOS checks are running. No product deadline changes.
+Status: In Progress. macOS/Linux a5843f36e pass the complete installed product suite. Windows a584 passes F9/two-profile/support51/native42, with two seed observer failures. Observer-free4810 still passes those five groups but fails both seeds at production AdmissionTimeout. All114 artifacts from each run verified. A native blocking wait now replaces polling only for waits with no deadline or cancellation; 60 admission/monitor/startup checks pass, including two regressions that fail with the old wait. Actual macOS combined verification is running; full Windows verification is next. No product or test deadline changes.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.
