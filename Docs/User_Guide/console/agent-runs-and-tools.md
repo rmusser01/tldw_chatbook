@@ -103,8 +103,13 @@ reply:
   (Back)`) and the **Cancel all agents** button, both reached from the
   Inspect rail's **Agents** section — see below.
 - **View full log** opens the "Full run log — <run id>" window: the complete,
-  untruncated record ("what the model actually saw, before the Console's
-  display cap trimmed it"). **Close** or **Esc** dismisses it.
+  stored record beyond the Console display cap, loaded one page at a time.
+  **Next** advances, **Previous** reloads the previous page, and **First**
+  returns to the beginning (also after older navigation history is dropped).
+  Large records continue across pages; any writer storage truncation is
+  identified separately. A scan with no matching records can still offer
+  **Next**. If access is lost, the last loaded page stays visible.
+  **Close** or **Esc** dismisses the window, including while a page loads.
 
 **In the Inspector** (right rail) — the "Status:" line tracks the run
 (`Status: Ready` / `Status: Generating…` / `Status: Needs approval` /

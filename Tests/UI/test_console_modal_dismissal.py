@@ -134,6 +134,7 @@ from tldw_chatbook.Widgets.Console.console_review_notes_modal import (
     ConsoleReviewNotesModal,
 )
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
 from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
@@ -540,7 +541,10 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleRunLogModal,
-        lambda: ConsoleRunLogModal(run_id="run-1", log_text="log"),
+        lambda: ConsoleRunLogModal(
+            run_id="run-1", first_page=RunLogPage((), RunLogPageCursor(0, 0), None, 0),
+            page_loader=lambda cursor: None,
+        ),
         "#console-run-log-modal",
         None,
         "Console run log action",

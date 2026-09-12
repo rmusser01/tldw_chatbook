@@ -8673,7 +8673,9 @@ class ConsoleAgentBridge:
         parent_run_id = record.get("parent_run_id") if record else None
         return parent_run_id or run_id
 
-    def run_log_available(self, run_id: str) -> bool:
+    def run_log_available(
+        self, run_id: str, *, cancelled: Callable[[], bool] | None = None
+    ) -> bool:
         """Confirm a complete matching record using bounded metadata chunks.
 
         Call from a worker: a child's first record may follow many chunks.
@@ -8684,6 +8686,8 @@ class ConsoleAgentBridge:
         authority = self._run_log_authority_for(owner)
         cursor = None
         while True:
+            if cancelled is not None and cancelled():
+                return False
             page = self._read_run_log_page(
                 run_id, owner, authority, cursor=cursor, metadata_only=True
             )

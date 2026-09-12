@@ -709,3 +709,43 @@ def test_run_log_page_validation_error_remains_explicit(paged_authority):
     bridge, _manager, _snapshot, primary, _child, _entries = paged_authority
     with pytest.raises(ValueError, match="invalid run-log cursor"):
         bridge.load_run_log_page(primary, cursor=RunLogPageCursor(-1, 0))
+
+
+def test_availability_cancellation_stops_before_next_metadata_chunk(
+    paged_authority, monkeypatch
+):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Agents import run_log_paging
+    from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+
+    bridge, _manager, snapshot, primary, child, _entries = paged_authority
+    segment = next(
+        resolve_existing_log_dir(primary, root=snapshot.root).glob("logs.*.txt")
+    )
+    segment.write_bytes(b"malformed\n" * 1000 + segment.read_bytes())
+    original = run_log_paging.load_record_metadata_page
+    entered, gate, cancelled = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+
+    def gated(*args, **kwargs):
+        result = original(*args, **kwargs, max_scan_bytes=1000)
+        calls.append(result)
+        entered.set()
+        gate.wait(3)
+        return result
+
+    monkeypatch.setattr(run_log_paging, "load_record_metadata_page", gated)
+    with ThreadPoolExecutor() as pool:
+        future = pool.submit(
+            bridge.run_log_available, child, cancelled=cancelled.is_set
+        )
+        # Surface an API failure immediately instead of waiting for a missing signal.
+        if not entered.wait(0.5):
+            future.result(timeout=1)
+        cancelled.set()
+        gate.set()
+        assert future.result(timeout=3) is False
+    assert len(calls) == 1
+    assert calls[0].next_cursor is not None
