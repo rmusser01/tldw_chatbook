@@ -20,6 +20,11 @@ from typing import Any
 from pydantic import BaseModel, field_validator
 
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
+from tldw_chatbook.Chat.sampling_params import (
+    params_to_dict,
+    params_to_tuple,
+    validate_sampling_params,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 
 logger = logging.getLogger(__name__)
@@ -75,6 +80,8 @@ class CustomEndpointEntry:
         models: Cached model list discovered for this endpoint.
         created_from: Template provider id this entry was created from
             (informational only).
+        params: Validated sampling params as sorted ``(key, value)`` pairs
+            (empty when the entry carries none).
     """
 
     slug: str
@@ -85,6 +92,7 @@ class CustomEndpointEntry:
     api_key: str | None = field(default=None, repr=False)
     models: tuple[str, ...] = ()
     created_from: str | None = None
+    params: tuple[tuple[str, object], ...] = ()
 
 
 class _EndpointEntryConfig(BaseModel):
@@ -107,11 +115,21 @@ class _EndpointEntryConfig(BaseModel):
     api_key: str | None = None
     models: tuple[str, ...] = ()
     created_from: str | None = None
+    params: dict[str, Any] = {}
 
     @field_validator("api_key_env", "api_key", "created_from")
     @classmethod
     def _optional_blank_is_none(cls, value: str | None) -> str | None:
         return value or None
+
+    @field_validator("params", mode="before")
+    @classmethod
+    def _params_reject_non_tables(cls, value: object) -> object:
+        if value is None:
+            return {}
+        if isinstance(value, Mapping):
+            return dict(value)
+        raise ValueError("params must be a table of sampling-param values")
 
     @field_validator("models", mode="before")
     @classmethod
@@ -222,7 +240,7 @@ def load_custom_endpoints(
         display_name = config.display_name
         family = config.family
         base_url = config.base_url
-        reasons = validate_entry(display_name, family, base_url)
+        reasons = validate_entry(display_name, family, base_url, params=config.params)
         if not isinstance(slug, str) or not SLUG_PATTERN.fullmatch(slug):
             reasons.append(
                 "slug must be lowercase letters, digits, and hyphens (1-64 chars)"
@@ -239,6 +257,7 @@ def load_custom_endpoints(
             api_key=config.api_key,
             models=config.models,
             created_from=config.created_from,
+            params=params_to_tuple(config.params),
         )
     return entries
 
@@ -333,21 +352,33 @@ def build_entry_mutation(
         values["api_key"] = entry.api_key
     if entry.created_from is not None:
         values["created_from"] = entry.created_from
+    if entry.params:
+        values["params"] = params_to_dict(entry.params)
     return {f"custom_endpoints.{entry.slug}": values}
 
 
-def validate_entry(display_name: str, family: str, base_url: str) -> list[str]:
+def validate_entry(
+    display_name: str,
+    family: str,
+    base_url: str,
+    *,
+    params: Mapping | None = None,
+) -> list[str]:
     """Return user-facing validation errors for a candidate entry.
 
     Checks a non-blank display name of at most 80 characters, a known
     family, and a base URL that passes ``validate_url`` after
     family-appropriate normalization. URL checking is skipped for unknown
-    families (there is no normalization rule to apply).
+    families (there is no normalization rule to apply). When ``params`` is
+    given, its ``validate_sampling_params`` errors are appended after the
+    structural checks (likewise skipped for unknown families, which return
+    early).
 
     Args:
         display_name: Candidate display name.
         family: Candidate family.
         base_url: Candidate base URL.
+        params: Optional candidate sampling-params table to validate.
 
     Returns:
         Error messages in display order; empty when the candidate is valid.
@@ -363,6 +394,7 @@ def validate_entry(display_name: str, family: str, base_url: str) -> list[str]:
         return errors
     if not validate_url(_normalize_base_url(family, base_url)):
         errors.append(_INVALID_BASE_URL_COPY)
+    errors.extend(validate_sampling_params(params or {}))
     return errors
 
 
