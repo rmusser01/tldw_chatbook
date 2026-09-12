@@ -9806,7 +9806,7 @@ def test_console_control_state_reads_persona_label_without_storing_it_on_session
     assert session.assistant_authority_id is None
     assert "assistant_kind" in session.__dataclass_fields__
     assert "assistant_id" in session.__dataclass_fields__
-    assert "assistant_name" not in session.__dataclass_fields__
+    assert session.assistant_name is None
 
 
 def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
