@@ -14,8 +14,9 @@ engine's hierarchical output.
 ``EnhancedChunkingService`` is retained as a thin delegating class (same
 class name and method signatures) so existing consumers —
 ``RAG_Search/simplified/enhanced_indexing_helpers.py``,
-``RAG_Search/simplified/enhanced_rag_service.py`` and
-``Widgets/chunk_preview_modal.py`` — keep importing it unchanged.
+``RAG_Search/simplified/enhanced_rag_service.py`` and the §7.3 pins in
+``Tests/Chunking/test_callsite_characterization.py`` — keep importing it
+unchanged.
 ``StructuredChunk``/``ChunkType`` are re-exported from the adapter for any
 straggler imports; ``create_enhanced_chunking_service()`` keeps returning
 the service.

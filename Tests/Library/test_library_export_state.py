@@ -329,9 +329,16 @@ def test_normalize_destination_replaces_a_different_suffix():
     )
 
 
-def test_normalize_destination_leaves_zip_suffix_untouched_case_insensitive():
+def test_normalize_destination_canonicalizes_zip_suffix_case():
+    """PR #2634 review: the writer compares suffixes case-sensitively, so
+    an uppercase pick must normalize to the lowercase file actually written
+    (previously ``foo.ZIP`` was preserved verbatim and the form's overwrite
+    check examined a different file than the writer replaced)."""
     assert normalize_export_destination(PurePath("/tmp/foo.ZIP")) == PurePath(
-        "/tmp/foo.ZIP"
+        "/tmp/foo.zip"
+    )
+    assert normalize_export_destination(PurePath("/tmp/foo.Zip")) == PurePath(
+        "/tmp/foo.zip"
     )
     assert normalize_export_destination(PurePath("/tmp/foo.zip")) == PurePath(
         "/tmp/foo.zip"

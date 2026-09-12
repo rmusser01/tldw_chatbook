@@ -76,3 +76,76 @@ async def test_unknown_editor_action_is_debug_logged_and_ignored(scratch_config)
         assert any("future-unknown-action" in str(record) for record in records), (
             "the unknown-action branch must log the unexpected action at debug level"
         )
+
+
+# ===================================================================
+# TASK-466: real-click integration -- row press mounts the modal, the
+# modal's actual buttons drive the outcome, and the panel's row badge and
+# the persisted override both reflect it. The tests above drive
+# _apply_editor_result directly (unit level); these pin the whole chain.
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_click_save_persists_and_badges(scratch_config):
+    scratch_config("")
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#prompt-row-agents__subagent_system").press()
+        await pilot.pause()
+        modal = app.screen
+        assert type(modal).__name__ == "InternalPromptEditorModal"
+        modal.query_one("#internal-prompt-editor-text").text = "CLICK-SAVED TEXT"
+        modal.query_one("#internal-prompt-editor-save").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            authoring.override_state("agents.subagent_system").active_text
+            == "CLICK-SAVED TEXT"
+        )
+        row = app.query_one("#prompt-row-agents__subagent_system")
+        assert "row-customized" in row.classes
+
+
+@pytest.mark.asyncio
+async def test_real_click_reset_clears_override(scratch_config):
+    scratch_config('[internal_prompts.agents]\nsubagent_system = "X"\n')
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert authoring.override_state("agents.subagent_system").customized is True
+
+        app.query_one("#prompt-row-agents__subagent_system").press()
+        await pilot.pause()
+        app.screen.query_one("#internal-prompt-editor-reset").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert authoring.override_state("agents.subagent_system").customized is False
+        row = app.query_one("#prompt-row-agents__subagent_system")
+        assert "row-customized" not in row.classes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_via", ["button", "escape"])
+async def test_real_click_cancel_and_escape_change_nothing(scratch_config, cancel_via):
+    scratch_config("")
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#prompt-row-agents__subagent_system").press()
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#internal-prompt-editor-text").text = "SHOULD NOT PERSIST"
+        if cancel_via == "button":
+            modal.query_one("#internal-prompt-editor-cancel").press()
+        else:
+            await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert authoring.override_state("agents.subagent_system").customized is False
+        row = app.query_one("#prompt-row-agents__subagent_system")
+        assert "row-customized" not in row.classes
