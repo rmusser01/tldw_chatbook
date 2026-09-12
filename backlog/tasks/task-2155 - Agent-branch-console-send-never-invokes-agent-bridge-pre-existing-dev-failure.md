@@ -3,11 +3,11 @@ id: TASK-2155
 title: >-
   Agent-branch console send never invokes agent bridge (pre-existing dev
   failure)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-06 17:09'
-updated_date: '2026-09-12 06:55'
+updated_date: '2026-09-12 07:25'
 labels:
   - console
   - agent
@@ -23,7 +23,7 @@ test_native_send_applies_conversation_dictionary_agent_branch fails on clean dev
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Test passes on dev without changing app behavior contracts,Root cause documented in task notes
+- [x] #1 Test passes on dev without changing app behavior contracts,Root cause documented in task notes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,6 +40,7 @@ Reason: test-harness repair preserving existing durable acceptance and dictionar
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 The failure was stale harness setup, not agent routing: both dictionary send
 branches reached durable commit and were refused with `RuntimeError: Durable
 Console Library policy no longer matches acceptance.` The manually assigned
@@ -54,3 +55,6 @@ Verification used `.superpowers/sdd/2026-09-11-agent-orchestration-pr-integratio
 The pre-edit module reproduced 2 failures; the final focused run passed both
 dictionary tests. ADR required: no; this is test setup for existing durable
 acceptance.
+
+Independent task review and final whole-branch review approved. The final documentation correction was also re-reviewed and approved at 13456c5393. Targeted test evidence above remains applicable; no runtime code changed after those runs. Changed-line lint/format checks and branch whitespace checks passed. Seven inherited mounted-UI/readiness failures and environment warnings remain explicitly recorded in backlog/docs/agent-orchestration-followups-2026-09-12.md; this closure does not claim a full green suite. Closed on codex/agent-orchestration-followups, pending integration.
+<!-- SECTION:NOTES:END -->

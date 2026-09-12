@@ -8,11 +8,16 @@ agent-orchestration workstream; these older open tickets are part of that area.
 This inventory distinguishes current code observations from old ticket claims.
 It does not treat every old failure as a current product defect.
 
+The current follow-up branch is `codex/agent-orchestration-followups`.
+TASK-13215, TASK-2155, TASK-22720, and TASK-19642.8.3 are Done on that branch
+after task review and final review; integration is pending. TASK-15666 has
+passed its scoped review and is receiving one final headless-lifecycle check.
+
 ## Reliability and resource follow-ups
 
 | Task | Current evidence | Remaining work |
 | --- | --- | --- |
-| [TASK-13215](../tasks/task-13215%20-%20Fleet-approval-revocation-add-a-revoked-run-tombstone-and-close-the-residual-arm-read-windows.md) | Reproduced late approval after revoke, including a real local write, and mixed multi-row verdict snapshots. The old cross-lock premise was stale. | **Implemented and task-reviewed on this branch** (`838e0fb1c3`): per-kind late-arm fences, atomic verdict snapshots, content-free unowned warnings, mutation-sensitive sibling recovery. Host-lifetime tombstones intentionally retain revoked IDs; safe reclamation requires physical-worker drain proof. |
+| [TASK-13215](../tasks/task-13215%20-%20Fleet-approval-revocation-add-a-revoked-run-tombstone-and-close-the-residual-arm-read-windows.md) | Reproduced late approval after revoke, including a real local write, and mixed multi-row verdict snapshots. The old cross-lock premise was stale. | **Done on this branch** (`838e0fb1c3`, documentation correction `13456c5393`): per-kind late-arm fences, atomic verdict snapshots, content-free unowned warnings, mutation-sensitive sibling recovery. Host-lifetime tombstones intentionally retain revoked IDs; safe reclamation requires physical-worker drain proof. |
 | [TASK-15666](../tasks/task-15666%20-%20busy_fleet_session_count-prunes-the-fleet-as-a-side-effect-of-a-read.md) | Coordinator terminal pruning was already at turn start; the remaining defect was retained-owner cleanup during the count. | **Done on this branch** (`726409de10`): observational snapshot, real controller/bridge regression, preserved cleanup; 10 targeted tests passed and independent review approved. |
 | [TASK-18601](../tasks/task-18601%20-%20Agent-run-step-log-is-a-single-JSON-blob-column-and-does-not-scale-to-the-raised-step-budget.md) | DB child-table storage and metadata-only reads already shipped; three AC are checked. `ConsoleRunLogModal` still receives/stores a complete `log_text` and builds one `TextArea`. | Finish viewer paging/bounded memory. Do not redo the DB migration. |
 | [TASK-18929](../tasks/task-18929%20-%20Agent-loop-consecutive-denial-circuit-breaker.md) | Existing run budgets bound execution; a separate consecutive-denial streak guard remains an open proposal. | Add a per-run breaker with honest terminal messaging, reset and sibling-isolation tests. Resolve the ticket's suggested small default versus its “0 or absent disables” AC before implementation. |
@@ -34,9 +39,9 @@ not added to the merged PR's CI results.
 
 | Task | Fresh evidence | Disposition |
 | --- | --- | --- |
-| [TASK-19642.8.3](../tasks/task-19642.8.3%20-%20Restore-Console-fleet-and-headless-wake-authority-tests.md) | All three named `test_console_fleet_wake_safety.py` nodes and `test_a_headless_wake_takes_the_same_agent_dispatch_and_budget` pass. | Verification reconciled in `eae3599460`; current gates and frozen run-budget assertions remain, with ADR-134 automatic restrictions documented. No reproduced defect from the four original nodes. |
-| [TASK-22720](../tasks/task-22720%20-%20Agent-bridge-placeholder-replacement-test-trips-the-unresolved-recovery-guard.md) | The old recovery regression XPASSed on merged dev; its task correction already rejected the swallowed-exception premise. | Stale marker removed in `eae3599460`; all replacement assertions remain and 7 agent citation cases pass normally. |
-| [TASK-2155](../tasks/task-2155%20-%20Agent-branch-console-send-never-invokes-agent-bridge-pre-existing-dev-failure.md) | The manually bound conversation lacked a durable Library policy. Hydration alone failed; real policy insert plus hydration fixed test setup. | Repaired in `eae3599460`; both dictionary branches pass and verify raw transcript text. Production acceptance remains unchanged. |
+| [TASK-19642.8.3](../tasks/task-19642.8.3%20-%20Restore-Console-fleet-and-headless-wake-authority-tests.md) | All three named `test_console_fleet_wake_safety.py` nodes and `test_a_headless_wake_takes_the_same_agent_dispatch_and_budget` pass. | **Done on this branch** in `eae3599460`; verification reconciled and reviewed; current gates and frozen run-budget assertions remain, with ADR-134 automatic restrictions documented. No reproduced defect from the four original nodes. |
+| [TASK-22720](../tasks/task-22720%20-%20Agent-bridge-placeholder-replacement-test-trips-the-unresolved-recovery-guard.md) | The old recovery regression XPASSed on merged dev; its task correction already rejected the swallowed-exception premise. | **Done on this branch** in `eae3599460`; stale marker removed; all replacement assertions remain and 7 agent citation cases pass normally. |
+| [TASK-2155](../tasks/task-2155%20-%20Agent-branch-console-send-never-invokes-agent-bridge-pre-existing-dev-failure.md) | The manually bound conversation lacked a durable Library policy. Hydration alone failed; real policy insert plus hydration fixed test setup. | **Done on this branch** in `eae3599460`; harness repaired; both dictionary branches pass and verify raw transcript text. Production acceptance remains unchanged. |
 | [TASK-13154](../tasks/task-13154%20-%20Supervisor-agent-fleet-program.md) | Parent remains In Progress; discovered definition, wake, and steering children are Done. Older deferred notes include spawn validation, Settings DB ownership, and tool-filter feedback. | Reconcile the original six-phase acceptance criterion and each deferred note with merged work before closing the parent. |
 
 Open PR #2427 was checked for overlap: it lists none of the four test files

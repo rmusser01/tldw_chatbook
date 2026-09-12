@@ -1,11 +1,11 @@
 ---
 id: TASK-22720
 title: Agent bridge placeholder-replacement test trips the unresolved-recovery guard
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: ''
-updated_date: '2026-09-12 06:52'
+updated_date: '2026-09-12 07:25'
 labels:
   - console
   - agents
@@ -41,10 +41,10 @@ secondary and may well be a stale expectation in the test's own bridge double
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The exception raised inside `run_reply` is identified and named
-- [ ] #2 An agent-bridge failure is no longer silently swallowed into an empty
+- [x] #1 The exception raised inside `run_reply` is identified and named
+- [x] #2 An agent-bridge failure is no longer silently swallowed into an empty
       assistant row -- it is either surfaced or logged with its exception type
-- [ ] #3 The xfail marker in `test_console_local_citation_boundary.py` is removed
+- [x] #3 The xfail marker in `test_console_local_citation_boundary.py` is removed
       and the test passes
 
 ## Correction 2026-08-27 — the filed premise was wrong on both counts
@@ -96,6 +96,7 @@ Reason: remove a stale expected-failure marker from an existing passing recovery
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Current merged behavior makes the corrected regression pass normally: the
 agent bridge replaces the missing placeholder with its runtime row, citation
 repair does not dispatch, the replacement becomes complete, and visible output
@@ -113,3 +114,6 @@ Verification used the isolated worktree interpreter:
 
 Result: 7 passed, 96 deselected. ADR required: no; this removes stale
 expected-failure metadata from an existing recovery regression.
+
+Independent task review and final whole-branch review approved. The final documentation correction was also re-reviewed and approved at 13456c5393. Targeted test evidence above remains applicable; no runtime code changed after those runs. Changed-line lint/format checks and branch whitespace checks passed. Seven inherited mounted-UI/readiness failures and environment warnings remain explicitly recorded in backlog/docs/agent-orchestration-followups-2026-09-12.md; this closure does not claim a full green suite. Closed on codex/agent-orchestration-followups, pending integration.
+<!-- SECTION:NOTES:END -->

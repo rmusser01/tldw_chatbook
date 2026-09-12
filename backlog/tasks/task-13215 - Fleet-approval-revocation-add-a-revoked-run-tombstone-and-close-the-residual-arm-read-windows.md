@@ -3,11 +3,11 @@ id: TASK-13215
 title: >-
   Fleet approval revocation: add a revoked-run tombstone and close the residual
   arm/read windows
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-10 01:37'
-updated_date: '2026-09-12 07:02'
+updated_date: '2026-09-12 07:25'
 labels: []
 dependencies: []
 priority: medium
@@ -21,11 +21,11 @@ Cancellation must fence delayed approval fallbacks even when no round existed at
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A revoked-run registry is consulted at arm time so a card armed after revocation resolves all-deny immediately
-- [ ] #2 The sibling retained-payload rule has a regression test (unconditional pop must fail it)
-- [ ] #3 Arming a round with an empty run-id owner logs a warning
-- [ ] #4 Revoking or tearing down one skill-script round preserves the exact retained payload and remountability of a live sibling round.
-- [ ] #5 The final tool-approval decision snapshot is atomic with revocation, so revocation before snapshot completion cannot return a partially approved batch.
+- [x] #1 A revoked-run registry is consulted at arm time so a card armed after revocation resolves all-deny immediately
+- [x] #2 The sibling retained-payload rule has a regression test (unconditional pop must fail it)
+- [x] #3 Arming a round with an empty run-id owner logs a warning
+- [x] #4 Revoking or tearing down one skill-script round preserves the exact retained payload and remountability of a live sibling round.
+- [x] #5 The final tool-approval decision snapshot is atomic with revocation, so revocation before snapshot completion cannot return a partially approved batch.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,5 +50,7 @@ ADR required: no new ADR. Clarified backlog/decisions/067-indefinite-human-appro
 
 Regression evidence: unchanged production gave 12 intended failures and 4 passing controls; repaired admission/snapshot/sibling selection gave 20 passes. A destructive same-session unpark mutation fails all four approval/script revoke/teardown remount cases. The real local fs_write fallback creates no file after revoke. Local approval selection: 16 passed. Scoped same-session script harness now waits for actual badge and retained payload and joins workers through begin_shutdown; its old preregistration-only wait raced publication and leaked a waiter on failure.
 
-Affected-file initial run: 201 passed, 9 failed. Exact original-source rerun of those nodes: 8 reproduced and the script readiness race passed once; human-wait passes alone (7), and corrected script plus human-wait passes together (12). Baseline UI failures and their exact node IDs are recorded in the task report; they remain outside this bounded fix. No full suite, dependency, guard/cap, provider authority, or cancellation-policy changes. Final combined host/wiring/script/human-wait/MCP run: 197 passed, 5 baseline mounted-UI cases deselected; parked-payload/approval targeted selection: 30 passed. Changed-line Ruff lint/format checks are clean; whole-file inherited debt is compared in task-2-static.log. Self-review preserved per-kind ownership, check_revoked=False, callback lock boundaries, sibling cleanup, and terminal snapshot semantics. Status remains In Progress for independent root review.
+Affected-file initial run: 201 passed, 9 failed. Exact original-source rerun of those nodes: 8 reproduced and the script readiness race passed once; human-wait passes alone (7), and corrected script plus human-wait passes together (12). Baseline UI failures and their exact node IDs are recorded in the task report; they remain outside this bounded fix. No full suite, dependency, guard/cap, provider authority, or cancellation-policy changes. Final combined host/wiring/script/human-wait/MCP run: 197 passed, 5 baseline mounted-UI cases deselected; parked-payload/approval targeted selection: 30 passed. Changed-line Ruff lint/format checks are clean; whole-file inherited debt is compared in task-2-static.log. Self-review preserved per-kind ownership, check_revoked=False, callback lock boundaries, sibling cleanup, and terminal snapshot semantics. Independent task review approved; final review evidence is recorded below.
+
+Independent task review and final whole-branch review approved. The final documentation correction was also re-reviewed and approved at 13456c5393. Targeted test evidence above remains applicable; no runtime code changed after those runs. Changed-line lint/format checks and branch whitespace checks passed. Seven inherited mounted-UI/readiness failures and environment warnings remain explicitly recorded in backlog/docs/agent-orchestration-followups-2026-09-12.md; this closure does not claim a full green suite. Closed on codex/agent-orchestration-followups, pending integration.
 <!-- SECTION:NOTES:END -->
