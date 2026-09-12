@@ -3944,7 +3944,7 @@ class LibraryScreen(BaseAppScreen):
                     + trash_keys
                     + escape_chip
                 )
-            if self._library_prompt_editor_active():
+            if self._prompts_controller._library_prompt_editor_active():
                 # task-32393: while the prompt editor REFUSES Escape
                 # (``_exit_library_prompt_editor_guarded``'s two vetoes, which
                 # now both say so) the chip names the blocker rather than

@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsReadiness,
 )
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
+from tldw_chatbook.UI.Console_Modules.dictation import _DictationRetryDialog
 from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeGitCommitModal,
     ChangeGitPushModal,
@@ -50,6 +51,7 @@ from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
+from tldw_chatbook.Widgets.workspace_persona_default import WorkspacePersonaDefaultModal
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Chat.console_context_compaction import ManualSummaryPreview
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
@@ -67,12 +69,22 @@ from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
 )
+from tldw_chatbook.Widgets.Console.console_agent_history_modal import (
+    ConsoleAgentHistoryModal,
+)
+from tldw_chatbook.Widgets.Console.console_agent_progress_modal import (
+    ConsoleAgentProgressModal,
+)
+from tldw_chatbook.Widgets.Console.console_appearance_picker_modal import (
+    ConsoleAppearancePickerModal,
+)
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ConsoleComposerMenuModal,
 )
 from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
+    ConsoleEditThinkingModal,
 )
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
@@ -102,6 +114,7 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
+    WorkspaceArchiveReceiptModal,
 )
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
     ConsoleWorkspaceFilesModal,
@@ -1099,12 +1112,22 @@ _CONSOLE_DIRECT_MODAL_TYPES = tuple(
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
 _CURRENT_CONSOLE_DIRECT_MODAL_TYPES = (
     ChangeRevertConfirmModal,
+    ConsoleAgentHistoryModal,
+    ConsoleAgentProgressModal,
+    ConsoleAppearancePickerModal,
+    ConsoleEditThinkingModal,
     ConsoleForkChatModal,
     ConsoleLibraryAccessModal,
     ConsoleLibrarySearchModal,
     ConsoleSaveMarkdownModal,
     ConsoleTerminalSessionModal,
+    # Restore-with-rename also launches directly, outside the switcher's
+    # ordinary rename callback declared separately below.
+    ConsoleWorkspaceRenameModal,
     DeleteConfirmationDialog,
+    WorkspaceArchiveReceiptModal,
+    WorkspacePersonaDefaultModal,
+    _DictationRetryDialog,
 )
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
@@ -1531,8 +1554,15 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # These modals live under the scanned Console package but are launched
     # outside the legacy task-2/3/5/6/7 dismissal-contract graph. Keep them
     # explicit so a newly added modal still fails this inventory gate.
+    # Registration here checks discovery/reachability only; it does not
+    # claim the legacy dismissal cases exercise these modal behaviors.
     inventory_only_types: set[type[ModalScreen[Any]]] = {
+        ConsoleAgentHistoryModal,
+        ConsoleAgentProgressModal,
+        ConsoleAppearancePickerModal,
         ConsoleCapturePolicyDialog,
+        ConsoleEditThinkingModal,
+        ConsoleEndpointTemplateModal,
         ConsoleExchangeExportDialog,
         ConsoleForkChatModal,
         ConsoleLibraryAccessModal,
@@ -1545,6 +1575,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         ProjectInstructionNoticeModal,
         ProjectInstructionSetupModal,
         TraceExportDialog,
+        WorkspaceArchiveReceiptModal,
     }
 
     assert discovered_console_types - console_contract_types == inventory_only_types
@@ -1562,10 +1593,15 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 59
+    assert len(reachable_modal_types) == 67
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
-    } | inventory_only_types | {DeleteConfirmationDialog, TrajectoryScreen}
+    } | inventory_only_types | {
+        DeleteConfirmationDialog,
+        TrajectoryScreen,
+        WorkspacePersonaDefaultModal,
+        _DictationRetryDialog,
+    }
     # ConsoleRagSettingsModal is the tested shared base for the concrete
     # ConsoleLibrarySearchModal; only the latter is constructed at runtime.
     all_contract_types.remove(ConsoleRagSettingsModal)
