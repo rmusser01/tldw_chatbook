@@ -55,6 +55,10 @@ _PRODUCT_TESTS = (
         "Tests/ProductionApp/test_backup_restore_composition.py::"
         "test_actual_mounted_backup_publishes_verified_archive_after_navigation"
     ),
+    (
+        "Tests/ProductionApp/test_backup_restore_end_to_end.py::"
+        "test_f9_created_archive_restores_and_opens_through_actual_controls"
+    ),
 )
 _SYNTHETIC_CREDENTIALS = (
     "test-only-new-safety-password",
@@ -62,6 +66,8 @@ _SYNTHETIC_CREDENTIALS = (
     "qualification-worker-password",
     "alpha-synthetic-history-api-value",
     "beta-synthetic-history-api-value",
+    "synthetic-f9-secret",
+    "private F9 archive passphrase",
     "test-only",
 )
 _ALLOWED_ENVIRONMENT = frozenset(
@@ -434,15 +440,21 @@ def _sanitize_file(
     destination.parent.mkdir(parents=True, exist_ok=True)
     content = _redact(source.read_text(encoding="utf-8", errors="replace"))
     if private_root is not None:
-        private_value = str(private_root)
-        variants = {
-            private_value,
-            private_value.replace("\\", "/"),
-            private_value.replace("/", "\\"),
-        }
-        variants.update(value.replace("\\", "\\\\") for value in tuple(variants))
-        for value in sorted(variants, key=len, reverse=True):
-            content = content.replace(value, "[PRIVATE_ROOT]")
+        replacements = (
+            (str(private_root), "[PRIVATE_ROOT]"),
+            (str(Path.home()), "[RUNNER_HOME]"),
+        )
+        for path_value, replacement in replacements:
+            variants = {
+                path_value,
+                path_value.replace("\\", "/"),
+                path_value.replace("/", "\\"),
+            }
+            variants.update(
+                value.replace("\\", "\\\\") for value in tuple(variants)
+            )
+            for value in sorted(variants, key=len, reverse=True):
+                content = content.replace(value, replacement)
     destination.write_text(
         content,
         encoding="utf-8",
@@ -498,7 +510,7 @@ def _run_pytest_phase(
             *tests,
             "-vv",
             "--tb=long",
-            "--timeout=300",
+            "--timeout=600",
             f"--basetemp={private_root / f'{phase}-pytest'}",
             f"--junitxml={raw_junit}",
         )

@@ -305,7 +305,103 @@ diagnostics.close()
 )
 
 
-@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX terminal workflow")
+_WINDOWS_CONSOLE = r"""
+import ctypes
+import json
+import runpy
+import sys
+import traceback
+from pathlib import Path
+
+receipt = Path(sys.argv[2])
+state = {"status": "starting", "handles": {}}
+def record():
+    payload = json.dumps(state)
+    if len(payload) > 32000:
+        state["traceback"] = state["traceback"][-4000:]
+        payload = json.dumps(state)
+    receipt.write_text(payload, encoding="utf-8")
+record()
+try:
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetStdHandle.argtypes = [ctypes.c_uint32]
+    kernel.GetStdHandle.restype = ctypes.c_void_p
+    kernel.GetFileType.argtypes = [ctypes.c_void_p]
+    kernel.GetFileType.restype = ctypes.c_uint32
+    kernel.GetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    kernel.GetConsoleMode.restype = ctypes.c_int
+    for name, identifier, stream in (("stdin", -10, sys.stdin), ("stdout", -11, sys.stdout)):
+        handle = kernel.GetStdHandle(identifier)
+        mode = ctypes.c_uint32()
+        kind = kernel.GetFileType(handle)
+        console = bool(kernel.GetConsoleMode(handle, ctypes.byref(mode)))
+        state["handles"][name] = {
+            "file_type": kind, "console_mode_available": console,
+            "console_mode": mode.value, "isatty": stream.isatty(),
+        }
+        record()
+        if kind != 2 or not console or not stream.isatty():
+            raise RuntimeError("native Windows console preflight failed: " + name)
+    state["status"] = "console_verified"
+    record()
+    runpy.run_path(sys.argv[1], run_name="__main__")
+    state["status"] = "completed"
+    record()
+except BaseException:
+    state["status"] = "failed"
+    state["traceback"] = traceback.format_exc()[-24000:]
+    record()
+    raise
+"""
+
+
+def _run_windows_console(
+    tmp_path: Path, script: str, environment: dict[str, str]
+) -> None:
+    """Run the unchanged product flow with real, unredirected Windows console I/O."""
+    child_script = tmp_path / "ui-console-flow.py"
+    wrapper = tmp_path / "ui-console-launcher.py"
+    receipt = tmp_path / "ui-console.log"
+    for path, contents in ((child_script, script), (wrapper, _WINDOWS_CONSOLE)):
+        with path.open("x", encoding="utf-8") as output:
+            output.write(contents)
+    # CREATE_NEW_CONSOLE supplies new standard handles; redirecting any of them
+    # would prevent the production WindowsDriver from using its real console.
+    process = subprocess.Popen(  # nosec B603
+        [sys.executable, str(wrapper), str(child_script), str(receipt)],
+        cwd=tmp_path,
+        env=environment,
+        close_fds=True,
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+    )
+    try:
+        try:
+            returncode = process.wait(timeout=180)
+        except subprocess.TimeoutExpired as error:
+            diagnostic = (
+                receipt.read_text(encoding="utf-8")
+                if receipt.exists()
+                else "No console receipt"
+            )
+            raise AssertionError(
+                "Native UI child timed out: " + diagnostic[-32000:]
+            ) from error
+        diagnostic = (
+            receipt.read_text(encoding="utf-8")
+            if receipt.exists()
+            else "No console receipt"
+        )
+        assert returncode == 0, diagnostic[-32000:]
+        assert json.loads(diagnostic)["status"] == "completed", diagnostic[-32000:]
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux", "win32"}, reason="Native terminal workflow"
+)
 @pytest.mark.parametrize(
     "encrypted,credentials",
     [(False, False), (True, False), (True, True)],
@@ -315,13 +411,12 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(
     tmp_path, encrypted, credentials, native_package
 ):
     """Keep the real terminal suspend path while driving finite native fixtures."""
-    import pty
-
     for name in ("home", "config", "data"):
         (tmp_path / name).mkdir(mode=0o700)
     environment = dict(
         os.environ,
         HOME=str(tmp_path / "home"),
+        USERPROFILE=str(tmp_path / "home"),
         XDG_CONFIG_HOME=str(tmp_path / "config"),
         XDG_DATA_HOME=str(tmp_path / "data"),
         TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),
@@ -336,43 +431,50 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(
             (str(native_package), str(Path(__file__).resolve().parents[2]))
         ),
     )
-    master, slave = pty.openpty()
     script = "OPEN_CHILD=" + repr(_OPEN) + "\n" + _FLOW
-    process = subprocess.Popen(  # nosec B603
-        [sys.executable, "-c", script],
-        cwd=tmp_path,
-        env=environment,
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        close_fds=True,
-    )
-    os.close(slave)
-    log = tmp_path / "ui-terminal.log"
-    deadline = time.monotonic() + 180
-    try:
-        with log.open("wb") as output:
-            while True:
-                assert time.monotonic() < deadline, "Native UI child timed out"
-                readable, _, _ = select.select([master], [], [], 0.1)
-                if readable:
-                    try:
-                        data = os.read(master, 65536)
-                    except OSError as error:
-                        if error.errno != errno.EIO:
-                            raise
+    if sys.platform == "win32":
+        _run_windows_console(tmp_path, script, environment)
+    else:
+        import pty
+
+        master, slave = pty.openpty()
+        process = subprocess.Popen(  # nosec B603
+            [sys.executable, "-c", script],
+            cwd=tmp_path,
+            env=environment,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            close_fds=True,
+        )
+        os.close(slave)
+        log = tmp_path / "ui-terminal.log"
+        deadline = time.monotonic() + 180
+        try:
+            with log.open("wb") as output:
+                while True:
+                    assert time.monotonic() < deadline, "Native UI child timed out"
+                    readable, _, _ = select.select([master], [], [], 0.1)
+                    if readable:
+                        try:
+                            data = os.read(master, 65536)
+                        except OSError as error:
+                            if error.errno != errno.EIO:
+                                raise
+                            break
+                        if not data:
+                            break
+                        output.write(data)
+                    elif process.poll() is not None:
                         break
-                    if not data:
-                        break
-                    output.write(data)
-                elif process.poll() is not None:
-                    break
-        assert process.wait(timeout=5) == 0, log.read_text(errors="replace")[-12000:]
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-        os.close(master)
+            assert process.wait(timeout=5) == 0, log.read_text(errors="replace")[
+                -12000:
+            ]
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            os.close(master)
     result = json.loads((tmp_path / "ui-result.json").read_text())
     assert result["source_preserved"] and result["opened"]
     assert result["encrypted"] is encrypted

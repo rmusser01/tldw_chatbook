@@ -372,6 +372,7 @@ def test_open_private_binary_hardens_before_read(tmp_path):
 def test_open_private_binary_rejects_final_symlink(tmp_path):
     outside = tmp_path / "outside.toml"
     outside.write_text("secret = true\n", encoding="utf-8")
+    outside.chmod(0o644)
     alias = tmp_path / "config.toml"
     alias.symlink_to(outside)
 

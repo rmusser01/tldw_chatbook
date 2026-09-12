@@ -563,6 +563,14 @@ asyncio.run(main())
 
 def _run_profile_child(root, name, script, environment, *, timeout=60):
     """Run one fixed private fixture program and preserve its full native output."""
+    # Windows' native per-file barriers made the finite seed exceed 60 seconds
+    # while still creating records. Retain a stack at the previous observer bound.
+    if sys.platform == "win32" and name.startswith("seed-"):
+        script = (
+            "import faulthandler\n"
+            "faulthandler.dump_traceback_later(55, repeat=False)\n" + script
+        )
+        timeout = 120
     program = root / (name + ".py")
     program.write_text(script, encoding="utf-8")
     output_path = root / (name + ".log")

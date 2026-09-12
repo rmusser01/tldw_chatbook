@@ -347,3 +347,50 @@ def test_atomic_private_write_replaces_existing_config(tmp_path):
     assert target.read_bytes() == b"generation = 2\n"
     assert WindowsOS().stat(target).st_ino != before
     assert list(tmp_path.glob(".config.toml.*.tmp")) == []
+
+
+@pytest.mark.parametrize("error_code", [38, 5, 87, 234])
+def test_stream_enumeration_accepts_only_documented_no_stream_result(
+    monkeypatch, error_code
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Utils import windows_files
+
+    def check(okay):
+        if not okay:
+            raise OSError(error_code, "synthetic native stream failure")
+
+    native_api = SimpleNamespace(
+        handle=lambda fd: fd,
+        check=check,
+        kernel=SimpleNamespace(GetFileInformationByHandleEx=lambda *args: False),
+    )
+    monkeypatch.setattr(windows_files, "_native", lambda: native_api)
+    monkeypatch.setattr(
+        windows_files.C, "get_last_error", lambda: error_code, raising=False
+    )
+    if error_code == 38:
+        assert WindowsOS().listxattr(123) == []
+    else:
+        with pytest.raises(OSError) as caught:
+            WindowsOS().listxattr(123)
+        assert caught.value.errno == error_code
+
+
+@native
+@pytest.mark.parametrize("populated", [False, True], ids=["empty", "populated"])
+def test_native_directory_stream_enumeration_detects_named_data(tmp_path, populated):
+    win = WindowsOS()
+    path = tmp_path / "directory-streams"
+    win.mkdir(path, 0o700)
+    if populated:
+        (path / "ordinary.txt").write_bytes(b"ordinary child")
+    descriptor = win.open(path, win.O_RDONLY | win.O_DIRECTORY)
+    try:
+        assert win.listxattr(descriptor) == []
+        with open(str(path) + ":hidden", "wb") as stream:
+            stream.write(b"directory metadata must not be omitted")
+        assert win.listxattr(descriptor) == [":hidden:$DATA"]
+    finally:
+        win.close(descriptor)

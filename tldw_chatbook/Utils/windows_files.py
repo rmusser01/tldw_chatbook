@@ -960,11 +960,14 @@ class WindowsOS:
         """Expose alternate data streams as nonordinary metadata, never omit them."""
         native = _native()
         buffer = C.create_string_buffer(65536)
-        native.check(
-            native.kernel.GetFileInformationByHandleEx(
-                native.handle(fd), 7, buffer, len(buffer)
-            )
+        okay = native.kernel.GetFileInformationByHandleEx(
+            native.handle(fd), 7, buffer, len(buffer)
         )
+        # FileStreamInfo reports ERROR_HANDLE_EOF when no streams exist.
+        # NTFS directories have no unnamed $DATA stream, unlike regular files.
+        if not okay and C.get_last_error() == 38:
+            return []
+        native.check(okay)
         output, offset = [], 0
         while True:
             next_offset, length = struct.unpack_from("<II", buffer, offset)
