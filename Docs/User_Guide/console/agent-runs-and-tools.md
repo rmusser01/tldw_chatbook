@@ -350,6 +350,116 @@ before use. Neither lesson text nor a previous outcome grants a future write.
 Recording an applied, rejected, stale, or failed outcome is a separate ordinary
 Agent Lesson Note update with its own exact foreground approval.
 
+### Run hooks — your own commands at session lifecycle points
+
+You can configure external commands — *hooks* — that Chatbook runs at fixed
+points of a Console session's lifecycle. A hook is an ordinary executable
+that receives one JSON document on **stdin** describing what just happened
+and, for two of the events, can refuse the action through its exit code or
+stdout. Typical uses: a `PreToolUse` guard that denies risky tool calls, a
+notification script that reacts to an approval waiting or a run finishing,
+or a `UserPromptSubmit` hook that injects extra context into a turn.
+
+v1 is **config-file only** — there is no Settings UI for hooks yet; a
+dedicated settings sub-screen lands in the next PR, and the `config.toml`
+schema below is the contract it will edit.
+
+**The six events.** Each firing delivers one JSON document: a common
+envelope — `hook_event`, `session_id`, `run_id`, `timestamp`, `cwd` — plus
+an event-specific `data` object:
+
+| Event | When it fires | `data` carries |
+|---|---|---|
+| `UserPromptSubmit` | after the submit gates, before the turn composes — **manual sends only** | `prompt` (truncated) |
+| `PreToolUse` | per tool-call batch, before permission review | `tool_name`, `tool_args` |
+| `PostToolUse` | after a call actually dispatched — refused calls fire nothing | `tool_name`, `tool_args`, `tool_result` (truncated), `is_error` |
+| `ApprovalRequested` | when an approval round is armed (view-detached rounds included) | `calls` (each call's name + args summary), `session_active` |
+| `Stop` | a session's run reaching terminal state | `status`: `completed`, `error`, or `cancelled` |
+| `SubagentStop` | a fleet child run settling | `child_run_id`, `status` |
+
+The wake rule from
+[auto-wake](#when-a-background-sub-agent-finishes--auto-wake) applies
+unchanged: machine-origin wake notices never fire `UserPromptSubmit` — only
+sends you typed do. `Stop` and `SubagentStop` fire for wake turns too; they
+report run outcomes, not user input.
+
+**Configuring hooks** in `config.toml`:
+
+```toml
+[hooks]
+enabled = true          # master switch; false disables every firing
+
+[[hooks.hook]]
+event = "PreToolUse"    # one of the six names; unknown = validation error
+matcher = "fs_*"        # optional, tool-name glob
+command = ["/usr/local/bin/guard.sh", "--strict"]   # argv; required, non-empty
+timeout_s = 10          # optional, default 10
+```
+
+Validation is fail-loud: an unknown event name, a `matcher` on a non-tool
+event, an empty or non-list `command`, or a non-positive `timeout_s` each
+disable that one hook with a logged warning — never a silent no-op. The
+file is re-parsed when its modification time changes, and the master
+`enabled` switch is read fresh on every firing, so setting
+`enabled = false` stops every hook without an app restart. Matching:
+`matcher` is a glob against the tool name (`fs_*`, `mcp__github__*`); no
+matcher means the hook fires for every call. It is only valid on
+`PreToolUse` / `PostToolUse` — the other events have no tool name to
+match, and configuring one there is a validation error.
+
+**Verdict rules — hooks can only deny.** Just two events are blocking
+(`UserPromptSubmit`, `PreToolUse`), and neither can *grant* anything: an
+`allow` decision is parsed, ignored, and logged, and no hook verdict ever
+bypasses the permission store or the "Approval required" card. Hooks add
+restrictions, never permissions.
+
+- **`PreToolUse`** — exit 2, or stdout JSON `{"decision": "deny",
+  "reason": "…"}`, denies the matching tool call **before** permission
+  review: no approval card is shown for it, and the model sees the reason
+  as that call's result, prefixed `hook: ` so hook-produced text can never
+  be mistaken for a dispatch go-ahead. This event **fails closed** — a
+  crashed, timed-out, or otherwise unclean hook exit is itself a deny
+  ("hook `<name>` failed"), visible to the model and the logs, never
+  silent.
+- **`UserPromptSubmit`** — exit 2, or stdout JSON
+  `{"decision": "block"}`, rejects your send outright; the reason comes
+  back to you as a refusal and your composer draft is kept. A clean exit 0
+  with plain stdout instead *injects* that text (up to the truncation
+  budget) as context for the turn — disclosed in the transcript as its own
+  System row naming the hook, never silently merged into your message.
+  This event **fails open**: a broken hook logs a warning and the send
+  proceeds — a misconfigured convenience hook must not brick the composer.
+
+Precedence: stdout that parses as a JSON object with a `decision` key wins
+over the exit code (exit 2 is shorthand for the event's blocking
+decision); unparseable stdout with exit 0 is a clean pass with a warning.
+
+**Security posture.**
+
+- **User scope only.** Hooks are read from your `config.toml` alone — a
+  project can never ship hooks, the same untrusted-project stance as
+  [project instructions](#project-instructions-before-tools-run).
+- **argv only, no shell.** `command` is a list of arguments executed
+  directly; no shell string is ever parsed, so the hook line itself has no
+  injection surface.
+- **Per-hook timeout with process-group kill.** `timeout_s` (default 10 s)
+  bounds each hook; on timeout the hook *and any children it spawned* are
+  killed as one process group (`taskkill /T` on Windows), so a spawning
+  script cannot outlive its own deadline.
+- **Truncated payloads.** Prompts, tool args, tool results, and hook
+  stdout/stderr are all capped by one shared budget (4,000 chars) before
+  the child process or the logs see them. Payloads carry session/run ids
+  and tool facts only — never environment variables, config values, or
+  API keys.
+- **Every execution is logged.** Each firing records the event, session
+  and run ids, the hook's exit status, timing, and its captured
+  (truncated) stdout/stderr as structured log records.
+
+v1 limits, deliberate: hooks can deny but never rewrite tool inputs; there
+is no project-scoped hook file; and only the two blocking events can
+change what happens — the other four are observe-and-notify, with their
+output logged and dropped.
+
 ### Interrupted provider tool runs — Resume, Take over, or Discard
 
 For a provider integration that has opted into exact tool continuation, Console

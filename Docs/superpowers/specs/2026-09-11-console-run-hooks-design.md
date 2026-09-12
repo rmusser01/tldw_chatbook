@@ -1,7 +1,7 @@
 # Console Run Hooks — Design Spec
 
 Date: 2026-09-11
-Status: Draft — pending user review
+Status: Implemented
 ADR: backlog/decisions/148-console-run-hooks.md
 Related: ADR-069 (untrusted project context), `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`
 
@@ -241,3 +241,24 @@ Project-scope hooks behind a trust gate; decision-JSON input rewriting;
 SessionStart/SessionEnd; PreCompact (rewind/summarize seam); **dedicated
 settings sub-screen (confirmed follow-up PR, editing the config schema
 defined here)**; per-session hook overrides.
+
+## 12. Implementation Notes
+
+Recorded at implementation close-out (2026-09-12):
+
+- **Execution logging (Ruling R13).** The spec's §4 "written to the run
+  log" phrasing is implemented as structured loguru records: every firing
+  logs the event, session/run ids, exit status, timing, and captured
+  (truncated) stdout/stderr at INFO. For events fired outside an active
+  run this is the observability surface — there is no run-log row to
+  write.
+- **`Stop` carries `run_id` null in v1 (Ruling R24).** The run-state seam
+  where `Stop` fires has no run identity, so the envelope's `run_id` is
+  `null` rather than a fabricated id. Correlate a Stop with its run via
+  the preceding `PostToolUse`/`SubagentStop` firings for the same
+  `session_id`.
+- **Injected `UserPromptSubmit` context delivery (Ruling R22).** Clean-exit
+  stdout is delivered to the model as a payload-only trailing user-role
+  entry (the wake-notice delivery precedent) — never written to the store,
+  turn-scoped, gone on the next history rebuild. The auditable record is a
+  separate hook-origin SYSTEM transcript row carrying the injected text.
