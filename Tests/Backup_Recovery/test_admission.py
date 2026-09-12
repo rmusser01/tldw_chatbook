@@ -381,19 +381,19 @@ def test_failed_remap_metadata_barrier_preserves_authority_across_processes(
     registered, tmp_path, monkeypatch, phase
 ):
     import errno
-    import fcntl
-    from tldw_chatbook.Backup_Recovery import native_files
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
 
     admission, source = registered
     target = tmp_path / "new"
     target.write_bytes(b"candidate")
-    control_inode = admission.control_root.stat().st_ino
-    native_fcntl = fcntl.fcntl
+    control_inode = admission_module.os.stat(admission.control_root).st_ino
+    native_flush_directory = admission_module.flush_directory
     injected = []
 
-    def fail_published_registry_barrier(fd, command, *args):
-        result = native_fcntl(fd, command, *args)
-        if command != fcntl.F_FULLFSYNC or os.fstat(fd).st_ino != control_inode:
+    def fail_published_registry_barrier(fd):
+        result = native_flush_directory(fd)
+        if admission_module.os.fstat(fd).st_ino != control_inode:
             return result
         state = json.loads((admission.control_root / "registry.json").read_text())
         entry = state["entries"]["a"]
@@ -407,7 +407,9 @@ def test_failed_remap_metadata_barrier_preserves_authority_across_processes(
             raise OSError(errno.EIO, "injected_registry_barrier_failure")
         return result
 
-    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_published_registry_barrier)
+    monkeypatch.setattr(
+        admission_module, "flush_directory", fail_published_registry_barrier
+    )
     with pytest.raises(OSError, match="injected_registry_barrier_failure"):
         admission.remap("a", (target,), 2)
     code = """
@@ -478,23 +480,23 @@ def test_initial_registry_barrier_failure_retains_before_after_evidence(
     tmp_path, monkeypatch
 ):
     import errno
-    import fcntl
-    from tldw_chatbook.Backup_Recovery import native_files
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
 
     control = tmp_path / "control"
-    native_fcntl = fcntl.fcntl
+    native_flush_directory = admission_module.flush_directory
 
-    def fail_initial_barrier(fd, command, *args):
-        result = native_fcntl(fd, command, *args)
+    def fail_initial_barrier(fd):
+        result = native_flush_directory(fd)
         if (
-            command == fcntl.F_FULLFSYNC
-            and (control / "registry.json").exists()
-            and os.fstat(fd).st_ino == control.stat().st_ino
+            (control / "registry.json").exists()
+            and admission_module.os.fstat(fd).st_ino
+            == admission_module.os.stat(control).st_ino
         ):
             raise OSError(errno.EIO, "injected_initial_registry_barrier_failure")
         return result
 
-    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_initial_barrier)
+    monkeypatch.setattr(admission_module, "flush_directory", fail_initial_barrier)
     with pytest.raises(OSError, match="injected_initial_registry_barrier_failure"):
         Admission(control)
     intent = json.loads((control / "registry.pending.json").read_text())
@@ -508,25 +510,26 @@ def test_remap_cleanup_failure_exposes_only_durably_committed_mapping(
     registered, tmp_path, monkeypatch, failure
 ):
     import errno
-    import fcntl
-    from tldw_chatbook.Backup_Recovery import native_files
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
 
     admission, source = registered
     control = admission.control_root
     target = tmp_path / "new"
     target.write_bytes(b"candidate")
-    native_fcntl, native_unlink = fcntl.fcntl, os.unlink
+    native_flush_directory = admission_module.flush_directory
+    native_unlink = admission_module.os.unlink
     final_mapping_barriers = []
 
     def final_state():
         entry = json.loads((control / "registry.json").read_text())["entries"]["a"]
         return entry["roots"] == [str(target)] and entry["pending"] is None
 
-    def observe_or_fail(fd, command, *args):
-        result = native_fcntl(fd, command, *args)
+    def observe_or_fail(fd):
+        result = native_flush_directory(fd)
         if (
-            command == fcntl.F_FULLFSYNC
-            and os.fstat(fd).st_ino == control.stat().st_ino
+            admission_module.os.fstat(fd).st_ino
+            == admission_module.os.stat(control).st_ino
             and final_state()
         ):
             if (control / "registry.pending.json").exists():
@@ -542,8 +545,8 @@ def test_remap_cleanup_failure_exposes_only_durably_committed_mapping(
             raise OSError(errno.EIO, "injected_intent_cleanup_failure")
         return native_unlink(name, *args, **kwargs)
 
-    monkeypatch.setattr(native_files.fcntl, "fcntl", observe_or_fail)
-    monkeypatch.setattr(os, "unlink", fail_unlink)
+    monkeypatch.setattr(admission_module, "flush_directory", observe_or_fail)
+    monkeypatch.setattr(admission_module.os, "unlink", fail_unlink)
     with pytest.raises(OSError, match="injected_intent_cleanup_failure"):
         admission.remap("a", (target,), 2)
     assert final_mapping_barriers
@@ -605,30 +608,38 @@ def test_failed_intent_barrier_never_replaces_registry(
     registered, tmp_path, monkeypatch, phase
 ):
     import errno
-    import fcntl
-    from tldw_chatbook.Backup_Recovery import native_files
+
+    from tldw_chatbook.Backup_Recovery import admission as admission_module
 
     admission, source = registered
     control = admission.control_root
     original = (control / "registry.json").read_bytes()
     target = tmp_path / "new"
     target.write_bytes(b"candidate")
-    native_fcntl = fcntl.fcntl
+    native_flush = (
+        admission_module.flush_file
+        if phase == "intent_file"
+        else admission_module.flush_directory
+    )
 
-    def fail_intent_barrier(fd, command, *args):
-        result = native_fcntl(fd, command, *args)
+    def fail_intent_barrier(fd):
+        result = native_flush(fd)
         intent = control / "registry.pending.json"
-        if command == fcntl.F_FULLFSYNC and intent.exists():
+        if intent.exists():
             expected_inode = (
-                intent.stat().st_ino
+                admission_module.os.stat(intent).st_ino
                 if phase == "intent_file"
-                else control.stat().st_ino
+                else admission_module.os.stat(control).st_ino
             )
-            if os.fstat(fd).st_ino == expected_inode:
+            if admission_module.os.fstat(fd).st_ino == expected_inode:
                 raise OSError(errno.EIO, "injected_intent_barrier_failure")
         return result
 
-    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_intent_barrier)
+    monkeypatch.setattr(
+        admission_module,
+        "flush_file" if phase == "intent_file" else "flush_directory",
+        fail_intent_barrier,
+    )
     with pytest.raises(OSError, match="injected_intent_barrier_failure"):
         admission.remap("a", (target,), 2)
     assert (control / "registry.json").read_bytes() == original

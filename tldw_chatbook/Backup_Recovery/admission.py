@@ -507,6 +507,27 @@ class Admission:
                         parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel
                     ):
                         registry = self._read(parent)
+                        if not maintenance and not any(
+                            entry.pending for entry in registry.entries.values()
+                        ):
+                            # Every expanded group includes the requested names.
+                            # A closed requested gate already prevents entry; do
+                            # not compete with its maintenance owner by scanning
+                            # all target roots before waiting. This probe grants
+                            # no admission: release it before fresh group checks.
+                            # Pending remaps still need immediate alias-aware
+                            # refusal through the existing full group check.
+                            if any(name not in registry.entries for name in names):
+                                raise AdmissionError("namespace_unregistered")
+                            with ExitStack() as requested:
+                                for name in names:
+                                    fd = self._open(
+                                        parent, self._key(name, "gate"), os.O_RDWR
+                                    )
+                                    requested.callback(os.close, fd)
+                                    self._observe_gate(parent, name, fd)
+                                    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                                    self._observe_gate(parent, name, fd)
                         group = self._groups(registry, names, recovery_journal)
                         if any(registry.entries[n].pending for n in group):
                             raise AdmissionError("remap_recovery_required")

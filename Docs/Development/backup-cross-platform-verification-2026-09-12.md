@@ -4,6 +4,43 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Windows matrix [34719523728](https://github.com/rmusser01/tldw_chatbook/actions/runs/34719523728)
+at `ec2c668f731b3b830549c2f423f99b3072cc73a9` passed the complete encrypted-
+credential F9 create/restore/open flow and all 24 support cases. All seven jobs
+passed 42 native cases. Plain/encrypted archives were created and restored, but
+fresh app opens hit Textual screen readiness failures after 48-second UI stalls.
+The backup monitor's synchronous native filesystem poll now runs off-loop; its
+single probe is retained through cancellation, and runtime coordination remains
+on the original task. New regressions first reproduced the blocking behavior.
+
+The rollback seed recorded an actual maintenance timeout after a 62.2-second
+root scan while startup readmission was scanning the same registry. There were
+21 distinct roots, so duplicate-root caching would not address it. Ordinary
+admission now probes requested gates before scanning roots: a closed gate can
+only defer admission. Temporary locks are released before unchanged fresh group,
+identity, permission and alias validation. Pending remaps retain their original
+immediate alias-aware refusal. The existing remap test caught a missing exception
+to the fast path before correction. Application deadlines remain unchanged.
+Gate/monitor/native-recovery scope passed 59 cases (88.06 seconds); independent
+review accepted both production changes. Seven old failure injectors were repaired
+to wrap the actual file/directory barriers after their old fcntl hook moved.
+All their authority, journaling and cleanup assertions remain intact. Touched
+production Bandit has zero findings; Ruff adds no findings to its prior baseline.
+
+The Windows two-profile case actually passed both fresh opens (653.44 seconds),
+but its job correctly failed for a missing installed-package receipt. Historical
+two-profile runs used the verified checkout, unlike the wheel-based F9 and
+replacement flows. It now uses the existing wheel fixture and verifies the loaded
+code path in every child. The installed-wheel macOS two-profile case passes
+(89.06 seconds). Windows verification of this fixture change is pending.
+
+Linux `ec2c668f7`: ten new reader/observer cases passed (1.47 seconds), all three
+F9 modes passed (130.05 seconds), two-profile passed (66.70 seconds), and combined
+replacement/later rollback passed (283.85 seconds). Its public codeload SHA256 is
+`69d783c3a2e66dfff306c538020089b56b0c0bcc57138fbba11ea272a96382c6`.
+The macOS full run passed its first four cases, then its aggregate 480-second test
+driver expired during the combined case; it is not counted as a full pass.
+
 Latest full matrix [34718268264](https://github.com/rmusser01/tldw_chatbook/actions/runs/34718268264)
 at `9b643f744e5bfdcca1c54083b848c12a9e048a77` passed all 42 native tests in
 all seven jobs and 16 support cases. Six product cases failed; none skipped.

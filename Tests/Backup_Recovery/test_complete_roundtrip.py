@@ -6,6 +6,10 @@ import subprocess  # nosec B404
 import sys
 from pathlib import Path, PurePath, PureWindowsPath
 
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - installed product fixture
+)
+
 
 def _relative_archive_key(root: PurePath, path: PurePath) -> str:
     """Return the portable member key used by the captured file receipt."""
@@ -47,6 +51,9 @@ from pathlib import Path
 from Tests.Backup_Recovery.test_complete_roundtrip import _relative_archive_key
 from Tests.network_guard import install,blocked_attempts
 install()
+import tldw_chatbook
+if os.environ.get('TLDW_TEST_INSTALLED_PACKAGE'):
+ assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook'/'__init__.py'
 for name in ('sounddevice','pyaudio'):sys.modules[name]=None
 import keyring
 from keyring.backends.null import Keyring
@@ -608,7 +615,9 @@ def _run_profile_child(root, name, script, environment, *, timeout=60):
         # Fixed interpreter and fixture-owned source; no shell or external command.
         result = subprocess.run(  # nosec B603
             [sys.executable, str(program)],
-            cwd=Path(__file__).resolve().parents[2],
+            cwd=root
+            if environment.get("TLDW_TEST_INSTALLED_PACKAGE")
+            else Path(__file__).resolve().parents[2],
             env=environment,
             stdout=output,
             stderr=subprocess.STDOUT,
@@ -674,7 +683,7 @@ def test_roundtrip_child_environment_preserves_windows_runtime_without_secrets(
     assert environment["PYTHONIOENCODING"] == "utf-8"
 
 
-def _capture_two_profiles(tmp_path):
+def _capture_two_profiles(tmp_path, installed_package=None):
     """Stage1: A is live, B is closed at capture; this is not restore qualification."""
     root = tmp_path.resolve()
     for name in ("home", "xdg-config", "xdg-data", "cache", "tmp", "shared"):
@@ -688,10 +697,16 @@ def _capture_two_profiles(tmp_path):
         XDG_CACHE_HOME=str(root / "cache"),
         TMPDIR=str(root / "tmp"),
         ROUNDTRIP_FIXTURE=str(root),
+        ROUNDTRIP_TEST_ROOT=str(Path(__file__).resolve().parents[2]),
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHONPATH=str(Path(__file__).resolve().parents[2]),
     )
+    if installed_package is not None:
+        environment["TLDW_TEST_INSTALLED_PACKAGE"] = str(installed_package)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            (str(installed_package), environment["ROUNDTRIP_TEST_ROOT"])
+        )
     for name in ("alpha", "beta"):
         profile = root / name
         (profile / "custom").mkdir(parents=True, mode=0o700)
@@ -865,6 +880,8 @@ try:main_cli_runner()
 except SystemExit as error:assert error.code in (None,0),error
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.profile_open import opened_receipt
+import tldw_chatbook
+assert str(Path(tldw_chatbook.__file__).resolve())==expected['package']
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 assert opened_receipt(profile,control,attempt) is None
 async def main():
@@ -1154,6 +1171,7 @@ try:
  assert len({row['installation_id'] for row in installed.values()})==2
  assert len({row['core'] for row in installed.values()})==2
  assert len({row['prompts'] for row in installed.values()})==1
+ for row in installed.values():row['package']=str(Path(tldw_chatbook.__file__).resolve())
  prompts=Path(next(iter(installed.values()))['prompts'])
  assert prompts.stat().st_ino!=(fixture/'shared'/'prompts.db').stat().st_ino
  (fixture/'stage2-installed.json').write_text(json.dumps(installed,indent=2))
@@ -1163,7 +1181,8 @@ try:
   profile=argv[argv.index('--recovery-profile')+1]
   output_path=fixture/('stage2-open-'+installed[profile]['label']+'.log')
   with output_path.open('w') as output:
-   result=subprocess.run([sys.executable,'-c',OPEN_CHILD,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=135 if sys.platform=='win32' else 45)
+   reader='import sys;sys.path.append('+repr(os.environ['ROUNDTRIP_TEST_ROOT'])+')\n'+OPEN_CHILD
+   result=subprocess.run([sys.executable,'-c',reader,*argv[4:],str(fixture)],**kwargs,stdout=output,stderr=subprocess.STDOUT,text=True,timeout=135 if sys.platform=='win32' else 45)
   assert result.returncode==0,output_path.read_text()[-14000:]
   return result.returncode
  subprocess.call=headless
@@ -1197,9 +1216,11 @@ print('TWO_PROFILE_RESTORED_AND_OPENED',flush=True)
 )
 
 
-def test_two_captured_profiles_restore_and_open_with_native_content(tmp_path):
+def test_two_captured_profiles_restore_and_open_with_native_content(
+    tmp_path, native_package
+):
     """Stage2b executes and opens the finite cohort without approving owners."""
-    root, environment = _capture_two_profiles(tmp_path)
+    root, environment = _capture_two_profiles(tmp_path, native_package)
     environment = _isolated_environment(root, environment)
     script = "OPEN_CHILD=" + repr(_OPEN_RESTORED) + "\n" + _RESTORE_ISOLATED
     assert "TWO_PROFILE_RESTORED_AND_OPENED" in _run_profile_child(

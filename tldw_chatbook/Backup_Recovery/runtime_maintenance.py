@@ -574,9 +574,9 @@ class RuntimeMaintenance:
 
     def retire_local_caches(self):
         """Fence ordinary storage, then release only this thread's owned caches."""
+        from ..Logging_Config import PrivateRotatingFileHandler
         from . import storage_admission as storage
         from .participants import _retire_current_thread_caches
-        from ..Logging_Config import PrivateRotatingFileHandler
 
         self._check()
         if not self._settled:
@@ -636,6 +636,26 @@ async def _resume_monitor(runtime):
         raise cancellation
 
 
+async def _poll_local_pause_requested():
+    """Keep native probing off-loop, retaining its resources through cancellation."""
+    from . import storage_admission as storage
+
+    completion = asyncio.create_task(asyncio.to_thread(storage._local_pause_requested))
+    cancellation = None
+    try:
+        while not completion.done():
+            try:
+                await asyncio.shield(completion)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        return completion.result()
+    finally:
+        # A cancelled monitor must still exit if the settled probe failed;
+        # otherwise its ordinary error handler would start another probe.
+        if cancellation is not None:
+            raise cancellation
+
+
 async def monitor_app(app):
     """Yield this live app to native maintenance intent, then restore admission.
 
@@ -644,13 +664,11 @@ async def monitor_app(app):
     abandon that handoff. A refused attempt waits for its intent to end before
     retrying, preserving user work and avoiding repeated pause/resume cycles.
     """
-    from . import storage_admission as storage
-
     refused = False
     while True:
         await asyncio.sleep(0.1)
         try:
-            requested = storage._local_pause_requested()
+            requested = await _poll_local_pause_requested()
         except (OSError, ValueError, RuntimeError):
             app._backup_maintenance_error = "admission_state_unavailable"
             continue

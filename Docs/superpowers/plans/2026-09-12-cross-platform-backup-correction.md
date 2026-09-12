@@ -21,7 +21,7 @@ Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: In Progress. Full Linux and macOS product cases pass at 9b643f744. Windows34718268264 passed all native and support cases, and all isolated captures/restores reached validation; fresh opens fail on a missed MCP native filesystem import. Replacement exposes real maintenance AdmissionTimeout; aggregate native timings will identify its cost without changing application deadlines. Correct restored startup platform integrations and rerun all Windows product groups.
+Status: In Progress. Linux ec2c668f7 full flows pass; last complete macOS run9b643f744 passed (ec2 aggregate driver expired during fifth case). Windows ec2 encrypted-credential F9 and support pass; two-profile application case passes but lacked wheel receipt, now fixture corrected and actual macOS wheel case passes. Root/gate timing and UI stalls prompted reviewed early normal gate refusal plus off-loop native polling; targeted59tests pass. Next Windows run must verify all original flows with installed-package receipts.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.
