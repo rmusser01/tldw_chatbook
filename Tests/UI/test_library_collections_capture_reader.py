@@ -30,8 +30,8 @@ from tldw_chatbook.Library.collections_capture_models import (
     CaptureNoteLink,
     CapturePage,
     CapturePageRequest,
-    CaptureSaveRequest,
     CaptureSaveOutcome,
+    CaptureSaveRequest,
     CaptureSummary,
     ExternalMediaReference,
     ExternalNoteReference,
@@ -42,12 +42,15 @@ from tldw_chatbook.Library.collections_capture_models import (
 from tldw_chatbook.Library.collections_capture_service import (
     LocalCollectionsCaptureService,
 )
-from tldw_chatbook.UI.Library_Modules.screen_constants import (
-    LIBRARY_COLLECTIONS_READER_PROFILE,
-)
 from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
     CaptureArchiveReceipt,
     CollectionsCaptureControllerState,
+)
+from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_COLLECTIONS_READER_PROFILE,
+)
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LibraryAdaptiveReaderShell,
 )
 from tldw_chatbook.Widgets.Library.library_collections_capture_reader import (
     CollectionsCaptureReaderPresentation,
@@ -55,10 +58,6 @@ from tldw_chatbook.Widgets.Library.library_collections_capture_reader import (
     LibraryCollectionsScopeRows,
     LibraryCollectionsWorkPane,
 )
-from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
-    LibraryAdaptiveReaderShell,
-)
-
 
 AUTHORITY = "local:test-authority"
 
@@ -168,7 +167,9 @@ def _presentation(**overrides) -> CollectionsCaptureReaderPresentation:
         authority_key=AUTHORITY,
         requested_scope=request,
         applied_scope=request,
-        page=CapturePage(request, (_summary("a", title="A literal [capture]"), selected), 2),
+        page=CapturePage(
+            request, (_summary("a", title="A literal [capture]"), selected), 2
+        ),
         page_stale=True,
         page_error="refresh_failed",
         selected_identity=selected.identity,
@@ -233,6 +234,13 @@ class _ReaderApp(ConsolidatedCSSApp):
         )
 
 
+def _status_text_sync(screen) -> str:
+    """Read the Collections action-status line synchronously."""
+    return str(
+        screen.query_one("#library-collections-action-status", Static).renderable
+    )
+
+
 async def test_scope_rows_are_contextual_bounded_and_show_only_active_total() -> None:
     app = _ReaderApp(_presentation())
 
@@ -240,9 +248,9 @@ async def test_scope_rows_are_contextual_bounded_and_show_only_active_total() ->
         await pilot.pause()
 
         assert len(app.query(".library-collections-scope-row")) == 7
-        assert str(app.query_one("#library-collections-scope-reading", Button).label).startswith(
-            "▸ Reading"
-        )
+        assert str(
+            app.query_one("#library-collections-scope-reading", Button).label
+        ).startswith("▸ Reading")
         assert "(2)" not in str(
             app.query_one("#library-collections-scope-reading", Button).label
         ), "stale totals must not be presented as exact"
@@ -273,7 +281,9 @@ async def test_items_keep_capture_controls_rows_and_stale_recovery_reachable() -
         assert "Selected · loading" in painted
 
 
-async def test_capture_and_filter_disclosures_mount_complete_editable_controls() -> None:
+async def test_capture_and_filter_disclosures_mount_complete_editable_controls() -> (
+    None
+):
     app = _ReaderApp(
         _presentation(
             quick_capture_open=True,
@@ -333,15 +343,11 @@ async def test_unknown_server_save_keeps_draft_and_requires_explicit_retry() -> 
                 "#library-collections-capture-retry-warning", Static
             ).renderable
         )
-        assert app.query_one(
-            "#library-collections-capture-refresh", Button
-        ).disabled
+        assert app.query_one("#library-collections-capture-refresh", Button).disabled
         assert app.query_one(
             "#library-collections-capture-retry-confirm", Button
         ).disabled
-        assert app.query_one(
-            "#library-collections-capture-retry-back", Button
-        ).disabled
+        assert app.query_one("#library-collections-capture-retry-back", Button).disabled
 
 
 async def test_work_keeps_selected_loaded_truth_and_distinct_note_models() -> None:
@@ -353,14 +359,16 @@ async def test_work_keeps_selected_loaded_truth_and_distinct_note_models() -> No
         assert "Loading “Selected capture B”… showing “A literal [capture]”" in str(
             app.query_one("#library-collections-reader-loading", Static).renderable
         )
-        assert str(app.query_one("#library-collections-reader-title", Static).renderable) == (
-            "A literal [capture]"
-        )
+        assert str(
+            app.query_one("#library-collections-reader-title", Static).renderable
+        ) == ("A literal [capture]")
         assert app.query_one("#library-collections-freeform-note", TextArea).text == (
             "Private note [kept literal]"
         )
         assert "Linked Notes" in str(
-            app.query_one("#library-collections-linked-notes-heading", Static).renderable
+            app.query_one(
+                "#library-collections-linked-notes-heading", Static
+            ).renderable
         )
         assert "Unavailable: note missing" in str(
             app.query_one("#library-collections-linked-note-link-1", Static).renderable
@@ -390,14 +398,14 @@ async def test_archive_undo_remains_visible_without_a_loaded_detail() -> None:
         await pilot.pause()
 
         button = app.query_one("#library-collections-archive-undo", Button)
-        assert getattr(button, "capture_identity") == _identity("a")
+        assert button.capture_identity == _identity("a")
         receipt = app.query_one("#library-collections-archive-receipt")
-        assert "Moved to Archive" in str(
-            receipt.query_one(Static).renderable
-        )
+        assert "Moved to Archive" in str(receipt.query_one(Static).renderable)
 
 
-async def test_supported_annotation_and_overflow_actions_have_reachable_results() -> None:
+async def test_supported_annotation_and_overflow_actions_have_reachable_results() -> (
+    None
+):
     app = _ReaderApp(
         _presentation(
             capabilities=_capabilities(
@@ -428,7 +436,9 @@ async def test_supported_annotation_and_overflow_actions_have_reachable_results(
         assert app.query_one("#library-collections-highlight-save", Button)
         assert app.query_one("#library-collections-summarize", Button).disabled is False
         assert app.query_one("#library-collections-listen", Button).disabled is False
-        assert app.query_one("#library-collections-save-offline", Button).disabled is False
+        assert (
+            app.query_one("#library-collections-save-offline", Button).disabled is False
+        )
         assert "Summary ready" in str(
             app.query_one("#library-collections-action-status", Static).renderable
         )
@@ -437,7 +447,9 @@ async def test_supported_annotation_and_overflow_actions_have_reachable_results(
         )
 
 
-async def test_read_and_info_modes_render_content_and_provenance_as_inert_text() -> None:
+async def test_read_and_info_modes_render_content_and_provenance_as_inert_text() -> (
+    None
+):
     for mode, selector, expected in (
         ("read", "#library-collections-read-body", "Readable body [not markup]."),
         ("info", "#library-collections-media-provenance", "Unavailable: media missing"),
@@ -449,7 +461,9 @@ async def test_read_and_info_modes_render_content_and_provenance_as_inert_text()
             assert expected in str(widget.renderable)
 
 
-async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_grips() -> None:
+async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_grips() -> (
+    None
+):
     app = _build_test_app()
     host = LibraryHarness(app)
 
@@ -492,9 +506,8 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
                 and live_shell().items.region.width
                 == live_shell().effective_layout.items_width
                 and live_shell().items.region.width > 56
-                and live_shell().work.region.width == (
-                    LIBRARY_COLLECTIONS_READER_PROFILE.work_min_width
-                )
+                and live_shell().work.region.width
+                == (LIBRARY_COLLECTIONS_READER_PROFILE.work_min_width)
                 and screen._library_reader_durable_generations["library"] > 0
             ),
             message="Collections Library pane did not collapse",
@@ -508,9 +521,7 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
             pilot,
             lambda: (
                 not live_shell().items.display
-                and screen._library_reader_durable_generations[
-                    "collections_items"
-                ]
+                and screen._library_reader_durable_generations["collections_items"]
                 > items_generation
             ),
             message="Collections Items pane did not collapse",
@@ -534,18 +545,18 @@ async def test_real_library_route_quick_capture_persists_and_selects_capture() -
 
         screen.query_one("#library-collections-quick-capture", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
-        screen.query_one("#library-collections-capture-url", Input).value = (
-            "https://example.test/new-capture"
-        )
-        screen.query_one("#library-collections-capture-title", Input).value = (
-            "Saved from the reader"
-        )
-        screen.query_one("#library-collections-capture-tags", Input).value = (
-            "research, later"
-        )
-        screen.query_one("#library-collections-capture-note", TextArea).text = (
-            "A local capture note."
-        )
+        screen.query_one(
+            "#library-collections-capture-url", Input
+        ).value = "https://example.test/new-capture"
+        screen.query_one(
+            "#library-collections-capture-title", Input
+        ).value = "Saved from the reader"
+        screen.query_one(
+            "#library-collections-capture-tags", Input
+        ).value = "research, later"
+        screen.query_one(
+            "#library-collections-capture-note", TextArea
+        ).text = "A local capture note."
         screen.query_one("#library-collections-capture-save", Button).press()
 
         await _wait_for_condition(
@@ -583,15 +594,15 @@ async def test_quick_capture_draft_survives_background_reader_recompose() -> Non
             screen, pilot, "#library-collections-capture-url"
         )
         original_url.value = "https://example.test/draft-in-progress"
-        screen.query_one("#library-collections-capture-title", Input).value = (
-            "Draft title"
-        )
-        screen.query_one("#library-collections-capture-tags", Input).value = (
-            "research, later"
-        )
-        screen.query_one("#library-collections-capture-note", TextArea).text = (
-            "Draft note"
-        )
+        screen.query_one(
+            "#library-collections-capture-title", Input
+        ).value = "Draft title"
+        screen.query_one(
+            "#library-collections-capture-tags", Input
+        ).value = "research, later"
+        screen.query_one(
+            "#library-collections-capture-note", TextArea
+        ).text = "Draft note"
         await pilot.pause()
 
         screen._refresh_library_collections_capture_reader()
@@ -640,15 +651,15 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
         await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
         screen.query_one("#library-collections-quick-capture", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
-        screen.query_one("#library-collections-capture-url", Input).value = (
-            "https://example.test/uncertain-save"
-        )
-        screen.query_one("#library-collections-capture-title", Input).value = (
-            "Uncertain save"
-        )
-        screen.query_one("#library-collections-capture-note", TextArea).text = (
-            "Do not lose this draft."
-        )
+        screen.query_one(
+            "#library-collections-capture-url", Input
+        ).value = "https://example.test/uncertain-save"
+        screen.query_one(
+            "#library-collections-capture-title", Input
+        ).value = "Uncertain save"
+        screen.query_one(
+            "#library-collections-capture-note", TextArea
+        ).text = "Do not lose this draft."
         screen.query_one("#library-collections-capture-save", Button).press()
 
         await _wait_for_condition(
@@ -677,9 +688,7 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
             pilot,
             "#library-collections-capture-retry-confirm",
         )
-        screen.query_one(
-            "#library-collections-capture-retry-confirm", Button
-        ).press()
+        screen.query_one("#library-collections-capture-retry-confirm", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: len(calls) == 2,
@@ -722,8 +731,9 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
         screen.query_one("#library-collections-summarize", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._collections_state.action_content
-            == "Summary of Action capture",
+            lambda: (
+                screen._collections_state.action_content == "Summary of Action capture"
+            ),
             message="Summarize result did not reach the reader",
         )
         await _wait_for_selector(screen, pilot, "#library-collections-listen")
@@ -747,12 +757,12 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
         await _wait_for_selector(screen, pilot, "#library-collections-mode-highlights")
         screen.query_one("#library-collections-mode-highlights", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-highlight-quote")
-        screen.query_one("#library-collections-highlight-quote", TextArea).text = (
-            "A useful body"
-        )
-        screen.query_one("#library-collections-highlight-note", Input).value = (
-            "Remember this"
-        )
+        screen.query_one(
+            "#library-collections-highlight-quote", TextArea
+        ).text = "A useful body"
+        screen.query_one(
+            "#library-collections-highlight-note", Input
+        ).value = "Remember this"
         screen.query_one("#library-collections-highlight-save", Button).press()
         await _wait_for_condition(
             pilot,
@@ -763,9 +773,9 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
         await _wait_for_selector(screen, pilot, "#library-collections-mode-notes")
         screen.query_one("#library-collections-mode-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-freeform-note")
-        screen.query_one("#library-collections-freeform-note", TextArea).text = (
-            "Updated capture note"
-        )
+        screen.query_one(
+            "#library-collections-freeform-note", TextArea
+        ).text = "Updated capture note"
         screen.query_one("#library-collections-freeform-note-save", Button).press()
         await _wait_for_condition(
             pilot,
@@ -902,3 +912,92 @@ async def test_legacy_recovery_inspector_and_export_reach_every_page(
         assert screen._collections_state.action_status == (
             "Legacy recovery export complete."
         )
+
+
+async def test_quick_capture_hostile_fields_are_rejected_and_valid_still_saves() -> (
+    None
+):
+    """TASK-31205: title/tags/note flow through the shared input-validation
+    seam (the URL already did). Each hostile field rejects the save with a
+    status message and preserves the draft; a fully valid form still saves.
+
+    Every widget is re-queried per phase: the reader recomposes after each
+    rejection, so a cached widget reference goes stale and edits would land
+    on a detached input.
+    """
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+
+        screen.query_one("#library-collections-quick-capture", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
+
+        def _fill(title: str, tags: str, note: str) -> None:
+            screen.query_one(
+                "#library-collections-capture-url", Input
+            ).value = "https://example.test/hostile-fields"
+            screen.query_one("#library-collections-capture-title", Input).value = title
+            screen.query_one("#library-collections-capture-tags", Input).value = tags
+            screen.query_one("#library-collections-capture-note", TextArea).text = note
+
+        def _press_save() -> None:
+            screen.query_one("#library-collections-capture-save", Button).press()
+
+        # Hostile title: script-injection pattern.
+        _fill("Meeting <script>alert(1)</script>", "research", "A local capture note.")
+        _press_save()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: "check the Title, Tags, and Note" in _status_text_sync(screen),
+            message="hostile title was not rejected",
+        )
+        assert (
+            screen.query_one("#library-collections-capture-url", Input).value
+            == "https://example.test/hostile-fields"
+        )
+
+        # Hostile tag: beyond the 64-char single-line cap.
+        _fill("Saved from the reader", "x" * 65, "A local capture note.")
+        _press_save()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: "check the Title, Tags, and Note" in _status_text_sync(screen),
+            message="oversized tag was not rejected",
+        )
+
+        # Hostile note: dangerous-pattern content.
+        _fill("Saved from the reader", "research, later", "See javascript:void(0)")
+        _press_save()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: "check the Title, Tags, and Note" in _status_text_sync(screen),
+            message="dangerous-pattern note was not rejected",
+        )
+
+        # Fully valid form still saves (same assertions as the happy-path
+        # characterization test above).
+        _fill("Saved from the reader", "research, later", "A local capture note.")
+        _press_save()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen._library_collections_capture_controller
+                and screen._library_collections_capture_controller.state.loaded_detail
+            ),
+            message=lambda: (
+                f"valid quick capture did not save after rejections; "
+                f"status={_status_text_sync(screen)!r}"
+            ),
+        )
+        detail = screen._library_collections_capture_controller.state.loaded_detail
+        assert detail is not None
+        assert detail.capture.title == "Saved from the reader"
+        assert detail.capture.tags == ("later", "research")
