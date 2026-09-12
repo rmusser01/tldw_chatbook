@@ -44,6 +44,7 @@ from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
 from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
 from .agent_models import (
     AgentDefinition,
+    MESSAGE_TOOL_NAMES,
     CHECK_AGENTS_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FIND_TOOLS_RESULT_LIMIT,
@@ -82,6 +83,10 @@ from .run_log_search import (
 # keeps the module off the UI-ready census path. The live policy object is
 # constructed by its callers (see `Chat/console_agent_bridge.py`).
 if TYPE_CHECKING:
+    from .fleet_message_tools import (
+        READ_AGENT_MESSAGES_SCHEMA as READ_AGENT_MESSAGES_SCHEMA,
+        REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
+    )
     from .run_tool_policy import RunToolPolicy
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
@@ -97,7 +102,7 @@ PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
-    {"canvas_list", "canvas_read", "canvas_create", "canvas_update"}
+    {"canvas_list", "canvas_read", "canvas_create", "canvas_update", "canvas_guide"}
 )
 
 
@@ -829,12 +834,23 @@ class GateableTool(NamedTuple):
         module_name: Module under ``tldw_chatbook.Tools`` defining it.
         factory_name: Class name to instantiate.
         tool_name: The name the LLM calls it by.
+        title: Plain-language name for every surface that offers the gate
+            (task-32284) -- the first-run wizard's Tools step and the MCP
+            hub's Tool gates pane both render it. Required, with no
+            fallback: a row without copy would ship a blank switch, which
+            is exactly the failure this field exists to make impossible.
+        blurb: One-line, user-facing description of what turning the gate
+            on allows -- shown under the wizard's switch and as the hub
+            row's tooltip. ``⚠`` marks a tool that creates or changes data
+            on disk (a static judgment mirroring its ``risk_tags``).
     """
 
     gate_key: str
     module_name: str
     factory_name: str
     tool_name: str
+    title: str
+    blurb: str
 
 
 #: Built-ins registered unconditionally -- no gate, cannot be turned off.
@@ -847,34 +863,68 @@ ALWAYS_ON_BUILTIN_NAMES: tuple[str, ...] = ("calculator", "get_current_datetime"
 #: since a provider only lists what its gates already permit.
 _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
     GateableTool(
-        "read_file_enabled", "file_operation_tools", "ReadFileTool", "read_file"
+        "read_file_enabled",
+        "file_operation_tools",
+        "ReadFileTool",
+        "read_file",
+        "Read file",
+        "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "list_directory_enabled",
         "file_operation_tools",
         "ListDirectoryTool",
         "list_directory",
+        "List directory",
+        "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
-        "write_file_enabled", "file_operation_tools", "WriteFileTool", "write_file"
+        "write_file_enabled",
+        "file_operation_tools",
+        "WriteFileTool",
+        "write_file",
+        "Write file",
+        "⚠ Creates or overwrites files on disk.",
     ),
     GateableTool(
-        "create_note_enabled", "note_management_tools", "CreateNoteTool", "create_note"
+        "create_note_enabled",
+        "note_management_tools",
+        "CreateNoteTool",
+        "create_note",
+        "Create note",
+        "⚠ Adds new notes to your notebook.",
     ),
     GateableTool(
-        "update_note_enabled", "note_management_tools", "UpdateNoteTool", "update_note"
+        "update_note_enabled",
+        "note_management_tools",
+        "UpdateNoteTool",
+        "update_note",
+        "Update note",
+        "⚠ Edits your existing notes.",
     ),
     GateableTool(
-        "glob_files_enabled", "file_operation_tools", "GlobFiles", "glob_files"
+        "glob_files_enabled",
+        "file_operation_tools",
+        "GlobFiles",
+        "glob_files",
+        "Find files",
+        "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
-        "grep_files_enabled", "file_operation_tools", "GrepFiles", "grep_files"
+        "grep_files_enabled",
+        "file_operation_tools",
+        "GrepFiles",
+        "grep_files",
+        "Search in files",
+        "Search inside files for text. Asks before running unless you approve a longer scope.",
     ),
     GateableTool(
         "expand_document_enabled",
         "document_expansion_tool",
         "ExpandDocumentTool",
         "expand_document",
+        "Expand document",
+        "Read the whole document behind a search result. Asks before running unless you approve a longer scope.",
     ),
 )
 
@@ -972,6 +1022,9 @@ class BuiltinToolProvider:
         self,
         gate: Any | None = None,
         workspace_id: str | None = None,
+        workspace_read_binding_ids: tuple[str, ...] | None = None,
+        workspace_write_binding_ids: tuple[str, ...] | None = None,
+        workspace_binding_authority: tuple[Any, ...] | None = None,
         ephemeral: bool = False,
         diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
         instruction_root: Path | None = None,
@@ -987,6 +1040,9 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        self._workspace_read_binding_ids = workspace_read_binding_ids
+        self._workspace_write_binding_ids = workspace_write_binding_ids
+        self._workspace_binding_authority = workspace_binding_authority
         self._sandbox_root = (
             Path(sandbox_root).resolve() if sandbox_root is not None else None
         )
@@ -1146,7 +1202,12 @@ class BuiltinToolProvider:
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
         from tldw_chatbook.Utils.path_validation import validate_path_multi
 
-        with self._file_authority(), run_workspace(self._workspace_id):
+        with self._file_authority(), run_workspace(
+            self._workspace_id,
+            read_binding_ids=self._workspace_read_binding_ids,
+            write_binding_ids=self._workspace_write_binding_ids,
+            binding_authority=self._workspace_binding_authority,
+        ):
             roots = allowed_file_roots(write=write, sandbox_root=_tool_sandbox_root())
             path = validate_path_multi(value, roots)
             try:
@@ -1250,7 +1311,12 @@ class BuiltinToolProvider:
             # concurrent run's. `self._workspace_id=None` keeps the
             # ContextVar at `None`, which is `allowed_file_roots`' own
             # documented fallback to the active workspace.
-            with authority, run_workspace(self._workspace_id):
+            with authority, run_workspace(
+                self._workspace_id,
+                read_binding_ids=self._workspace_read_binding_ids,
+                write_binding_ids=self._workspace_write_binding_ids,
+                binding_authority=self._workspace_binding_authority,
+            ):
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
             return ToolResult(
@@ -2006,7 +2072,7 @@ def probe_initial_catalog(
     schemas: list[ToolSchema] = []
     try:
         for entry in registry.list_catalog():
-            if entry.name not in allowed:
+            if entry.name not in allowed or entry.name in MESSAGE_TOOL_NAMES:
                 continue
             schemas.append(registry.load_schema(entry.id))
             measured = measure_schema_set(tuple(schemas))
@@ -2017,3 +2083,12 @@ def probe_initial_catalog(
     except Exception:
         return None
     return tuple(schemas)
+
+
+def __getattr__(name: str):
+    """Keep the public progress-schema exports lazy until explicitly requested."""
+    if name in {"READ_AGENT_MESSAGES_SCHEMA", "REPORT_TO_SUPERVISOR_SCHEMA"}:
+        from . import fleet_message_tools
+
+        return getattr(fleet_message_tools, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

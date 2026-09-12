@@ -233,7 +233,12 @@ from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static
 
 from ...Chatbooks.chatbook_models import ContentType
-from ...Library.library_export_scope import ExportScope, count_export_scope
+from ...Library.library_export_scope import (
+    ExportPreview,
+    ExportScope,
+    count_export_scope,
+    preview_export_scope,
+)
 from ...Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
     MEDIA_QUALITY_OPTIONS,
@@ -714,6 +719,9 @@ class LibraryExportController:
         """
         self._library_export_scope = scope or ExportScope(kind="everything")
         self._library_export_counts = None
+        # task-32353 AC#2: the preview lands and clears with the counts --
+        # a fresh visit must never show the previous scope's contents list.
+        self._library_export_preview = ExportPreview()
         self._library_export_form = self._default_library_export_form()
         # task-14902: a fresh visit never inherits a half-open quality strip.
         self._library_export_quality_choices_visible = False
@@ -822,6 +830,38 @@ class LibraryExportController:
                 type(exc).__name__,
             )
             return {"media": 0, "conversations": 0, "notes": 0, "prompts": 0}
+
+    @staticmethod
+    def _compute_library_export_preview(
+        scope: ExportScope, media_db: Any
+    ) -> ExportPreview:
+        """Read what the bundle will contain, beside the counts (task-32353 AC#2).
+
+        The sibling of ``_compute_library_export_counts`` above, and
+        deliberately the same shape: the pure query lives in
+        ``library_export_scope`` and raises honestly, this wrapper owns
+        the quiet-degrade AND the log line. Without the log, a canvas
+        permanently stuck on "size known once it runs" (a missing table,
+        a selection past SQLite's bound-parameter limit, a changed seam)
+        would be undiagnosable -- the one path in this feature that can
+        fail in production must not fail invisibly.
+
+        Args:
+            scope: What this export will include.
+            media_db: The media database read seam, or ``None``.
+
+        Returns:
+            The titles + byte total, or ``ExportPreview()`` on any failure.
+        """
+        try:
+            return preview_export_scope(scope, media_db)
+        except Exception as exc:
+            logger.warning(
+                "Library export preview failed scope_kind={} category={}",
+                scope.kind,
+                type(exc).__name__,
+            )
+            return ExportPreview()
 
     # ----- Export canvas: execution (Task 3) ------------------------------
 
@@ -1323,7 +1363,11 @@ class LibraryExportController:
         exists, so the overwrite line the form shows always names the
         actual path that will be written, never the raw picked one (the
         F4 design spec's explicit ordering: "normalized to .zip BEFORE any
-        overwrite confirmation").
+        overwrite confirmation"). The NORMALIZED path is validated too
+        (TASK-31204): suffix replacement rewrites the final segment, so
+        the path the export actually writes must itself clear the shared
+        seam -- validating only the raw pick left that written path
+        unchecked.
 
         Args:
             selected_path: The chosen destination, or ``None`` if the
@@ -1333,6 +1377,10 @@ class LibraryExportController:
             return
         try:
             validated_path = validate_path_simple(selected_path, require_exists=False)
+            normalized_path = normalize_export_destination(validated_path)
+            normalized_path = validate_path_simple(
+                normalized_path, require_exists=False
+            )
         except ValueError as exc:
             logger.warning(
                 f"Rejected Library export destination {selected_path!r}: {exc}"
@@ -1341,7 +1389,6 @@ class LibraryExportController:
             if callable(notify):
                 notify(f"Rejected export destination: {exc}", severity="warning")
             return
-        normalized_path = normalize_export_destination(validated_path)
         self._library_export_form["destination"] = str(normalized_path)
         self._library_export_form["destination_exists"] = normalized_path.exists()
         self.refresh(recompose=True)

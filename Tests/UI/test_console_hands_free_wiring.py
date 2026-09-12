@@ -1176,18 +1176,18 @@ async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
     )
     send_calls: list[str] = []
 
-    async def _fake_send(self, event) -> bool:
-        # TASK-340: a keyboard send stashes the draft (and clears it from
-        # the composer) at the Enter KEYPRESS, before the `Button.Pressed`
-        # this fake intercepts even fires -- `composer.draft_text()` reads
-        # empty by this point; the stash is where the sent text actually is.
-        stash = self._console_pending_send_stash
-        send_calls.append(stash.text if stash is not None else "")
-        event.stop()
+    async def _fake_send(self, *, session_id=None, pending_send_token=None) -> bool:
+        # Enter freezes the draft in the app-owned pending-send carrier before
+        # the scheduled visible-action callback runs.
+        pending = self._console_pending_send
+        send_calls.append(pending.stash.text if pending is not None else "")
+        self._console_pending_send = None
         return True
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+        chat_screen_module.ChatScreen,
+        "_send_console_message_from_visible_action",
+        _fake_send,
     )
     _, host = _ready_host()
 
@@ -1226,18 +1226,18 @@ async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
     )
     send_calls: list[str] = []
 
-    async def _fake_send(self, event) -> bool:
-        # TASK-340: a keyboard send stashes the draft (and clears it from
-        # the composer) at the Enter KEYPRESS, before the `Button.Pressed`
-        # this fake intercepts even fires -- `composer.draft_text()` reads
-        # empty by this point; the stash is where the sent text actually is.
-        stash = self._console_pending_send_stash
-        send_calls.append(stash.text if stash is not None else "")
-        event.stop()
+    async def _fake_send(self, *, session_id=None, pending_send_token=None) -> bool:
+        # Enter freezes the draft in the app-owned pending-send carrier before
+        # the scheduled visible-action callback runs.
+        pending = self._console_pending_send
+        send_calls.append(pending.stash.text if pending is not None else "")
+        self._console_pending_send = None
         return True
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+        chat_screen_module.ChatScreen,
+        "_send_console_message_from_visible_action",
+        _fake_send,
     )
     _, host = _ready_host()
 
@@ -1874,3 +1874,353 @@ async def test_vad_degraded_entry_warns_instead_of_promising_auto_send(monkeypat
             "auto-send" in message and kwargs.get("severity") == "warning"
             for message, kwargs in notifications
         )
+
+
+@pytest.mark.asyncio
+async def test_reply_with_only_failed_utterances_escalates_once(monkeypatch):
+    """TASK-32494: when EVERY utterance of a hands-free reply fails to play,
+    the loop must say so once -- a single synthesis-side failure toast (or
+    none at all, when failures are playback-side) previously left a fully
+    mute reply with zero user-visible signal."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _fast_countdown(monkeypatch, seconds=0.3)
+    gateway = _HandsFreeReplyGateway("First sentence here. Second one too. ")
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    _install_fake_tts_handler(app, mode="fail")
+    host = ConsoleHarness(app)
+
+    notifications: list[str] = []
+
+    def _record_notify(message, *args, **kwargs):
+        notifications.append(str(message))
+        return None
+
+    monkeypatch.setattr(app, "notify", _record_notify)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
+
+        await pilot.click("#console-dictation")
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+
+        service.emit_final("hello from hands free")
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while time.monotonic() < deadline and not gateway.sent_messages:
+            await pilot.pause(0.02)
+        assert gateway.sent_messages, "the countdown never drove a real send"
+
+        # Every utterance failed; the reply must still drain and the loop
+        # return to listening (failure-tolerant), but with ONE escalation
+        # notice naming the speech failure.
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while (
+            time.monotonic() < deadline
+            and console._console_hands_free.controller.state != "listening"
+        ):
+            await pilot.pause(0.02)
+        assert console._console_hands_free.controller.state == "listening"
+
+        escalations = [
+            text
+            for text in notifications
+            if "could not be spoken" in text or "Reply speech failed" in text
+        ]
+        assert escalations, notifications
+        assert len(escalations) == 1, escalations
+
+
+# ---------------------------------------------------------------------------
+# TASK-32495: failure honesty -- dictation-death exit, degraded copy,
+# entry preflight
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dictation_start_failure_exits_hands_free_loop(monkeypatch):
+    """A dictation start failure (missing mic extras, no device) must tear
+    the loop down through its reasoned exit path -- previously the Switch
+    stayed ON with no live microphone, a mode claiming to be live."""
+    fake = FakeDictationSession(start_error="No microphone backend installed")
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _patch_availability(monkeypatch)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications: list[tuple[str, dict]] = []
+        console.app_instance.notify = lambda message, **kwargs: notifications.append(
+            (message, kwargs)
+        )
+
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+
+        # The fake's start fails synchronously, so the loop may already
+        # have torn itself down by the first pause -- entry itself is
+        # proven by the capture ATTEMPT, not by a surviving session.
+        assert fake.start_calls >= 1, "the loop must have attempted a capture"
+
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while (
+            time.monotonic() < deadline
+            and console._console_hands_free is not None
+        ):
+            await pilot.pause(0.02)
+
+        assert console._console_hands_free is None, (
+            "a failed capture start must exit the loop, not strand a "
+            "switch-ON session with no live microphone"
+        )
+        assert any(
+            "No microphone backend" in message for message, _ in notifications
+        )
+
+
+def test_degraded_entry_copy_does_not_recommend_spoken_stop():
+    """In degraded (no-webrtcvad) mode, mid-capture spoken commands can
+    never fire (segments only finalize at capture stop) and nothing is
+    ever auto-sent (the 60s limit exits the loop, inserting text into the
+    draft) -- the entry warning must not recommend 'Console, stop.' and
+    must say where retained text goes."""
+    message = hands_free_module.CONSOLE_HANDS_FREE_DEGRADED_MESSAGE
+    assert "auto-send" in message  # existing degraded-entry pin
+    assert "Console, stop" not in message, message
+    assert "draft" in message, message
+
+
+@pytest.mark.asyncio
+async def test_entry_refused_when_dictation_probe_fails(monkeypatch):
+    """Hands-free entry must preflight dictation availability and refuse
+    with the probe's reason+remedy -- the switch never claims the mode."""
+    from tldw_chatbook.Chat import console_voice_input as voice_module
+
+    monkeypatch.setattr(
+        voice_module,
+        "probe",
+        lambda: voice_module.Availability(
+            ok=False,
+            kind="missing-capture",
+            reason="No microphone backend installed.",
+            remedy="Microphone support isn't installed.",
+        ),
+    )
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications: list[tuple[str, dict]] = []
+        console.app_instance.notify = lambda message, **kwargs: notifications.append(
+            (message, kwargs)
+        )
+
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+
+        assert console._console_hands_free is None, "entry must be refused"
+        assert any(
+            "Microphone support isn't installed" in message
+            and kwargs.get("severity") == "error"
+            for message, kwargs in notifications
+        ), notifications
+
+
+@pytest.mark.asyncio
+async def test_entry_warns_once_when_no_playback_path_exists(monkeypatch):
+    """With no way to play ANY audio format (no sink, no player), entry
+    still proceeds (mic-only use is legitimate) but warns once per app run."""
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _patch_availability(monkeypatch)
+    from tldw_chatbook.TTS import playback_capability as pc_module
+
+    monkeypatch.setattr(pc_module, "locally_playable_formats", lambda: frozenset())
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        notifications: list[tuple[str, dict]] = []
+        console.app_instance.notify = lambda message, **kwargs: notifications.append(
+            (message, kwargs)
+        )
+
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+        assert console._console_hands_free is not None, (
+            "mic-only hands-free is legitimate: entry proceeds with a warning"
+        )
+        warnings = [
+            (message, kwargs)
+            for message, kwargs in notifications
+            if "WAV" in message and kwargs.get("severity") == "warning"
+        ]
+        assert warnings, notifications
+
+
+def test_voice_switch_tooltips_state_relationship_and_interrupts():
+    """TASK-32496: the two voice switches sit side by side -- their
+    tooltips must state the per-conversation scope, the relationship
+    between the features, and how to interrupt/exit without opening docs."""
+    from tldw_chatbook.Widgets.Console.console_speech_controls import (
+        AUTO_SPEAK_SWITCH_TOOLTIP,
+        HANDS_FREE_SWITCH_TOOLTIP,
+    )
+
+    assert "conversation" in AUTO_SPEAK_SWITCH_TOOLTIP
+    assert "Hands-free" in AUTO_SPEAK_SWITCH_TOOLTIP
+    assert "Ctrl+Shift+H" in HANDS_FREE_SWITCH_TOOLTIP
+    assert "interrupt" in HANDS_FREE_SWITCH_TOOLTIP.lower()
+
+
+@pytest.mark.asyncio
+async def test_reply_with_no_tts_handler_escalates_once(monkeypatch):
+    """PR #2638 Qodo #1: when the TTS handler cannot initialize at all,
+    every utterance takes the no-handler branch -- that must count as a
+    failure for the whole-reply escalation, or a fully silent reply never
+    produces the visible notice."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _fast_countdown(monkeypatch, seconds=0.3)
+    gateway = _HandsFreeReplyGateway("First sentence here. Second one too. ")
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+
+    async def _no_tts_handler():
+        return None
+
+    app._ensure_tts_handler = _no_tts_handler
+    host = ConsoleHarness(app)
+
+    notifications: list[str] = []
+
+    def _record_notify(message, *args, **kwargs):
+        notifications.append(str(message))
+        return None
+
+    monkeypatch.setattr(app, "notify", _record_notify)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
+
+        await pilot.click("#console-dictation")
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+
+        service.emit_final("hello from hands free")
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while time.monotonic() < deadline and not gateway.sent_messages:
+            await pilot.pause(0.02)
+        assert gateway.sent_messages
+
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while (
+            time.monotonic() < deadline
+            and console._console_hands_free.controller.state != "listening"
+        ):
+            await pilot.pause(0.02)
+
+        escalations = [t for t in notifications if "could not be spoken" in t]
+        assert escalations, notifications
+        assert len(escalations) == 1
+
+
+def test_stale_utterance_worker_never_touches_a_replacement_session():
+    """PR #2638 Qodo #4: the speech worker must bind the session that
+    DISPATCHED it, not whatever session is current when the worker
+    happens to start -- otherwise an old loop's utterance, landing after
+    exit + re-entry, mutates the replacement's failure counters and can
+    flag a perfectly healthy reply as all-failed."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Chat.console_hands_free import HandsFreeController
+    from tldw_chatbook.Chat.reply_sentence_sequencer import SentenceSequencer
+    from tldw_chatbook.UI.Console_Modules.hands_free import (
+        ConsoleHandsFreeController,
+        ConsoleHandsFreeSession,
+    )
+
+    spoke: list[str] = []
+
+    def _speak(text: str) -> None:
+        spoke.append(text)
+
+    def make_session() -> ConsoleHandsFreeSession:
+        return ConsoleHandsFreeSession(
+            controller=HandsFreeController(emit=lambda intent: None),
+            sequencer=SentenceSequencer(speak=_speak, stop_speech=lambda: None),
+        )
+
+    screen = Mock()
+    app_instance = Mock()
+
+    async def _ensure_handler():  # pragma: no cover - must not be reached
+        raise AssertionError("a stale worker must bail before the handler")
+
+    app_instance._ensure_tts_handler = _ensure_handler
+
+    def noop(*args, **kwargs):
+        return None
+
+    controller = ConsoleHandsFreeController(
+        screen,
+        app_instance=app_instance,
+        composer_accessor=noop,
+        chat_store_accessor=noop,
+        dictation_state_accessor=lambda: "idle",
+        dictation_origin_session_id_accessor=lambda: None,
+        set_pending_voice_action=noop,
+        request_dictation_start=noop,
+        request_dictation_stop=noop,
+        run_pending_voice_action=noop,
+        realtime_session_accessor=lambda: None,
+        enter_realtime_loop=noop,
+        request_auto_speak_enabled=noop,
+        request_auto_speak_resume=noop,
+        request_auto_speak_retry=noop,
+        sync_auto_speak_controls=noop,
+        sync_hands_free_state=noop,
+        runtime_accessor=lambda: None,
+        project_voice_preview=noop,
+        clear_voice_preview=noop,
+    )
+
+    dispatching = make_session()
+    replacement = make_session()
+    # The loop that dispatched `dispatching` is gone; a NEW loop owns the
+    # screen now. The stale worker must touch neither session.
+    controller._console_hands_free = replacement
+
+    import asyncio
+
+    asyncio.run(
+        controller._speak_console_hands_free_utterance("stale words", 1, dispatching)
+    )
+
+    assert replacement.utterances_failed == 0
+    assert replacement.utterances_dispatched == 0
+    assert dispatching.utterances_failed == 0
+    assert spoke == []

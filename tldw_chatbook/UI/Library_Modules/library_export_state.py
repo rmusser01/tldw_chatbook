@@ -61,7 +61,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...Library.library_export_scope import ExportScope
+from ...Library.library_export_scope import ExportPreview, ExportScope
 
 
 @dataclass
@@ -78,6 +78,11 @@ class LibraryExportState:
     # plan's screen-attrs contract.
     scope: ExportScope = ExportScope(kind="everything")
     counts: dict[str, int] | None = None
+    # task-32353 AC#2: the counts worker's sibling read -- WHAT the bundle
+    # will contain (titles + estimated bytes), landed and reset in lockstep
+    # with ``counts`` so the consequence line can never describe a scope the
+    # count no longer belongs to.
+    preview: ExportPreview = ExportPreview()
     # Monotonic ownership for the counts request, separate from the export
     # execution token below.  Scope/route/generation can all repeat after a
     # leave -> return ABA visit, so none of them can identify the newest

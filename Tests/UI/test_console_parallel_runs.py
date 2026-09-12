@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from textual.content import Content
-from textual.widgets import Static
+from textual.widgets import Button, Select, Static
 
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -388,7 +388,7 @@ async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_view
 
     Reproduces the real ordering: the background session is active at the
     moment its (fake) send starts the timer -- exactly what
-    `_submit_console_native_draft` does for whichever session is active at
+    runtime custody does for whichever session is active at
     dispatch -- and only THEN does the user switch away to the idle
     `viewed` session, matching the reviewer's live repro.
     """
@@ -403,7 +403,7 @@ async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_view
         viewed = store.active_session_id
         background = controller.new_session().id  # background is active here
 
-        # Same start call `_submit_console_native_draft` makes as its first
+        # Same start call runtime custody makes as its first
         # action, for whichever session is active at dispatch (background).
         console._start_console_transcript_sync_timer()
         assert console._console_transcript_sync_timer is not None
@@ -530,6 +530,68 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
         assert len(
             [n for n in notifications if "needs approval" in n]
         ) == 1
+
+
+@pytest.mark.asyncio
+async def test_needs_approval_tab_marker_click_routes_to_review_action() -> None:
+    """task-32277: clicking a session tab wearing the ◆ marker reaches the
+    same approval-review seam as Alt+A / the inspector's Review button.
+
+    The clicked session here is the BACKGROUND (non-viewed) one, so its
+    round starts PARKED exactly like
+    `test_background_approval_parks_with_badge_and_single_toast` above --
+    proving the click activates it (un-parking/re-mounting its card, the
+    same behaviour `ConsoleChatController.switch_session` already gives a
+    normal tab click) before focusing its first undecided decision.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+
+        controller._parked_approval_payloads["seeded-round-tab"] = {
+            "round_id": "seeded-round-tab",
+            "session_id": background,
+            "calls": [
+                {
+                    "llm_name": "mcp__srv__tool",
+                    "server_key": "local:srv",
+                    "tool_name": "tool",
+                    "server_label": "Srv",
+                    "arguments": {},
+                    "reason": "ask",
+                    "options": ["approve_once", "deny"],
+                }
+            ],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.3)
+
+        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+        assert store.active_session_id == viewed  # still viewing the other tab
+
+        tab_button = console.query_one(f"#console-session-tab-{background}", Button)
+        tab_button.press()
+        await pilot.pause(0.3)
+
+        assert store.active_session_id == background
+        card = console.query_one("#chat-approval-card")
+        assert card.display
+        # `host` (the `ConsoleHarness` App under `run_test`) holds live
+        # focus -- `app` is the plain, never-run `TldwCli` instance handed
+        # to `ChatScreen` only for `app_instance` config/service lookups.
+        assert isinstance(host.focused, Select)
+        assert "approval-row-decision" in host.focused.classes
 
 
 @pytest.mark.asyncio
@@ -1066,7 +1128,6 @@ class _TallStepsFleetBridge:
 
     def subagent_runs(self, conversation_id: str) -> list:
         return []
-
 
 async def _setup_tall_steps_and_parked_fleet(
     console, *, collapse_session_and_model: bool

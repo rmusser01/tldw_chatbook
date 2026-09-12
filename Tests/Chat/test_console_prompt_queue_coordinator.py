@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_activity_receipts import (
     ConsoleActivityReceiptService,
@@ -37,6 +39,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     QueueGenerationAuthorization,
 )
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -429,6 +432,76 @@ async def test_three_turn_chain_drains_fifo_with_one_slot_and_explicit_origins()
 
 
 @pytest.mark.asyncio
+async def test_queued_drain_enters_runtime_custody_before_controller_with_frozen_config():
+    gateway = SequencedGateway()
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Queue custody owner")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    accepted_requests = []
+    original_accept_turn = runtime.accept_turn
+
+    def accept_turn_once(request, **kwargs):
+        accepted_requests.append((request, kwargs))
+        return original_accept_turn(request, **kwargs)
+
+    runtime.accept_turn = accept_turn_once  # type: ignore[method-assign]
+    controller.temperature = 0.15
+
+    chain_task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session.id)
+    )
+    await gateway.started[0].wait()
+    queued_id = _queue(controller, session.id, "two frozen")
+    controller.temperature = 1.75
+
+    queued_submit_started = asyncio.Event()
+    release_queued_submit = asyncio.Event()
+    observations: list[tuple[str, float | None, bool]] = []
+    original_submit = controller.submit_draft
+
+    async def submit_with_barrier(draft: str, **kwargs):
+        if kwargs.get("origin") is ConsoleSubmissionOrigin.QUEUED:
+            record = next(iter(runtime._turn_custody.values()), None)
+            configuration = kwargs.get("configuration")
+            observations.append(
+                (
+                    draft,
+                    configuration.provider_payload_settings.get("temperature"),
+                    bool(
+                        record is not None
+                        and record.request is not None
+                        and record.request.draft == draft
+                    ),
+                )
+            )
+            queued_submit_started.set()
+            await release_queued_submit.wait()
+        return await original_submit(draft, **kwargs)
+
+    controller.submit_draft = submit_with_barrier  # type: ignore[method-assign]
+    gateway.release[0].set()
+    await queued_submit_started.wait()
+    release_queued_submit.set()
+    await gateway.started[1].wait()
+    gateway.release[1].set()
+    await chain_task
+
+    assert observations == [("two frozen", 0.15, True)]
+    assert len(accepted_requests) == 1
+    accepted_request, accepted_kwargs = accepted_requests[0]
+    assert accepted_request.draft == "two frozen"
+    assert accepted_request.attachment_ids == ()
+    assert accepted_request.staged_evidence_launch is None
+    assert accepted_kwargs["origin"] is ConsoleSubmissionOrigin.QUEUED
+    assert accepted_kwargs["queue_entry_id"] == queued_id
+    assert controller.prompt_queue_registry.snapshot(session.id).total_count == 0
+    assert not runtime._turn_custody
+
+
+@pytest.mark.asyncio
 async def test_intermediate_completions_emit_only_one_final_background_outcome():
     gateway = SequencedGateway()
     controller, _store, session_id = _arm_controller(gateway)
@@ -664,7 +737,10 @@ async def test_failed_retry_stays_on_queue_owner_after_viewed_session_switch():
 @pytest.mark.asyncio
 async def test_preaccept_refusal_returns_claim_to_head_and_writes_no_history():
     gateway = RefuseSecondGateway()
-    controller, _store, session_id = _arm_controller(gateway)
+    controller, store, session_id = _arm_controller(gateway)
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
     history = RecordingPromptHistory()
     controller.prompt_history = history
     task = asyncio.create_task(
@@ -681,6 +757,8 @@ async def test_preaccept_refusal_returns_claim_to_head_and_writes_no_history():
     assert [entry.entry_id for entry in snapshot.entries] == [queued_id]
     assert history.items == ["one"]
     assert gateway.user_turns == ["one"]
+    assert runtime.recoveries_for_session(session_id) == ()
+    assert not runtime._turn_custody
 
 
 @pytest.mark.asyncio
@@ -737,7 +815,7 @@ async def test_close_tombstones_before_cancel_and_never_starts_next_prompt():
     await gateway.started[0].wait()
     _queue(controller, session_id, "two")
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     await asyncio.gather(chain_task, return_exceptions=True)
 
     assert gateway.user_turns == ["one"]
@@ -931,6 +1009,14 @@ async def test_rider_added_after_admission_returns_claim_without_consuming_it():
     )
     await gateway.started[0].wait()
     queued_id = _queue(controller, session.id, "two")
+    later_attachment = PendingAttachment(
+        "/later.png",
+        "later.png",
+        "image",
+        "attachment",
+        data=b"later",
+    )
+    assert store.add_pending_attachment(session.id, later_attachment)
     rider_present = True
     gateway.release[0].set()
     await task
@@ -940,6 +1026,7 @@ async def test_rider_added_after_admission_returns_claim_without_consuming_it():
     assert snapshot.pause_reason is PromptQueuePauseReason.DISPATCH_REFUSED
     assert [entry.entry_id for entry in snapshot.entries] == [queued_id]
     assert gateway.user_turns == ["one"]
+    assert store.pending_attachments(session.id) == [later_attachment]
 
 
 def test_queue_generation_authorization_cannot_be_constructed_externally():

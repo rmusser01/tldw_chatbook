@@ -2,13 +2,15 @@
 #
 # Unit tests for Confluence authentication
 #
-import pytest
 import os
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
+
+import pytest
 import requests
+
 from tldw_chatbook.Web_Scraping.Confluence.confluence_auth import (
-    ConfluenceAuth,
     AuthMethod,
+    ConfluenceAuth,
     create_confluence_auth,
 )
 
@@ -110,33 +112,86 @@ class TestConfluenceAuth:
         assert session is not None
         assert isinstance(session, requests.Session)
 
-    @patch.object(requests.Session, "get")
-    def test_test_authentication_success(self, mock_get):
-        """Test successful authentication test"""
+    @patch(
+        "tldw_chatbook.Web_Scraping.Confluence.confluence_auth.guarded_fetch_requests"
+    )
+    def test_test_authentication_success(self, mock_guarded_fetch):
+        """Test successful authentication test
+
+        TASK-589: the current-user probe must go through the egress-guarded
+        fetch helper (SSRF protection), like every other Confluence request.
+        """
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"displayName": "Test User"}
-        mock_get.return_value = mock_response
+        mock_guarded_fetch.return_value = mock_response
 
         auth = ConfluenceAuth("https://example.atlassian.net/wiki")
         auth.configure_api_token("user@example.com", "token")
 
         result = auth.test_authentication()
         assert result is True
-        mock_get.assert_called_once()
+        mock_guarded_fetch.assert_called_once()
 
-    @patch.object(requests.Session, "get")
-    def test_test_authentication_failure(self, mock_get):
+    @patch(
+        "tldw_chatbook.Web_Scraping.Confluence.confluence_auth.guarded_fetch_requests"
+    )
+    def test_test_authentication_failure(self, mock_guarded_fetch):
         """Test failed authentication test"""
         mock_response = Mock()
         mock_response.status_code = 401
-        mock_get.return_value = mock_response
+        mock_guarded_fetch.return_value = mock_response
 
         auth = ConfluenceAuth("https://example.atlassian.net/wiki")
         auth.configure_api_token("user@example.com", "wrong-token")
 
         result = auth.test_authentication()
         assert result is False
+
+    @patch.object(requests.Session, "get")
+    @patch(
+        "tldw_chatbook.Web_Scraping.Confluence.confluence_auth.guarded_fetch_requests"
+    )
+    def test_test_authentication_routes_through_egress_guard(
+        self, mock_guarded_fetch, mock_raw_get
+    ):
+        """TASK-589: no raw session.get bypass of the egress guard.
+
+        ``test_authentication`` used to call ``self.session.get`` directly,
+        bypassing SSRF protection (including the metadata hard-block) that
+        every other request in this module goes through.
+        """
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"displayName": "Test User"}
+        mock_guarded_fetch.return_value = mock_response
+
+        auth = ConfluenceAuth("https://example.atlassian.net/wiki")
+        auth.configure_api_token("user@example.com", "token")
+
+        assert auth.test_authentication() is True
+        mock_raw_get.assert_not_called()
+        mock_guarded_fetch.assert_called_once()
+        call = mock_guarded_fetch.call_args
+        fetched_url = call.args[0] if call.args else call.kwargs["url"]
+        assert fetched_url.endswith("/rest/api/user/current")
+        call_kwargs = call.kwargs
+        assert call_kwargs["session"] is auth.get_session()
+        assert call_kwargs["timeout"] == 10
+
+    @patch(
+        "tldw_chatbook.Web_Scraping.Confluence.confluence_auth.guarded_fetch_requests"
+    )
+    def test_test_authentication_blocked_by_egress_returns_false(
+        self, mock_guarded_fetch
+    ):
+        """TASK-589: an egress-policy rejection fails the probe, fail-closed."""
+        mock_guarded_fetch.side_effect = PermissionError("blocked by egress policy")
+
+        auth = ConfluenceAuth("https://example.atlassian.net/wiki")
+        auth.configure_api_token("user@example.com", "token")
+
+        assert auth.test_authentication() is False
 
     def test_get_auth_headers_api_token(self):
         """Test getting auth headers for API token auth"""

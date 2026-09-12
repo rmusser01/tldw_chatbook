@@ -75,6 +75,37 @@ $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
 $ds-library-source-browser-width: 31;
 
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+$ds-textarea-min-height: 5;
+
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+$ds-opacity-dim: 70%;
+
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
+
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
 
 .tldw-agentic-split-preamble-end { }
 
@@ -882,6 +913,22 @@ $ds-library-source-browser-width: 31;
     text-style: bold underline;
 }
 
+/* task-32359 (critique #10, B D9): the active destination and the focused
+   row rendered identically -- bold + underline over rgb(25,68,102) vs
+   rgb(28,70,102), three RGB units apart and colour-only. The rail had no
+   `:focus` rule of its own and fell back to the Button default. Focus
+   everywhere else on this screen is a SHAPE -- the house `█` left bar
+   (task-31983) -- so the rail stops being the exception: `-selected` above
+   keeps the background treatment, focus adds the bar. The bar replaces the
+   row's 1-column left padding (`padding: 0 1` -> `0 1 0 0`) so the label
+   neither shifts nor is clipped, and `outline: none` suppresses the generic
+   `*:focus{outline:solid}` fallback (core/_reset.tcss). */
+.library-rail-row:focus {
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* Flashcards-due emphasis on the create-flashcards rail row. Bright uses an
    accent text color (not a background fill) so the row stands out without
    reading as selected -- real selection is `.library-rail-row-selected`'s
@@ -1210,18 +1257,6 @@ $ds-library-source-browser-width: 31;
     border-left: thick $ds-action-focus;
     padding: 0 1 0 0;
     outline: none;
-}
-
-/* "From a template" group label: separates the primary Blank note action
-   from the template rows (same top-rule section grammar as the media
-   viewer's Content/Analysis/Highlights headers). */
-#library-notes-template-section {
-    width: 100%;
-    text-style: bold;
-    color: $ds-text-primary;
-    border-top: solid $ds-grid-line;
-    padding: 1 0 0 0;
-    margin: 1 0 1 0;
 }
 
 .library-canvas-action {
@@ -1757,26 +1792,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold;
 }
 
-/* Bounded editor: a bare TextArea in this scrolling canvas defaults to
-   height:1fr, which would balloon to fill available space and crowd out
-   the keywords/meta/action row beneath it. height:auto with a floor and a
-   generous ceiling keeps short notes compact while long notes scroll
-   inside the field itself instead of pushing the rest of the editor off
-   screen. */
+/* task-32217 (critique #9 density rule): the Body is the primary content
+   box of this pane and takes the pane. The old ceiling (`height: auto`,
+   `max-height: 20`) was written when the keywords, meta line and action
+   row still sat BELOW the TextArea and it had to leave them room; they
+   moved into the Info region, so `#library-note-editor-region` ends at
+   this field and the ceiling only bought blank pane. Measured live at
+   235x52 on the seeded profile: a 3-line note got a 12-row box with 18
+   empty rows under it, and the compact stage had already been given
+   `1fr` for the same reason (see the `.library-notes-compact` rules). */
 #library-note-body {
-    height: auto;
-    min-height: 12;
-    max-height: 20;
+    height: 1fr;
+    min-height: 6;
     margin: 0 0 1 0;
 }
 
-/* The read-only Markdown preview takes the TextArea's place one-for-one.
-   The focusable wrapper is its sole scroll owner; Markdown grows naturally
-   inside it so keyboard paging can reach the complete document. */
+/* The read-only Markdown preview takes the TextArea's place one-for-one,
+   so it takes the same height. The focusable wrapper is its sole scroll
+   owner; Markdown grows naturally inside it so keyboard paging can reach
+   the complete document. */
 #library-note-preview-region {
-    height: auto;
-    min-height: 12;
-    max-height: 20;
+    height: 1fr;
+    min-height: 6;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     overflow-y: auto;
@@ -2869,6 +2906,22 @@ Input.library-media-speaker-input:focus {
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* task-32350 (critique #10 P1): the applied-scope line under the Media
+   header. Quiet by design -- it is a statement of fact, not an action.
+   `1fr`, not `auto`: this line is long (a filter term and a sort label),
+   and an auto-width Static pushed its own Clear Button off the pane edge
+   once the Reader narrowed Items (live-verified at 235x52). The squeeze
+   lands on the Static, which ellipsises; the compact Button keeps its
+   natural width, so task-4023's zero-width-Button hazard is not in play. */
+.library-media-scope-line {
+    color: $ds-text-muted;
+    width: 1fr;
+    height: 1;
+    padding: 0 1 0 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* TASK-716: pressable-but-blocked Library source actions render dim; the

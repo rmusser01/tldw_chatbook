@@ -836,3 +836,67 @@ async def test_console_scope_resolution_unscoped_when_no_active_session():
 
     assert outcome is None
     assert scoped_request is request
+
+
+def test_search_kind_canvas_sync_never_targets_the_screen_directly():
+    """TASK-31261: every `_sync_library_canvas(..., "search", ...)` call site
+    forwards the CONTROLLER as the screen argument, never LibraryScreen.
+
+    The dispatcher's search-kind branch writes the flat
+    `_library_rag_answer_render_key` attribute directly on its receiver;
+    LibraryScreen has no `_rag_search_state`, so a screen-targeted call
+    would silently grow a dead instance attribute instead of raising. The
+    invariant was verified once by hand (an AST-verified code comment); this
+    census makes it standing, following the two-file pattern of
+    `test_library_screen_call_sites_never_pass_scope_kwarg` above but
+    sweeping the screen AND every Library controller module, so the census
+    cannot go silently green if the call sites move again.
+    """
+    package_root = Path(tldw_chatbook.__file__).parent
+    candidate_files = [
+        package_root / "UI" / "Screens" / "library_screen.py",
+        *sorted((package_root / "UI" / "Library_Modules").glob("*.py")),
+    ]
+
+    def _search_kind_calls(tree):
+        found = []
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_sync_library_canvas"
+            ):
+                continue
+            args = list(node.args)
+            kind_is_search = False
+            if len(args) >= 2 and isinstance(args[1], ast.Constant):
+                kind_is_search = args[1].value == "search"
+            kind_is_search = kind_is_search or any(
+                kw.arg == "kind"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value == "search"
+                for kw in node.keywords
+            )
+            if kind_is_search:
+                found.append(node.lineno)
+        return found
+
+    total_sites = 0
+    for source_path in candidate_files:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        sites = _search_kind_calls(tree)
+        total_sites += len(sites)
+        if source_path.name == "library_rag_search_controller.py":
+            continue
+        assert not sites, (
+            f"{source_path.name} calls _sync_library_canvas with kind "
+            f'"search" directly (line(s) {sites}): search-kind syncs must '
+            "go through LibraryRagSearchController, which owns "
+            "_rag_search_state -- a screen receiver would silently grow a "
+            "dead attribute instead of raising."
+        )
+
+    assert total_sites >= 1, (
+        "no search-kind _sync_library_canvas call site found in any "
+        "censused file; the invariant cannot be verified by an empty census"
+    )

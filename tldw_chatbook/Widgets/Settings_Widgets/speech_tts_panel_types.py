@@ -14,6 +14,7 @@ The draft-validation cluster therefore lives here: the bounds, the realtime
 sibling draft, the two detach/validate helpers, and the snapshot itself. The
 panel re-imports the three names it still uses directly
 (``SpeechTTSPanelDraftSnapshot``, ``_RealtimeSettingsDraft``,
+``_PipelineVoiceSettingsDraft``,
 ``_MAX_DRAFT_REVISION``); the other nine are reached through those. Because
 they are re-exports rather than copies, ``panel.SpeechTTSPanelDraftSnapshot``
 remains the SAME class object -- the identity checks above and the panel's own
@@ -28,7 +29,7 @@ Speech/TTS settings model, which is already on the app import path through
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import cast
 
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
@@ -97,8 +98,14 @@ class _RealtimeSettingsDraft:
     turn_detection: str
     vad_threshold: str
     vad_silence_ms: str
+    #: TASK-32496: the pipeline loop's tuning knobs, surfaced in Settings.
+    #: The send delay is an optional number (blank = unset -- the readers'
+    #: own default wins and Save deletes the key); barge-in is an explicit
+    #: on/off Switch, always written.
+    handsfree_send_delay_seconds: str
+    acoustic_barge_in: bool
 
-    def snapshot(self) -> tuple[bool, str, str, str, str, str, str, str, str]:
+    def snapshot(self) -> tuple[bool, str, str, str, str, str, str, str, str, str, bool]:
         return (
             self.enabled,
             self.provider,
@@ -109,7 +116,36 @@ class _RealtimeSettingsDraft:
             self.turn_detection,
             self.vad_threshold,
             self.vad_silence_ms,
+            self.handsfree_send_delay_seconds,
+            self.acoustic_barge_in,
         )
+
+
+@dataclass
+class _PipelineVoiceSettingsDraft:
+    """Local editable copy of speculative-pipeline-only voice settings."""
+
+    response_eagerness_ms: str
+    pipeline_aec_enabled: bool
+
+    def snapshot(self) -> tuple[str, bool]:
+        return (self.response_eagerness_ms, self.pipeline_aec_enabled)
+
+
+def _validated_pipeline_voice_draft_copy(
+    value: object,
+) -> _PipelineVoiceSettingsDraft:
+    """Return one detached, structurally bounded pipeline voice draft."""
+
+    if type(value) is not _PipelineVoiceSettingsDraft:
+        raise TypeError("Pipeline voice Settings draft is invalid")
+    if (
+        type(value.response_eagerness_ms) is not str
+        or len(value.response_eagerness_ms) > _MAX_DRAFT_TEXT_CHARACTERS
+        or type(value.pipeline_aec_enabled) is not bool
+    ):
+        raise ValueError("Pipeline voice Settings draft is invalid")
+    return replace(value)
 
 
 def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
@@ -118,6 +154,8 @@ def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
     if type(value) is not _RealtimeSettingsDraft:
         raise TypeError("Realtime Settings draft is invalid")
     if type(value.enabled) is not bool:
+        raise TypeError("Realtime Settings draft is invalid")
+    if type(value.acoustic_barge_in) is not bool:
         raise TypeError("Realtime Settings draft is invalid")
     for field_name in (
         "provider",
@@ -128,6 +166,7 @@ def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
         "turn_detection",
         "vad_threshold",
         "vad_silence_ms",
+        "handsfree_send_delay_seconds",
     ):
         text = getattr(value, field_name)
         if type(text) is not str or len(text) > _MAX_DRAFT_TEXT_CHARACTERS:
@@ -331,6 +370,12 @@ class SpeechTTSPanelDraftSnapshot:
     realtime_original: _RealtimeSettingsDraft
     configure_provider: str
     draft_revision: int
+    pipeline_voice_draft: _PipelineVoiceSettingsDraft = field(
+        default_factory=lambda: _PipelineVoiceSettingsDraft("700", True)
+    )
+    pipeline_voice_original: _PipelineVoiceSettingsDraft = field(
+        default_factory=lambda: _PipelineVoiceSettingsDraft("700", True)
+    )
 
     def __post_init__(self) -> None:
         if self.configure_provider not in BUILT_IN_TTS_PROVIDER_ORDER:
@@ -360,6 +405,16 @@ class SpeechTTSPanelDraftSnapshot:
             self,
             "realtime_original",
             _validated_realtime_draft_copy(self.realtime_original),
+        )
+        object.__setattr__(
+            self,
+            "pipeline_voice_draft",
+            _validated_pipeline_voice_draft_copy(self.pipeline_voice_draft),
+        )
+        object.__setattr__(
+            self,
+            "pipeline_voice_original",
+            _validated_pipeline_voice_draft_copy(self.pipeline_voice_original),
         )
 
     def __repr__(self) -> str:

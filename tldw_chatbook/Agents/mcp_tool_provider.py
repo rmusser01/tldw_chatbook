@@ -56,20 +56,30 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
 from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
-from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+from tldw_chatbook.MCP.execution_log import (
+    APPROVED_SESSION_DECISION,
+    KILL_SWITCH_DENIED_DECISION,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
     local_tools_from_record,
     schema_argument_names,
 )
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    HIGH_RISK_TAGS,
+    EffectiveToolState,
+)
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.tool_naming import dedupe_names, llm_tool_name
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .run_context import current_run_id
 from .tool_catalog import ToolExecutionPolicy
+from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 
 SOURCE = "mcp"
 
@@ -92,7 +102,10 @@ USER_DENY_REFUSAL = f"tool call denied by the user. {DENIAL_POLICY}"
 #: decided, and the permissions were not Off.
 UNRESOLVED_REFUSAL = "tool call not approved (no decision recorded)"
 TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
-KILL_SWITCH_REFUSAL = "blocked — MCP tools are switched off"
+#: task-32285: ONE definition of the sentence, in `Agents.tool_refusals`
+#: -- see `TOOL_KILL_SWITCH_REFUSAL`. The NAME stays (importers depend on
+#: it); only the value's source moved.
+KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 NON_TEXT_PLACEHOLDER = "[image result — not yet supported]"
 
 # `.result(timeout=...)` slack added on top of the configured per-call tool
@@ -106,6 +119,72 @@ _MAX_ERROR_CHARS = 300
 _NON_TEXT_CONTENT_TYPES = frozenset({"image", "blob"})
 
 _FAIL_CLOSED_STATE = EffectiveToolState(state="ask", origin="global_default")
+
+
+#: Qodo #1 (task-32278): names of ``builtin:tldw_chatbook`` tools that WRITE.
+#:
+#: Every built-in ``HubTool`` carries ``tags=()`` unconditionally
+#: (``hub_tool_catalog.builtin_tools_from_inventory`` hard-codes it) and the
+#: local MCP manifest it is built from carries no risk metadata at all --
+#: ``MCP/server.py`` synthesizes each entry from the tool function's AST
+#: signature. That empty tag tuple is load-bearing, not an oversight:
+#: ``permission_store.BY_KEY_HASH_FREE_SERVER_KEYS`` exempts this server key
+#: from ``resolve_effective_state_by_key()``'s "any allow collapses to ask"
+#: rule, which is safe ONLY while there is no tag for a floor to catch (see
+#: that constant's comment and the tripwire test
+#: ``test_builtin_tools_never_carry_risk_tags_even_when_offered_them``).
+#:
+#: So the card's read-vs-write wording is recovered HERE, from the one place
+#: the write fact is actually declared -- the Library descriptor table's
+#: ``mutates`` flag, plus the one hand-written note tool the local MCP server
+#: registers directly. This feeds ``effects`` only; nothing here reaches the
+#: permission layer, so no built-in's risk floor, argument rules, or
+#: Permissions-matrix row changes.
+_MUTATING_BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
+    {name for name, d in LIBRARY_TOOL_DESCRIPTORS.items() if d.mutates}
+    | {"create_note"}
+)
+
+
+def approval_effects_for_tool(tool: Any) -> tuple[str, ...]:
+    """Return the card-facing effects implied by a tool's risk tags.
+
+    task-32278: the approval card's read-vs-mutation wording keys off
+    ``MCPPendingCall.effects``, and only the local-tool descriptors ever
+    populated it -- so a built-in ``write_file`` (``risk_tags ==
+    ("mutates",)``) rendered "this tool reads local data". Deriving the
+    effect from the SAME tag vocabulary the risk floor already uses
+    (``permission_store.HIGH_RISK_TAGS``) keeps the card's sentence and the
+    reason the row is asking from disagreeing, without adding a second
+    signal.
+
+    Qodo #1: a ``source == "builtin"`` ``HubTool`` has no tags to read (see
+    ``_MUTATING_BUILTIN_TOOL_NAMES``), so a mutating built-in reaching this
+    provider's path -- ``create_note``, ``library_save_note`` -- fell
+    through to ``()`` and its row rendered no "Effects:" line at all. Those
+    are recovered by name, and only for the built-in source: a local or
+    server tool that happens to share a name is unaffected.
+
+    Args:
+        tool: A built-in ``Tool`` (``risk_tags``) or a ``HubTool`` (``tags``).
+            Anything else, ``None`` included, yields ``()``.
+
+    Returns:
+        ``("mutates_local",)`` for a mutating tool, else ``()`` -- a read
+        needs no effect, since the card's default sentence already says
+        "reads".
+    """
+    tags = getattr(tool, "risk_tags", None)
+    if tags is None:
+        tags = getattr(tool, "tags", ())
+    if any(str(tag).lower() == "mutates" for tag in tags or ()):
+        return ("mutates_local",)
+    if (
+        getattr(tool, "source", "") == "builtin"
+        and str(getattr(tool, "name", "")) in _MUTATING_BUILTIN_TOOL_NAMES
+    ):
+        return ("mutates_local",)
+    return ()
 
 
 @dataclass(frozen=True)
@@ -183,6 +262,35 @@ def _pending_reason(state: EffectiveToolState) -> str:
     return "ask"
 
 
+#: task-32281 fix round (R22): every card option EXCEPT "always allow this
+#: exact input". `permission_store.arg_rule_allows` refuses outright for a
+#: tool whose tags intersect `HIGH_RISK_TAGS`, so a rule stored for one
+#: would never quiet a single call -- the card was advertising a decision
+#: that does nothing. `always_allow` STAYS: it persists a tool-level
+#: `allow` whose `origin` is `"tool_override"`, and
+#: `resolve_effective_state`'s floor explicitly spares that origin, so
+#: unlike the arg rule it really does take effect.
+_HIGH_RISK_OPTIONS: tuple[str, ...] = (
+    "approve_once",
+    "approve_session",
+    "always_allow",
+    "deny",
+)
+
+
+def _options_for_tool(tool: HubTool) -> tuple[str, ...]:
+    """The card options this tool may be decided with.
+
+    Args:
+        tool: The tool the row is for.
+
+    Returns:
+        `_HIGH_RISK_OPTIONS` for a `mutates`/`process` tool, else `()` --
+        the empty default the card reads as "offer everything".
+    """
+    return _HIGH_RISK_OPTIONS if set(tool.tags) & HIGH_RISK_TAGS else ()
+
+
 class MCPToolProvider:
     """``ToolProvider``: local + builtin MCP tools, gated per call.
 
@@ -209,6 +317,8 @@ class MCPToolProvider:
         builtin_raw_name_exclusions: Any = None,
         profile_id_provider: Callable[[], str] | None = None,
         persona_policy_provider: Callable[[], "PersonaToolPolicy | None"] | None = None,
+        maximum_tool_ids: frozenset[str] | None = None,
+        maximum_definition_hashes: Mapping[str, str] | None = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -260,6 +370,16 @@ class MCPToolProvider:
         # Persona require_confirmation floor (final review): read fresh per
         # gate resolution; None keeps every pre-feature call identical.
         self._persona_policy_provider = persona_policy_provider
+        self._maximum_tool_ids = (
+            frozenset(str(value) for value in maximum_tool_ids)
+            if maximum_tool_ids is not None
+            else None
+        )
+        self._maximum_definition_hashes = (
+            {str(key): str(value) for key, value in maximum_definition_hashes.items()}
+            if maximum_definition_hashes is not None
+            else None
+        )
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -375,11 +495,21 @@ class MCPToolProvider:
         effective = self._service.effective_tool_states(
             hub_tools, **self._profile_kwargs()
         )
+        from tldw_chatbook.MCP.permission_store import definition_hash
         eligible = [
             tool
             for tool in hub_tools
             if effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state
             != "deny"
+            and (
+                self._maximum_tool_ids is None
+                or tool.tool_id in self._maximum_tool_ids
+            )
+            and (
+                self._maximum_definition_hashes is None
+                or self._maximum_definition_hashes.get(tool.tool_id)
+                == definition_hash(tool.description, tool.input_schema)
+            )
         ]
 
         # Distinct servers (not tools) among the eligible, non-denied set
@@ -531,6 +661,35 @@ class MCPToolProvider:
         with self._decisions_lock:
             return self._stamped_decisions.get((run_id, llm_name))
 
+    def record_user_denial(self, llm_name: str) -> None:
+        """Audit a card "Deny" the review hook resolved BEFORE dispatch.
+
+        `invoke()` records every refusal it reaches, but a hook-level deny
+        never reaches it: `run_agent_loop` turns any non-"proceed" verdict
+        straight into the call's result and skips the dispatch chain
+        entirely (`agent_runtime.py`, "a non-'proceed' verdict ... skips
+        dispatch entirely"). Live on dev 3315241674 that left three
+        approvals of one tool in `mcp_execution_log.jsonl` and no row at
+        all for the Deny pressed on the same tool (task-32280). So the
+        denial is recorded here, where it becomes final, through the same
+        `record_tool_decision` seam and the same `"denied"` decision
+        `_apply_verdict`'s own deny branch writes.
+
+        No double-recording: the runtime never dispatches the call this
+        denial belongs to, so `invoke()` never runs for it. A same-name
+        SIBLING call the user approved is dispatched and recorded on its
+        own, once, by `_execute`.
+
+        Args:
+            llm_name: The LLM-facing tool id the card refused. A name this
+                provider does not own (a built-in or skill tool -- the
+                review hook reviews those too) is silently ignored.
+        """
+        entry = self._entry_by_llm_name.get(llm_name)
+        if entry is None:
+            return
+        self._record_decision_safe(entry[0], decision="denied")
+
     @contextlib.contextmanager
     def stamp_scope(self, run_id: str):
         """Snapshot `run_id`'s stamps on enter; RESTORE (not merge) on exit.
@@ -668,6 +827,8 @@ class MCPToolProvider:
                 :TOOL_DESCRIPTION_CAPTURE_CAP
             ],
             reason=_pending_reason(state),
+            options=_options_for_tool(tool),
+            effects=approval_effects_for_tool(tool),
         )
 
     # -- invocation (WORKER THREAD) ----------------------------------------
@@ -704,7 +865,15 @@ class MCPToolProvider:
             length-capped, always-non-empty `error` on refusal or
             failure. Never raises.
         """
+        from .automatic_work_runtime import current_automatic_work
+
         with self._invoke_lock:
+            automatic_work = current_automatic_work()
+            if automatic_work is not None:
+                try:
+                    automatic_work.check()
+                except Exception as exc:  # noqa: BLE001 -- no authority, no approval or tool work
+                    return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
             return self._invoke_locked(tool_id, args)
 
     def _invoke_locked(self, tool_id: str, args: dict) -> ToolResult:
@@ -763,7 +932,10 @@ class MCPToolProvider:
         # stamped-verdict short-circuit below so even an earlier-this-turn
         # approval cannot bypass it.
         if self._kill_switch_engaged():
-            self._record_decision_safe(tool, decision="denied")
+            # task-32280 fix round: the SWITCH refused, not the user and not
+            # this tool's Allow/Ask/Off setting -- a reader who wants the
+            # call to work must go to the switch, so the row says so.
+            self._record_decision_safe(tool, decision=KILL_SWITCH_DENIED_DECISION)
             return ToolResult.blocked(KILL_SWITCH_REFUSAL)
 
         # PR2a Task 5: only THIS run's own stamp may resolve this call. The
@@ -790,7 +962,12 @@ class MCPToolProvider:
             return ToolResult(ok=False, error=str(exc)[:_MAX_ERROR_CHARS])
 
         if state.state == "deny":
-            self._record_decision_safe(tool, decision="denied")
+            # task-32280: `DENY_REFUSAL` tells the model this was the
+            # permissions being Off, so the audit row says the same. Plain
+            # "denied" is now reserved for a person's card Deny ("Denied by
+            # you" in Audit) -- one bucket for both made "what did I
+            # refuse?" unanswerable.
+            self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION)
             return ToolResult.blocked(DENY_REFUSAL)
 
         if state.state == "allow":
@@ -808,7 +985,10 @@ class MCPToolProvider:
         if self._arg_rule_allows_safe(tool, call_args):
             return self._execute(tool, call_args, decision="allowed")
         if self._approval_callback is None:
-            self._record_decision_safe(tool, decision="denied")
+            # Same `DENY_REFUSAL` copy, same audit token (task-32280): there
+            # was no surface to ask on, so nobody was shown a card and
+            # nobody said no.
+            self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION)
             return ToolResult.blocked(DENY_REFUSAL)
 
         pending = MCPPendingCall(
@@ -818,6 +998,8 @@ class MCPToolProvider:
             server_label=tool.server_label,
             arguments=call_args,
             reason=_pending_reason(state),
+            options=_options_for_tool(tool),
+            effects=approval_effects_for_tool(tool),
         )
         try:
             decisions = self._approval_callback([pending])
@@ -969,6 +1151,16 @@ class MCPToolProvider:
             decision = APPROVED_SESSION_DECISION if already_approved else "approved"
             return self._execute(tool, args, decision=decision)
         if verdict == "allow_matching":
+            if set(tool.tags) & HIGH_RISK_TAGS:
+                # R22: `arg_rule_allows` refuses for these tools, so the
+                # rule would be stored and never consulted. Degrade to a
+                # one-time approval rather than persist dead state.
+                logger.debug(
+                    "MCPToolProvider: allow_matching not persisted for "
+                    f"{tool.server_key}/{tool.name} -- high-risk tags are "
+                    "never quieted by an argument rule; approving once"
+                )
+                return self._execute(tool, args, decision="approved")
             # TASK-26012: persist an allow scoped to EXACTLY the displayed
             # arguments (AC#3) -- never a whole-tool allow. Rug-pull hashing
             # happens service-side against this live HubTool.
@@ -1015,7 +1207,7 @@ class MCPToolProvider:
         # version recorded plain "denied" here, so Decision-filtered audit
         # views reported an explicit denial nobody made). Mirrors the
         # existing "denied-timeout" vocabulary.
-        self._record_decision_safe(tool, decision="denied-unresolved")
+        self._record_decision_safe(tool, decision=UNRESOLVED_DENIED_DECISION)
         return ToolResult.blocked(UNRESOLVED_REFUSAL)
 
     def _safe_side_effect(
@@ -1073,20 +1265,39 @@ class MCPToolProvider:
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
         try:
+            from .automatic_work_runtime import current_automatic_work
+
+            automatic_work = current_automatic_work()
+            if automatic_work is not None:
+                # An approval may have arrived after this chain stopped.
+                automatic_work.check()
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
             # Task 4 (PR-T3): the same schema `tool.input_schema` the Hub
             # workbench's Test Tool form renders from -- named argument
             # NAMES only, never values, so an agent-initiated run is
             # audited with real provenance instead of the pre-Task-4
             # always-empty `argument_names: []`.
-            execution_coroutine = self._service.execute_hub_tool(
-                tool.server_key,
-                tool.name,
-                args,
-                initiator="agent",
-                decision=decision,
-                registered_argument_names=schema_argument_names(tool.input_schema),
-            )
+            def create_execution():
+                return self._service.execute_hub_tool(
+                    tool.server_key,
+                    tool.name,
+                    args,
+                    initiator="agent",
+                    decision=decision,
+                    registered_argument_names=schema_argument_names(tool.input_schema),
+                )
+
+            if automatic_work is not None:
+                async def execute_authorized():
+                    # Scheduling on the main loop can itself wait. Bind the
+                    # captured authority and check again at actual dispatch.
+                    with automatic_work.scope():
+                        automatic_work.check()
+                        return await create_execution()
+
+                execution_coroutine = execute_authorized()
+            else:
+                execution_coroutine = create_execution()
             future = asyncio.run_coroutine_threadsafe(
                 execution_coroutine,
                 self._main_loop,

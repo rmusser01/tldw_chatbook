@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
@@ -87,6 +88,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_turn_context import (
@@ -102,7 +104,22 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 class ConsoleChatStore(_ConsoleChatStore):
-    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+    """Ephemeral test store with a permissive frozen policy ceiling."""
+
+    def __init__(self, **kwargs):
+        # Individual tests replace the live coordinator to select ALLOWED,
+        # BLOCKED, AUTOMATIC, or NEVER. Runtime custody intersects that live
+        # selection with the session's frozen maximum, so keep the maximum
+        # permissive here rather than accidentally overriding the fake under
+        # test with the production fail-closed defaults.
+        kwargs.setdefault(
+            "library_policy_defaults",
+            ConsoleLibraryPolicyDefaults(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            ),
+        )
+        super().__init__(**kwargs)
 
     def create_session(self, **kwargs):
         kwargs.setdefault("ephemeral", self.persistence is None)
@@ -1019,10 +1036,19 @@ async def test_interrupted_validation_releases_only_its_session(interruption):
             with pytest.raises(asyncio.CancelledError):
                 await task
         elif interruption == "close":
-            controller.close_session(session.id)
+            ticket = controller.begin_session_close(
+                session.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=session.id
+                ).revision,
+            )
+            # ADR-094 drains cancellation before deleting the session.
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+            assert task.cancelled()
             closed_state = controller.run_state_for(session.id)
-            result = await asyncio.wait_for(task, timeout=1)
-            assert result.session_closed
+            assert closed_state.status is ConsoleRunStatus.STOPPED
+            controller.finalize_session_close(ticket)
             assert all(item.id != session.id for item in store.sessions())
             assert controller.run_state_for(session.id) == closed_state
         else:
@@ -1081,7 +1107,7 @@ async def test_skill_refuse_after_preparation_removes_transient_echo():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
-    async def _refuse(messages):
+    async def _refuse(messages, _turn_context):
         return messages, "Refused: untrusted skill.", (), (), ""
 
     controller._apply_skill_substitution = _refuse
@@ -1100,7 +1126,7 @@ async def test_dictionary_apply_raise_after_preparation_removes_transient_echo()
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
-    async def _boom(messages, session_id):
+    async def _boom(messages, session_id, _turn_context):
         raise RuntimeError("dict boom")
 
     controller._apply_chat_dictionaries = _boom
@@ -1448,16 +1474,11 @@ async def test_character_retry_without_chunks_preserves_prior_emote_metadata():
 
 
 @pytest.mark.asyncio
-async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
-    started = threading.Event()
-    release = threading.Event()
-
-    class BlockingRepository:
+async def test_character_snapshot_blocks_when_actor_changes_after_handoff():
+    class Repository:
         def get_active_actor_pack(self, actor_kind, actor_id):
             assert actor_kind == "character"
             if actor_id == 7:
-                started.set()
-                assert release.wait(2)
                 state = "old_state"
                 identity = 70
             else:
@@ -1474,6 +1495,18 @@ async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
                 ],
             }
 
+    class BlockingResolutionGateway(CharacterEmoteStreamingGateway):
+        def __init__(self):
+            super().__init__("Emote: new_state\nHello")
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def resolve_for_send(self, selection):
+            resolution = await super().resolve_for_send(selection)
+            self.started.set()
+            await self.release.wait()
+            return resolution
+
     store = ConsoleChatStore()
     session = store.create_session(
         settings=ConsoleSessionSettings(provider="llama_cpp"),
@@ -1481,31 +1514,24 @@ async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
         assistant_id="7",
         character_id=7,
     )
-    gateway = CharacterEmoteStreamingGateway("Emote: new_state\nHello")
+    gateway = BlockingResolutionGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller._visual_identity_repository = BlockingRepository()
+    controller._visual_identity_repository = Repository()
 
     task = asyncio.create_task(controller.submit_draft("hello", session_id=session.id))
-    for _attempt in range(100):
-        if started.is_set():
-            break
-        await asyncio.sleep(0)
-    assert started.is_set()
+    await gateway.started.wait()
     session.assistant_id = "8"
     session.character_id = 8
     session.identity_revision += 1
-    release.set()
+    gateway.release.set()
 
     result = await task
 
     assert result.accepted is True
-    prompt = gateway.messages_seen[0]["content"]
-    assert "new_state" in prompt
-    assert "old_state" not in prompt
-    completed = store.messages_for_session(session.id)[-1]
-    assert completed.content == "Hello"
-    assert completed.metadata.character_emote.actor_id == 8
-    assert completed.metadata.character_emote.pack_id == 80
+    assert result.visible_copy == "Character context changed before dispatch; try again."
+    assert gateway.messages_seen is None
+    failed = _last_failed_assistant(store, session.id)
+    assert failed.content == ""
 
 
 @pytest.mark.asyncio
@@ -1849,7 +1875,7 @@ async def test_close_streaming_session_stops_run_without_key_error():
     assert session_id is not None
     assert controller.run_state.status is ConsoleRunStatus.STREAMING
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     gateway.release.set()
     result = await asyncio.wait_for(task, timeout=0.5)
 
@@ -1898,7 +1924,7 @@ async def test_close_streaming_session_result_does_not_set_dispatch_gap_toast_fl
     await asyncio.wait_for(gateway.started.wait(), timeout=1)
     session_id = store.active_session_id
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     gateway.release.set()
     result = await asyncio.wait_for(task, timeout=0.5)
 
@@ -1923,7 +1949,7 @@ async def test_submit_draft_dispatch_gap_session_closed_sets_toast_flag_with_inf
     session_a = store.ensure_session(title="A")
     closed_session_id = session_a.id
     controller.new_session(title="B")
-    controller.close_session(closed_session_id)
+    close_controller_session(controller, closed_session_id)
 
     result = await controller.submit_draft("hello", session_id=closed_session_id)
 
@@ -3574,6 +3600,48 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     # persistent write, so it must stay offered (spec correction 0e6e8a56d).
     assert row.options == ("approve_once", "approve_session", "deny")
     assert verdicts == {"write_thing": "proceed"}
+
+
+def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
+    """task-32278 AC#3: the card's blast-radius sentence must be right.
+
+    The read-vs-mutation wording keys off `MCPPendingCall.effects`, and this
+    builder passed none -- so `write_file`, whose `risk_tags == ("mutates",)`
+    is exactly what floors it to "ask", rendered "this tool reads local
+    data". Driven through the REAL hook with the REAL tools: a
+    reconstruction of these kwargs would keep passing if the builder stopped
+    supplying them, which is the defect itself.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool, WriteFileTool
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_reason,
+    )
+
+    def _row_for(tool) -> MCPPendingCall:
+        asked: dict[str, list[MCPPendingCall]] = {}
+
+        def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+            asked["pending"] = pending
+            return {p.llm_name: "deny" for p in pending}
+
+        hook = build_tool_review_hook(
+            _FakeBuiltinGate(), _FakeBuiltinProvider(tool), None, request_approvals
+        )
+        hook([_builtin_call(tool.name)], RUN)
+        return asked["pending"][0]
+
+    mutating = _row_for(WriteFileTool())
+    assert mutating.effects == ("mutates_local",)
+    assert format_approval_reason(vars(mutating)) == (
+        "High risk: this tool changes local data and always asks first."
+    )
+
+    reading = _row_for(ReadFileTool())
+    assert reading.effects == ()
+    assert format_approval_reason(vars(reading)) == (
+        "High risk: this tool reads local data and always asks first."
+    )
 
 
 def _file_tool(name: str):
@@ -5736,6 +5804,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
 ):
     from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.conversation_local_marks_service import ConversationLocalMarksService
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     db = CharactersRAGDB(
@@ -5795,6 +5864,9 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
 
         assert first.accepted is True
         assert assistant.status == "failed"
+        marks = ConversationLocalMarksService(db)
+        first_marks = marks.list_console_unseen_marks()
+        assert first_marks == ((session.persisted_conversation_id, assistant.metadata.terminal_receipt_id),)
         first_metadata_json = db.get_message_by_id(assistant.persisted_message_id)[
             "metadata_json"
         ]
@@ -5837,6 +5909,7 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
             ):
                 await controller.retry_message(assistant.id)
             assert canvas.settlement_for_assistant(assistant.id).state.value == "ready"
+            assert marks.list_console_unseen_marks() == first_marks
             uncommitted_row = db.get_message_by_id(assistant.persisted_message_id)
             assert [
                 card["status"]
@@ -5864,6 +5937,11 @@ async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
         assert settlement is not None
         assert settlement.state.value == "committed"
         durable_assistant = store.get_message(assistant.id)
+        assert set(marks.list_console_unseen_marks()) == {
+            *first_marks,
+            (session.persisted_conversation_id, durable_assistant.metadata.terminal_receipt_id),
+        }
+        assert durable_assistant.metadata.terminal_receipt_id != first_marks[0][1]
         if successful_retry_uses_canvas:
             assert invoke_results[-1].ok is True
         rows = db.execute_query(
@@ -6026,7 +6104,7 @@ async def test_agent_path_applies_dictionary_before_bridge_sees_messages():
     gateway = RecordingStreamingGateway()
     events: list[str] = []
 
-    def applier(conversation_id, content):
+    def applier(conversation_id, content, _frozen_inputs):
         events.append("dictionary_applied")
         return content.replace("Warden", "grim jailer")
 
@@ -6082,7 +6160,7 @@ async def test_stream_assistant_response_owner_lookup_survives_closed_session():
     # Simulate the session closing while a caller (e.g. retry_message) was
     # still awaiting earlier stages of the pipeline: this purges
     # `_message_session_index` for `assistant.id` before the gate runs.
-    controller.close_session(session.id)
+    close_controller_session(controller, session.id)
 
     resolution = type(
         "Resolution",
@@ -7170,7 +7248,7 @@ async def test_baseline_ignores_dispatch_time_substitution_and_stays_comparable(
     )
     session = store.ensure_session(title="Chat 1")
 
-    async def _substitute_final_turn(provider_messages):
+    async def _substitute_final_turn(provider_messages, _turn_context):
         # Stand-in for skill/chat-dictionary/world-info substitution: the
         # ephemeral payload for this turn differs from what the store
         # actually holds (the raw text the user typed is what's persisted).
@@ -7777,8 +7855,8 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
         if change_history:
             substitute = controller._apply_skill_substitution
 
-            async def changed_history(rows):
-                result = await substitute(rows)
+            async def changed_history(rows, turn_context=None):
+                result = await substitute(rows, turn_context)
                 result[0][0] = {**result[0][0], "content": "Different history."}
                 return result
 
@@ -9177,6 +9255,8 @@ async def test_agent_provider_composition_captures_one_named_profile_for_mcp_and
     context = SimpleNamespace(
         tool_policy_profile_id="research",
         persona_policy_rules=None,
+        mcp_tool_maximum=None,
+        mcp_definition_maximum={},
     )
 
     await controller._compose_agent_request_providers(
@@ -9746,6 +9826,17 @@ class _CountingGenerationPersistence:
         self.writer_release.clear()
 
     def replace_assistant_generation_projection(self, **kwargs):
+        return self._write_generation(
+            self._delegate.replace_assistant_generation_projection, kwargs
+        )
+
+    def replace_assistant_generation_projection_with_contributions(self, **kwargs):
+        return self._write_generation(
+            self._delegate.replace_assistant_generation_projection_with_contributions,
+            kwargs,
+        )
+
+    def _write_generation(self, writer, kwargs):
         with self._count_lock:
             self.projection_attempts += 1
             should_block = self._block_next
@@ -9753,7 +9844,7 @@ class _CountingGenerationPersistence:
         if should_block:
             self.writer_entered.set()
             assert self.writer_release.wait(timeout=3)
-        version = self._delegate.replace_assistant_generation_projection(**kwargs)
+        version = writer(**kwargs)
         with self._count_lock:
             self.projection_commits += 1
         return version
@@ -11142,3 +11233,343 @@ async def test_leading_reference_draft_still_gets_audit_row(monkeypatch):
     rows = store.messages_for_session(store.active_session_id)
     system_rows = [m for m in rows if m.role.value == "system" and "@-references" in m.content]
     assert system_rows, "leading-@ draft lost its audit row"
+
+
+# --------------------------------------------------------------------------
+# task-32344: pre-provider setup is bounded and visible.
+# --------------------------------------------------------------------------
+
+
+def test_personal_context_bootstrap_cannot_hold_the_send_open(monkeypatch):
+    """A wedged lazy bootstrap must give up, not stall the first send.
+
+    Reproduces the real trace: the app-owned Personal Context service is
+    built lazily on the FIRST agent send, and its constructor talks to the
+    OS credential store, which can block indefinitely (macOS Keychain
+    authorization UI). ``personalization never blocks chat`` was enforced
+    only against exceptions, so a hang sailed straight through it.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+    entered = threading.Event()
+
+    def never_returns():
+        entered.set()
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    # The shipped ceiling; the test then patches it so the wedge is quick.
+    assert controller_module.CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS == 10.0
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        started = time.monotonic()
+        resolved = loop.run_until_complete(controller._personal_context_service())
+        elapsed = time.monotonic() - started
+    finally:
+        released.set()
+        loop.close()
+    assert entered.is_set()
+    assert resolved is None
+    # Under 1s, not merely under the shipped 10s: this must fail if the
+    # patched budget is ever ignored and the real ceiling applies.
+    assert elapsed < 1.0, elapsed
+
+
+def test_expired_budget_warning_names_the_budget_value(monkeypatch):
+    """The budget-exceeded WARNING must render the actual number.
+
+    loguru only substitutes kwargs that appear as ``{placeholders}`` in the
+    message string itself; ``_forward_loguru_to_standard`` forwards only
+    ``record["message"]``, never ``record["extra"]``. A message that carries
+    ``budget_seconds=...`` as a bare kwarg (with no ``{budget_seconds}`` in
+    the template) ships with no number in it at all.
+    """
+    from loguru import logger as loguru_logger
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+
+    def never_returns():
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    messages = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    loop = asyncio.new_event_loop()
+    try:
+        resolved = loop.run_until_complete(controller._personal_context_service())
+    finally:
+        loguru_logger.remove(sink_id)
+        released.set()
+        loop.close()
+    assert resolved is None
+    rendered = [str(m) for m in messages if "personal context bootstrap" in str(m)]
+    assert rendered, "expected a budget-exceeded WARNING"
+    assert "0.05" in rendered[0], rendered[0]
+
+
+def test_a_wedged_bootstrap_does_not_park_a_second_worker(monkeypatch):
+    """The second send must not queue another thread behind the first.
+
+    Expiring the budget abandons the worker; it does not kill it, and
+    `get_personal_context_service` holds a process-wide lock for the whole
+    bootstrap. Without a guard, send N+1 parks another shared-executor
+    worker on that lock permanently -- and that executor also carries
+    `run_reply` and ~1100 other `to_thread` calls.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    released = threading.Event()
+    calls = []
+
+    def never_returns():
+        calls.append(1)
+        released.wait(30)
+        return object()
+
+    controller.app = SimpleNamespace(get_personal_context_service=never_returns)
+    monkeypatch.setattr(
+        controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        assert loop.run_until_complete(controller._personal_context_service()) is None
+        started = time.monotonic()
+        second = loop.run_until_complete(controller._personal_context_service())
+        second_elapsed = time.monotonic() - started
+    finally:
+        released.set()
+        loop.close()
+    assert second is None
+    # One submission, not two: the wedged worker is still holding the lock.
+    assert calls == [1], calls
+    # And the second send did not even wait out the (patched) budget.
+    assert second_elapsed < 0.01, second_elapsed
+
+
+def test_a_finished_bootstrap_clears_the_in_flight_guard(monkeypatch):
+    """The guard is not a one-way latch -- a healthy attempt reopens it."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    calls = []
+
+    def getter():
+        calls.append(1)
+        return service
+
+    controller.app = SimpleNamespace(get_personal_context_service=getter)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is service
+    assert asyncio.run(controller._personal_context_service()) is service
+    assert calls == [1, 1]
+    assert not controller_module._PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set()
+
+
+def test_a_cancel_before_the_worker_starts_reopens_the_in_flight_guard(monkeypatch):
+    """Stop during the queue wait must not latch the guard for the process.
+
+    Qodo #5 on PR #2586: the guard is set before `to_thread` submits, and
+    only the callable cleared it. Cancelling the await while that callable is
+    still QUEUED cancels the executor future outright -- it never runs, never
+    clears, and every later resolution in the process returns None, silently
+    sending without profile tools forever.
+
+    The executor is pinned to one worker and that worker is occupied, so the
+    bootstrap callable provably cannot have started when the cancel lands.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    calls = []
+
+    def getter():
+        calls.append(1)
+        return service
+
+    controller.app = SimpleNamespace(get_personal_context_service=getter)
+    guard = threading.Event()
+    monkeypatch.setattr(
+        controller_module, "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT", guard
+    )
+
+    occupied = threading.Event()
+    release = threading.Event()
+
+    def occupy_the_only_worker():
+        occupied.set()
+        release.wait(30)
+
+    loop = asyncio.new_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    loop.set_default_executor(executor)
+
+    async def _cancel_while_queued():
+        blocker = loop.run_in_executor(executor, occupy_the_only_worker)
+        assert occupied.wait(5), "the blocking job never took the worker"
+        task = asyncio.ensure_future(controller._personal_context_service())
+        await asyncio.sleep(0.05)
+        assert guard.is_set(), "the guard should be held across the submission"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return blocker
+
+    try:
+        blocker = loop.run_until_complete(_cancel_while_queued())
+        assert calls == [], "the callable must not have started"
+        assert not guard.is_set(), "a cancel before the worker started latched the guard"
+        release.set()
+        loop.run_until_complete(blocker)
+        # The whole point: a later send still gets its profile tools.
+        assert loop.run_until_complete(controller._personal_context_service()) is service
+        assert calls == [1]
+    finally:
+        release.set()
+        executor.shutdown(wait=False)
+        loop.close()
+
+
+def test_a_raising_bootstrap_clears_the_in_flight_guard(monkeypatch):
+    """A bootstrap that raises must not wedge the guard shut either."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    def boom():
+        raise RuntimeError("no credential store")
+
+    controller.app = SimpleNamespace(get_personal_context_service=boom)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is None
+    assert not controller_module._PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set()
+
+
+def test_personal_context_bootstrap_returns_its_service_within_budget(monkeypatch):
+    """The bound is a ceiling, not a delay: a healthy bootstrap is unchanged."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    service = object()
+    controller.app = SimpleNamespace(get_personal_context_service=lambda: service)
+    monkeypatch.setattr(
+        controller_module,
+        "_PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT",
+        threading.Event(),
+    )
+    assert asyncio.run(controller._personal_context_service()) is service
+
+
+@pytest.mark.asyncio
+async def test_setup_state_covers_the_mcp_catalog_composition(monkeypatch):
+    """The row must say "setup" WHILE tools are being composed, not after.
+
+    Qodo #6 on PR #2586: `_compose_agent_request_providers` awaits
+    `compose_catalog()`'s discovery I/O, and the setup phase used to open
+    only once that returned -- so a slow or unreachable MCP server left the
+    assistant row blank for exactly as long as the discovery took, which is
+    the failure the setup state exists to end.
+    """
+    from unittest.mock import MagicMock
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    bridge_store = MagicMock()
+    bridge_store.messages_for_session.return_value = []
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=MagicMock(),
+        store=bridge_store,
+        provider_gateway=MagicMock(),
+    )
+    bridge.run_reply = lambda **_kwargs: (
+        "run-test",
+        RunOutcome(status=RUN_DONE, steps=[], final_text="ok"),
+    )
+    controller._agent_bridge = bridge
+    session = _arm_session(store)
+    conversation_id = controller._agent_conversation_id(session.id)
+    assert bridge.live_snapshot(conversation_id).status == "idle"
+
+    observed = []
+    compose = controller._compose_agent_request_providers
+
+    async def observed_compose(**kwargs):
+        observed.append(bridge.live_snapshot(conversation_id).status)
+        # Stand in for the discovery I/O: the mark must survive the await,
+        # not just the call.
+        await asyncio.sleep(0)
+        observed.append(bridge.live_snapshot(conversation_id).status)
+        return await compose(**kwargs)
+
+    monkeypatch.setattr(
+        controller, "_compose_agent_request_providers", observed_compose
+    )
+
+    await controller.submit_draft("hello")
+
+    assert observed == ["setup", "setup"], observed
+    # And the mark does not outlive the dispatch it was covering.
+    assert bridge._setup_started_at == {}
+
+
+def test_pre_provider_setup_phase_marks_and_clears_the_bridge():
+    """The bracket the send runs its setup inside marks, then always clears."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    bridge = SimpleNamespace(marked=[], cleared=[])
+    bridge.begin_setup_phase = lambda cid, **_kw: bridge.marked.append(cid)
+    bridge.end_setup_phase = lambda cid: bridge.cleared.append(cid)
+    controller._agent_bridge = bridge
+
+    async def _happy():
+        async with controller._pre_provider_setup_phase("c1"):
+            assert bridge.marked == ["c1"]
+            assert bridge.cleared == []
+
+    asyncio.run(_happy())
+    assert bridge.cleared == ["c1"]
+
+    async def _raising():
+        async with controller._pre_provider_setup_phase("c2"):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(_raising())
+    assert bridge.cleared == ["c1", "c2"]

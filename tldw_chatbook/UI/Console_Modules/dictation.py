@@ -1103,6 +1103,17 @@ class ConsoleDictationController:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
         self._cancel_console_dictation_elapsed_timer()
+        # TASK-32495: a dictation failure inside the hands-free loop
+        # (capture start refused -- missing extras, no device -- or a
+        # mid-capture failure) strands the loop otherwise: the FSM has no
+        # capture-failed input and `listening` has no watchdog, so the
+        # Switch kept claiming a live mode over a dead microphone. Exit
+        # through the loop's own reasoned path, exactly the precedent
+        # `_handle_console_dictation_limit` set for bounded endings -- the
+        # failure toast below still fires from this method.
+        hands_free_session = self._console_hands_free
+        if hands_free_session is not None:
+            hands_free_session.controller.on_exit_request()
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
         self._console_dictation_partial = ""
@@ -1281,7 +1292,12 @@ class ConsoleDictationController:
                     # `_request_console_dictation_stop()` here would only
                     # do the first half, leaving the FSM believing it is
                     # still running.
-                    self._console_hands_free.controller.on_exit_request()
+                    controller = self._console_hands_free.controller
+                    stop = getattr(controller, "on_stop_request", None)
+                    if callable(stop):
+                        stop()
+                    else:
+                        controller.on_exit_request()
                 else:
                     self._request_console_dictation_stop()
             elif event.name == "discard":
@@ -2062,7 +2078,12 @@ class ConsoleDictationController:
             # state, exactly like Esc/spoken "stop" -- superseding the
             # ordinary one-shot toggle below for as long as the loop is
             # running.
-            self._console_hands_free.controller.on_exit_request()
+            controller = self._console_hands_free.controller
+            microphone_disabled = getattr(controller, "on_microphone_disabled", None)
+            if callable(microphone_disabled):
+                microphone_disabled()
+            else:
+                controller.on_exit_request()
             return
         if self._console_realtime is not None:
             # V4 task 5 (final review C1): the SAME rule for the

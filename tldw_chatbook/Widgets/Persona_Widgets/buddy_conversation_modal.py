@@ -179,6 +179,18 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
         )
         self.query_one(SkillScriptConfirmCard).set_script(payloads.get("skill_script"))
         self.query_one(ChatQuestionCard).set_questions(payloads.get("question"))
+        rendered_id = None
+        for kind, card_type in (
+            ("approval", ChatApprovalCard),
+            ("skill_install", SkillInstallConfirmCard),
+            ("skill_script", SkillScriptConfirmCard),
+        ):
+            payload = payloads.get(kind)
+            if payload and self.query_one(card_type).display:
+                rendered_id = payload.get("_decision_id")
+        coordinator.show_decisions(
+            self, self.binding if available else None, decision_id=rendered_id
+        )
         notice = coordinator.notices.get(self.binding, "")
         if "worktree_merge" in payloads:
             notice = "A worktree decision needs review. Open Console to continue."

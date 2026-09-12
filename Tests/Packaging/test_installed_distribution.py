@@ -1170,7 +1170,7 @@ def _copy_build_inputs(destination: Path) -> None:
         "dist",
         "*.egg-info",
     )
-    for name in ("tldw_chatbook", "Packaging", "packages"):
+    for name in ("tldw_chatbook", "Packaging", "packages", "scripts"):
         shutil.copytree(REPO_ROOT / name, destination / name, ignore=ignored)
 
     seen_test_trees: set[tuple[int, int]] = set()
@@ -1760,6 +1760,9 @@ def test_built_artifacts_match_distribution_contract(
     } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
+    development_launcher = "scripts/run_speculative_voice_dev.py"
+    assert development_launcher not in sdist_members
+    assert development_launcher not in wheel_members
     for members in (sdist_members, wheel_members):
         assert {
             name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")
@@ -1923,6 +1926,36 @@ print("installed-audio-cpp-manifest-ok")
         result = _run_child([sys.executable, "-c", probe], run_root, env)
 
     assert "installed-audio-cpp-manifest-ok" in result.stdout
+
+
+def test_installed_wheel_loads_all_canvas_guides(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel(built_distributions, target)
+    env = _private_child_env(state_root, target, built_distributions.source_root)
+    probe = """
+from pathlib import Path
+import os
+from tldw_chatbook.Canvas import guide
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+assert Path(guide.__file__).resolve(strict=True).is_relative_to(expected_target)
+assert set(guide.CANVAS_GUIDE_PATHS) == {"basics", "controls", "mermaid", "repair"}
+for topic in guide.CANVAS_GUIDE_PATHS:
+    text = guide.read_canvas_guide(topic)
+    assert text.strip()
+    assert len(text.encode("utf-8")) <= guide.MAX_CANVAS_GUIDE_RESULT_BYTES
+print("installed-canvas-guides-ok")
+"""
+    with _read_only_installed_tree(target):
+        result = _run_child([sys.executable, "-c", probe], run_root, env)
+    assert "installed-canvas-guides-ok" in result.stdout
 
 
 def test_installed_migration_probe_validates_environment_derived_path() -> None:

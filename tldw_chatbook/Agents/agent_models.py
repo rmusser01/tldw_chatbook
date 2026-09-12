@@ -12,6 +12,7 @@ import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -22,6 +23,14 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
+
+
+class WorkOrigin(Enum):
+    """Trusted admission origin shared by runtime owners."""
+
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"
@@ -173,6 +182,11 @@ SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
 # per-call daemon-thread timeout wrapper.
 MERGE_AGENT_WORKTREE_TOOL_NAME = "merge_agent_worktree"
 DISCARD_AGENT_WORKTREE_TOOL_NAME = "discard_agent_worktree"
+REPORT_TO_SUPERVISOR_TOOL_NAME = "report_to_supervisor"
+READ_AGENT_MESSAGES_TOOL_NAME = "read_agent_messages"
+MESSAGE_TOOL_NAMES = frozenset(
+    {REPORT_TO_SUPERVISOR_TOOL_NAME, READ_AGENT_MESSAGES_TOOL_NAME}
+)
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -190,6 +204,8 @@ RUNTIME_TOOL_NAMES = frozenset(
         SEND_TO_AGENT_TOOL_NAME,
         MERGE_AGENT_WORKTREE_TOOL_NAME,
         DISCARD_AGENT_WORKTREE_TOOL_NAME,
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
     }
 )
 
@@ -221,13 +237,51 @@ MAX_LOOP_PERIOD = 4
 class SkillFileBindings:
     """Per-run authorization + reader for the skill_file runtime tool.
 
-    Mutable by design: seeded with the turn's $skill names; SkillRunner adds
-    each spawned skill's name before spawn so a skill can always read its own
-    bundle. Authorization lives here, never in config.allowed_tools.
+    Mutable by design: seeded with the turn's admitted skill definitions;
+    SkillRunner adds each spawned definition before spawn so a skill can read
+    only that exact bundle. Authorization lives here, never in
+    config.allowed_tools.
     """
 
     authorized: set[str]
-    reader: Callable[[str, str], dict] | None = None
+    reader: Callable[[str, str], dict] | None = field(default=None, repr=False)
+    definition_digests: dict[str, str] = field(default_factory=dict, repr=False)
+    current_definition_digest: Callable[[str], str | None] | None = field(
+        default=None, repr=False
+    )
+
+    def authorize(self, skill_name: str, definition_digest: str | None) -> None:
+        """Grant one exact admitted skill definition, or fail closed."""
+        digest = str(definition_digest or "")
+        if not digest:
+            self.revoke(skill_name)
+            return
+        self.definition_digests[skill_name] = digest
+        self.authorized.add(skill_name)
+
+    def revoke(self, skill_name: str) -> None:
+        """Remove both the name and its exact admitted definition."""
+        self.authorized.discard(skill_name)
+        self.definition_digests.pop(skill_name, None)
+
+    def read(self, skill_name: str, path: str) -> dict:
+        """Revalidate the exact admitted definition before reading bytes."""
+        expected = self.definition_digests.get(skill_name)
+        resolver = self.current_definition_digest
+        if skill_name not in self.authorized or not expected or resolver is None:
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed")
+        try:
+            current = resolver(skill_name)
+        except Exception:  # noqa: BLE001 -- uncertainty revokes old authority
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed") from None
+        if current != expected:
+            self.revoke(skill_name)
+            raise PermissionError("skill_definition_changed")
+        if self.reader is None:
+            raise RuntimeError("no reader configured")
+        return self.reader(skill_name, path)
 
 
 @dataclass(frozen=True)
@@ -405,6 +459,10 @@ def failed_tool_record_projection(
         ok=result.ok if result is not None else False,
         error_category=category,
     )
+
+
+class SpawnAdmissionRefusal(ToolResult):
+    """A spawn refused before child execution; it consumes no spawn allowance."""
 
 
 @dataclass(frozen=True)

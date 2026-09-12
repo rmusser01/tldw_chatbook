@@ -7,6 +7,8 @@ import re
 import sqlite3
 from collections.abc import Mapping
 
+from loguru import logger
+
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleAssistantSettlement,
     ConsoleContinuationHandoff,
@@ -46,8 +48,13 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleExactNativeIdTransactionContribution,
     _scoped_console_transaction_writer,
 )
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
 _OWNER_SELECT = """
@@ -114,6 +121,7 @@ class ConsoleDispatchRepository:
 
     def __init__(self, db: CharactersRAGDB) -> None:
         self.db = db
+        self.local_marks = ConversationLocalMarksService(db)
 
     def insert_with_messages(
         self,
@@ -457,15 +465,14 @@ class ConsoleDispatchRepository:
             )
         active_ids = self._active_path_ids(cursor, conversation_id)
         if assistant_id not in active_ids:
-            return self._quarantined(
+            return self._reconcile_stranded_checkpoint(
+                cursor,
                 conversation_id,
-                assistant_id,
-                "checkpoint_not_active_path",
+                row,
+                allow_writes=allow_writes,
             )
 
-        continuation = read_provider_continuation_json(
-            row["provider_continuation_json"]
-        )
+        continuation = read_provider_continuation_json(row["provider_continuation_json"])
         if continuation.checkpoint is not None:
             if continuation.checkpoint.state != "active":
                 return self._quarantined(
@@ -498,9 +505,7 @@ class ConsoleDispatchRepository:
                 ),
             )
             if updated.rowcount != 1:
-                raise sqlite3.IntegrityError(
-                    "Continuation precedence message CAS failed."
-                )
+                raise sqlite3.IntegrityError("Continuation precedence message CAS failed.")
             self._delete_exact_checkpoint(cursor, row)
             return ConsoleDispatchRecoveryState(
                 kind=ConsoleDispatchRecoveryKind.CONTINUATION,
@@ -532,6 +537,78 @@ class ConsoleDispatchRepository:
                 assistant_id,
                 error_code or "invalid_checkpoint",
             )
+        return console_dispatch_recovery_from_checkpoint(checkpoint)
+
+    def _reconcile_stranded_checkpoint(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        row: sqlite3.Row,
+        *,
+        allow_writes: bool,
+    ) -> "ConsoleDispatchRecoveryState | _ReconcileWriteNeeded":
+        """Restore a proven pending turn stranded by an older cursor writer.
+
+        This repairs only the local view pointer, never the checkpoint or its
+        authority. No request is dispatched; ordinary explicit recovery follows.
+        """
+        assistant_id = str(row["assistant_message_id"])
+        checkpoint, error_code = self._checkpoint_from_row(row)
+        if checkpoint is None:
+            return self._quarantined(
+                conversation_id, assistant_id, error_code or "invalid_checkpoint"
+            )
+        # Do not select a different branch over another unresolved owner.
+        if self._reconcile_checkpoint_free_owner(cursor, conversation_id) is not None:
+            return self._quarantined(
+                conversation_id, assistant_id, "duplicate_active_path_owner"
+            )
+        seen: set[str] = set()
+        current: str | None = assistant_id
+        while current is not None:
+            if current in seen:
+                return self._quarantined(
+                    conversation_id, assistant_id, "invalid_checkpoint_ancestry"
+                )
+            seen.add(current)
+            ancestor = cursor.execute(
+                "SELECT parent_message_id, provider_continuation_json, assistant_generation_state "
+                "FROM messages WHERE id = ? AND conversation_id = ? AND deleted = 0",
+                (current, conversation_id),
+            ).fetchone()
+            if ancestor is None or (
+                current == assistant_id
+                and ancestor["parent_message_id"] != checkpoint.user_message_id
+            ):
+                return self._quarantined(
+                    conversation_id, assistant_id, "invalid_checkpoint_ancestry"
+                )
+            if current != assistant_id:
+                continuation = read_provider_continuation_json(
+                    ancestor["provider_continuation_json"]
+                )
+                if ancestor["assistant_generation_state"] in {
+                    "accepted",
+                    "dispatch_started",
+                    "continuation_active",
+                } or (
+                    ancestor["provider_continuation_json"] is not None
+                    and (
+                        continuation.checkpoint is None
+                        or continuation.checkpoint.state != "complete"
+                    )
+                ):
+                    return self._quarantined(
+                        conversation_id, assistant_id, "invalid_checkpoint_ancestry"
+                    )
+            current = ancestor["parent_message_id"]
+        if not allow_writes:
+            return _RECONCILE_WRITE_NEEDED
+        cursor.execute(
+            "UPDATE conversations SET active_leaf_message_id = ?, active_leaf_before_message_id = NULL "
+            "WHERE id = ? AND deleted = 0",
+            (assistant_id, conversation_id),
+        )
         return console_dispatch_recovery_from_checkpoint(checkpoint)
 
     def _reconcile_checkpoint_free_owner(
@@ -701,6 +778,7 @@ class ConsoleDispatchRepository:
             if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code or "")
             else "invalid_checkpoint"
         )
+        logger.warning("console_dispatch_recovery_quarantined error_code={}", bounded)
         return ConsoleDispatchRecoveryState(
             kind=ConsoleDispatchRecoveryKind.QUARANTINED,
             assistant_message_id=assistant_message_id,
@@ -887,6 +965,38 @@ class ConsoleDispatchRepository:
                 raise ConsoleDispatchCheckpointValidationError(
                     "Invalid assistant metadata."
                 )
+        terminal_mark_type = None
+        ordinary = MessageMetadata.from_json(settlement.metadata_json)
+        video = VideoGenerationMetadata.from_json(settlement.metadata_json)
+        metadata_receipt = (
+            video.terminal_receipt_id
+            if video is not None
+            else ordinary.terminal_receipt_id
+            if ordinary is not None
+            else ""
+        )
+        attention_terminal = settlement.terminal_state in {"complete", "failed"}
+        if (
+            attention_terminal != (settlement.terminal_receipt_id is not None)
+            or bool(metadata_receipt)
+            != (settlement.terminal_receipt_id is not None)
+            or (
+                settlement.terminal_receipt_id is not None
+                and metadata_receipt != settlement.terminal_receipt_id
+            )
+        ):
+            raise ConsoleDispatchCheckpointValidationError(
+                "Invalid terminal receipt settlement."
+            )
+        if settlement.terminal_receipt_id is not None:
+            try:
+                terminal_mark_type = self.local_marks.console_unseen_mark_type(
+                    settlement.terminal_receipt_id
+                )
+            except ValueError as exc:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid terminal receipt settlement."
+                ) from exc
         if settlement.usage_json is not None:
             try:
                 usage = json.loads(settlement.usage_json)
@@ -996,6 +1106,15 @@ class ConsoleDispatchRepository:
                             conversation_id=str(row["conversation_id"]),
                             message_ids=message_ids,
                         )
+            if terminal_mark_type is not None:
+                self.local_marks.set_console_terminal_with_cursor(
+                    cursor,
+                    str(row["conversation_id"]),
+                    settlement.terminal_receipt_id,
+                    settlement.terminal_state,
+                    created_at=now,
+                    updated_at=now,
+                )
             deleted = cursor.execute(
                 """
                 DELETE FROM console_dispatch_checkpoints

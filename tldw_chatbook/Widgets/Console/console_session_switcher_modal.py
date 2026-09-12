@@ -251,7 +251,7 @@ class ConsoleSessionSwitcherModal(
     BINDINGS: ClassVar[list[tuple[str, str, str] | Binding]] = [
         ("escape", "request_safe_cancel", "Cancel"),
         ("f2", "rename_entry", "Rename"),
-        ("f3", "toggle_mode", "Next mode"),
+        ("shift+f3", "toggle_mode", "Next mode"),
         Binding("down", "switcher_cursor_down", "Next result", priority=True),
         Binding("up", "switcher_cursor_up", "Previous result", priority=True),
         Binding("home", "switcher_cursor_home", "First result", priority=True),
@@ -387,7 +387,7 @@ class ConsoleSessionSwitcherModal(
                     if self._mode is SwitcherMode.CHARACTER_CHATS
                     else self._operational_query
                 ),
-                placeholder="Find titles, workspaces or status…",
+                placeholder="Search sessions, workspaces, waiting, running, or finished…",
                 id="console-switcher-query",
                 max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
             )
@@ -416,7 +416,7 @@ class ConsoleSessionSwitcherModal(
                     )
             with Horizontal(id="console-switcher-footer"):
                 yield Static(
-                    "Enter: switch · F3: History",
+                    "Enter: switch · Shift+F3: History",
                     id="console-switcher-hints",
                     markup=False,
                 )
@@ -1024,7 +1024,7 @@ class ConsoleSessionSwitcherModal(
             )
         if self._mode is SwitcherMode.ACTIVE and not query and not self._active_results:
             return (
-                "No active agents yet. Ctrl+T creates an agent tab. Use F3 for "
+                "No active agents yet. Ctrl+T creates an agent tab. Use Shift+F3 for "
                 "saved conversation History."
             )
         if query:
@@ -1926,7 +1926,7 @@ class ConsoleSessionSwitcherModal(
             query.placeholder = (
                 "Search local Character chats by Keyword…"
                 if self._mode is SwitcherMode.CHARACTER_CHATS
-                else ("Find titles, workspaces or status…")
+                else ("Search sessions, workspaces, waiting, running, or finished…")
             )
         except NoMatches:
             pass
@@ -2082,9 +2082,9 @@ class ConsoleSessionSwitcherModal(
             hints.update("Finishing…")
         else:
             hints.update(
-                f"{primary} F3:mode Esc:close"
+                f"{primary} Shift+F3:mode Esc:close"
                 if self._compact_layout
-                else f"{primary} · ↑↓:move · F3:mode · Esc:close"
+                else f"{primary} · ↑↓:move · Shift+F3:mode · Esc:close"
             )
 
     async def action_show_workbench_help(self) -> None:
@@ -2121,7 +2121,7 @@ class ConsoleSessionSwitcherModal(
                             (
                                 ("Enter", "apply selected action"),
                                 ("F2", "rename eligible open Console tab"),
-                                ("F3", "next mode"),
+                                ("Shift+F3", "next mode"),
                                 ("Esc", "close or cancel precommit open"),
                                 (
                                     "Library Back",

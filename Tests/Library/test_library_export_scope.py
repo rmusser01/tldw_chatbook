@@ -17,6 +17,7 @@ snapshot instead of a fresh query would silently drop rows past the cap.
 from __future__ import annotations
 
 import pytest
+from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -25,7 +26,9 @@ from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_export_scope import (
     ExportScope,
     count_export_scope,
+    ExportPreview,
     export_scope_label,
+    preview_export_scope,
     resolve_export_selections,
 )
 
@@ -408,3 +411,212 @@ def test_export_scope_label_media_type_filter_pluralises_too():
 def test_export_scope_label_explicit_selection_pluralises():
     scope = ExportScope(kind="notes", ids=("note-1",))
     assert export_scope_label(scope, {"notes": 1}) == "Selected notes · 1 item"
+
+
+# --- preview_export_scope (task-32353 AC#2) ---------------------------------
+# The canvas asked for a destination and a name and then wrote a bundle
+# nobody had seen the contents of. This is the pre-write read that lets it
+# say what it is about to write -- run on the counts worker, never the UI
+# thread, and never raising out of it.
+
+
+def test_preview_reports_the_selected_items_titles_and_their_stored_bytes(media_db):
+    first, _, _ = media_db.add_media_with_keywords(
+        title="Attention Is All You Need", content="a" * 2048, media_type="article"
+    )
+    second, _, _ = media_db.add_media_with_keywords(
+        title="Deep Residual Learning", content="b" * 2048, media_type="article"
+    )
+    scope = ExportScope(
+        kind="media", ids=(f"local:media:{first}", f"local:media:{second}")
+    )
+
+    preview = preview_export_scope(scope, media_db)
+
+    assert preview.titles == (
+        "Attention Is All You Need",
+        "Deep Residual Learning",
+    )
+    assert preview.approx_bytes == 4096
+
+
+def test_preview_counts_utf8_bytes_not_characters(media_db):
+    # A bare LENGTH() on TEXT counts characters and would under-report any
+    # non-ASCII library by up to 4x.
+    media_id, _, _ = media_db.add_media_with_keywords(
+        title="Ω", content="Ω" * 100, media_type="article"
+    )
+
+    preview = preview_export_scope(
+        ExportScope(kind="media", ids=(str(media_id),)), media_db
+    )
+
+    assert preview.approx_bytes == 200
+
+
+def test_preview_honours_the_media_type_filter_for_a_whole_source_scope(media_db):
+    media_db.add_media_with_keywords(title="V1", content="x" * 1024, media_type="video")
+    media_db.add_media_with_keywords(title="A1", content="y" * 1024, media_type="article")
+
+    preview = preview_export_scope(
+        ExportScope(kind="media", media_type="video"), media_db
+    )
+
+    assert preview.titles == ("V1",)
+    assert preview.approx_bytes == 1024
+
+
+def test_preview_skips_deleted_and_trashed_items(media_db):
+    media_db.add_media_with_keywords(
+        title="Kept", content="k" * 1024, media_type="article"
+    )
+    trashed, _, _ = media_db.add_media_with_keywords(
+        title="Trashed", content="t" * 1024, media_type="article"
+    )
+    media_db.mark_as_trash(trashed)
+
+    preview = preview_export_scope(ExportScope(kind="media"), media_db)
+
+    # The trashed item contributes neither a title nor its 1024 bytes.
+    assert preview.titles == ("Kept",)
+    assert preview.approx_bytes == 1024
+
+
+def test_preview_caps_the_title_query_instead_of_reading_every_row(media_db):
+    """task-32353 review (Low 3): the SUM must visit every row, but the
+    canvas renders 20 titles -- so the title query is LIMITed and never
+    materialises one string per item in a whole-source scope."""
+    for index in range(25):
+        # Distinct content per item: identical content dedups into one row.
+        media_db.add_media_with_keywords(
+            title=f"Item {index:02d}",
+            content=f"{index:02d}" + "x" * 1022,
+            media_type="article",
+        )
+
+    preview = preview_export_scope(ExportScope(kind="media"), media_db)
+
+    # One row past the render limit -- enough to know it was truncated.
+    assert len(preview.titles) == 21
+    assert preview.titles[0] == "Item 00"
+    # The byte total still covers all 25, not just the 21 fetched.
+    assert preview.approx_bytes == 25 * 1024
+
+
+def test_preview_is_empty_for_a_scope_whose_items_it_cannot_size(media_db):
+    """An "everything" export spans four sources; only one is sizeable here,
+    so the canvas says "size known once it runs" rather than guessing."""
+    media_db.add_media_with_keywords(title="M", content="m" * 1024, media_type="article")
+
+    preview = preview_export_scope(ExportScope(kind="everything"), media_db)
+
+    assert preview.titles == ()
+    assert preview.approx_bytes is None
+
+
+def test_preview_raises_so_its_wrapper_can_log_the_failure():
+    """task-32353 review (Medium 2): the quiet-degrade AND its log line
+    live in the controller wrapper, exactly like the sibling counts
+    helper -- the pure query raises rather than failing invisibly."""
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    class _Broken:
+        def execute_query(self, query, params=()):
+            raise RuntimeError("no such table: Media")
+
+    with pytest.raises(RuntimeError):
+        preview_export_scope(ExportScope(kind="media"), _Broken())
+
+    # loguru does not route through pytest's caplog -- attach a real sink.
+    warnings: list[str] = []
+    handle = loguru_logger.add(warnings.append, level="WARNING")
+    try:
+        degraded = LibraryExportController._compute_library_export_preview(
+            ExportScope(kind="media"), _Broken()
+        )
+    finally:
+        loguru_logger.remove(handle)
+    assert degraded == ExportPreview()
+    assert any("Library export preview failed" in line for line in warnings), warnings
+    assert any("category=RuntimeError" in line for line in warnings), warnings
+    # A missing seam is not an error -- there is simply nothing to read.
+    assert preview_export_scope(ExportScope(kind="media"), None).approx_bytes is None
+
+
+# --- Qodo review on PR #2601 -------------------------------------------------
+
+
+def test_preview_reports_how_many_active_rows_it_actually_found(media_db):
+    """Qodo #7: a selection counted by ``len(scope.ids)`` promised items the
+    archive would not hold. The preview resolves the selection against the
+    same active-row filter the collector applies and reports that count."""
+    kept, _, _ = media_db.add_media_with_keywords(
+        title="Kept", content="k" * 1024, media_type="article"
+    )
+    trashed, _, _ = media_db.add_media_with_keywords(
+        title="Trashed", content="t" * 2048, media_type="article"
+    )
+    media_db.mark_as_trash(trashed)
+
+    preview = preview_export_scope(
+        ExportScope(kind="media", ids=(str(kept), str(trashed))), media_db
+    )
+
+    # Two selected, one still exportable.
+    assert preview.item_count == 1
+    assert preview.titles == ("Kept",)
+    assert preview.approx_bytes == 1024
+
+
+def test_preview_counts_past_the_render_cap(media_db):
+    """The item count covers every matching row, not just the fetched page."""
+    for index in range(25):
+        media_db.add_media_with_keywords(
+            title=f"Item {index:02d}",
+            content=f"{index:02d}" + "x" * 1022,
+            media_type="article",
+        )
+
+    preview = preview_export_scope(ExportScope(kind="media"), media_db)
+
+    assert preview.item_count == 25
+    assert len(preview.titles) == 21
+
+
+def test_preview_reads_the_whole_estimate_in_one_statement(media_db):
+    """Qodo #2/#3: titles, count and bytes came from two statements, so a
+    write landing between them could mix snapshots, and two cursors were
+    left to garbage collection. One windowed statement, one closed cursor."""
+    media_db.add_media_with_keywords(
+        title="Only", content="o" * 1024, media_type="article"
+    )
+    seen: list[str] = []
+    real = media_db.execute_query
+
+    def record(query, params=None, **kwargs):
+        seen.append(query)
+        return real(query, params, **kwargs)
+
+    media_db.execute_query = record
+    try:
+        preview = preview_export_scope(ExportScope(kind="media"), media_db)
+    finally:
+        media_db.execute_query = real
+
+    assert len(seen) == 1, seen
+    assert preview.item_count == 1
+    assert preview.approx_bytes == 1024
+
+
+def test_preview_of_an_empty_scope_reports_zero_not_none(media_db):
+    """Zero bytes is a known fact; ``None`` means "could not find out". The
+    canvas renders them differently, so the query must not conflate them."""
+    preview = preview_export_scope(
+        ExportScope(kind="media", media_type="video"), media_db
+    )
+
+    assert preview.item_count == 0
+    assert preview.approx_bytes == 0
+    assert preview.titles == ()

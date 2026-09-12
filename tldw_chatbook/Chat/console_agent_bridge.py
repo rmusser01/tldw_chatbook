@@ -19,14 +19,19 @@ import re
 import threading
 import time
 from collections import deque
+from collections.abc import Awaitable
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
+from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
+    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
@@ -37,6 +42,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import (
+    WorkOrigin,
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     FIND_TOOLS_NAME,
@@ -113,7 +119,7 @@ from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 # `Tools.{git,local,patch}_tool_impls`, `Tools.workspace_root_pin`,
 # `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) -- seven
 # modules resident at `_ui_ready` to compare a handful of strings. The set
-# they feed is now built on first use; see `_blocked_provider_refusals`.
+# they feed is now built on first use; see `_refusal_statuses`.
 from tldw_chatbook.Agents.mcp_tool_provider import (
     DENY_REFUSAL as MCP_DENY_REFUSAL,
     KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,
@@ -135,6 +141,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
     intersect_skill_tools,
 )
+from tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 from tldw_chatbook.Tools.raw_cli_executor import (
     MAX_RAW_PREVIEW_BYTES,
     RawCliResult,
@@ -656,6 +663,43 @@ def console_run_budget() -> RunBudget:
     )
 
 
+def intersect_console_run_budget(
+    maximum: RunBudget, live: RunBudget
+) -> RunBudget:
+    """Intersect an admitted budget maximum with later live narrowing."""
+
+    def ceiling(admitted: int | float, current: int | float) -> int | float:
+        if admitted == 0:
+            return current
+        if current == 0:
+            return admitted
+        return min(admitted, current)
+
+    return RunBudget(
+        max_steps=min(maximum.max_steps, live.max_steps),
+        max_wall_seconds=min(maximum.max_wall_seconds, live.max_wall_seconds),
+        max_subagents=min(maximum.max_subagents, live.max_subagents),
+        max_subagent_result_chars=int(
+            ceiling(
+                maximum.max_subagent_result_chars,
+                live.max_subagent_result_chars,
+            )
+        ),
+        max_tool_result_chars=int(
+            ceiling(maximum.max_tool_result_chars, live.max_tool_result_chars)
+        ),
+        max_model_turns=min(maximum.max_model_turns, live.max_model_turns),
+        max_total_tokens=int(
+            ceiling(maximum.max_total_tokens, live.max_total_tokens)
+        ),
+        max_tool_call_seconds=float(
+            ceiling(maximum.max_tool_call_seconds, live.max_tool_call_seconds)
+        ),
+        max_model_retries=min(maximum.max_model_retries, live.max_model_retries),
+        budget_warning_fraction=min(maximum.budget_warning_fraction, live.budget_warning_fraction),
+    )
+
+
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
 # Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
@@ -673,12 +717,22 @@ CANVAS_DISCOVERY_HINT = (
 
 
 def _append_canvas_discovery_hint(prompt: str, allowed_tools: Collection[str]) -> str:
-    """Advertise Canvas discovery only when this run offers all V1 tools."""
-    from tldw_chatbook.Agents.canvas_tool_provider import CANVAS_TOOL_NAMES
+    """Offer before authoring and name only this run's available capabilities."""
+    from tldw_chatbook.Agents.canvas_tool_provider import CANVAS_ARTIFACT_TOOL_NAMES
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
 
-    if not CANVAS_TOOL_NAMES.issubset(allowed_tools):
+    sections = []
+    if CANVAS_ARTIFACT_TOOL_NAMES.issubset(allowed_tools):
+        sections.append(CANVAS_DISCOVERY_HINT)
+    if "canvas_guide" in allowed_tools:
+        sections.append(
+            "Canvas authoring documentation is available through canvas_guide; "
+            "after the user requests or accepts Canvas, use find_tools and "
+            "load_tools to access only needed topics."
+        )
+    if not sections:
         return prompt
-    return f"{prompt}\n\n{CANVAS_DISCOVERY_HINT}"
+    return f"{prompt}\n\n{CANVAS_OFFER_POLICY} {' '.join(sections)}"
 
 
 def _combine_state_scopes(scopes: list) -> "Any | None":
@@ -1392,19 +1446,43 @@ def _thinking_round_ordinals(
     return frozenset(block.round_ordinal for block in envelope.blocks)
 
 
-_BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
+#: task-32285: hand-copied from `Agents.builtin_tool_gate.BuiltinToolGate.
+#: check()`'s own inline kill-switch return string -- NOT imported (this
+#: module already lazily imports `Agents.local_tool_provider` for the
+#: other four refusal strings, see `_blocked_provider_refusals()`'s own
+#: docstring; adding `Agents.builtin_tool_gate` as a module-level or
+#: lazy import here for one string is not worth a new dependency edge).
+#: `Tests/Chat/test_console_agent_bridge.py::
+#: test_kill_switch_refusal_wording_is_unified_everywhere` asserts this
+#: equals the gate's actual `check()` return value, and equals the other
+#: three kill-switch refusal constants -- see
+#: `console_chat_controller.KILL_SWITCH_REFUSAL`'s docstring for why they
+#: are all the same sentence now.
+#: Qodo #2597 #2: no longer a hand copy -- `Agents.tool_refusals` is an
+#: import-free leaf module, so taking it here costs no dependency edge
+#: (the reason the string was duplicated in the first place).
+_BUILTIN_KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 _BUILTIN_DENY_REFUSAL_PREFIX = "tool is set to Off: "
 _BUILTIN_UNRESOLVED_REFUSAL_PREFIX = "tool requires approval and none was granted: "
 _CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition("{name}")[0]
 
 
 @functools.lru_cache(maxsize=1)
-def _blocked_provider_refusals() -> frozenset[str]:
-    """Canonical dispatched-provider permission-refusal copy.
+def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
+    """Canonical refusal copy mapped to the state it renders as.
+
+    task-32279: one table, keyed by the SAME refusal strings the audit log
+    classifies, so "who refused" cannot drift between the two surfaces. A
+    refusal the user made by hand is ``denied``; a configured Off entry is
+    ``blocked_off``; a switched-off runtime is ``blocked_kill_switch``.
+    Everything else (an unresolved decision, a timeout, a resolver failure)
+    stays the generic ``blocked`` -- it is still a refusal, but naming an
+    authority it does not have would be a lie.
 
     Built on first use so importing this module does not drag
-    `Agents.local_tool_provider` (task-24458). The values are module-level
-    string constants, so the set is computed once and never invalidated.
+    `Agents.local_tool_provider` (task-24458) -- or, since Qodo #3,
+    `Agents.raw_shell_tool_provider`. The values are module-level string
+    constants, so the table is computed once and never invalidated.
     """
     from tldw_chatbook.Agents.local_tool_provider import (
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
@@ -1413,45 +1491,67 @@ def _blocked_provider_refusals() -> frozenset[str]:
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
+        LOCAL_USER_DENY_REFUSAL,
     )
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
-    return frozenset(
-        {
-            _BUILTIN_KILL_SWITCH_REFUSAL,
-            LOCAL_DENY_REFUSAL,
-            LOCAL_TIMEOUT_REFUSAL,
-            LOCAL_KILL_SWITCH_REFUSAL,
-            LOCAL_GATE_ERROR_REFUSAL,
-            LOCAL_ROOT_CHANGED_REFUSAL,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            MCP_DENY_REFUSAL,
-            MCP_USER_DENY_REFUSAL,
-            MCP_UNRESOLVED_REFUSAL,
-            MCP_TIMEOUT_REFUSAL,
-            MCP_KILL_SWITCH_REFUSAL,
-        }
-    )
+    return MappingProxyType({
+        MCP_USER_DENY_REFUSAL: "denied",
+        _BUILTIN_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch
+        # verdict -- `_direct_controller_block_status` only sees the raw form.
+        CONTROLLER_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        LOCAL_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        MCP_KILL_SWITCH_REFUSAL: "blocked_kill_switch",
+        # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be
+        # returned for BOTH a configured Off and an explicit card Deny, so
+        # it could claim neither authority and rendered the generic
+        # "blocked"; the local provider now has its own user-deny string and
+        # the row splits into `denied` + `blocked_off` like the MCP pair.
+        LOCAL_USER_DENY_REFUSAL: "denied",
+        LOCAL_DENY_REFUSAL: "blocked_off",
+        MCP_DENY_REFUSAL: "blocked_off",
+        # Qodo #3: the raw-shell provider's Off refusal names the same fact
+        # MCP's does ("set to Off"), so it renders the same way -- it used to
+        # fall through to the generic `blocked` and hide the cause.
+        RAW_SHELL_DENY_REFUSAL: "blocked_off",
+        LOCAL_TIMEOUT_REFUSAL: "blocked",
+        LOCAL_GATE_ERROR_REFUSAL: "blocked",
+        LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
+        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: "blocked",
+        MCP_UNRESOLVED_REFUSAL: "blocked",
+        MCP_TIMEOUT_REFUSAL: "blocked",
+    })
 
 
-_BLOCKED_PROVIDER_REFUSAL_PREFIXES = (
-    _BUILTIN_DENY_REFUSAL_PREFIX,
-    _CONTROLLER_USER_DENIED_PREFIX,
-    _BUILTIN_UNRESOLVED_REFUSAL_PREFIX,
+#: Refusal copy whose provider-owned suffix is the runtime tool name. Same
+#: three-way vocabulary as `_refusal_statuses`; the builtin gate and the
+#: Console review hook share one user-denial prefix by construction.
+_REFUSAL_STATUS_PREFIXES: tuple[tuple[str, ConsoleActivityStatus], ...] = (
+    (_CONTROLLER_USER_DENIED_PREFIX, "denied"),
+    (_BUILTIN_DENY_REFUSAL_PREFIX, "blocked_off"),
+    (_BUILTIN_UNRESOLVED_REFUSAL_PREFIX, "blocked"),
 )
 
 
-def _is_direct_controller_block(result: str) -> bool:
-    """Return whether ``result`` is a pre-dispatch Console review refusal."""
-    return result == CONTROLLER_KILL_SWITCH_REFUSAL or result.startswith(
-        _CONTROLLER_USER_DENIED_PREFIX
-    )
+def _direct_controller_block_status(result: str) -> ConsoleActivityStatus | None:
+    """Classify a pre-dispatch Console review refusal, or return ``None``."""
+    if result == CONTROLLER_KILL_SWITCH_REFUSAL:
+        return "blocked_kill_switch"
+    if result.startswith(_CONTROLLER_USER_DENIED_PREFIX):
+        return "denied"
+    return None
 
 
-def _is_blocked_tool_refusal(error: str) -> bool:
-    """Match canonical dispatched-provider permission refusal copy."""
-    return error in _blocked_provider_refusals() or error.startswith(
-        _BLOCKED_PROVIDER_REFUSAL_PREFIXES
-    )
+def _refusal_status(error: str) -> ConsoleActivityStatus | None:
+    """Classify canonical dispatched-provider refusal copy, or ``None``."""
+    status = _refusal_statuses().get(error)
+    if status is not None:
+        return status
+    for prefix, prefix_status in _REFUSAL_STATUS_PREFIXES:
+        if error.startswith(prefix):
+            return prefix_status
+    return None
 
 
 def classify_activity_status(
@@ -1471,15 +1571,20 @@ def classify_activity_status(
         return "success"
     if tool_outcome == "failed":
         return "failed"
-    if tool_outcome == "blocked":
-        return "blocked"
     text = str(result if result is not None else "")
-    if _is_direct_controller_block(text):
-        return "blocked"
-    if not text.startswith("ERROR:"):
+    direct = _direct_controller_block_status(text)
+    if direct is not None:
+        return direct
+    wrapped = text.startswith("ERROR:")
+    refusal = _refusal_status(text.removeprefix("ERROR:").strip() if wrapped else text)
+    if tool_outcome == "blocked":
+        # task-32279: `tool_outcome` proves only THAT the call was refused.
+        # Reading the refusal text as well is what separates the user's own
+        # Deny from a policy block; an unrecognised one stays generic.
+        return refusal or "blocked"
+    if not wrapped:
         return "success"
-    error = text.removeprefix("ERROR:").strip()
-    return "blocked" if _is_blocked_tool_refusal(error) else "failed"
+    return refusal or "failed"
 
 
 def _activity_label(value: object, *, fallback: str) -> str:
@@ -1789,12 +1894,21 @@ class SubAgentSummary:
             always empty on the inline path, which has no coordinator).
         handle_id: The ``FleetCoordinator`` handle id backing this row.
             Empty on the inline path (no coordinator, no handle).
+        budget_tokens: Persisted run-budget counter for historical rows.
+            None means unavailable; this may include estimates/cache weighting.
+        created_at: Saved run start timestamp, absent on live summaries.
+        updated_at: Saved last-update timestamp; only an approximate end.
+        detail: Bounded saved result or last meaningful step for this child.
     """
 
     text: str
     status: str = "running"
     run_id: str = ""
     handle_id: str = ""
+    budget_tokens: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    detail: str = ""
 
 
 def _subagent_summaries_from_fleet(
@@ -1932,19 +2046,24 @@ class AgentLiveSnapshot:
     idle, so both must expose the same shape.
 
     Attributes:
-        status: Run status -- ``"idle"``, ``"running"``, or a terminal
-            ``RunOutcome.status`` value (``"done"``/``"error"``/
-            ``"cancelled"``/``"stuck"``).
+        status: Run status -- ``"idle"``, ``"running"``, ``"setup"``
+            (task-32344: the send is composing this turn's tool surface and
+            no run exists yet), or a terminal ``RunOutcome.status`` value
+            (``"done"``/``"error"``/``"cancelled"``/``"stuck"``).
         step: Total number of steps observed so far for this run.
         steps: The most recent steps (bounded to the last 5), oldest first.
         subagents: Summaries of this run's spawned sub-agents, in the order
             they were spawned/recorded.
+        setup_started_at: ``time.monotonic()`` reading the ``"setup"``
+            status began at, so the rail can time it. ``None`` in every
+            other status -- a run's own steps carry their own bases.
     """
 
     status: str = "idle"
     step: int = 0
     steps: tuple[AgentLiveStep, ...] = ()
     subagents: tuple[SubAgentSummary, ...] = ()
+    setup_started_at: float | None = None
 
 
 @dataclass
@@ -2040,6 +2159,19 @@ class SettledChild:
 
 
 @dataclass(frozen=True)
+class FleetChildSettled:
+    """One durable terminal child, without waiting for its siblings (ADR-135).
+
+    Delivered on the child's thread with its original settlement classification.
+    Consumers read the result from ``child.run_id`` and must tolerate duplicate
+    intake; durable result claims govern automatic admission.
+    """
+
+    conversation_id: str
+    child: SettledChild
+
+
+@dataclass(frozen=True)
 class FleetDrained:
     """This conversation's fleet just drained to zero unsettled children
     (PR3a-2 Task 2).
@@ -2058,7 +2190,42 @@ class FleetDrained:
     drain_id: str = field(default_factory=lambda: str(uuid4()))
 
 
-class FleetDrainFanout:
+_FleetSettlementEvent = TypeVar(
+    "_FleetSettlementEvent", FleetChildSettled, FleetDrained
+)
+
+
+class _FleetSettlementFanout(Generic[_FleetSettlementEvent]):
+    """Named bridge-lifetime consumers, replacing in place and failure-isolated."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._consumers: list[tuple[str, Callable[[_FleetSettlementEvent], None]]] = []
+
+    def register(
+        self, name: str, consumer: Callable[[_FleetSettlementEvent], None]
+    ) -> None:
+        with self._lock:
+            for index, (existing, _) in enumerate(self._consumers):
+                if existing == name:
+                    self._consumers[index] = (name, consumer)
+                    return
+            self._consumers.append((name, consumer))
+
+    def fire(self, event: _FleetSettlementEvent) -> None:
+        with self._lock:
+            consumers = list(self._consumers)
+        for _name, consumer in consumers:
+            try:
+                consumer(event)
+            except Exception as exc:  # noqa: BLE001 -- one consumer never starves the rest
+                logger.warning(
+                    "fleet settlement consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
+
+
+class FleetDrainFanout(_FleetSettlementFanout[FleetDrained]):
     """One signal -- "this conversation's last fleet child has settled
     terminal" -- fanned out to N registered consumers (PR3a-2 Task 2).
 
@@ -2088,11 +2255,9 @@ class FleetDrainFanout:
     every consumer registered here may read what the change window wrote.
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._consumers: list[tuple[str, Callable[[FleetDrained], None]]] = []
-
-    def register(self, name: str, consumer: Callable[[FleetDrained], None]) -> None:
+    def register(
+        self, name: str, consumer: Callable[[FleetDrained], None]
+    ) -> None:
         """Register a consumer for the life of the owning bridge.
 
         Registration is BRIDGE-lifetime, not turn-scoped, because the
@@ -2112,12 +2277,7 @@ class FleetDrainFanout:
             consumer: Called with the ``FleetDrained`` event, on the last
                 child's own thread. Must honour the class contract above.
         """
-        with self._lock:
-            for index, (existing, _) in enumerate(self._consumers):
-                if existing == name:
-                    self._consumers[index] = (name, consumer)
-                    return
-            self._consumers.append((name, consumer))
+        super().register(name, consumer)
 
     def fire(self, event: FleetDrained) -> None:
         """Deliver one drain event to every consumer, in order, isolated.
@@ -2125,16 +2285,7 @@ class FleetDrainFanout:
         Args:
             event: The drain to deliver.
         """
-        with self._lock:
-            consumers = list(self._consumers)
-        for name, consumer in consumers:
-            try:
-                consumer(event)
-            except Exception as exc:  # noqa: BLE001 -- one consumer never starves the rest
-                logger.warning(
-                    "fleet drain consumer raised (exception_type={})",
-                    type(exc).__name__,
-                )
+        super().fire(event)
 
 
 class _ModelCallLifeline:
@@ -2166,39 +2317,102 @@ class _ModelCallLifeline:
     try/finally that owns its ``shutdown``.
     """
 
-    __slots__ = ("loop", "_thread", "_name")
+    __slots__ = (
+        "loop",
+        "_thread",
+        "_name",
+        "_close_current_loop",
+        "_shutdown_lock",
+        "_shutdown_requested",
+        "_operation",
+    )
 
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        close_current_loop: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._name = name
+        self._close_current_loop = close_current_loop
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_requested = False
+        self._operation: OwnedOperation | None = None
         self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self.loop.run_forever, name=name, daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
 
-    def start(self) -> None:
-        """Start the driver thread. Raises only on thread exhaustion."""
-        self._thread.start()
+    def _run(self) -> None:
+        """Keep loop-bound cleanup on its driver, even after a join times out."""
+        try:
+            self.loop.run_forever()
+        finally:
+            try:
+                self.loop.close()
+            finally:
+                if self._operation is not None:
+                    self._operation.finish()
+
+    async def _cleanup(self) -> None:
+        try:
+            pending = [
+                task
+                for task in asyncio.all_tasks()
+                if task is not asyncio.current_task()
+            ]
+            for task in pending:
+                task.cancel()
+            try:
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                await self.loop.shutdown_asyncgens()
+            finally:
+                if self._close_current_loop is not None:
+                    await self._close_current_loop()
+        except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
+            logger.warning("model-call loop cleanup failed")
+        finally:
+            # Keep is_running() true through cleanup: an idle gap would let
+            # app-level gateway teardown detach and schedule this same pool.
+            self.loop.stop()
+
+    def start(self, *, owner: ExecutionOwner | None = None) -> None:
+        """Own the driver before start; failed starts have no physical work."""
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+        with self._shutdown_lock:
+            if self._shutdown_requested or self._thread.ident is not None:
+                raise RuntimeError("model lifeline cannot be restarted")
+            owner = owner or current_execution_owner()
+            self._operation = owner.reserve_model() if owner is not None else None
+            try:
+                self._thread.start()
+            except BaseException:
+                if self._operation is not None:
+                    self._operation.finish()
+                raise
 
     def shutdown(self) -> None:
-        """Stop the driver thread, join it, then close the loop.
+        """Stop submissions, request owner-loop cleanup, and join with a bound.
 
-        ``close()`` on a still-running loop raises, and a loop closed out
-        from under its own thread is undefined -- hence stop, then join,
-        then close. ``ident`` is ``None`` only when ``start()`` itself never
-        succeeded (thread exhaustion): ``join()`` would raise RuntimeError
-        and skip the close below, leaking the loop's fd, and nothing was
-        ever scheduled anyway, so close it directly. A thread still alive
-        after the bounded join keeps its loop OPEN: a leaked loop is
-        survivable, a segfaulting one is not, and the thread is a daemon so
-        it dies with the process either way.
+        The driver closes its loop after cleanup, including when cleanup
+        outlasts this join. A failed start has no driver or client to clean up,
+        so that loop closes here. Repeated calls must not stop cleanup itself.
         """
+        with self._shutdown_lock:
+            if not self._shutdown_requested:
+                self._shutdown_requested = True
+                if self._operation is not None:
+                    self._operation.mark_stopping()
+                if self._thread.ident is None:
+                    self.loop.close()
+                elif not self.loop.is_closed():
+                    self.loop.call_soon_threadsafe(
+                        lambda: self.loop.create_task(self._cleanup())
+                    )
         if self._thread.ident is not None:
-            self.loop.call_soon_threadsafe(self.loop.stop)
             self._thread.join(timeout=_LOOP_THREAD_JOIN_SECONDS)
         if self._thread.is_alive():
             logger.warning("model-call loop did not stop within its bounded join")
-        else:
-            self.loop.close()
 
 
 _BUDGET_USAGE_COUNT_KEYS = (
@@ -2927,7 +3141,8 @@ class _StreamingModelAdapter:
         # promptly; a wedged one would make every such sweep burn its full
         # timeout. The handle still identifies it.
         lifeline = _ModelCallLifeline(
-            "child-loop-" + threading.current_thread().name.removeprefix("fleet-")
+            "child-loop-" + threading.current_thread().name.removeprefix("fleet-"),
+            close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
         )
         try:
             lifeline.start()
@@ -3681,6 +3896,9 @@ def _compose_run_registry_and_allowed(
     mcp_provider: Any | None = None,
     builtin_gate: Any | None = None,
     workspace_id: str | None = None,
+    workspace_read_binding_ids: tuple[str, ...] | None = None,
+    workspace_write_binding_ids: tuple[str, ...] | None = None,
+    workspace_binding_authority: tuple[Any, ...] | None = None,
     ephemeral: bool = False,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
     scratch_root: Path | None = None,
@@ -3805,6 +4023,9 @@ def _compose_run_registry_and_allowed(
     builtin_provider = BuiltinToolProvider(
         gate=builtin_gate,
         workspace_id=workspace_id,
+        workspace_read_binding_ids=workspace_read_binding_ids,
+        workspace_write_binding_ids=workspace_write_binding_ids,
+        workspace_binding_authority=workspace_binding_authority,
         ephemeral=ephemeral,
         diff_sink=diff_sink,
         sandbox_root=scratch_root,
@@ -3995,6 +4216,10 @@ def build_console_first_request_plan(
     library_authority: Any | None,
     profile_provider: Any | None = None,
     workspace_id: str | None,
+    workspace_read_binding_ids: tuple[str, ...] | None = None,
+    workspace_write_binding_ids: tuple[str, ...] | None = None,
+    workspace_binding_authority: tuple[Any, ...] | None = None,
+    run_budget: RunBudget | None = None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
     scratch_root: Path | None,
@@ -4011,12 +4236,12 @@ def build_console_first_request_plan(
     agent_messages: list[dict],
     agent_definitions: tuple[AgentDefinition, ...] = (),
     fleet_max_live: int = 1,
-    run_budget: RunBudget | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     profile_context_service: Any | None = None,
     personal_context_snapshot: ProfileContextSnapshot | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
+    progress_inbox_exists: bool = False,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
 
@@ -4090,6 +4315,9 @@ def build_console_first_request_plan(
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 workspace_id=workspace_id,
+                workspace_read_binding_ids=workspace_read_binding_ids,
+                workspace_write_binding_ids=workspace_write_binding_ids,
+                workspace_binding_authority=workspace_binding_authority,
                 ephemeral=ephemeral,
                 diff_sink=diff_sink,
                 scratch_root=scratch_root,
@@ -4143,7 +4371,9 @@ def build_console_first_request_plan(
         offer_find_load=True,
     )
     discovery_prompt = _append_canvas_discovery_hint(discovery_prompt, allowed_tools)
-    workspace_note = workspace_context_note(workspace_id)
+    workspace_note = workspace_context_note(
+        workspace_id, binding_authority=workspace_binding_authority
+    )
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
     )
@@ -4159,7 +4389,11 @@ def build_console_first_request_plan(
         provider=api_endpoint,
         fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
-        budget=run_budget or console_run_budget(),
+        budget=(
+            intersect_console_run_budget(run_budget, console_run_budget())
+            if run_budget is not None
+            else console_run_budget()
+        ),
         native_tools=native_tools,
         reasoning_replay=getattr(resolution, "reasoning_replay", None),
         workspace_context_note=workspace_note,
@@ -4192,6 +4426,7 @@ def build_console_first_request_plan(
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
+        progress_available=progress_inbox_exists,
         worktree_merge_enabled=worktree_merge_enabled,
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
@@ -4320,18 +4555,37 @@ class _BridgeSkillRunner:
         builtin_names: tuple[str, ...],
         local_names: tuple[str, ...] = (),
         skill_file_bindings: SkillFileBindings | None = None,
+        definition_digests: Mapping[str, str] | None = None,
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
         self._local_names = local_names
         self._skill_file_bindings = skill_file_bindings
+        self._definition_digests = dict(definition_digests or {})
 
     def is_skill_tool(self, name: str) -> bool:
         return name in self._skill_names
 
     def run(self, name: str, args: str, spawn: Callable[..., ToolResult]) -> ToolResult:
         try:
+            expected_digest = self._definition_digests.get(name)
+            if expected_digest is not None:
+                local = getattr(self._skills_service, "local_service", None)
+                if local is None and hasattr(self._skills_service, "trust_service"):
+                    local = self._skills_service
+                trust = getattr(local, "trust_service", None)
+                current_digest = (
+                    trust.current_fingerprint_digest(name)
+                    if trust is not None
+                    else None
+                )
+                if current_digest != expected_digest:
+                    raise SkillTrustBlockedError(
+                        skill_name=name,
+                        reason_code="skill_definition_changed",
+                        trust_status="quarantined_modified",
+                    )
             result = asyncio.run(
                 self._skills_service.execute_skill(name, mode="local", args=args)
             )
@@ -4364,7 +4618,9 @@ class _BridgeSkillRunner:
         # block to the rendered task text whenever execute_skill reported
         # any (absent when the skill has no bundle beyond SKILL.md).
         if self._skill_file_bindings is not None:
-            self._skill_file_bindings.authorized.add(name)
+            self._skill_file_bindings.authorize(
+                name, self._definition_digests.get(name)
+            )
         refs = result.get("reference_files") if isinstance(result, Mapping) else None
         if refs and self._skill_file_bindings is not None:
             rows = ", ".join(
@@ -4405,7 +4661,17 @@ class ConsoleAgentBridge:
         change_tracker: Any | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         change_finalization_coordinator: Any | None = None,
+        runtime_capacity: RuntimeCapacity | None = None,
+        runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
+        message_store: MessageStore | None = None,
     ) -> None:
+        self._message_store = message_store
+        self._progress_closed = False
+        self._message_store_lock = threading.RLock()
+        self._runtime_capacity = runtime_capacity
+        self._runtime_capacity_factory = runtime_capacity_factory
+        self._runtime_capacity_lock = threading.RLock()
+        self._runtime_capacity_closed = False
         self._db = agent_runs_db
         # TASK-1971: optional Agent Change Review turn tracker. None (the
         # default, and every pre-existing construction site) disables
@@ -4414,6 +4680,8 @@ class ConsoleAgentBridge:
         self._buddy_sink = buddy_sink
         self._change_finalization_coordinator = change_finalization_coordinator
         self._store = store
+        if self._store is not None and message_store is not None:
+            self._store.register_progress_message_store(message_store)
         self._gateway = provider_gateway
         self._clock = clock
         self._raw_shell_marker_lock = threading.Lock()
@@ -4454,6 +4722,10 @@ class ConsoleAgentBridge:
         #: Which `_live[conversation_id]` key holds the rail's summary --
         #: the newest turn's primary run. Only `run_reply` writes it.
         self._live_primary_keys: dict[str, str] = {}
+        #: task-32344: conversations currently in pre-provider setup, each
+        #: mapped to the `time.monotonic()` the phase began, so the rail
+        #: can name and time a window that publishes no step of its own.
+        self._setup_started_at: dict[str, float] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
         self._run_log_authorities: dict[str, _ConsoleRunLogAuthority] = {}
         self._run_log_authority_lock = threading.Lock()
@@ -4541,6 +4813,17 @@ class ConsoleAgentBridge:
         # use -- see `_conversation_fleet_coordinator` for the sizing,
         # pruning and kill-switch rules.
         self._fleet_coordinators: dict[str, FleetCoordinator] = {}
+        # Destructive close and app shutdown must win atomically against
+        # lazy coordinator construction. The first unreleased generation for
+        # a conversation remains authoritative; a later incarnation cannot
+        # replace a timed-out fence with a token it could release. This lock
+        # serializes that ledger with the get-or-create path below. The
+        # coordinator's own fence is irreversible; a fully drained session
+        # close may discard it and its matching ledger entry so reopening the
+        # saved conversation starts a fresh incarnation. Timeout/app-shutdown
+        # fences stay latched.
+        self._fleet_admission_lock = threading.Lock()
+        self._fleet_fence_generations: dict[str, int] = {}
         # PR3a-1 Task 6a -- the services of FINISHED runs that still have
         # a live child, kept only so that child stays STOPPABLE.
         #
@@ -4552,23 +4835,18 @@ class ConsoleAgentBridge:
         # service can actually stop it -- which is why
         # `AgentService.cancel_subagent` now refuses a handle it does not
         # own rather than reporting a success it cannot deliver. Each
-        # entry is dropped as soon as its last child settles
-        # (`_prune_settled_fleet_survivors`), so this holds at most one
-        # service per turn that left a child running, and live children
-        # are themselves capped by the coordinator above.
+        # Settled entries are dropped on the next turn boundary and on
+        # existing lifecycle/action cleanup paths. Until then, this can
+        # retain one settled service per completed survivor turn in addition
+        # to the live owners bounded by the coordinator above.
         self._fleet_survivor_services: dict[str, list[AgentService]] = {}
-        # The ONE lock in this class's fleet state, and only because this
-        # entry is the only read-modify-write among them. Every other
-        # dict here is single-operation (a `.get`, a `[k] = v`, a `.pop`)
-        # and rides the GIL, as their own docstrings above argue. Pruning
-        # a retained list is not: it reads the list, filters it, and
-        # writes the result back, so a `run_reply` finally appending its
-        # own survivor in that window would be silently dropped -- and a
-        # dropped owner is an unstoppable child, the precise failure this
-        # retention exists to prevent. Held only across list rebuilds and
-        # never while calling into a coordinator's own lock in a way that
-        # could nest (a snapshot copy is taken, then the lock is
-        # released).
+        # This lock protects the survivor-service list's read-modify-write
+        # operations. The separate admission and activity locks above protect
+        # different state and are never nested with it. Every other fleet dict
+        # here uses a single `.get`, assignment, or `.pop` and rides the GIL.
+        # Pruning a retained list is not atomic: it reads, filters, and writes,
+        # so a `run_reply` finally appending its survivor in that window could
+        # otherwise be silently dropped, leaving an unstoppable child.
         self._fleet_survivor_lock = threading.Lock()
         # PR3a-1 Task 6c (audit F2) -- the change-review window that covers
         # what a turn's SURVIVORS do after that turn's E snapshot.
@@ -4617,6 +4895,17 @@ class ConsoleAgentBridge:
         # IDENTITY into the settle hook it hands `AgentService`, but
         # never touches this registry.
         self._fleet_drain_fanout = FleetDrainFanout()
+        # Task 22514: content-free fleet lifecycle fan-out and race-safe
+        # async drain waiters. Activity consumers receive only the opaque
+        # conversation id; waiters are registered before their first live
+        # snapshot so a child settling during that read cannot strand them.
+        self._fleet_activity_lock = threading.Lock()
+        self._fleet_activity_consumers: dict[str, Callable[[str], None]] = {}
+        self._fleet_terminal_waiters: dict[
+            str,
+            list[tuple[asyncio.AbstractEventLoop, asyncio.Future[bool]]],
+        ] = {}
+        self._fleet_child_fanout = _FleetSettlementFanout[FleetChildSettled]()
         # PR3a-2 Task 4: the survivor discriminator. Assistant message ids
         # of turns whose `run_reply` is CURRENTLY executing -- added when
         # the turn publishes its fleet service, discarded first thing in
@@ -4684,6 +4973,7 @@ class ConsoleAgentBridge:
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        skills_context: Mapping[str, Any] | None = None,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
@@ -4692,8 +4982,8 @@ class ConsoleAgentBridge:
         personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
         """Build a disposable exact first request without a run or consent."""
-        context: Mapping[str, Any] = {}
-        if self._skills_service is not None:
+        context: Mapping[str, Any] = skills_context or {}
+        if self._skills_service is not None and skills_context is None:
             context = asyncio.run(self._skills_service.get_context(mode="local"))
         workspace_id = None
         ephemeral = False
@@ -4757,6 +5047,7 @@ class ConsoleAgentBridge:
             persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
+            progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -4876,6 +5167,9 @@ class ConsoleAgentBridge:
         session_system_prompt: str,
         agent_messages: list[dict],
         should_cancel: Callable[[], bool],
+        expected_progress_owner_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
@@ -4915,6 +5209,12 @@ class ConsoleAgentBridge:
         profile_provider: Any | None = None,
         canvas_provider: Any | None = None,
         canvas_authority: Any | None = None,
+        skills_context: Mapping[str, Any] | None = None,
+        workspace_id: str | None = None,
+        workspace_ephemeral: bool | None = None,
+        workspace_read_binding_ids: tuple[str, ...] | None = None,
+        workspace_write_binding_ids: tuple[str, ...] | None = None,
+        workspace_binding_authority: tuple[Any, ...] | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
         # cancels or abandons, so its still-armed approval cards are failed
         # closed and taken off screen instead of staying pressable for a
@@ -4942,6 +5242,8 @@ class ConsoleAgentBridge:
         thinking_owner_key: str | None = None,
         generation_token: int | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
+        project_instruction_nested_max_bytes: int | None = None,
+        run_budget: RunBudget | None = None,
         confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
         | None = None,
         on_project_instruction_activation: Callable[
@@ -4985,6 +5287,18 @@ class ConsoleAgentBridge:
             generation_token = self._store.begin_generation_attempt(
                 assistant_message_id
             )
+        # Capture before setup can yield to native close/state replacement.
+        # Reusing a native ID must not let this delayed run bind its successor.
+        with self._store.progress_owner_scope(
+            session_id, message_store=self.message_store
+        ) as initial_progress_owner_id:
+            if initial_progress_owner_id is None or (
+                expected_progress_owner_id is not None
+                and initial_progress_owner_id != expected_progress_owner_id
+            ):
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
         protocol = getattr(resolution, "continuation_protocol", None)
         if continuation_target is None and isinstance(protocol, str) and protocol:
             provider = getattr(resolution, "execution_key", None)
@@ -5063,16 +5377,17 @@ class ConsoleAgentBridge:
         # service read, matching _BridgeSkillRunner.run's own
         # asyncio.run-in-worker-thread pattern just below.
         skill_file_bindings = None
-        context: Mapping[str, Any] = {}
-        if self._skills_service is not None:
+        context: Mapping[str, Any] = skills_context or {}
+        if self._skills_service is not None and skills_context is None:
             context = asyncio.run(self._skills_service.get_context(mode="local"))
-        run_workspace_id: str | None = None
-        run_is_ephemeral = False
-        if self._store is not None:
+        run_workspace_id = workspace_id
+        run_is_ephemeral = bool(workspace_ephemeral)
+        if self._store is not None and workspace_id is None:
             try:
                 run_workspace_id = self._store.session_workspace_id(session_id)
             except KeyError:
                 pass
+        if self._store is not None and workspace_ephemeral is None:
             try:
                 run_is_ephemeral = self._store.session_is_ephemeral(session_id)
             except KeyError:
@@ -5095,7 +5410,11 @@ class ConsoleAgentBridge:
                 else bool(self._native_tools_enabled())
             )
         )
-        run_budget = console_run_budget()
+        run_budget = (
+            intersect_console_run_budget(run_budget, console_run_budget())
+            if run_budget is not None
+            else console_run_budget()
+        )
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
@@ -5153,6 +5472,9 @@ class ConsoleAgentBridge:
             canvas_provider=canvas_provider,
             canvas_authority=canvas_authority,
             workspace_id=run_workspace_id,
+            workspace_read_binding_ids=workspace_read_binding_ids,
+            workspace_write_binding_ids=workspace_write_binding_ids,
+            workspace_binding_authority=workspace_binding_authority,
             ephemeral=run_is_ephemeral,
             diff_sink=pending_diffs.append,
             scratch_root=scratch_root,
@@ -5176,6 +5498,7 @@ class ConsoleAgentBridge:
             persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
+            progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
         )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
@@ -5187,7 +5510,9 @@ class ConsoleAgentBridge:
         if startup_instruction_candidate is not None:
             project_instruction_context = _ProjectInstructionDispatchContext(
                 nested_max_bytes=coerce_int_setting(
-                    get_cli_setting(
+                    project_instruction_nested_max_bytes
+                    if project_instruction_nested_max_bytes is not None
+                    else get_cli_setting(
                         "console",
                         "project_instructions_nested_max_bytes",
                         DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -5242,12 +5567,30 @@ class ConsoleAgentBridge:
                         if callable(unbind_promotion_context):
                             unbind_promotion_context()
 
+        admitted_skill_definition_digests = {
+            str(item["name"]): str(item["definition_digest"])
+            for item in _eligible_skill_entries(context)
+            if item.get("name") and item.get("definition_digest")
+        }
         if self._skills_service is not None:
+            local_skills = getattr(self._skills_service, "local_service", None)
+            if local_skills is None and hasattr(
+                self._skills_service, "trust_service"
+            ):
+                local_skills = self._skills_service
+            trust_service = getattr(local_skills, "trust_service", None)
+
+            def current_skill_definition_digest(skill_name: str) -> str | None:
+                if trust_service is None:
+                    return None
+                return trust_service.current_fingerprint_digest(skill_name)
+
             skill_file_bindings = SkillFileBindings(
                 authorized=set(),
                 reader=lambda skill_name, path: asyncio.run(
                     self._skills_service.read_skill_file(skill_name, path, mode="local")
                 ),
+                current_definition_digest=current_skill_definition_digest,
             )
             skill_runner = _BridgeSkillRunner(
                 skills_service=self._skills_service,
@@ -5255,6 +5598,11 @@ class ConsoleAgentBridge:
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
                 skill_file_bindings=skill_file_bindings,
+                definition_digests={
+                    name: digest
+                    for name, digest in admitted_skill_definition_digests.items()
+                    if name in first_request_plan.skill_names
+                },
             )
         prepare_managed_skill_promotion_tool = None
         if (
@@ -5278,7 +5626,11 @@ class ConsoleAgentBridge:
         # (which can only happen when the controller's own skills-service-
         # gated substitution ran) has nothing to seed.
         if skill_file_bindings is not None:
-            skill_file_bindings.authorized.update(turn_skill_bindings)
+            for skill_name in turn_skill_bindings:
+                skill_file_bindings.authorize(
+                    skill_name,
+                    admitted_skill_definition_digests.get(skill_name),
+                )
         # Agent-callable skill install (5th runtime tool). Built only when
         # BOTH a skills service AND a confirm callback exist -- without a
         # callback the tool is simply absent (never advertised) rather than
@@ -5326,6 +5678,13 @@ class ConsoleAgentBridge:
                         ok=False, error="The user declined to install this skill."
                     )
                 try:
+                    from tldw_chatbook.Agents.automatic_work_runtime import (
+                        current_automatic_work,
+                    )
+
+                    automatic_work = current_automatic_work()
+                    if automatic_work is not None:
+                        automatic_work.check()
                     result = asyncio.run(
                         install_skill_from_url(url, scope_service=scope)
                     )
@@ -5432,6 +5791,13 @@ class ConsoleAgentBridge:
                                 "Failed to persist skill script grant"
                             )
                 try:
+                    from tldw_chatbook.Agents.automatic_work_runtime import (
+                        current_automatic_work,
+                    )
+
+                    automatic_work = current_automatic_work()
+                    if automatic_work is not None:
+                        automatic_work.check()
                     if scratch_root is not None and scratch_lease is not None:
                         with scratch_lease():
                             outcome = asyncio.run(
@@ -5519,7 +5885,10 @@ class ConsoleAgentBridge:
         # docstring), because a fleet CHILD now owns one of its own from
         # birth via `adapter.child_lifeline`. This one stays exactly what
         # it always was: the PRIMARY agent's, turn-scoped.
-        turn_lifeline = _ModelCallLifeline("console-agent-loop")
+        turn_lifeline = _ModelCallLifeline(
+            "console-agent-loop",
+            close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
+        )
         thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
         adapter = _StreamingModelAdapter(
             store=self._store,
@@ -6114,10 +6483,29 @@ class ConsoleAgentBridge:
             if on_redirect_ready is not None:
                 on_redirect_ready(redirect_fn)
 
+        with self._store.progress_owner_scope(
+            session_id, message_store=self.message_store
+        ) as progress_owner_id:
+            if progress_owner_id != initial_progress_owner_id:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
+            fleet_coordinator = self._conversation_fleet_coordinator(
+                conversation_id,
+                create=bool(
+                    first_request_plan.schemas.runtime_schemas
+                    or first_request_plan.schemas.active_schemas
+                ),
+                progress_owner_id=progress_owner_id,
+            )
+            message_inbox = self.message_store.get_inbox(progress_owner_id)
         service = AgentService(
             self._db,
             registry,
             chat_call=adapter.chat_call,
+            runtime_capacity=self.runtime_capacity,
+            work_origin=work_origin,
+            work_chain_id=work_chain_id,
             clock=self._clock,
             on_step=on_step,
             # TASK-25903: hands the controller a steer(text) bound to THIS
@@ -6156,6 +6544,7 @@ class ConsoleAgentBridge:
             # closes a survivor's change-review window, and nothing else
             # in the bridge knows it (the coordinator marks a handle
             # terminal only AFTER this scope exits).
+            inline_child_model_scope=adapter.child_lifeline,
             child_model_scope=functools.partial(
                 self._child_run_scope,
                 conversation_id,
@@ -6176,7 +6565,8 @@ class ConsoleAgentBridge:
             # still visible and stoppable through. `None` when the fleet
             # kill switch is on, which leaves `AgentService` to take its
             # own inline path exactly as before.
-            fleet_coordinator=self._conversation_fleet_coordinator(conversation_id),
+            fleet_coordinator=fleet_coordinator,
+            message_inbox=message_inbox,
             startup_instruction_candidate=startup_instruction_candidate,
             confirm_project_instruction_dispatch=(
                 service_confirm_project_instruction_dispatch
@@ -6214,7 +6604,11 @@ class ConsoleAgentBridge:
             else None
         )
         run_messages = list(first_request_plan.messages)
+        execution_owner = None
         try:
+            execution_owner = self.runtime_capacity.begin_execution(
+                origin=work_origin, conversation_id=conversation_id
+            )
             # FIRST statement in the block that owns this thread's
             # shutdown -- see its construction above. Not merely *before*
             # the try: one inserted line there would silently re-open the
@@ -6222,8 +6616,9 @@ class ConsoleAgentBridge:
             # finally still runs and still closes the loop; `is_alive()`
             # is False for a never-started thread, so the close branch is
             # the one taken and no fd leaks.
-            turn_lifeline.start()
+            turn_lifeline.start(owner=execution_owner)
             run_id, outcome = service.run_turn(
+                execution_owner=execution_owner,
                 conversation_id=conversation_id,
                 messages=run_messages,
                 config=config,
@@ -6320,7 +6715,11 @@ class ConsoleAgentBridge:
             # (see `_StreamingModelAdapter.child_lifeline`), so a child
             # still running when this line executes keeps a live transport
             # to the model rather than losing one out from under it.
-            turn_lifeline.shutdown()
+            try:
+                turn_lifeline.shutdown()
+            finally:
+                if execution_owner is not None:
+                    execution_owner.finish_root()
             # TASK-1971: E snapshot on EVERY terminal path -- completed,
             # failed, cancelled, or crashed. A run that died halfway through
             # editing is when review matters most. `run_id` is unbound when
@@ -6682,8 +7081,9 @@ class ConsoleAgentBridge:
         # cancel Event and approval-revoke callback live in THIS service
         # and nowhere else, so dropping the last reference to it is what
         # made a survivor unstoppable. Retained until its last child
-        # settles; `_prune_settled_fleet_survivors` does the dropping,
-        # lazily, off the read paths below. Retained on the identity-miss
+        # settles; `_prune_settled_fleet_survivors` does the dropping at
+        # the next turn boundary or an existing lifecycle/action cleanup
+        # path. Retained on the identity-miss
         # path too (a stale teardown from an overtaken run still owns its
         # own children) -- `service` is this call's own object either way.
         if service.live_subagent_handles():
@@ -6858,6 +7258,110 @@ class ConsoleAgentBridge:
         """
         self._fleet_drain_fanout.register(name, consumer)
 
+    def on_fleet_activity(
+        self, name: str, consumer: Callable[[str], None]
+    ) -> None:
+        """Register one bridge-lifetime content-free fleet activity listener."""
+
+        with self._fleet_activity_lock:
+            self._fleet_activity_consumers[name] = consumer
+
+    @staticmethod
+    def _resolve_fleet_terminal_waiter(future: asyncio.Future[bool]) -> None:
+        """Resolve one waiter on its owning loop without leaking races."""
+
+        if not future.done():
+            future.set_result(True)
+
+    def _notify_fleet_consumers(self, conversation_id: str) -> None:
+        """Publish content-free activity without reading the coordinator.
+
+        Reservation invokes this while the coordinator lock is still held so
+        a subsequent close fence cannot overtake its lifecycle revision. The
+        callback therefore deliberately avoids fleet snapshots and waiter
+        resolution, either of which would re-enter that coordinator.
+        """
+
+        with self._fleet_activity_lock:
+            consumers = tuple(self._fleet_activity_consumers.values())
+        for consumer in consumers:
+            try:
+                consumer(conversation_id)
+            except Exception as exc:  # noqa: BLE001 -- lifecycle fan-out is isolated
+                logger.warning(
+                    "fleet activity consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
+
+    def _notify_fleet_activity(self, conversation_id: str) -> None:
+        """Publish settlement activity and resolve terminal waiters."""
+
+        self._notify_fleet_consumers(conversation_id)
+        with self._fleet_activity_lock:
+            waiters = tuple(self._fleet_terminal_waiters.get(conversation_id, ()))
+        if not waiters or self._fleet_has_live_children(conversation_id):
+            return
+        for loop, future in waiters:
+            try:
+                loop.call_soon_threadsafe(
+                    self._resolve_fleet_terminal_waiter,
+                    future,
+                )
+            except RuntimeError:
+                continue
+
+    def _fleet_has_live_children(self, conversation_id: str) -> bool:
+        """Return whether the public fleet snapshot contains a live handle."""
+
+        return any(
+            handle.status not in TERMINAL_RUN_STATUSES
+            for handle in self.fleet_snapshot(conversation_id)
+        )
+
+    async def await_fleet_terminal(self, conversation_id: str) -> bool:
+        """Wait until one conversation has no live delegated children.
+
+        The waiter is registered before the first live snapshot. This closes
+        the finish-during-registration race without polling or sleeps. Timeout
+        policy belongs to the runtime caller so session-close and app-quit can
+        share one global deadline.
+        """
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        waiter = (loop, future)
+        with self._fleet_activity_lock:
+            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(
+                waiter
+            )
+        try:
+            if not self._fleet_has_live_children(conversation_id):
+                return True
+            return await future
+        finally:
+            with self._fleet_activity_lock:
+                retained = self._fleet_terminal_waiters.get(conversation_id, [])
+                if waiter in retained:
+                    retained.remove(waiter)
+                if not retained:
+                    self._fleet_terminal_waiters.pop(conversation_id, None)
+    def on_fleet_child_settled(
+        self, name: str, consumer: Callable[[FleetChildSettled], None]
+    ) -> None:
+        """Register a bridge-lifetime individual completion consumer (ADR-135).
+
+        Registration replaces the same name in place. Consumers run in order,
+        outside the bridge lock, on the child's thread after terminal persistence;
+        use only databases and thread-safe callables, as for ``FleetDrained``.
+        Individual completion does not reconcile final usage or close a change
+        window. A notification failure does not suppress another consumer or drain.
+
+        Args:
+            name: Stable consumer identity and replacement key.
+            consumer: Called with each durable ``FleetChildSettled`` event.
+        """
+        self._fleet_child_fanout.register(name, consumer)
+
     def _on_fleet_child_settled(
         self,
         conversation_id: str,
@@ -6866,7 +7370,7 @@ class ConsoleAgentBridge:
         run_id: str | None,
         status: str,
     ) -> None:
-        """One fleet child fully settled -- record it; fire on the drain.
+        """Record one settlement, notify individually, then fire any final drain.
 
         The ``on_child_settled`` hook `run_reply` hands `AgentService`,
         with this turn's identity bound by its child-state wrapper (the
@@ -6890,6 +7394,7 @@ class ConsoleAgentBridge:
         """
         if run_id is not None and self._buddy_sink is not None:
             self._buddy_sink.release_run(run_id)
+        drained_children: tuple[SettledChild, ...] | None = None
         with self._change_window_lock:
             # PR3a-2 Task 4: classify AT SETTLE TIME, per child, under the
             # same lock the window open/close uses -- a drain can carry a
@@ -6909,12 +7414,42 @@ class ConsoleAgentBridge:
             remaining = self._unsettled_child_counts.get(conversation_id, 1) - 1
             if remaining > 0:
                 self._unsettled_child_counts[conversation_id] = remaining
-                return
-            self._unsettled_child_counts.pop(conversation_id, None)
-            children = tuple(self._settling_children.pop(conversation_id, ()))
-        self._fleet_drain_fanout.fire(
-            FleetDrained(conversation_id=conversation_id, children=children)
-        )
+            else:
+                self._unsettled_child_counts.pop(conversation_id, None)
+                drained_children = tuple(
+                    self._settling_children.pop(conversation_id, ())
+                )
+        # The service's last terminal-status write is best-effort. Verify the
+        # committed row independently before allowing individual wake intake;
+        # missing IDs, failed writes and unreadable rows never authorize work.
+        row = None
+        if run_id:
+            try:
+                row = self._db.get_run_fresh(run_id)
+            except Exception as exc:  # noqa: BLE001 -- verification cannot suppress the drain
+                logger.warning(
+                    "could not verify terminal fleet child row (exception_type={})",
+                    type(exc).__name__,
+                )
+        if row is not None and row.get("status") in TERMINAL_RUN_STATUSES:
+            self._fleet_child_fanout.fire(
+                FleetChildSettled(
+                    conversation_id=conversation_id,
+                    child=dataclass_replace(record, status=row["status"]),
+                )
+            )
+        if drained_children is not None:
+            self._fleet_drain_fanout.fire(
+                FleetDrained(
+                    conversation_id=conversation_id,
+                    children=drained_children,
+                )
+            )
+        # Terminal waiters may release a graceful close's provisional fence.
+        # Publish only after drain consumers had their final chance to observe
+        # it, otherwise the child thread can race the app loop and leak a stale
+        # wake into a newly reopened saved conversation.
+        self._notify_fleet_activity(conversation_id)
 
     def _open_post_turn_change_window(
         self,
@@ -7187,14 +7722,12 @@ class ConsoleAgentBridge:
     def _prune_settled_fleet_survivors(self, conversation_id: str) -> None:
         """Forget retained services whose last child has settled.
 
-        PR3a-1 Task 6a. Called off the read paths (`fleet_snapshot`,
-        `cancel_subagent`, `live_snapshot`) rather than from a completion
-        callback ON PURPOSE: the "last child of a turn finished" signal
-        does not exist yet and PR 3a-2 builds it for auto-wake, so
-        inventing a second one here would be built twice and thrown away
-        once. Nothing depends on the pruning being prompt -- a settled
-        service is inert, and every read that could observe it prunes it
-        first.
+        PR3a-1 Task 6a. Cleanup remains on lifecycle and action paths such
+        as `live_snapshot`, cancellation, and fence release rather than a
+        completion callback. A settled service is inert until one of those
+        existing paths releases it. `fleet_snapshot` deliberately does not
+        call this helper: fleet observation, including navigation counts,
+        must not change retained ownership.
 
         Args:
             conversation_id: The conversation to prune.
@@ -7211,8 +7744,174 @@ class ConsoleAgentBridge:
             else:
                 self._fleet_survivor_services.pop(conversation_id, None)
 
+    @property
+    def runtime_capacity(self) -> RuntimeCapacity:
+        """Return shared admission, allocating once on first execution access.
+
+        Returns:
+            Injected, runtime-supplied, or standalone admission capacity.
+
+        Raises:
+            RuntimeError: Closed ownership would require a new allocation.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity is None:
+                if self._runtime_capacity_closed:
+                    raise RuntimeError("bridge capacity is closed")
+                if self._runtime_capacity_factory is None:
+                    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+                    self._runtime_capacity = RuntimeCapacity.from_settings()
+                else:
+                    self._runtime_capacity = self._runtime_capacity_factory()
+            return self._runtime_capacity
+
+    @runtime_capacity.setter
+    def runtime_capacity(self, value: RuntimeCapacity) -> None:
+        """Replace idle admission while preserving explicit capacity injection.
+
+        Args:
+            value: Capacity to use for subsequent execution admission.
+
+        Raises:
+            RuntimeError: This bridge's ownership has closed.
+            ValueError: Replacement would detach active execution ownership.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity is value:
+                return
+            if self._runtime_capacity_closed:
+                raise RuntimeError("bridge capacity is closed")
+            if (
+                self._runtime_capacity is not None
+                and self._runtime_capacity.snapshot().executions
+            ):
+                raise ValueError("cannot replace capacity of an active bridge")
+            self._runtime_capacity = value
+            self._runtime_capacity_factory = None
+
+    def bind_runtime_capacity(
+        self,
+        factory: Callable[[], RuntimeCapacity],
+        *,
+        existing_capacity: RuntimeCapacity | None = None,
+    ) -> None:
+        """Bind shared runtime admission without forcing its first allocation.
+
+        Args:
+            factory: Runtime supplier that returns its locked shared capacity.
+            existing_capacity: Already allocated runtime capacity, if any.
+
+        Raises:
+            RuntimeError: This bridge has permanently closed its ownership.
+            ValueError: Rebinding would detach active execution ownership.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity_closed:
+                raise RuntimeError("bridge capacity is closed")
+            if self._runtime_capacity_factory == factory:
+                return
+            if (
+                self._runtime_capacity is not None
+                and self._runtime_capacity is not existing_capacity
+                and self._runtime_capacity.snapshot().executions
+            ):
+                raise ValueError("cannot replace capacity of an active bridge")
+            self._runtime_capacity = existing_capacity
+            self._runtime_capacity_factory = factory
+
+    @property
+    def message_store(self):
+        """Create the shared progress store only when execution needs it."""
+        with self._message_store_lock:
+            if self._progress_closed:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
+            if self._message_store is None:
+                from tldw_chatbook.Agents.fleet_messages import MessageStore
+
+                self._message_store = MessageStore()
+                if self._store is not None:
+                    self._store.register_progress_message_store(self._message_store)
+            return self._message_store
+
+    def _session_progress_inbox(self, session_id: str) -> MessageInbox | None:
+        """Noncreating lookup of the native session's exact progress owner."""
+        if self._store is None or self._progress_closed or self._message_store is None:
+            return None
+        with self._store.progress_owner_scope(
+            session_id, message_store=self._message_store
+        ) as owner_id:
+            return (
+                self._message_store.get_inbox(owner_id) if owner_id is not None else None
+            )
+
+    def progress_snapshot(self, owner_id: str) -> tuple[ProgressMessage, ...]:
+        """Inspect an opaque owner key from store.progress_owner_id; never allocate."""
+        if self._progress_closed or self._message_store is None:
+            return ()
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        inbox = self._message_store.get_inbox(owner_id)
+        try:
+            return inbox.snapshot() if inbox is not None else ()
+        except MessageError:
+            return ()
+
+    def progress_counts(self) -> dict[str, int]:
+        """Return body-free pending counts keyed by live native session ID."""
+        if self._progress_closed or self._message_store is None:
+            return {}
+        counts = self._message_store.pending_counts()
+        if self._store is None:
+            return counts
+        return {
+            session_id: counts[owner_id]
+            for session_id, owner_id in self._store.progress_owner_ids().items()
+            if owner_id in counts
+        }
+
+    def discard_progress(self, owner_id: str, message_ids: Sequence[str]) -> int:
+        """Discard selected IDs from an opaque owner key, not a native session ID."""
+        if self._progress_closed or self._message_store is None:
+            return 0
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        inbox = self._message_store.get_inbox(owner_id)
+        try:
+            return inbox.discard(message_ids) if inbox is not None else 0
+        except MessageError:
+            return 0
+
+    def close_progress(
+        self, session_id: str, *, conversation_id: str | None = None
+    ) -> None:
+        """Release a native binding before cancellation; last close drops progress."""
+        if self._progress_closed or self._message_store is None:
+            return None
+        with self._store.progress_owner_scope(
+            session_id, release=True, message_store=self._message_store
+        ) as owner_id:
+            if owner_id is not None:
+                self._fleet_coordinators.pop(conversation_id or session_id, None)
+
+    def close_all_progress(self) -> None:
+        """Permanently invalidate progress before worker shutdown."""
+        with self._runtime_capacity_lock:
+            self._runtime_capacity_closed = True
+        with self._message_store_lock:
+            self._progress_closed = True
+            if self._message_store is not None:
+                self._message_store.close()
+            self._fleet_coordinators.clear()
+
     def _conversation_fleet_coordinator(
-        self, conversation_id: str
+        self,
+        conversation_id: str,
+        *,
+        create: bool = True,
+        progress_owner_id: str | None = None,
     ) -> FleetCoordinator | None:
         """The coordinator for this conversation, built on first use.
 
@@ -7251,6 +7950,12 @@ class ConsoleAgentBridge:
             The conversation's coordinator, or ``None`` when the fleet is
             switched off.
         """
+        # TASK-15666: reclaim settled survivor owners at the same next-turn
+        # boundary that prunes terminal coordinator handles below. This must
+        # precede the kill-switch return so headless turns still clean up, and
+        # stay outside the admission lock because the helper owns its separate
+        # survivor-list lock. Live owners remain retained for cancellation.
+        self._prune_settled_fleet_survivors(conversation_id)
         # Read through the MODULE, not a from-import: `agent_service.
         # _setting` is what tests monkeypatch to flip the kill switch
         # (e.g. `test_inline_fleet_off_spawn_still_produces_a_live_
@@ -7282,16 +7987,35 @@ class ConsoleAgentBridge:
                 )
             )
         )
-        coordinator = self._fleet_coordinators.get(conversation_id)
-        if coordinator is None:
-            coordinator = FleetCoordinator(
-                max_live=max_live,
-                clock=self._clock,
-                retained_transcripts=retained_transcripts,
-                retained_transcript_max_chars=retained_transcript_max_chars,
-            )
-            self._fleet_coordinators[conversation_id] = coordinator
-            return coordinator
+        with self._fleet_admission_lock:
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if (
+                coordinator is not None
+                and progress_owner_id is not None
+                and coordinator.message_inbox
+                is not self.message_store.get_inbox(progress_owner_id)
+            ):
+                # Native state replacement closed the previous inbox. A new binding
+                # must not reuse a coordinator carrying that revoked capability.
+                coordinator = None
+                self._fleet_coordinators.pop(conversation_id, None)
+            if coordinator is None:
+                if not create:
+                    return None
+                coordinator = FleetCoordinator(
+                    max_live=max_live,
+                    clock=self._clock,
+                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),
+                    retained_transcripts=retained_transcripts,
+                    retained_transcript_max_chars=retained_transcript_max_chars,
+                    on_reserve=functools.partial(
+                        self._notify_fleet_consumers,
+                        conversation_id,
+                    ),
+                )
+                if conversation_id in self._fleet_fence_generations:
+                    coordinator.fence()
+                self._fleet_coordinators[conversation_id] = coordinator
         if coordinator.max_live != max_live:
             coordinator.set_max_live(max_live)
         if (
@@ -7303,6 +8027,67 @@ class ConsoleAgentBridge:
             )
         coordinator.prune_terminal()
         return coordinator
+
+    def fence_fleet(self, conversation_id: str, *, generation: int) -> bool:
+        """Stop one closing conversation from admitting new children.
+
+        The coordinator is lazy, so the fence is recorded even when no fleet
+        exists yet. The shared admission lock makes that record atomic with
+        coordinator construction; a stale parent cannot create an unfenced
+        coordinator after shutdown took its cancellation snapshot.
+
+        Args:
+            conversation_id: Conversation whose delegated fleet is closing.
+            generation: Monotonic close generation for stale-fence rejection.
+        """
+        with self._fleet_admission_lock:
+            if conversation_id in self._fleet_fence_generations:
+                return False
+            self._fleet_fence_generations[conversation_id] = generation
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if coordinator is not None:
+                coordinator.fence()
+            return True
+
+    def abort_fleet_fence(
+        self, conversation_id: str, *, generation: int
+    ) -> bool:
+        """Withdraw an exact provisional fence before cancellation begins."""
+
+        with self._fleet_admission_lock:
+            if self._fleet_fence_generations.get(conversation_id) != generation:
+                return False
+            self._fleet_fence_generations.pop(conversation_id, None)
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if coordinator is not None:
+                coordinator.abort_fence()
+            return True
+
+    def release_fleet_fence(
+        self, conversation_id: str, *, generation: int
+    ) -> bool:
+        """Release one matching provisional fence after a complete drain.
+
+        Once cancellation begins the coordinator itself is no longer reopened;
+        a graceful session close restores future admission by discarding that
+        drained coordinator. The runtime calls this only after every session
+        task and the fleet terminal waiter settled. A mismatch or live handle
+        fails closed; timeout and app-disposal paths never call this seam.
+        """
+
+        with self._fleet_admission_lock:
+            if self._fleet_fence_generations.get(conversation_id) != generation:
+                return False
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            if coordinator is not None and any(
+                handle.status not in TERMINAL_RUN_STATUSES
+                for handle in coordinator.snapshot()
+            ):
+                return False
+            self._fleet_fence_generations.pop(conversation_id, None)
+            self._fleet_coordinators.pop(conversation_id, None)
+        self._prune_settled_fleet_survivors(conversation_id)
+        return True
 
     def _conversation_fleet_handles(self, conversation_id: str) -> list[FleetHandle]:
         """Every handle this conversation's coordinator still holds.
@@ -7356,7 +8141,16 @@ class ConsoleAgentBridge:
         Falls back to the published snapshot untouched when this
         conversation has no coordinator -- the inline/kill-switch path,
         where there is no live status to read and never was.
+
+        task-32344: a conversation marked in pre-provider setup short-
+        circuits everything below it. No run exists yet, so there is
+        nothing published to merge with and no fleet to re-derive -- and
+        the PREVIOUS turn's terminal snapshot (still in ``_live``) must
+        not leak back over the turn now being set up.
         """
+        started_at = self._setup_started_at.get(conversation_id)
+        if started_at is not None:
+            return AgentLiveSnapshot(status="setup", setup_started_at=started_at)
         self._prune_settled_fleet_survivors(conversation_id)
         # PR3a-1 Task 6b (audit F1): the summary line is the NEWEST TURN's
         # primary run, resolved through `_live_primary_keys` -- never
@@ -7373,6 +8167,40 @@ class ConsoleAgentBridge:
             snapshot,
             subagents=_subagent_summaries_from_fleet(handles, list(snapshot.subagents)),
         )
+
+    def begin_setup_phase(
+        self, conversation_id: str, *, now: float | None = None
+    ) -> None:
+        """Mark this conversation as in pre-provider setup (task-32344).
+
+        The window between "send accepted" and "provider called" publishes
+        no step -- the run does not exist yet -- so the rail's snapshot was
+        idle and the assistant row rendered blank for however long that
+        setup took. On the first send of a process that is the whole lazy
+        cost of the turn's tool surface, including the Personal Context
+        bootstrap's OS credential-store round trip.
+
+        Args:
+            conversation_id: The conversation whose row should say so.
+            now: ``time.monotonic()`` base for the elapsed segment,
+                injected so the state is testable without sleeping.
+        """
+        self._setup_started_at[conversation_id] = (
+            time.monotonic() if now is None else now
+        )
+
+    def end_setup_phase(self, conversation_id: str) -> None:
+        """Clear the pre-provider setup mark (task-32344).
+
+        A no-op when it was never set, so callers can end unconditionally
+        from a ``finally``. Once cleared, ``live_snapshot`` resolves this
+        conversation from its published steps again.
+
+        Args:
+            conversation_id: The conversation whose setup marker is
+                removed; other conversations' marks are untouched.
+        """
+        self._setup_started_at.pop(conversation_id, None)
 
     def live_run_snapshot(
         self, conversation_id: str, run_id: str
@@ -7492,8 +8320,11 @@ class ConsoleAgentBridge:
         that seam is the only thing this method (or any other caller
         outside ``agent_service.py``) touches on ``AgentService`` for this
         purpose.
+
+        This observation does not release settled survivor owners. Existing
+        lifecycle and action paths perform that cleanup; terminal coordinator
+        handles remain available until the next turn prunes them.
         """
-        self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
         if service is not None:
             return service.fleet_snapshot()
@@ -7726,8 +8557,29 @@ class ConsoleAgentBridge:
             agent_kind=AGENT_KIND_SUBAGENT,
         )
 
+    def subagent_history_page(
+        self,
+        conversation_id: str,
+        *,
+        before: tuple[str, str] | None = None,
+        limit: int = 51,
+    ) -> list[dict]:
+        """Return one metadata-only page for the conversation's history picker."""
+        return self._db.list_subagent_run_headers(
+            conversation_id, before=before, limit=limit
+        )
+
     def subagent_run(self, run_id: str) -> dict | None:
-        return self._db.get_run(run_id)
+        record = self._db.get_run(run_id)
+        if (
+            record is not None
+            and record["agent_kind"] == AGENT_KIND_SUBAGENT
+            and record.get("resumed_from_run_id")
+        ):
+            record["continuation_budget"] = self._db.continuation_budget(
+                record["conversation_id"], run_id
+            )
+        return record
 
     def latest_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the most recent non-superseded PRIMARY run's id, if any.
@@ -8757,19 +9609,7 @@ class ConsoleAgentBridge:
             for step in (primary.get("steps") or [])[-5:]
         )
         subagents = tuple(
-            SubAgentSummary(
-                text=str(record.get("task") or ""),
-                status=str(record.get("status") or "running"),
-                # PR2b Task 4: the rail's per-row click-through needs a
-                # stable identity to resolve a clicked row back to its own
-                # run (`ConsoleAgentController._console_agent_drilldown_
-                # target_run_id`). Historical rows have no coordinator
-                # handle (there is none, post-restart), but they DO have
-                # their own permanent `AgentRunsDB` id -- populate it here
-                # so a resumed conversation's sub-agent rows are just as
-                # drillable as a live run's.
-                run_id=str(record.get("id") or ""),
-            )
+            self.historical_subagent_summary(record)
             for record in subagent_records
             if record.get("parent_run_id") == primary["id"]
         )
@@ -8778,6 +9618,27 @@ class ConsoleAgentBridge:
             step=len(primary.get("steps") or []),
             steps=steps,
             subagents=subagents,
+        )
+
+    @staticmethod
+    def historical_subagent_summary(record: dict) -> SubAgentSummary:
+        """Project one saved child into bounded rail detail and metadata."""
+        detail = _truncate_step_text(
+            str(record.get("result") or ""), limit=_console_tool_result_display_cap()
+        )
+        if not detail:
+            for step in reversed(record.get("steps") or []):
+                if any(step.get(key) for key in ("summary", "result", "tool_name")):
+                    detail = ConsoleAgentBridge._summarize_persisted_step(step)
+                    break
+        return SubAgentSummary(
+            text=str(record.get("task") or "sub-agent"),
+            status=str(record.get("status") or "running"),
+            run_id=str(record.get("id") or ""),
+            budget_tokens=record.get("budget_tokens"),
+            created_at=record.get("created_at"),
+            updated_at=record.get("updated_at"),
+            detail=detail,
         )
 
     @staticmethod

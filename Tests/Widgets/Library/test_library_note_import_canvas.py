@@ -12,6 +12,10 @@ from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
@@ -371,6 +375,10 @@ async def test_collision_controls_post_choice_and_proposed_name() -> None:
             phase="review",
             collision_kind="root",
             collision_name="Work",
+            # task-32262: the field renders the rename input alone, so an
+            # untouched panel shows its placeholder rather than a name with
+            # an error already painted under it.
+            collision_rename_input="Work",
             collision_reason="Choose how to handle the existing Work folder.",
         )
     )
@@ -434,8 +442,10 @@ async def test_update_choices_are_independent_and_post_item_scoped_messages() ->
         await pilot.pause()
         replace_button = app.query_one("#note-import-replace-item-1", Button)
         membership_button = app.query_one("#note-import-membership-item-1", Button)
-        assert replace_button.label.plain.startswith("✓")
-        assert membership_button.label.plain.startswith("○")
+        # task-32235 AC#2: the legend's checkbox pair, not the outcome "✓"
+        # and the blocked-action "○" these labels used to borrow.
+        assert replace_button.label.plain.startswith(LIBRARY_GLYPH_SELECTED)
+        assert membership_button.label.plain.startswith(LIBRARY_GLYPH_UNSELECTED)
         assert await pilot.click(replace_button)
         assert await pilot.click(membership_button)
         await pilot.pause()
@@ -487,7 +497,11 @@ async def test_import_gate_carries_disabled_reason_in_label_and_tooltip() -> Non
         await pilot.pause()
         import_button = app.query_one("#note-import-import", Button)
         assert import_button.disabled is True
-        assert import_button.label.plain == "Import selected items unavailable"
+        # task-32257: the reason is the label's own text, not the tooltip's
+        # alone -- the control used to read "unavailable" and nothing else.
+        assert import_button.label.plain == (
+            "Import selected items unavailable — Resolve the folder collision first"
+        )
         assert import_button.tooltip == "Resolve the folder collision first."
 
 
@@ -530,7 +544,7 @@ async def test_importing_shows_bounded_progress_and_cooperative_cancel() -> None
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         assert _plain(app.query_one("#note-import-progress", Static)) == (
-            "7 of 12 complete · 7 imported · 1 skipped · 0 failed"
+            "7 of 12 planned changes complete · 7 imported · 1 skipped · 0 failed"
         )
         assert await pilot.click("#note-import-cancel")
         await pilot.pause()
@@ -635,8 +649,10 @@ class _ProductionCssCanvasApp(ConsolidatedCSSApp):
 
 
 async def test_review_is_scrollable_and_paints_next_action_at_60_columns() -> None:
+    # Each row sits in its own folder, so the uniform-run collapse
+    # (task-32250) leaves 24 individual rows to scroll.
     items = tuple(
-        _item(item_id=f"item-{index}", name=f"draft [{index}].md")
+        _item(item_id=f"item-{index}", name=f"folder-{index}/draft [{index}].md")
         for index in range(1, 25)
     )
     snapshot = _snapshot(

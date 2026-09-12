@@ -15,8 +15,9 @@ from contextvars import ContextVar
 import json
 import os
 from pathlib import Path
+import stat
 import threading
-from typing import TYPE_CHECKING, Iterable, Iterator
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 from loguru import logger
 
@@ -26,6 +27,16 @@ if TYPE_CHECKING:
 _RUN_WORKSPACE_ID: ContextVar[str | None] = ContextVar(
     "tldw_run_workspace_id", default=None
 )
+_RUN_WORKSPACE_READ_BINDING_IDS: ContextVar[frozenset[str] | None] = ContextVar(
+    "tldw_run_workspace_read_binding_ids", default=None
+)
+_RUN_WORKSPACE_WRITE_BINDING_IDS: ContextVar[frozenset[str] | None] = ContextVar(
+    "tldw_run_workspace_write_binding_ids", default=None
+)
+_RUN_WORKSPACE_BINDING_AUTHORITY: ContextVar[tuple[Any, ...] | None] = ContextVar(
+    "tldw_run_workspace_binding_authority", default=None
+)
+_INHERIT_BINDING_MAXIMUM = object()
 _RUN_FILE_SANDBOX_ROOT: ContextVar[Path | None] = ContextVar(
     "tldw_run_file_sandbox_root", default=None
 )
@@ -126,6 +137,7 @@ def workspace_context_note(
     *,
     launch_cwd: str | os.PathLike[str] | None = None,
     registry=None,
+    binding_authority: Iterable[Any] | None = None,
 ) -> str:
     """Build the agent system-prompt note for a non-default workspace.
 
@@ -167,16 +179,39 @@ def workspace_context_note(
             return _NOTE_UNAVAILABLE
         name = " ".join(str(record.name).split())[:120] or workspace_id
         root_lines: list[str] = []
+        authority_by_id = (
+            {
+                str(getattr(item, "binding_id", "")): item
+                for item in binding_authority
+            }
+            if binding_authority is not None
+            else None
+        )
         for binding, folder in _iter_valid_folder_bindings(
             registry.list_folder_bindings(workspace_id)
         ):
+            frozen = (
+                authority_by_id.get(str(getattr(binding, "binding_id", "")))
+                if authority_by_id is not None
+                else None
+            )
+            if authority_by_id is not None and frozen is None:
+                continue
+            if frozen is not None and not _binding_matches_frozen_authority(
+                folder, frozen
+            ):
+                continue
             display, outside = _relativize_root(folder, launch)
             # Collapse whitespace in the rendered path exactly as the workspace
             # name is collapsed above: a bound folder whose leaf name contains
             # a newline (legal on POSIX) would otherwise splice a fake prompt
             # section into the note the agent reads as instructions.
             display = " ".join(display.split())
-            read_only = str(binding.metadata.get("access", "ro")) != "rw"
+            read_only = (
+                not bool(frozen.allow_write)
+                if frozen is not None
+                else str(binding.metadata.get("access", "ro")) != "rw"
+            )
             tags: list[str] = []
             if outside:
                 tags.append("outside the launch directory")
@@ -205,6 +240,40 @@ def workspace_context_note(
     else:
         lines.append(_NOTE_NO_ROOTS)
     return "\n".join(lines)
+
+
+def frozen_workspace_roots(
+    workspace_id: str | None,
+    binding_authority: Iterable[Any],
+    *,
+    registry=None,
+) -> tuple[Path, ...]:
+    """Return exact admitted roots that remain live without retargeting."""
+    if not workspace_id:
+        return ()
+    try:
+        registry = registry or _registry_factory()
+        live = {
+            str(getattr(item, "binding_id", "")): item
+            for item in registry.list_folder_bindings(workspace_id)
+        }
+        roots: list[Path] = []
+        for frozen in binding_authority:
+            binding = live.get(str(getattr(frozen, "binding_id", "")))
+            if binding is None:
+                continue
+            root = Path(binding.locator)
+            if (
+                root.is_dir()
+                and not root.is_symlink()
+                and root.resolve() == root
+                and _binding_matches_frozen_authority(root, frozen)
+            ):
+                roots.append(root)
+        return tuple(roots)
+    except Exception:
+        logger.opt(exception=True).debug("Frozen workspace roots unavailable")
+        return ()
 
 
 #: Process-wide cache for the default registry service (see
@@ -301,7 +370,13 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
 
 
 @contextmanager
-def run_workspace(workspace_id: str | None) -> Iterator[None]:
+def run_workspace(
+    workspace_id: str | None,
+    *,
+    read_binding_ids: Iterable[str] | None | object = _INHERIT_BINDING_MAXIMUM,
+    write_binding_ids: Iterable[str] | None | object = _INHERIT_BINDING_MAXIMUM,
+    binding_authority: Iterable[Any] | None | object = _INHERIT_BINDING_MAXIMUM,
+) -> Iterator[None]:
     """Bind the current run's workspace for the duration of a tool call.
 
     Sets a context-local workspace id that ``allowed_file_roots`` and
@@ -319,9 +394,40 @@ def run_workspace(workspace_id: str | None) -> Iterator[None]:
         current run's workspace.
     """
     token = _RUN_WORKSPACE_ID.set(workspace_id)
+    read_token = (
+        None
+        if read_binding_ids is _INHERIT_BINDING_MAXIMUM
+        else _RUN_WORKSPACE_READ_BINDING_IDS.set(
+            None
+            if read_binding_ids is None
+            else frozenset(str(value) for value in read_binding_ids)
+        )
+    )
+    write_token = (
+        None
+        if write_binding_ids is _INHERIT_BINDING_MAXIMUM
+        else _RUN_WORKSPACE_WRITE_BINDING_IDS.set(
+            None
+            if write_binding_ids is None
+            else frozenset(str(value) for value in write_binding_ids)
+        )
+    )
+    authority_token = (
+        None
+        if binding_authority is _INHERIT_BINDING_MAXIMUM
+        else _RUN_WORKSPACE_BINDING_AUTHORITY.set(
+            None if binding_authority is None else tuple(binding_authority)
+        )
+    )
     try:
         yield
     finally:
+        if authority_token is not None:
+            _RUN_WORKSPACE_BINDING_AUTHORITY.reset(authority_token)
+        if write_token is not None:
+            _RUN_WORKSPACE_WRITE_BINDING_IDS.reset(write_token)
+        if read_token is not None:
+            _RUN_WORKSPACE_READ_BINDING_IDS.reset(read_token)
         _RUN_WORKSPACE_ID.reset(token)
 
 
@@ -404,12 +510,45 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
             workspace_id = active.workspace_id if active is not None else None
         if workspace_id is None or workspace_id == DEFAULT_WORKSPACE_ID:
             return tuple(roots)
+        maximum_binding_ids = (
+            _RUN_WORKSPACE_WRITE_BINDING_IDS.get()
+            if write
+            else _RUN_WORKSPACE_READ_BINDING_IDS.get()
+        )
+        frozen_authority = _RUN_WORKSPACE_BINDING_AUTHORITY.get()
+        authority_by_id = (
+            {
+                str(getattr(item, "binding_id", "")): item
+                for item in frozen_authority
+            }
+            if frozen_authority is not None
+            else None
+        )
         bindings = (
             binding
             for binding in registry.list_folder_bindings(workspace_id)
             if not write or str(binding.metadata.get("access", "ro")) == "rw"
         )
-        for _binding, folder in _iter_valid_folder_bindings(bindings):
+        for binding, folder in _iter_valid_folder_bindings(bindings):
+            binding_id = str(getattr(binding, "binding_id", ""))
+            if (
+                maximum_binding_ids is not None
+                and binding_id not in maximum_binding_ids
+            ):
+                continue
+            frozen = (
+                authority_by_id.get(binding_id)
+                if authority_by_id is not None
+                else None
+            )
+            if authority_by_id is not None and frozen is None:
+                continue
+            if write and frozen is not None and not bool(frozen.allow_write):
+                continue
+            if frozen is not None and not _binding_matches_frozen_authority(
+                folder, frozen
+            ):
+                continue
             roots.append(folder)
     except Exception:
         logger.opt(exception=True).warning(
@@ -417,3 +556,30 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
         )
         return (sandbox_root,)
     return tuple(roots)
+
+
+def _binding_matches_frozen_authority(folder: Path, frozen: Any) -> bool:
+    """Return whether one live binding is still the exact admitted root."""
+    try:
+        expected_root = Path(frozen.root)
+        if folder != expected_root:
+            return False
+        from tldw_chatbook.Chat.console_project_instructions import (
+            fingerprint_canonical_locator,
+        )
+
+        if fingerprint_canonical_locator(str(folder)) != str(
+            frozen.locator_fingerprint
+        ):
+            return False
+        identities: list[tuple[str, int, int, int]] = []
+        for component in (*reversed(folder.parents), folder):
+            value = os.lstat(component)
+            if stat.S_ISLNK(value.st_mode) or not stat.S_ISDIR(value.st_mode):
+                return False
+            identities.append(
+                (str(component), value.st_dev, value.st_ino, value.st_mode)
+            )
+        return tuple(identities) == tuple(frozen.root_identity)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False

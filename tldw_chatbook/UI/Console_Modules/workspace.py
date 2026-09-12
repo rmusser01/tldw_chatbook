@@ -139,11 +139,10 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 
-CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
-# PR #2480 review (#7): the batched appearance map is cached on the same
-# order as the persisted-rows cache -- short enough that an appearance
-# change made elsewhere shows up promptly, long enough that the several
-# merges inside one state build share one read.
+CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 10.0
+# PR #2480 review (#7): keep the appearance map cache short so changes
+# made elsewhere show up promptly, while the several merges inside one
+# state build share one read.
 CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS = 2.0
 CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY = (
     "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
@@ -563,6 +562,9 @@ class ConsoleWorkspaceController:
                 terminal lines (or ``None`` before layout) so the browser's
                 per-section/group visible-row cap can adapt to fill the
                 available space.
+            notify_character_navigation: Report a character-conversation
+                activation result to the user; defaults to the app-level
+                ``notify`` when not supplied.
         """
         self._screen = screen
         self._notify_character_navigation = notify_character_navigation
@@ -1576,6 +1578,12 @@ class ConsoleWorkspaceController:
     def _row_belongs_to_flat_projection(
         row: ConsoleConversationBrowserInputRow,
     ) -> bool:
+        # TASK-32309: keep this controller-side twin in agreement with the
+        # builder's `_belongs_to_chats` -- character conversations belong to
+        # the Character section (or their workspace Tree node), never the
+        # flat lane, so the settled-rows cache must not retain them either.
+        if str(row.character_id or "").strip():
+            return False
         return row.scope_type == "global" or row.workspace_id in (
             None,
             DEFAULT_WORKSPACE_ID,
@@ -1907,6 +1915,23 @@ class ConsoleWorkspaceController:
             return (), 0, ""
         items = result.get("items") if isinstance(result.get("items"), list) else []
         labels = self._console_browser_workspace_labels()
+        # Review finding 6: workspace Tree pages legitimately contain
+        # character conversations (workspace wins), so their rows must carry
+        # the same character identity the other producers set -- downstream
+        # overlays and the Character-section routing key off it.
+        item_character_ids = [
+            text_id
+            for text_id in (
+                str(item.get("character_id") or "").strip()
+                if isinstance(item, dict)
+                else ""
+                for item in items
+            )
+            if text_id
+        ]
+        character_labels = self._console_browser_character_labels_for(
+            item_character_ids
+        )
         starred_ids = self._starred_console_conversation_ids()
         rows: list[ConsoleConversationBrowserInputRow] = []
         for item in items:
@@ -1915,6 +1940,7 @@ class ConsoleWorkspaceController:
             conversation_id = str(item.get("id") or "").strip()
             if not conversation_id:
                 continue
+            character_id = str(item.get("character_id") or "").strip() or None
             row = ConsoleConversationBrowserInputRow(
                 row_key=conversation_id,
                 conversation_id=conversation_id,
@@ -1928,6 +1954,12 @@ class ConsoleWorkspaceController:
                 source_kind="persisted",
                 updated_sort=console_persisted_row_updated_sort(item),
                 run_marker=self._console_browser_unseen_marker(conversation_id),
+                character_id=character_id,
+                character_label=(
+                    character_labels.get(character_id, "")
+                    if character_id is not None
+                    else ""
+                ),
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         total = result.get("total")
@@ -2193,7 +2225,10 @@ class ConsoleWorkspaceController:
             )
             source_rows = self._rows_with_latest_canonical_owner(source_rows)
             source_rows = self._overlay_current_console_browser_markers(source_rows)
+        bridge = self._ensure_console_agent_bridge()
+        read_counts = getattr(bridge, "progress_counts", None)
         return build_workspace_tree_state(
+            progress_counts=read_counts() if callable(read_counts) else {},
             workspaces=(
                 (str(record.workspace_id), str(record.name or record.workspace_id))
                 for record in records
@@ -2626,6 +2661,26 @@ class ConsoleWorkspaceController:
         starred_ids = self._starred_console_conversation_ids()
         active_session_id = store.active_session_id
         controller = self._console_chat_controller
+
+        def _session_character_id(session: Any) -> str | None:
+            local_character_id = getattr(session, "local_character_id", None)
+            if not callable(local_character_id):
+                return None
+            return str(local_character_id() or "").strip() or None
+
+        # Review finding 7: resolve labels only for the character sessions
+        # that actually exist -- never a full-library read, and no database
+        # access at all for the common no-character-sessions build.
+        session_character_ids = [
+            character_id
+            for character_id in (
+                _session_character_id(session) for session in store.sessions()
+            )
+            if character_id is not None
+        ]
+        character_labels = self._console_browser_character_labels_for(
+            session_character_ids
+        )
         rows: list[ConsoleConversationBrowserInputRow] = []
         for session in store.sessions():
             session_workspace_id = str(session.workspace_id or "").strip()
@@ -2635,6 +2690,18 @@ class ConsoleWorkspaceController:
                 else "workspace"
             )
             workspace_id = None if scope_type == "global" else session_workspace_id
+            # TASK-32309: a live global character session carries its
+            # character identity so the flat lane excludes it like every
+            # other character conversation. The session's own
+            # character_name wins over the cards DB (it is the
+            # authoritative projection for the bound card).
+            session_character_id = _session_character_id(session)
+            session_character_label = ""
+            if session_character_id is not None:
+                session_character_label = (
+                    str(getattr(session, "character_name", "") or "").strip()
+                    or character_labels.get(session_character_id, "")
+                )
             persisted_id = (
                 str(session.persisted_conversation_id).strip()
                 if session.persisted_conversation_id
@@ -2675,6 +2742,8 @@ class ConsoleWorkspaceController:
                 updated_sort=str(session.updated_at or ""),
                 run_marker=run_marker,
                 queued_count=queued_count,
+                character_id=session_character_id,
+                character_label=session_character_label,
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -3183,6 +3252,11 @@ class ConsoleWorkspaceController:
         labels = self._console_browser_workspace_labels()
         # The flat Conversations lane owns only unassigned/global and Default
         # records. Named-workspace search and pages have separate service calls.
+        # TASK-32309 (review finding 1): character conversations are excluded
+        # AT THE QUERY, before the service's limit/offset/total math -- a
+        # post-fetch filter would let character chats consume page slots and
+        # inflate the displayed total while ordinary chats beyond the page
+        # stayed unfetched.
         query_scopes = scopes or (
             ("global", None),
             ("workspace", DEFAULT_WORKSPACE_ID),
@@ -3207,6 +3281,9 @@ class ConsoleWorkspaceController:
                     "workspace_id": workspace_id,
                     "limit": CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
                     "offset": max(0, int(offset)),
+                    # TASK-32309 (review finding 1): flat-lane ownership is a
+                    # query filter, not a post-fetch removal.
+                    "character_scope": "generic",
                 }
                 if include_mode:
                     list_kwargs["mode"] = "local"
@@ -3366,6 +3443,16 @@ class ConsoleWorkspaceController:
                     group="console-persisted-browser-cache",
                     exclusive=True,
                 )
+        # TTL expiry schedules a refresh; it does not mean the rows vanished.
+        # Keep the same query/selection visible while that worker runs so the
+        # rail does not collapse and restore its scroll position on every refresh.
+        # Explicit invalidation clears this entry; another key never reuses it.
+        if (
+            self._console_persisted_rows_cache is not None
+            and self._console_persisted_rows_cache_key
+            == (query, current_conversation_id)
+        ):
+            return self._console_persisted_rows_cache
         return [], None, ""
 
     async def _refresh_console_persisted_rows_cache(
@@ -3421,26 +3508,28 @@ class ConsoleWorkspaceController:
         rows, _total, error = result
         if not error:
             self._record_canonical_owner_rows(rows)
-        from ...Chat.conversation_archive_actions import (
-            local_conversation_service,
-            storage_call,
-        )
-
         store = self._console_chat_store
         native_ids = [
             str(session.persisted_conversation_id)
             for session in (store.sessions() if store is not None else ())
             if session.persisted_conversation_id
         ]
-        try:
-            states = await storage_call(
-                local_conversation_service(self.app_instance),
-                "get_conversation_archive_states",
-                native_ids,
+        states = {}
+        if native_ids:
+            from ...Chat.conversation_archive_actions import (
+                local_conversation_service,
+                storage_call,
             )
-        except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
-            logger.debug("Archive state refresh unavailable")
-            states = {}
+
+            try:
+                states = await storage_call(
+                    local_conversation_service(self.app_instance),
+                    "get_conversation_archive_states",
+                    native_ids,
+                )
+            except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
+                logger.debug("Archive state refresh unavailable")
+                states = {}
         # Both database reads await: retain ownership through the last one,
         # including any archive receipt that settled while its snapshot loaded.
         if (
@@ -3841,6 +3930,7 @@ class ConsoleWorkspaceController:
             result_total_count=total,
             result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
             subagent_counts=subagent_counts,
+            progress_counts=(bridge.progress_counts() if callable(getattr(bridge, "progress_counts", None)) else {}),
             # The visible-row cap grows with the measured rail body height so
             # the Chats section expands to fill its even share of the rail
             # alongside the Workspaces tree; the historical 12-row default
@@ -6304,6 +6394,52 @@ class ConsoleWorkspaceController:
                 "Unable to list Console browser workspaces"
             )
             return ()
+
+    def _console_browser_character_labels_for(
+        self,
+        character_ids: Iterable[str],
+    ) -> dict[str, str]:
+        """Return character card names keyed by stringified local character id.
+
+        TASK-32309: browser rows that carry a character id label themselves
+        with their card's name. Review findings 5 and 7: resolve ONLY the ids
+        present on candidate rows (never a bounded full-library listing,
+        which silently loses cards past its limit) and skip the database
+        entirely when nothing needs a label -- the common no-character-rows
+        build must not touch the cards table.
+        """
+        needed = sorted(
+            {
+                text_id
+                for text_id in (str(value or "").strip() for value in character_ids)
+                if text_id
+            }
+        )
+        if not needed:
+            return {}
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        get_card = getattr(db, "get_character_card_by_id", None)
+        if not callable(get_card):
+            return {}
+        labels: dict[str, str] = {}
+        for text_id in needed:
+            try:
+                card_id = int(text_id)
+            except ValueError:
+                continue
+            try:
+                # Non-deleted cards only; a deleted or missing card returns
+                # None and the row keeps its empty (unknown) label.
+                card = get_card(card_id)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Unable to read character card {} for Console browser", card_id
+                )
+                continue
+            name = str((card or {}).get("name") or "").strip()
+            if name:
+                labels[text_id] = name
+        return labels
 
     def _console_browser_workspace_labels(self) -> dict[str, str]:
         """Return workspace labels keyed by workspace id for browser rows."""

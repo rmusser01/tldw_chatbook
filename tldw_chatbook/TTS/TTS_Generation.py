@@ -2240,13 +2240,50 @@ class TTSService:
         *,
         text: str,
         voice_override: str | None = None,
+        response_format_override: str | None = None,
         progress_sink: ProgressSink | None = None,
         admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
-        """Resolve and synthesize one revision-coherent default request."""
+        """Resolve and synthesize one revision-coherent default request.
+
+        Args:
+            text: The text to synthesize.
+            voice_override: Optional request-scoped voice identifier.
+            response_format_override: Optional request-scoped audio format
+                (e.g. "wav"); flows through the same effective-settings
+                validation as every explicit selection.
+            progress_sink: Optional async progress reporter.
+            admission_authorizer: Optional admission-time destination
+                authorizer for automatic speech requests.
+
+        Returns:
+            The synthesized provider response; the caller owns closing it.
+        """
         return await self._request_admission.synthesize_default(
             text=text,
             voice_override=voice_override,
+            response_format_override=response_format_override,
+            progress_sink=progress_sink,
+            admission_authorizer=admission_authorizer,
+        )
+
+    async def synthesize_hands_free(
+        self,
+        *,
+        text: str,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+        progress_sink: ProgressSink | None = None,
+        admission_authorizer: TTSAdmissionAuthorizer | None = None,
+    ) -> TTSAudioResponse:
+        """Synthesize app-owned PCM or declared WAV for hands-free playback."""
+
+        return await self._request_admission.synthesize_hands_free(
+            text=text,
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
             progress_sink=progress_sink,
             admission_authorizer=admission_authorizer,
         )

@@ -723,3 +723,21 @@ async def test_contextual_star_button_and_selection_line_are_retired() -> None:
         assert not console.query("#console-workspace-tree-star")
         assert not console.query("#console-workspace-tree-selection-context")
         assert not console.query("#console-workspace-context-action-row")
+
+
+@pytest.mark.asyncio
+async def test_transcript_press_folds_the_workspace_menu() -> None:
+    """ADR-068 parity: transcript presses fold the workspace menu too."""
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        console = pilot.app.screen
+        console.app_instance.workspace_registry_service = _stub_registry()
+
+        _request_menu(console, kind="workspace")
+        await pilot.pause(0.4)
+        assert console.query(ConsoleWorkspaceActionMenu)
+
+        assert await pilot.click("#console-native-transcript")
+        await pilot.pause(0.3)
+        assert not console.query(ConsoleWorkspaceActionMenu), (
+            "a transcript press left the workspace menu mounted"
+        )

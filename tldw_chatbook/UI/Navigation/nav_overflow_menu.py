@@ -18,7 +18,13 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from .main_navigation import NavigateToScreen, nav_button_label
+from .main_navigation import (
+    CONSOLE_ATTENTION_ATTR,
+    CONSOLE_ATTENTION_TOOLTIP,
+    NavigateToScreen,
+    navigation_destination_label,
+    navigation_destination_label_text,
+)
 from .shell_destinations import SHELL_DESTINATION_ORDER
 
 
@@ -66,24 +72,71 @@ class NavOverflowMenu(ModalScreen[None]):
         self._active_destination_id = active_destination_id
 
     def compose(self) -> ComposeResult:
+        console_needs_attention = bool(
+            getattr(self.app, "console_needs_attention", False)
+        )
         with Vertical(id="nav-overflow-menu"):
             yield Static("All destinations", id="nav-overflow-menu-title")
             for destination in SHELL_DESTINATION_ORDER:
-                label = nav_button_label(
+                # Same dimmed key-prefix label the strip shows (task-32458),
+                # so the menu doubles as shortcut teaching; the "(current)"
+                # marker is appended in plain style.
+                label = navigation_destination_label_text(
                     destination.destination_id,
                     destination.accessible_label,
+                    console_needs_attention=console_needs_attention,
                 )
                 if destination.destination_id == self._active_destination_id:
-                    label = f"{label} (current)"
+                    label = label.append(" (current)")
                 button = Button(
                     label,
                     id=f"nav-overflow-{destination.destination_id}",
                     classes="nav-overflow-destination",
-                    tooltip=destination.tooltip,
+                    tooltip=(
+                        CONSOLE_ATTENTION_TOOLTIP
+                        if destination.destination_id == "console"
+                        and console_needs_attention
+                        else destination.tooltip
+                    ),
                     compact=True,
                 )
                 button._overflow_target_route = destination.primary_route
                 yield button
+
+    def on_mount(self) -> None:
+        """Refresh durable attention when this transient projection opens."""
+        self.sync_console_attention(
+            bool(getattr(self.app, "console_needs_attention", False))
+        )
+        runtime = getattr(self.app, "console_runtime", None)
+        recompute = getattr(runtime, "recompute_console_attention", None)
+        if callable(recompute):
+            recompute(force_projection=True)
+
+    def sync_console_attention(self, needs_attention: bool) -> None:
+        """Project the same fixed Console glyph used by the main strip."""
+        needs_attention = bool(needs_attention or getattr(self.app, CONSOLE_ATTENTION_ATTR, 0))
+        try:
+            button = self.query_one("#nav-overflow-console", Button)
+        except Exception:
+            return
+        destination = next(
+            item
+            for item in SHELL_DESTINATION_ORDER
+            if item.destination_id == "console"
+        )
+        label = navigation_destination_label(
+            "console",
+            destination.accessible_label,
+            console_needs_attention=bool(needs_attention),
+        )
+        if destination.destination_id == self._active_destination_id:
+            label = f"{label} (current)"
+        button.label = label
+        button.tooltip = (
+            CONSOLE_ATTENTION_TOOLTIP if needs_attention else destination.tooltip
+        )
+        button.set_class(bool(needs_attention), "console-needs-attention")
 
     @on(Button.Pressed, ".nav-overflow-destination")
     def handle_destination(self, event: Button.Pressed) -> None:

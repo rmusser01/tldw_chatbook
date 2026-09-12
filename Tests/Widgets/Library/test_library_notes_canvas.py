@@ -237,7 +237,8 @@ async def test_authority_row_is_first_plain_child_in_every_notes_mode(
         assert authority._render_markup is False
         text = getattr(authority.renderable, "plain", str(authority.renderable))
         assert "Library notes" in text
-        assert "Library database" in text
+        # task-32218: one noun per source -- "· Library database" is gone.
+        assert "Library database" not in text
         assert status_fragment in text
         assert "Next:" in text
 
@@ -405,7 +406,7 @@ async def test_list_authority_running_without_status_uses_updating_fallback(
 
         assert "Updating notes…" in text
         assert "Ready" not in text
-        assert text == "Library notes · Library database · Updating notes…"
+        assert text == "Library notes · Updating notes…"
         assert "Next:" not in text
 
 
@@ -430,7 +431,7 @@ async def test_editor_authority_tracks_post_mount_save_state(widget_pilot):  # n
         assert canvas.query_one("#library-notes-authority", Static) is authority
         text = getattr(authority.renderable, "plain", str(authority.renderable))
         assert "Saving note…" in text
-        assert text == "Library notes · Library database · Saving note…"
+        assert text == "Library notes · Saving note…"
         assert "Next:" not in text
 
         canvas.apply_session_state(_editor_state(status="Save failed: database busy"))
@@ -468,7 +469,7 @@ async def test_editor_authority_tracks_transfer_through_context_navigation(
         assert "Saved" in text
         assert "Exporting Markdown…" in text
         assert (
-            text == "Library notes · Library database · Saved · Exporting Markdown…"
+            text == "Library notes · Saved · Exporting Markdown…"
         )
         assert "Next:" not in text
 

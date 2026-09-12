@@ -3787,9 +3787,23 @@ openai_cache_key = false
 #
 # How many sub-agents of ONE conversation may run at once, counting any
 # still working from an earlier message. 1 disables the fleet (sub-agents
-# run inline, one at a time). The cap is per conversation AND per running
-# app -- N conversations can hold N * this between them.
+# run inline, one at a time). The conversation cap is also subject to the
+# shared runtime cap below.
 # max_live_subagents = 3
+#
+# Shared child execution slots across this Console runtime, including inline
+# children and cleanup still running after a child is marked terminal.
+# Automatic work may occupy four of six; manual/queued work can use all six.
+# max_runtime_subagents = 6
+# reserved_manual_subagents = 2
+#
+# Local tool workers shared across all conversations in this Console runtime.
+# A timed-out worker keeps its slot until it really exits. Automatic wakes
+# may occupy six of the default eight slots; two remain for manual work.
+# Defaults are owned by Agents/execution_capacity.py. Read before admission;
+# lowering a limit does not cancel already admitted work.
+# max_runtime_tool_workers = 8
+# reserved_manual_tool_workers = 2
 #
 # Whether a sub-agent may keep working after the reply that spawned it has
 # finished. false settles every sub-agent at the end of its own turn.
@@ -4633,7 +4647,7 @@ allowed_extra_params = []
 
 # ComfyUI H3 image editing is explicit opt-in: add "comfyui" to
 # enabled_backends above after reviewing this server boundary. Saving a base_url
-# in F9 Settings consents to sending the source image and instruction to that
+# in F4 Settings consents to sending the source image and instruction to that
 # exact origin. ComfyUI retains uploaded inputs and saved outputs according to
 # the server operator's policy.
 # [image_generation.comfyui]
@@ -5099,7 +5113,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # Deep-Search Configuration
 # ==========================================================
 [tools]
-# web_deep_search_enabled = false    # Opt-in deep-search tool; requires app restart; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
+# web_deep_search_enabled = false    # Opt-in deep-search tool; the Console picks this up on its next agent run (each run rebuilds its tool catalog fresh, no app restart needed); external MCP clients only see it on their next client launch, and only when [mcp] expose_local_tools = true; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
 
 [SearchSettings]
 # Default search backend shared by basic web_search and web_deep_search.
@@ -5108,8 +5122,11 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # web-search dependencies and network access are still required).
 # search_provider_default = "duckduckgo"
 # Deep-search-only defaults below. Enable the deep-search tool with
-# [tools] web_deep_search_enabled = true (requires app restart; each call makes
-# ~2x-results+3 LLM calls plus page fetches -- real money on paid providers).
+# [tools] web_deep_search_enabled = true -- the Console picks this up on its
+# next agent run (no app restart needed); external MCP clients only see it on
+# their next client launch, and only when [mcp] expose_local_tools = true.
+# Each call makes ~2x-results+3 LLM calls plus page fetches -- real money on
+# paid providers.
 # relevance_analysis_llm = "openai"
 # final_answer_llm = "openai"
 # search_enable_subquery = false   # generate sub-questions from the query and
@@ -5282,6 +5299,12 @@ voice_match_min_seconds = 4
 # After a meeting that matched you cleanly, offer to learn from it and
 # improve the stored voiceprint (at most one offer per meeting).
 voice_learn_offer = true
+
+[dictation]
+# Speculative pipeline only. Safe range: 500-3000 milliseconds.
+response_eagerness_ms = 700
+# Troubleshooting-only false forces half duplex. Realtime voice is unaffected.
+pipeline_aec_enabled = true
 
 [transcription]
 # Default transcription provider
@@ -6677,6 +6700,16 @@ def get_atomic_config_snapshot() -> AtomicConfigSnapshot:
             generation=_CONFIG_GENERATION,
             values=_atomic_config_values_from_raw(raw),
         )
+
+
+def get_runtime_config_generation() -> int:
+    """Read the publication counter without locks, I/O, or copying config.
+
+    This is a baseline, not an acceptance fence. Callers must finish with
+    ``run_if_runtime_config_generation_current``; a concurrent publication
+    conservatively invalidates the captured baseline.
+    """
+    return _CONFIG_GENERATION
 
 
 def get_runtime_config_snapshot(

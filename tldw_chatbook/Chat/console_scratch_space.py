@@ -11,7 +11,7 @@ import threading
 import time
 from collections import deque
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
@@ -22,9 +22,9 @@ from loguru import logger
 class ConsoleScratchSnapshot:
     """Immutable capability identifying one live scratch-space generation."""
 
-    root: Path
-    token: str
-    identity: tuple[int, int]
+    root: Path = field(repr=False)
+    token: str = field(repr=False)
+    identity: tuple[int, int] = field(repr=False)
 
 
 class ConsoleScratchSpaceUnavailable(RuntimeError):

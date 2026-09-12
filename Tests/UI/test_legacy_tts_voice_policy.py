@@ -1,7 +1,7 @@
 """Global voice policies must agree with the effective admission contract."""
 
 import pytest
-from textual.widgets import Input, Select, Static
+from textual.widgets import Select, Static
 
 from Tests.UI.test_kokoro_playground_generation import _RecordingAdapter
 from Tests.UI.test_settings_speech_tts_panel import (
@@ -124,7 +124,7 @@ async def test_saved_invalid_kokoro_policy_remains_visible_and_can_be_repaired()
         assert "Exact" in str(error.renderable)
         voice.value = "exact"
         await pilot.pause()
-        app.query_one("#settings-speech-voice-value", Input).value = "af_heart"
+        app.query_one("#settings-speech-voice-value", Select).value = "af_heart"
         await pilot.pause()
         status = app.query_one("#settings-speech-default-status", Static)
         assert "Unsaved" in str(status.renderable)
@@ -146,5 +146,5 @@ async def test_return_to_saved_kokoro_restores_its_explicit_voice():
         app.query_one("#settings-speech-default-provider", Select).value = "kokoro"
         await pilot.pause()
         assert app.query_one("#settings-speech-voice-policy", Select).value == "exact"
-        assert app.query_one("#settings-speech-voice-value", Input).value == "bf_emma"
-        assert app.query_one("#settings-speech-model-value", Input).value == "kokoro"
+        assert app.query_one("#settings-speech-voice-value", Select).value == "bf_emma"
+        assert app.query_one("#settings-speech-model-value", Select).value == "kokoro"

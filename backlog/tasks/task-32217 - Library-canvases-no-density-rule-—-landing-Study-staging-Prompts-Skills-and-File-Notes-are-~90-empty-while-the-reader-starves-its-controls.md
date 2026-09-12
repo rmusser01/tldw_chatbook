@@ -3,10 +3,10 @@ id: TASK-32217
 title: >-
   Library canvases: no density rule — landing, Study staging, Prompts, Skills
   and File Notes are ~90% empty while the reader starves its controls
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-10 14:54'
-updated_date: '2026-09-10 20:19'
+updated_date: '2026-09-11 10:30'
 labels:
   - library
   - layout
@@ -25,7 +25,7 @@ The landing hub is ten lines in a 190x44 canvas; Study staging six lines; Prompt
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The empty-pane widening rule is applied to Prompts, Skills, Collections and Conversations
-- [ ] #2 The note editor Body and the reader content box grow to fill their pane; Analysis actions sit under the content
+- [x] #2 The note editor Body and the reader content box grow to fill their pane; Analysis actions sit under the content
 - [x] #3 The landing either earns its space (recent items, last import, pending review sets) or is narrowed to a readable measure
 <!-- AC:END -->
 
@@ -86,4 +86,13 @@ css/components/_agentic_terminal.tcss (+ regenerated bundle),
 Tests/UI/test_library_crit9_shell.py, and two width pins updated to the new
 rule (Tests/UI/test_library_skills_reader.py,
 Tests/UI/test_library_collections_capture_reader.py).
+
+**AC#2 ticked at the critique-10 wave close (task-32366).** Both halves are now
+on dev in `_agentic_terminal.tcss`: the note-editor Body fills its pane
+(`#library-note-body { height: 1fr; min-height: 6 }`, plus the compact variant),
+and the Analysis tab stops pinning its action row to the pane floor
+(`#library-media-reader-mode-analysis #library-media-viewer-content`, which
+overrides task-31237's unconditional `1fr` for the one tab whose actions sit
+below the content). The note above recorded why the second half could not be
+taken from this branch; it was taken by the owner of `library_media_viewer.py`.
 <!-- SECTION:NOTES:END -->

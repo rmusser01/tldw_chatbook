@@ -43,6 +43,15 @@ task...".
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
+### Character portrait sizing
+
+The selected character's portrait scales up or down to fit the available
+Character image area, keeping the whole image visible without stretching or
+cropping. Space may remain beside or beneath the image when its proportions
+differ from the area. The Character section grows with the terminal height and reserves space
+for the name and controls. Resizing smaller fits the portrait back into the
+reduced area. Click the portrait to open the larger image viewer.
+
 ### What the next send will cost
 
 When there is something to send, Send reads **Send | $** (or **Queue | $**
@@ -68,6 +77,12 @@ save the category. The opt-in style stacks the upright letters inside narrower
 three-column handles; expanded rails, tooltips, and badges keep their normal
 behavior. Return to Console after a successful save to see the change — no app
 restart is required.
+
+You can also open and close the rails with the keyboard — **Alt+C** for the
+Context rail, **Alt+I** for the Inspector — which works at every width,
+including the single-pane sizes where the handles hide. The handle badges
+abbreviate ("N appr" = N approvals pending, "art" = artifact ready); hover a
+badge for its full text.
 
 Console Behavior uses category-wide drafts: **Save** writes every pending edit
 in that category, and **Revert** discards every pending edit there, not just the
@@ -295,6 +310,13 @@ to hidden chain-of-thought.
   by the adapter. Proprietary evidence is text-free and appears as
   **Thinking · unavailable**; expanding it shows exactly
   `Proprietary thinking obfuscated - not available`.
+- Select a displayable Thinking row and press **e** to edit its text in place.
+  The answer, block identity, provenance, and replay encoding stay intact.
+  Blank edits are rejected, and text containing `<think>`/`</think>` tags is
+  rejected for start-anchored blocks so replay serialization stays safe.
+  Edited thinking stays replay-eligible under the same replay policy.
+  Proprietary (**unavailable**) rows cannot be edited, and editing the answer
+  itself still clears the turn's thinking.
 - A new live disclosure opens when its first evidence arrives, then
   auto-collapses once at the first visible answer or tool event. If neither
   occurs, the terminal state is the fallback boundary. Expanding or collapsing
@@ -381,7 +403,7 @@ also appears there when an original attempt can be shown safely.
 |---|---|---|
 | Copy | Copies the message body to the clipboard. | All messages |
 | 🔊 / ⏹ | Speaks the reply aloud; playback starts automatically, and while it plays the button becomes ⏹ to stop ("Stopped speaking."). Text-to-speech provider setup lives in Settings. | Completed assistant replies |
-| Edit | Opens the "Edit Message" editor; editing one of your own messages can also fork and resend — see [branching & rewind](branching-and-rewind.md). | All messages |
+| Edit | Opens the "Edit Message" editor; editing one of your own messages can also fork and resend — see [branching & rewind](branching-and-rewind.md). On a selected displayable **Thinking** row, **e** opens the "Edit Thinking" editor for that block's text — see [model thinking disclosures](#model-thinking-disclosures). | All messages |
 | < > | Step between regenerated variants — see [branching & rewind](branching-and-rewind.md). | Messages with variants |
 | Fork | Opens a focused naming dialog, then creates a new independent chat containing the active conversation path through this message, inclusive. Press **f** for the same action — see [branching & rewind](branching-and-rewind.md). | Stable User and Assistant messages |
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
@@ -468,7 +490,7 @@ Transcript:
 ### Exchange capture privacy
 
 Provider exchanges use **Safe** capture by default. The Conversation
-Inspector and live Trace use `c` for scoped future controls; F9 **Console
+Inspector and live Trace use `c` for scoped future controls; F4 **Console
 Behavior** controls the global On/Off and Safe/Full default. Next-send Full is
 one-shot and expires when consumed. Capture Off preserves dormant Full choices
 and warns before they resume. Imported Trace stays read-only.

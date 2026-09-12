@@ -23,10 +23,13 @@ patching the global clock would destabilize the event loop's own timers.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Static
 
 from Tests.UI.test_console_fleet_panel import (
+    _real_fleet_recovery_database,
     _AGENT_SECTION_SIZE,
     _scroll_into_view,
     _setup_console,
@@ -214,7 +217,7 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         after = _fleet_row_text(console)
         assert "✓" in after, (
             "the tick's final pass must paint the terminal glyph without "
-            f"any user interaction: {after!r}"
+            f"any user interaction: {after!r}; state={console._agent._console_agent_fleet_section_state()!r}; mounted={console.is_mounted}; active={host.screen is console}"
         )
 
 
@@ -271,6 +274,9 @@ async def test_unseen_mark_paints_the_tab_badge_and_viewing_clears_it(tmp_path):
         first = store.ensure_session()
         second = store.create_session(title="Background research")
         store.switch_session(first.id)
+        await asyncio.to_thread(
+            app.console_runtime.activity_receipts.hydrate_from_storage
+        )
         # The production write pair: the consumer writes the mark on the
         # child thread and bumps the badge-cache revision on the app loop.
         marks.set_mark(second.id, ConversationLocalMarksService.FLEET_UNSEEN)
@@ -293,7 +299,7 @@ async def test_unseen_mark_paints_the_tab_badge_and_viewing_clears_it(tmp_path):
         await pilot.pause()
         assert not marks.has_mark(
             second.id, ConversationLocalMarksService.FLEET_UNSEEN
-        ), "viewing the conversation must clear the durable mark"
+        ), (store.active_session_id, console._fleet._active_session_id_accessor(), console._fleet._console_screen_displayed(), controller.fleet_wake.has_pending(second.id), controller.fleet_wake.pause_reason(second.id))
         tab = console.query_one(f"#console-session-tab-{second.id}")
         assert "◈" not in str(tab.label), (
             f"the badge must not outlive the mark: {tab.label!r}"

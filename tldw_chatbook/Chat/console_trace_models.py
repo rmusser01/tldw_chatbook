@@ -27,6 +27,19 @@ def _validate_opaque_id(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be a canonical UUIDv4 string")
 
 
+def _validate_stable_opaque_id(value: str, field_name: str) -> None:
+    """Accept random ledger IDs and repository-owned deterministic IDs."""
+
+    if type(value) is not str:
+        raise ValueError(f"{field_name} must be a canonical UUID string")
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a canonical UUID string") from exc
+    if parsed.version not in {4, 5} or str(parsed) != value:
+        raise ValueError(f"{field_name} must be a canonical UUID string")
+
+
 def _validate_identifier_token(value: str, field_name: str) -> None:
     if (
         type(value) is not str
@@ -96,8 +109,8 @@ class SurfaceBoundary:
     surface_head_id: str
 
     def __post_init__(self) -> None:
-        _validate_opaque_id(self.segment_id, "segment_id")
-        _validate_opaque_id(self.surface_head_id, "surface_head_id")
+        _validate_stable_opaque_id(self.segment_id, "segment_id")
+        _validate_stable_opaque_id(self.surface_head_id, "surface_head_id")
         _validate_sequence(self.sequence, "sequence")
 
 
@@ -119,7 +132,7 @@ class SurfaceReplacement:
             "end_node_id",
             "replacement_node_id",
         ):
-            _validate_opaque_id(getattr(self, field_name), field_name)
+            _validate_stable_opaque_id(getattr(self, field_name), field_name)
         _validate_sequence(self.start_sequence, "start_sequence")
         _validate_sequence(self.end_sequence, "end_sequence")
         if self.end_sequence < self.start_sequence:
@@ -179,6 +192,16 @@ class TraceOutcome(str, Enum):
     ERROR = "error"
     INTERRUPTED = "interrupted"
     ABANDONED = "abandoned"
+
+
+class TraceReservationProvenance(str, Enum):
+    """Why a durable call row exists before or after provider dispatch."""
+
+    CRASH_DURABLE_RESERVED = "crash_durable_reserved"
+    POST_DISPATCH_PROMOTED = "post_dispatch_promoted"
+
+
+PROMOTED_VOICE_IMPORT_REASON = "provisional_voice_promoted"
 
 
 class InvalidTraceTransition(ValueError):

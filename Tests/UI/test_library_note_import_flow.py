@@ -31,6 +31,10 @@ from Tests.UI.test_library_shell import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from tldw_chatbook.Library.library_note_import_state import (
     NoteImportPhase,
     initial_note_import_snapshot,
@@ -566,8 +570,13 @@ async def test_real_import_then_back_offers_last_import_and_names_the_skips(
                 "vault/app.json": "Not a note file (app configuration).",
                 "vault/empty.md": "Empty file — nothing to import.",
             }
+            # task-32258: the counted outcome is stated once, on the receipt
+            # line; the quiet detail reconciles the two denominators. 3 = one
+            # create plus two skips, which pins the shared planned-change unit
+            # against the real ledger on the real flow.
+            assert projection.receipt_line == "1 note created · 2 files skipped"
             assert projection.receipt_detail == (
-                "Import finished · 1 note created · 2 files skipped"
+                "3 planned changes from 3 reviewed sources."
             )
 
             # The shipped Back to Notes button, not Escape.
@@ -663,7 +672,7 @@ async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vau
             await _reach_import_review(screen, pilot, vault)
 
             toggle = screen.query_one("#note-import-obsidian-mode", Button)
-            assert str(toggle.label) == "✓ Obsidian vault"
+            assert str(toggle.label) == f"{LIBRARY_GLYPH_SELECTED} Obsidian vault"
             assert "skips .obsidian" in str(
                 screen.query_one("#note-import-obsidian-reason", Static).renderable
             )
@@ -686,7 +695,7 @@ async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vau
                 pilot,
                 lambda: str(
                     screen.query_one("#note-import-obsidian-mode", Button).label
-                ).startswith("○"),
+                ).startswith(LIBRARY_GLYPH_UNSELECTED),
                 message="Turning Obsidian vault off never re-ran the check.",
             )
             review_off = _review_text(screen)

@@ -339,10 +339,18 @@ class ConsoleModelPopover(
         quick popover shows the same names as the full modal (``llama.cpp``, not
         the raw ``llama_cpp`` key).
         """
-        return [
-            (provider_display_name(option.value), option.value)
-            for option in build_console_provider_options(self._providers_models)
-        ]
+        options: list[tuple[str, str]] = []
+        for option in build_console_provider_options(
+            self._providers_models, app_config=self._app_config
+        ):
+            # Registry entries (ADR-146) carry their own display_name label;
+            # relabeling them through the shared catalog would replace the
+            # user-authored name with a generic one.
+            if str(option.value).startswith("custom-ep:"):
+                options.append((option.label, option.value))
+                continue
+            options.append((provider_display_name(option.value), option.value))
+        return options
 
     def _field_draft(self, name: str) -> ConsoleSettingsFieldDraft | None:
         return next(

@@ -239,6 +239,23 @@ the same markers, after the CLI's short summary.
 hand-edit to elaborate — never the other order. Diff the task file after any `--notes`
 call to confirm what survived.
 
+**Second instance, 2026-09-11 (critique-10 fix wave, task-32057).** Nearly four
+years of this file saying so did not stop it. Closing out the pagers branch,
+`backlog task edit 32057 --notes "<short summary>"` was run on a task that
+already carried hand-written notes for AC#2, AC#3 and AC#4 plus its modified-file
+list. The command printed success; the detail was gone. It was recoverable only
+because the task file had already been committed — `git checkout HEAD -- "<task
+file>"` brought it back, and the short summary was then re-applied by hand inside
+the markers. Had the notes been written and not yet committed, they were
+unrecoverable: nothing else holds a copy.
+
+The sharpened rule, because "run `--notes` first" is easy to forget an hour into
+a close-out: **`--notes` is a create-only flag. On a task that already has an
+`## Implementation Notes` section, never use it — edit the Markdown between
+`<!-- SECTION:NOTES:BEGIN -->` and `<!-- SECTION:NOTES:END -->` directly.** And
+commit the task file before any `backlog task edit`, so git is the backstop the
+CLI does not give you.
+
 ---
 
 ## Never `git add -A` while resolving a rebase conflict
@@ -578,6 +595,17 @@ load-bearing side keeps; references are attributed per side by their context,
 never rewritten wholesale — the same integer means different tasks in
 different files).
 
+**2026-09-11, TASK-13158 re-triage.** A local-worktree duplicate scan found
+nine colliding IDs, but dev had ZERO: seven pairs were pre-renumber ghosts
+resolved by dev commit `2b8dd094d5` (the branch predated it — rebase, don't
+renumber), and the remaining two were **untracked local-only task files**
+holding IDs dev uses for different tasks (TASK-18908, TASK-2511). Those are
+not ghosts — no twin exists — and they are the one case where renumbering
+locally IS the fix: renumber past the all-remote swept max (32470 at the
+time), filename and frontmatter both. So the triage order for any duplicate
+report on a branch: (1) is it already fixed on dev? (2) is one side an
+untracked local claimant? Only then consider renumbering a tracked file.
+
 ---
 
 ## Do not assign zsh's special lowercase `path` variable
@@ -720,6 +748,7 @@ itself: 076 was ALREADY claimed (library-lifecycle landed `1c567f3ae` at 14:24 t
 same day, four hours before the 18:44 renumber), caught only the next day, and the
 ADR renumbered again to 077 (TASK-19610) — the merge-time check must cover the
 number being renamed TO, not just the one being renamed FROM.
+and the owning task's plan references) mid-merge.
 
 **What to do.** ADR numbers have exactly the same collision dynamics as task IDs
 (see "assign against origin/dev" above), but no CI guard. Treat the drafted number
@@ -830,6 +859,12 @@ pushed — so `git reset --soft <parent>` and re-committing was clean, and the
 one document that cited the old hash was updated in the same operation. Had a
 blame-ignore entry pinned it, the rule is the opposite (recipe §10, §6): the
 message is immutable, and the correction lives in the report and the PR body.
+
+renumbering, grep the repo for both `NNN-<slug>` and `ADR-NNN` — the owning task's
+plan section references the ADR by number and path, and stale references there
+mislead the next session.
+
+---
 
 ## Related
 

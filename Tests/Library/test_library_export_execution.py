@@ -24,7 +24,7 @@ from loguru import logger
 
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
-from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_export_scope import ExportPreview, ExportScope
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryEntryReconcileResult,
     LibraryScreen,
@@ -182,6 +182,9 @@ def test_prompt_memory_database_forces_inline_count_resolution():
             "notes": 0,
             "prompts": 2,
         },
+        # task-32353: the counts helper's sibling, which the worker calls
+        # for the contents/size preview beside the counts.
+        _compute_library_export_preview=lambda *_args: ExportPreview(),
         _apply_library_export_counts=apply_counts,
         _run_library_export_counts_worker=lambda *_args: pytest.fail(
             "memory-backed Prompt counts must stay on the owner thread"
@@ -194,7 +197,15 @@ def test_prompt_memory_database_forces_inline_count_resolution():
         (
             scope,
             {"media": 0, "conversations": 0, "notes": 0, "prompts": 2},
-            {"generation": 7, "route_key": route_key, "request_id": 1},
+            {
+                "generation": 7,
+                "route_key": route_key,
+                "request_id": 1,
+                # task-32353: a Prompts scope has no media to size, so the
+                # sibling preview read lands empty -- and never touches the
+                # poison media source to find that out.
+                "preview": ExportPreview(),
+            },
         )
     ]
 

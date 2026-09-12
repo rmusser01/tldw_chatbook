@@ -1744,3 +1744,83 @@ async def test_control_plane_service_exposes_remaining_governance_and_external_a
     assert assignment_status["status"] == "configured"
     assert "external_server.secret.set" in external_actions
     assert external_secret["secret_ref_id"] == "secret-1"
+
+
+# -- task-32291 (Qodo #2597 #9 / #2600 #16): session approvals are shared ----
+
+
+def test_session_approval_listing_survives_concurrent_grants_and_revokes():
+    """`list_session_approvals()` built its snapshot with `tuple(a_set)`,
+    which is NOT atomic: an agent worker thread granting or revoking
+    mid-copy raised `RuntimeError`, which `MCPWorkbench._session_approvals_
+    for_row()` swallows into an EMPTY listing -- every " (session)" marker
+    and Revoke row vanished for that render.
+
+    Hammers add/discard from a second thread while listing, and pins BOTH
+    halves: no exception escapes, and one entry that is never touched by
+    the writer stays visible in every single listing.
+    """
+    import threading
+
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._session_approvals = set()
+    service._session_approvals_lock = threading.Lock()
+
+    # The stable entry: granted once, never revoked, so it must be in every
+    # snapshot the reader takes.
+    service.approve_for_session("srv", "stable")
+
+    stop = threading.Event()
+    writer_error: list[BaseException] = []
+
+    def _churn() -> None:
+        try:
+            index = 0
+            while not stop.is_set():
+                name = f"churn-{index % 64}"
+                service.approve_for_session("srv", name)
+                service.revoke_session_approval("srv", name)
+                index += 1
+        except BaseException as exc:  # noqa: BLE001 -- reported to the test
+            writer_error.append(exc)
+
+    writer = threading.Thread(target=_churn, daemon=True)
+    writer.start()
+    try:
+        for _ in range(2000):
+            listing = service.list_session_approvals()
+            assert ("srv", "stable") in listing
+    finally:
+        stop.set()
+        writer.join(timeout=5)
+
+    assert not writer_error, writer_error
+    assert writer.is_alive() is False
+
+
+def test_clearing_one_profiles_session_approvals_keeps_the_same_set_object():
+    """The per-profile clear REBOUND `_session_approvals` to a new set, so a
+    reader holding the old one (and the lock guarding a set nobody writes
+    any more) would see a stale world. It mutates in place now."""
+    import threading
+
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._session_approvals = set()
+    service._session_approvals_lock = threading.Lock()
+    service.approve_for_session("srv", "a", profile_id="keep")
+    service.approve_for_session("srv", "b", profile_id="drop")
+    identity = service._session_approvals
+
+    service.clear_session_approvals(profile_id="drop")
+
+    assert service._session_approvals is identity
+    assert service.list_session_approvals(profile_id="keep") == [("srv", "a")]
+    assert service.list_session_approvals(profile_id="drop") == []

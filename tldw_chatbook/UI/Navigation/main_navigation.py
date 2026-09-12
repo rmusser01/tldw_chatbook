@@ -3,11 +3,11 @@
 from typing import TYPE_CHECKING, Any, Callable
 from loguru import logger
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.events import DescendantFocus
 from textual.geometry import Region
-from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 from textual.message import Message
 from textual import on
@@ -46,6 +46,8 @@ def _straddles_viewport(region: Region, viewport: Region) -> bool:
 #: The UP ARROWHEAD glyph (⌃, the macOS control convention) makes the label
 #: honest at zero extra width per tab -- "⌃1" reads "ctrl+1".
 NAV_HOTKEY_GLYPH = "⌃"
+CONSOLE_ATTENTION_GLYPH = "!"
+CONSOLE_ATTENTION_TOOLTIP = "Console needs attention."
 
 
 def nav_button_label(destination_id: str, label: str) -> str:
@@ -67,13 +69,35 @@ def nav_button_label(destination_id: str, label: str) -> str:
     return f"{shortcut.upper()} {label}"
 
 
+def nav_button_label_text(destination_id: str, label: str) -> Text:
+    """Renderable form of :func:`nav_button_label` with the key prefix dimmed.
+
+    task-32458: the dimmed prefix parses as a key hint rather than an
+    ordinal number. The plain-string contract stays with
+    ``nav_button_label``:
+    ``str(nav_button_label_text(d, l)) == nav_button_label(d, l)``, so
+    width math, ghost clipping, and label assertions are styling-neutral.
+
+    Args:
+        destination_id: Stable shell destination ID.
+        label: Compact destination label from the shell destination model.
+
+    Returns:
+        The shortcut-prefixed label as ``Text`` with the prefix in ``dim``.
+    """
+    text = Text(nav_button_label(destination_id, label))
+    prefix_end = text.plain.find(" ")
+    if prefix_end > 0:
+        text.stylize("dim", 0, prefix_end)
+    return text
+
+
 #: task-31385: where the app remembers how many Console interrupt rounds
 #: are pending, so a navigation bar composed AFTER a round armed (every
 #: screen composes its own bar) still shows the badge on mount.
 CONSOLE_ATTENTION_ATTR = "_console_pending_interrupts"
 #: The pending-interrupt badge on the Console nav button; the same glyph
 #: the session tabs use for "needs approval".
-CONSOLE_ATTENTION_GLYPH = "◆"
 
 
 def set_console_attention(app: Any, pending: int) -> None:
@@ -89,8 +113,42 @@ def set_console_attention(app: Any, pending: int) -> None:
     if not isinstance(stack, (list, tuple)):
         return
     for screen in stack:
+        sync = getattr(screen, "sync_console_attention", None)
+        if callable(sync):
+            sync(bool(getattr(app, "console_needs_attention", False)))
         for bar in screen.query(MainNavigationBar):
             bar.apply_console_attention()
+
+
+def navigation_destination_label(
+    destination_id: str, label: str, *, console_needs_attention: bool
+) -> str:
+    """Return a geometry-stable label with Console's reserved glyph cell."""
+    rendered = nav_button_label(destination_id, label)
+    if destination_id != "console":
+        return rendered
+    # The trailing cell is always present so toggling attention never moves a
+    # later destination or changes the clip/ghost decision at a viewport edge.
+    return f"{rendered} {CONSOLE_ATTENTION_GLYPH if console_needs_attention else ' '}"
+
+
+def navigation_destination_label_text(
+    destination_id: str, label: str, *, console_needs_attention: bool
+) -> Text:
+    """task-32458: :func:`navigation_destination_label` as dim-prefixed ``Text``.
+
+    Same geometry-stable contract -- Console's reserved trailing glyph cell
+    is preserved and ``str()`` equals ``navigation_destination_label(...)`` --
+    but the key prefix carries the ``dim`` style so it parses as a key hint
+    rather than an ordinal. Width math, ghost clipping, and label assertions
+    are styling-neutral.
+    """
+    rendered = nav_button_label_text(destination_id, label)
+    if destination_id != "console":
+        return rendered
+    return rendered.append(
+        f" {CONSOLE_ATTENTION_GLYPH if console_needs_attention else ' '}"
+    )
 
 
 class NavigateToScreen(Message):
@@ -400,6 +458,9 @@ class MainNavigationBar(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the navigation bar from master-shell destination metadata."""
+        console_needs_attention = bool(
+            getattr(self.app, "console_needs_attention", False)
+        )
         # Left overflow indicator: visible only when the strip is scrolled
         # right, so off-screen destinations on the left stay discoverable.
         left_hint = Static("‹", id="nav-overflow-hint-left", classes="nav-overflow-hint")
@@ -409,13 +470,19 @@ class MainNavigationBar(Container):
         with Horizontal(id="nav-destination-strip", classes="main-nav"):
             for destination in SHELL_DESTINATION_ORDER:
                 button = NavigationButton(
-                    nav_button_label(
+                    navigation_destination_label_text(
                         destination.destination_id,
                         destination.label,
+                        console_needs_attention=console_needs_attention,
                     ),
                     id=f"nav-{destination.destination_id}",
                     classes="nav-button ascii-nav-tab",
-                    tooltip=destination.tooltip,
+                    tooltip=(
+                        CONSOLE_ATTENTION_TOOLTIP
+                        if destination.destination_id == "console"
+                        and console_needs_attention
+                        else destination.tooltip
+                    ),
                     target_route=destination.primary_route,
                 )
                 if destination.destination_id == self.active_destination_id:
@@ -439,19 +506,18 @@ class MainNavigationBar(Container):
 
     def apply_console_attention(self) -> None:
         """task-31385: badge the Console button while interrupt rounds are pending."""
-        try:
-            button = self.query_one("#nav-console", Button)
-        except NoMatches:
-            return
-        base = nav_button_label("console", get_shell_destination("console").label)
-        pending = int(getattr(self.app, CONSOLE_ATTENTION_ATTR, 0) or 0)
-        label = f"{base} {CONSOLE_ATTENTION_GLYPH}" if pending else base
-        if str(button.label) != label:
-            button.label = label
+        self.sync_console_attention(bool(getattr(self.app, "console_needs_attention", False)))
 
     def on_mount(self) -> None:
         """Scroll the initially active destination's button into view."""
         self.apply_console_attention()
+        self.sync_console_attention(
+            bool(getattr(self.app, "console_needs_attention", False))
+        )
+        runtime = getattr(self.app, "console_runtime", None)
+        recompute = getattr(runtime, "recompute_console_attention", None)
+        if callable(recompute):
+            recompute(force_projection=True)
         # Order matters: settle the overflow indicators (which change the
         # strip's width) before aligning the active button.
         self.call_after_refresh(self._update_overflow_hints)
@@ -482,6 +548,24 @@ class MainNavigationBar(Container):
         self.set_timer(0.06, self._recenter_strip)
         self.set_timer(0.25, self._refresh_overflow_hint_visibility)
         self.set_timer(0.26, self._recenter_strip)
+
+    def sync_console_attention(self, needs_attention: bool) -> None:
+        """Project the content-free Console attention state into this bar."""
+        needs_attention = bool(needs_attention or getattr(self.app, CONSOLE_ATTENTION_ATTR, 0))
+        try:
+            button = self.query_one("#nav-console", NavigationButton)
+        except Exception:
+            return
+        destination = get_shell_destination("console")
+        button.label = navigation_destination_label_text(
+            "console",
+            destination.label,
+            console_needs_attention=bool(needs_attention),
+        )
+        button.tooltip = (
+            CONSOLE_ATTENTION_TOOLTIP if needs_attention else destination.tooltip
+        )
+        button.set_class(bool(needs_attention), "console-needs-attention")
 
     def _mark_mount_settled(self) -> None:
         """Close the mount-settle window -- but only once the screen's
@@ -1029,7 +1113,7 @@ class MainNavigationBar(Container):
     def handle_overflow_hint(self, event: Button.Pressed) -> None:
         """Open the overflow menu listing every destination (NV-01)."""
         event.stop()
-        # Local import: nav_overflow_menu imports NavigateToScreen/nav_button_label
+        # Local import: nav_overflow_menu imports NavigateToScreen/nav_button_label_text
         # from this module, so a top-level import here would be circular.
         from .nav_overflow_menu import NavOverflowMenu
 

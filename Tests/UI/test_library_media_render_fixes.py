@@ -3024,14 +3024,14 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
 # ---------------------------------------------------------------------------
 
 
-_ANALYSED_SECONDARY = "document · 5m · analysed"
+_ANALYSED_SECONDARY = "document · updated 5m · analysed"
 
 
 def _review_state_items(count: int = 4, analysed: int = 2) -> list[dict]:
     """``count`` ``document`` items, the first ``analysed`` of them analysed.
 
     The stamp is fixed 5m30s back so every row's age label is "5m" and the
-    secondary line is exactly the 24-cell ``document · 5m · analysed`` the
+    secondary line is exactly the 30-cell ``document · updated 5m · analysed`` the
     Items pane has to hold.
     """
     stamp = (
@@ -3076,10 +3076,10 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
     """task-28008: the row says which items already carry an analysis, in words.
 
     What this pins about width: each parametrized size resolves the Items
-    pane to its own AUTOMATIC width, and the 24-cell
-    ``document · 5m · analysed`` paints whole in it, indented, with room to
+    pane to its own AUTOMATIC width, and the 30-cell
+    ``document · updated 5m · analysed`` paints whole in it, indented, with room to
     spare. The narrower 36-cell FLOOR is pinned separately by
-    ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
+    ``test_analysed_secondary_is_bounded_at_custom_items_widths`` -- a
     ``>= 36`` assertion here would have claimed a floor that never ran,
     which is why the exact automatic width is asserted instead.
 
@@ -3087,7 +3087,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
     the resolver changed under them -- 9187bc0307 (task-31979) hands the
     empty Reader's unused width to the Items list at the wide size, and the
     below-64 Media stage work (c668aaec5e / db86a39b19) re-fitted the narrow
-    one. Both new widths are still far above the 24-cell secondary, so what
+    one. Both new widths are still far above the 30-cell secondary, so what
     the assertion means is unchanged; the resolver's own contract lives in
     Tests/UI/test_library_adaptive_reader_shell.py.
 
@@ -3110,8 +3110,8 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
             _ANALYSED_SECONDARY,
         ], secondaries
         assert [line.strip() for line in secondaries[2:]] == [
-            "document · 5m",
-            "document · 5m",
+            "document · updated 5m",
+            "document · updated 5m",
         ], secondaries
         assert _items_pane_width(screen) == items_width
 
@@ -3538,13 +3538,20 @@ async def test_returning_to_read_restores_the_reading_position_once():
         )
 
 
+@pytest.mark.parametrize(
+    ("items_width", "expected"),
+    [(36, "document · updated 5m · a…"), (44, _ANALYSED_SECONDARY)],
+)
 @pytest.mark.asyncio
-async def test_analysed_secondary_survives_the_36_cell_items_floor():
-    """M-1: the 24-cell secondary at the Items pane's 36-cell floor.
+async def test_analysed_secondary_is_bounded_at_custom_items_widths(
+    items_width, expected
+):
+    """Pin truncation at the floor and full text at a wider custom size.
 
     A custom 36-cell Items pane gives its canvas 32 cells after padding.
     Since task-32060 the canvas fits that content box instead of overflowing
-    it with its own 36-cell minimum. The analysis state must remain readable.
+    it with its own 36-cell minimum. The longer labelled age from task-32347
+    now ellipsises the analysis suffix at that floor; a wider pane shows it.
     """
     host = _review_state_host()
     async with host.run_test(size=(235, 52)) as pilot:
@@ -3552,12 +3559,12 @@ async def test_analysed_secondary_survives_the_36_cell_items_floor():
         screen._media_state.reader_preferences = dataclasses.replace(
             screen._media_state.reader_preferences,
             custom_widths_enabled=True,
-            items_width=36,
+            items_width=items_width,
         )
         screen._sync_library_media_reader_layout_from_shell()
         await _wait_for_condition(
             pilot,
-            lambda: _items_pane_width(screen) == 32,
+            lambda: _items_pane_width(screen) == items_width - 4,
             message=lambda: (
                 f"Items canvas width={_items_pane_width(screen)}; "
                 f"view={screen._media_state.view}; "
@@ -3570,10 +3577,10 @@ async def test_analysed_secondary_survives_the_36_cell_items_floor():
         # right edge, so strip that too before comparing the row's own text.
         _titles, secondaries = _painted_media_rows(host, screen)
         assert [line.strip(" │") for line in secondaries[:2]] == [
-            _ANALYSED_SECONDARY,
-            _ANALYSED_SECONDARY,
+            expected,
+            expected,
         ], secondaries
-        assert "…" not in "".join(secondaries), secondaries
+        assert all("…" not in line for line in secondaries[2:]), secondaries
 
 
 # ---------------------------------------------------------------------------
@@ -3620,15 +3627,42 @@ def _match_reason_items() -> list[dict]:
     ]
 
 
-@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        (
+            (235, 52),
+            [
+                "article · updated 2m · keyword: notes · loaded",
+                "article · updated 2m",
+                "article · updated 2m · keyword: notesandmo…",
+            ],
+        ),
+        (
+            (100, 30),
+            [
+                "article · updated 2m · keyword: notes…",
+                "article · updated 2m",
+                "article · updated 2m · keyword: notes…",
+            ],
+        ),
+    ],
+    ids=["wide", "narrow"],
+)
 @pytest.mark.asyncio
-async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
+async def test_keyword_only_rows_paint_the_keyword_that_matched(size, expected):
     """The reason is WORDS on the secondary line, and only where it is needed.
 
     ``Field notes`` matched the query in its own painted title, so it says
     nothing extra; the two rows whose match lives in a keyword name it. The
     keyword is capped at ten characters because the Items pane's floor is
     36 cells -- ``notesandmorestuff`` would push the line past it whole.
+
+    task-32347 made both sizes tighter and the expectations are now
+    per-size rather than shared: labelling the age ("updated 2m") costs 8
+    cells on every row, so the narrow pane no longer has room for the
+    trailing "· loaded" on the row the Reader holds. The term itself still
+    paints -- dropping the review round's " ago" is what bought that back.
     """
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_match_reason_items())
@@ -3641,11 +3675,12 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
 
         lines = _painted_item_lines(host, screen)
         secondaries = [line.strip() for line in lines if "article · " in line]
-        assert secondaries == [
-            "article · 2m · keyword: notes",
-            "article · 2m",
-            "article · 2m · keyword: notesandmo…",
-        ], secondaries
+        # task-32347 cost, pinned rather than hidden: labelling the age
+        # ("updated 2m", 10 cells where "2m" was 2) made every secondary 8
+        # cells longer, and task-32364 AC#1 adds "· loaded" to whichever
+        # row the Reader holds. At the wide size both still fit; at the
+        # narrow one the "· loaded" suffix is what runs out of room.
+        assert secondaries == expected, secondaries
 
 
 
@@ -3655,12 +3690,11 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
 
     The ten-character cap keeps the line SHORT; it does not make it fit
     here. A 36-cell Items pane spends 4 cells on its own padding, so the
-    row has ~28 cells and `article · 2m · keyword: notes` needs 29 -- at the
-    floor a keyword row still cannot show its whole term, for the short
-    keyword as well as the long one. The neighbouring
-    `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
-    a line that DOES fit looks like there; this one is the honest contrast,
-    and it exists so nobody re-derives the false "the cap makes it fit".
+    row has ~28 cells and `article · updated 2m · keyword: notes` needs 37 --
+    at the floor a keyword row still cannot show its whole term, for the
+    short keyword as well as the long one. The neighbouring
+    `test_analysed_secondary_is_bounded_at_custom_items_widths` also pins
+    truncation at this floor and complete text at a wider custom size.
 
     task-32060: what changed is HOW it stops. The canvas used to carry a
     36-cell min-width, so at a 36-cell pane it overflowed its 32-cell slot
@@ -3696,14 +3730,21 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
         secondaries = [
             line.strip(" │") for line in lines if "article · " in line
         ]
+        # task-32347 costs the floor 6 cells, and the pin says exactly how
+        # far that reaches rather than softening: the row still gets INTO
+        # its "keyword:" label and no further. (The review round's rejected
+        # "updated 2m ago" spent 4 more and cut the label off entirely --
+        # that is what the shorter grammar bought back.) Recorded here so
+        # nobody re-derives "the cap makes it fit" from a pin that never
+        # said so.
         assert secondaries == [
-            "article · 2m · keyword: n…",
-            "article · 2m",
-            "article · 2m · keyword: n…",
+            "article · updated 2m · ke…",
+            "article · updated 2m",
+            "article · updated 2m · ke…",
         ], secondaries
         # The row without a reason still paints whole -- the shortfall is the
         # suffix's own cost, not a regression in the base secondary line.
-        assert "article · 2m" in secondaries, secondaries
+        assert "article · updated 2m" in secondaries, secondaries
 
 
 @pytest.mark.asyncio
@@ -4082,7 +4123,7 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
         for _ in range(3):
             await pilot.pause()
         _titles, before = _painted_media_rows(host, screen)
-        assert [line.strip() for line in before] == ["document · 5m"] * 4, before
+        assert [line.strip() for line in before] == ["document · updated 5m"] * 4, before
 
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
@@ -4107,10 +4148,12 @@ async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
 
         _titles, after = _painted_media_rows(host, screen)
         assert [line.strip() for line in after] == [
-            _ANALYSED_SECONDARY,
-            "document · 5m",
-            "document · 5m",
-            "document · 5m",
+            # task-32364 AC#1: this row is the one open in the Reader, so
+            # it carries the state word on its fact line.
+            f"{_ANALYSED_SECONDARY} · loaded",
+            "document · updated 5m",
+            "document · updated 5m",
+            "document · updated 5m",
         ], after
         # ...and the only read it cost was one id-scoped row, never a
         # re-page of the list.

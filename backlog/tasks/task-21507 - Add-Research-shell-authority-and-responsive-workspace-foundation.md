@@ -6,6 +6,10 @@ assignee:
   - '@codex'
 created_date: '2026-08-24 05:54'
 updated_date: '2026-08-24 10:08'
+status: To Do
+assignee: []
+created_date: '2026-08-24 05:54'
+updated_date: '2026-08-24 05:54'
 labels:
   - research
   - workspace
@@ -35,6 +39,14 @@ Add the durable Research destination and a real Workspace screen whose Local/Ser
 - [x] #6 Wide, medium, narrow, and short-height layouts meet the approved pane-count and minimum-content contracts at the exact verification sizes, with hidden panes removed from the focus cycle and responsive overrides restoring preferences when width returns.
 - [x] #7 A private, bounded, atomically written device-overlay store keys pane preferences by qualified authority/profile/principal/workspace identity, recovers per-record corruption without blocking the canonical workspace, and stores no secrets or canonical content.
 - [x] #8 Targeted unit, mounted Textual, command-palette, navigation, persistence, inverse, and geometry checks pass; generated CSS is rebuilt from source and no full-suite claim is made.
+- [ ] #1 Research is a fourteenth shell destination after Library and before Artifacts; its primary route is `research_workspace`, direct `research` callers still mount Research Runs, existing destination shortcuts do not shift, and F10 opens Research Workspace.
+- [ ] #2 Workspace and Runs mount one shared Research mode bar and navigate between separate real screens while preserving each screen's own saved state.
+- [ ] #3 The Workspace screen exposes an explicit `Workspace data: Local | Server` selector and authority-qualified workspace identities; unavailable Server state fails closed with recovery and never reads, displays, or mutates Local as fallback.
+- [ ] #4 Local and Server adapters implement one normalized, capability-aware read/lifecycle contract without reusing `WorkspaceAuthority` as the data-source discriminator or merging results from both owners.
+- [ ] #5 Sources and Studio use exact `<---` / `--->` collapse/reveal labels, deterministic focus relocation, separate stored preference versus effective responsive state, and Chat maximizes when both side panes are closed.
+- [ ] #6 Wide, medium, narrow, and short-height layouts meet the approved pane-count and minimum-content contracts at the exact verification sizes, with hidden panes removed from the focus cycle and responsive overrides restoring preferences when width returns.
+- [ ] #7 A private, bounded, atomically written device-overlay store keys pane preferences by qualified authority/profile/principal/workspace identity, recovers per-record corruption without blocking the canonical workspace, and stores no secrets or canonical content.
+- [ ] #8 Targeted unit, mounted Textual, command-palette, navigation, persistence, inverse, and geometry checks pass; generated CSS is rebuilt from source and no full-suite claim is made.
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -291,6 +291,7 @@ nemo = [
     "torchaudio",  # Required for audio processing
 ]
 speech_recording = [
+    "tldw-voice-aec==0.2.0",  # Native WebRTC AEC3 companion; version-locked to this app release
     "pyaudio>=0.2.14",  # Primary audio backend
     "sounddevice>=0.4.6",  # Fallback audio backend
     "webrtcvad-wheels>=2.0.14",  # Voice activity detection (drop-in `webrtcvad` fork; upstream webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removed)
@@ -532,6 +533,9 @@ exclude = [
     "assets/tiktoken_cache/manifest.json",
 ]
 "tldw_chatbook.Canvas" = [
+    "guides/basics.md",
+    "guides/controls.md",
+    "guides/repair.md",
     "static/canvas_shell.html",
     "static/canvas_shell.css",
     "static/canvas_shell.js",
@@ -583,6 +587,10 @@ exclude = [
 "tldw_chatbook.Evals" = ["config/*.yaml", "eval_datasets/*.json"]
 "tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]
+"tldw_chatbook.Audio" = [
+    "voice_qualification_manifest.json",
+    "voice_build_identity.json",
+]
 # One pinned artifact manifest, named ON PURPOSE (audited in task-19860):
 # `Tests/Packaging` pins its repository, commit and package count, so a second
 # TTS `.json` appearing in the wheel is a decision, not a glob's side effect.

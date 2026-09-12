@@ -101,6 +101,26 @@ gateway: launch mode had been inferred from whether authentication produced a
 client. Retaining the served marker independently and refusing native gateway
 creation made that regression pass. A bad protocol version must disable the
 affected transport, not select a different listener or authority boundary.
+---
+
+## Trace import evidence must cross the real producer and reconstruction boundaries
+
+**TASK-23175 current-dev voice integration, 2026-09-07.** Green row-shape
+and recording-only repository tests missed duplicated cross-turn surfaces,
+multi-message retry ordering and component-tag collisions. Real
+`ConsoleTraceService` reconstruction after consecutive imports exposed them.
+A separate real saved-controller → gateway seal → winning claim → SQLite
+check found that generated inline headers did not share the sanitized prompt's
+privacy projection, despite apparently correct captured body text.
+
+**What to do.** Assert exact reconstructed surfaces across consecutive turns,
+retries, inherited history and ordinary continuation, not just inserted rows.
+Carry actual transformed producer output through the production sealing and
+durable import boundary, and compare exact sanitized headers as well as bodies.
+Keep malformed bounded-span inputs fail-closed; a recording fake cannot prove
+production privacy or reconstruction behavior.
+
+---
 
 ## Index-plan guards must accept the names the DDL actually uses
 
@@ -2301,6 +2321,23 @@ never what the screen shows; the composited screen is the only authority (third
 recorded instance of this lesson class). When a live report contradicts a green suite,
 suspect the harness before the reporter.
 
+**Fourth instance, inverted direction (TASK-32330, 2026-09-11).** The
+arc's per-suite runs were all green for a staged-row status class whose
+CSS line referenced `$ds-status-muted` — a variable that does not exist
+anywhere in the tree. Nothing caught it because the light harnesses
+never load the console split sheets, so the rule (and its broken
+variable) simply never applied. The consolidated run — which mounts
+screens through harnesses that DO load the full stylesheet — failed 102
+tests at compose with `UnresolvedVariableError: reference to undefined
+variable '$ds-status-muted'`. Same root cause, opposite symptom: the
+harness gap hid a stylesheet defect instead of a geometry one. **What to
+do:** any change that TOUCHES a tcss file must run at least one suite
+that loads the real stylesheet bundle (e.g. the environment-wiring or
+workbench-contract harnesses) — per-suite green on widget-level harnesses
+says nothing about whether the sheet itself parses. Grepping the variable
+name against the theme sheets costs one second and catches the
+typo-class outright.
+
 **Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
 `.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
 flush against its card border) tested green with `snippet.region.x ==
@@ -3459,7 +3496,7 @@ or Textual will reject the duplicate even when the route signature matches.
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
 
-**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+**Follow-up incident (TASK-31978 / PR #2437, 2026-09-05).** Forty-five
 pixel-migu seed, resource, and installed-distribution checks passed after a
 rebase, but the required generated-artifact job still failed: two new startup
 diagnostics in `app.py` and `config.py` were absent from the production
@@ -13055,6 +13092,12 @@ The mounted policy check also needed splash disabled in its isolated on-disk
 config: its six-second wait expired during the seven-second splash, and the
 factory snapshot alone does not control the compose-time configuration read.
 
+PR #2504's subsequent rebase retained a fake-clock regression that still delayed
+FTS after dev removed it from the required set. Both timing assertions failed
+because the actual required sentinels were already present. Select the delayed
+fixture from the current required set so the test continues to exercise waiting
+and timeout without restoring a deliberately optional worker requirement.
+
 ## Faking a decorated method deletes the decorator, and the bug can live there
 
 **task-32121, Library ▸ Folder files, 2026-09-09.** Critique #8's task-32055 gave
@@ -13217,7 +13260,7 @@ aggregate count that unrelated items can satisfy.
 
 ## Render helpers must distinguish widget content, borders, and layout slots
 
-**Incident (TASK-32311, 2026-09-10).** Release verification found five Library
+**Incident (TASK-32506, 2026-09-10).** Release verification found five Library
 assertion failures, all reproduced on pristine pre-release dev. The focus helper
 required underline on the newly added solid border; a width helper measured the
 32-cell canvas while its test expected the 36-cell padded pane; and a grid test
@@ -13229,3 +13272,156 @@ and compare grid origins with independently pinned expected margins. Subtracting
 whatever margin is currently present would hide the accidental indentation the
 original regression was intended to catch. The repaired five cases and four
 shared focus-helper caller cases passed without changing application behavior.
+
+### Rebased cold-session fixtures must cross activation boundaries (2026-09-10)
+
+PR #2504's final integration initially failed 31 closed-history cases before the
+intended tamper hook. Its reload fixture restored rows but omitted real Library
+policy hydration, so the new send-time frozen configuration correctly retained
+unavailable authority. Hydrating through the real store method fixed that fixture
+gap; accepting the new third frozen-input dictionary callback argument fixed a
+second fixture mismatch. Neither justified weakening production policy checks.
+The still-failing exact closed-history proof then exposed a real composition gap:
+ordinary terminal receipt-only metadata was not one of its accepted empty forms.
+An exact canonical receipt/default shape, with four negative metadata regressions,
+resolved it; all 39 selected closed-history cases passed. Locate the actual failed
+boundary before treating every post-rebase failure as either fixture-only or a
+production regression.
+
+### A pipeline's exit code is the LAST command's — `pytest | tail` always looks green (2026-09-11)
+
+During the critique-10 fix wave a branch verified a change with
+`… -m pytest <file> -q | tail -40` and read the command as passing. It was not:
+the run was red, and `tail` had exited 0 over it. A shell pipeline reports the
+status of its **last** command, so every `pytest | tail`, `pytest | grep`,
+`pytest | head` reports the status of the filter, never the test run. The
+failure is silent in the worst way — the tool that lies is the one added for
+readability, and the failing names are usually scrolled off above the tail
+window, so the output *looks* consistent with the exit code.
+
+This is why the wave's brief mandated the redirect form, and it is the form to
+use:
+
+```bash
+… -m pytest <node id> -q -p no:cacheprovider > /tmp/<name>.txt 2>&1
+tail -40 /tmp/<name>.txt          # separate command; the status above is pytest's
+```
+
+Read the **summary line** out of the file (`N failed, M passed`), not the exit
+status of whatever printed it. `set -o pipefail` fixes the exit code but not the
+lost output, and it is not on by default in the shells these commands run in.
+The same trap sits behind `./scripts/preflight.sh | tail` — a known previous
+incident in this repo, and the reason preflight is always run bare.
+
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31758, 2026-09-05)
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31978, 2026-09-05)
+
+The artifact-share SDD plan embedded near-verbatim implementation and test
+code authored against pinned-at-plan-time versions, and both sides rotted
+before implementation. Task 3: the plan's aiohttp middleware block appended
+bare `(request, handler)` methods to `app.middlewares`; under the installed
+aiohttp 3.14.3 every route 500'd because 3.14 discriminates middleware by
+the `__middleware_version__ == 1` marker the plan omitted — caught only when
+the implementer's RED run failed with 500s across the suite. Task 5: the
+plan's test snippet called `SelectionList.select(0)` as if it took an index;
+Textual 8.2.8's `select()` takes a *value* and does not validate existence,
+so with string option values the selection stayed empty and two tests could
+never pass — again caught only at implementer-run RED, and the failure first
+looked like a dialog bug rather than a wrong test call.
+
+**What to do.** Treat code embedded in plan docs as a sketch, never as
+verified: pin the library-version assumptions at the top of the plan, and
+never skip the implementer-run RED step — it is the only checkpoint that
+reveals whether the plan's code or its tests encode the wrong API. When a
+RED failure contradicts the plan, check the *test-side* API usage for
+version rot before hunting a bug in code that follows the plan.
+
+## A refusal path needs its own test, or it will lose both its name and its cleanup (task-32243, 2026-09-11)
+
+Library ▸ Notes lasting sync shipped on 2026-08-21 with a working happy path and
+a refusal path no test ever entered. `grep root_lease_unavailable Tests/` and
+`grep root_discovery_incomplete Tests/` both returned zero hits for three weeks.
+Two independent defects lived there the whole time, and both are the same shape:
+
+- `_ensure_lease` published a status to the store *before* returning the falsy
+  value its caller turned into `RuntimeError("root_lease_unavailable")`. For a
+  setup review the root is not in the store yet, so the publish raised
+  `NotesDeviceStateError: The requested sync root does not exist` and the honest,
+  named refusal was destroyed by a secondary crash on its way out.
+- `review_setup` popped its `_root_paths` entry only on the branch where
+  `_ensure_lease` *returned* falsy. A raise skipped the pop, so the leaked entry
+  made the coordinator refuse the same folder as `lasting_root_overlap` on every
+  later attempt — for the rest of the session, invisibly, even after the user
+  fixed the real cause. Only a restart cleared it.
+
+Both are invisible to a happy-path suite, and both are the kind of thing a
+reviewer reads straight past: the publish looks like ordinary status reporting,
+and the pop looks like it is on the failure path. The generalisation:
+
+**On any path that refuses, write the test that refuses.** Not a test that the
+error type is raised — a test that (a) the error carries the reason the code
+went to the trouble of computing, and (b) the second attempt reaches the same
+decision a fresh process would. (b) is the one that catches leaked state, and
+nothing else does: one call in isolation passes either way.
+
+Two corollaries worth keeping:
+
+- **Anything you write before you raise can raise first.** A guard that reports,
+  persists, or publishes before it fails has two exits, and the one you did not
+  write the test for is the one users will hit.
+- **Cleanup belongs on one path, not on each failure branch.** The fix here was
+  not a second pop next to the raise — it was moving the lease check inside the
+  `except` block that already released the setup authority for the *other*
+  failure. Two half-cleanups is the bug; one release for every failure is the
+  fix, and it is the smaller diff.
+
+### Canvas CSS must survive browser parsing as well as compilation (2026-09-10)
+
+During TASK-32459, both new HTML guide examples passed the Canvas compiler but
+Chromium refused their plans with `invalid-plan`. Inspecting CSSOM declarations
+showed that `background` expanded into unallowlisted `background-position-x/y`,
+and `border` expanded into unallowlisted `border-image-*` properties. Replacing
+those shorthands with `background-color`, `border-width`, `border-style`, and
+`border-color` made the exact packaged examples execute without changing pinned
+runtime assets. Compiler acceptance alone does not qualify authoring examples;
+run their exact source through the actual renderer and exercise the controls.
+
+## Reconstructing a PR must verify a fresh checkout's test prerequisites
+
+During the agent-orchestration preservation PR (2026-09-11), two mounted progress
+checks reached their screenshot capture and failed because the parent SDD evidence
+directory existed only in the original working checkout. The test used
+`mkdir(exist_ok=True)` for a nested path. Creating parents makes the capture work
+in a fresh checkout. The same pass found two survivor tests whose separately built
+app missed another module's autouse database fixture: recovery correctly reported
+`history_unavailable`, so the intended elapsed-row assertions could not run.
+Attaching the existing real-database helper before mount restored both exact
+checks without changing production behavior or weakening their assertions.
+
+A helper imported from another test module does not bring that module's autouse
+fixtures with it. Verify local artifact directories and explicit application
+prerequisites when reconstructing reviewed work outside its original checkout.
+
+## Isolated subprocess tests need the isolated checkout's import binding
+
+During PR 2631 integration, the shared virtual environment imported the rebased checkout for ordinary pytest calls, but its Python -I helper subprocesses loaded the original shared checkout through that environment's installed package. Newer parent/helper protocols then disagreed. A separate verification environment bound the exact worktree ahead of the existing dependency directory; checking `python -I -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` proved the binding, and all 431 feature and 575 upstream Agent cases passed, including real subprocess/worktree checks. Verify child-process package provenance as well as pytest cwd; do not change a shared editable installation to repair another checkout's tests.
+## A leaked TTS artifact deletes itself during interpreter shutdown, when builtins are gone
+
+**TASK-32013, 2026-09-11.** New `TTSEventHandler` tests that monkeypatched
+`_play_utterance_legacy_artifact` to a no-op started logging
+`Error securely deleting file /tmp/tts_audio_*.mp3: name 'open' is not
+defined` -- only under pytest, only for those tests, and the function
+worked fine when called directly in the same session. The no-op'd play
+path is also the path that schedules artifact cleanup, so every test
+leaked its written artifact; the global temp manager's `__del__` then ran
+`secure_delete_file` during interpreter teardown, where `open` is already
+cleared from builtins. The NameError was caught, logged, and the file
+left in /tmp -- a log line that looks like a code bug but is a test
+hygiene artifact.
+
+**What to do.** Any test that fakes the TTS play path must still run the
+handler's own teardown (`await handler.cleanup_tts_resources()` at test
+end) so artifacts are deleted inline while the interpreter is alive.
+When you see "name 'open' is not defined" from secure deletion, look for
+leaked temp artifacts deleted at shutdown, not a bug in the deleting
+code.

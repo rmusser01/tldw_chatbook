@@ -33,7 +33,7 @@ Mixed | Local/Server". This screen was previously called "Subscriptions."
 
 ## Getting there
 
-- Press **Ctrl+6**, click **⌃6 Watchlists** in the nav bar, or press
+- Press **Ctrl+5**, click **⌃5 Watchlists** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Watchlists".
 
 ## Adding sources and making a Watchlist

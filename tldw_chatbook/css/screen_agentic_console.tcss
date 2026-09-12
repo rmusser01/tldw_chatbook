@@ -75,6 +75,37 @@ $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
 $ds-library-source-browser-width: 31;
 
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+$ds-textarea-min-height: 5;
+
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+$ds-opacity-dim: 70%;
+
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
+
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
 
 .tldw-agentic-split-preamble-end { }
 
@@ -554,49 +585,25 @@ $ds-library-source-browser-width: 31;
 #console-speech-controls,
 #console-auto-speak-control,
 #console-hands-free-control {
-    width: auto;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    layout: horizontal;
-    align: left middle;
+    width:auto;height:1;min-height:1;max-height:1;layout:horizontal;align:left middle;
 }
 
-#console-speech-controls {
-    margin: 0 2 0 0;
-}
+#console-speech-controls {margin:0 2 0 0;}
 
 #console-auto-speak-label,
-#console-hands-free-label {
-    width: auto;
-    height: 1;
-    margin-right: 1;
-}
+#console-hands-free-label {width:auto;height:1;margin-right:1;}
 
 #console-auto-speak,
 #console-hands-free-switch {
-    width: 5;
-    min-width: 5;
-    max-width: 5;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    padding: 0;
-    margin: 0;
-    border: none;
+    width:5;min-width:5;max-width:5;height:1;min-height:1;max-height:1;
+    padding:0;margin:0;border:none;
 }
 
-#console-auto-speak {
-    margin-right: 1;
-}
+#console-auto-speak {margin-right:1;}
 
 #console-auto-speak-retry,
 #console-auto-speak-resume {
-    width: auto;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0 1 0 0;
+    width:auto;height:1;min-height:1;max-height:1;margin:0 1 0 0;
 }
 
 #console-status-chips {
@@ -1819,6 +1826,14 @@ Button.console-inspector-action:disabled {
 /* TASK-31665 AC#5: no top margin. With the section's own bottom margin the
    tail button floated between two blank lines, "orphaned ~28 lines from its
    data"; flush under the last row makes its owner unambiguous. */
+.console-inspector-section-row-stuck > .console-inspector-section-row-primary {
+    color: $ds-status-warning;
+}
+
+.console-inspector-section-row-cancelled > .console-inspector-section-row-primary {
+    color: $ds-text-muted;
+}
+
 .console-inspector-section-view-all {
     width: 100%;
     height: 1;
@@ -2146,6 +2161,19 @@ Button.console-inspector-action:disabled {
     color: $ds-text-primary;
 }
 
+/* task-32287: the inline task-card surface (ChatTaskCards) hugs its cards.
+   As a plain Container it kept Textual's `height: 1fr` default and took a
+   full share of the session column next to `#console-transcript-surface`
+   below -- 17 rows at 200x50 for an 11-row card (blank rows above the
+   transcript), and only 6 rows at 80x24, where it CLIPPED the approval
+   card's Approve-all/Submit/Deny-all bar out of the compositor entirely
+   (the bar's own coordinates rendered the transcript's empty state). The
+   surface is `display: none` whenever no card is pending, so `auto` costs
+   the transcript nothing until an agent actually asks for something. */
+#console-task-surface {
+    height: auto;
+}
+
 #console-transcript-surface {
     height: 1fr;
     min-height: 0;
@@ -2391,6 +2419,27 @@ Button.console-inspector-action:disabled {
 .console-activity-status-blocked {
     background: $ds-status-blocked 16%;
     color: $ds-text-primary;
+}
+
+/* task-32279: the three narrowed refusal states. They share the blocked
+   tint on purpose -- which authority refused is carried by the WORD, never
+   by colour -- and each widens the standard nine-cell column to fit that
+   word, the same way the proprietary-thinking state below already does. */
+.console-activity-status-denied,
+.console-activity-status-blocked_off {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+    width: 15;
+    min-width: 15;
+    max-width: 15;
+}
+
+.console-activity-status-blocked_kill_switch {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+    width: 23;
+    min-width: 23;
+    max-width: 23;
 }
 
 .console-activity-status-failed {
@@ -3445,6 +3494,7 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
 
 .console-staged-source-primary-ready { color: $ds-status-ready; }
 .console-staged-source-primary-warning { color: $ds-status-warning; }
+.console-staged-source-primary-listed { color: $ds-status-paused; }  /* TASK-32330: muted tone for listed-not-sent rows */
 .console-staged-source-primary-blocked { color: $ds-status-blocked; }
 
 .console-staged-source-detail {
@@ -4247,3 +4297,4 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     height: auto;
     color: $text-muted;
 }
+#console-agent-progress { width: 1fr; height: 1; min-height: 1; margin: 1 0; }

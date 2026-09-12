@@ -17,7 +17,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolInvocationResult,
 )
 from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
-from tldw_chatbook.MCP.execution_log import MCPExecutionLog
+from tldw_chatbook.MCP.execution_log import KILL_SWITCH_DENIED_DECISION, MCPExecutionLog
 from tldw_chatbook.MCP.hub_test_execution import (
     LocalHubExecutionOutcome,
     ToolTestAdmissionBlocked,
@@ -321,7 +321,10 @@ async def test_hub_tool_governance_denial_records_honest_blocked_row(tmp_path):
     assert records and records[0]["ok"] is False
     assert records[0]["status"] == "blocked"
     assert records[0]["duration_ms"] == 0
-    assert records[0]["decision"] == "denied"
+    # task-32280 fix round: governance refused this without showing anyone a
+    # card, so it must not land in Audit's "Denied by you" bucket. The
+    # `error_category` below still carries the precise mechanism.
+    assert records[0]["decision"] == "denied-policy"
     assert records[0]["exception_type"] == "MCPGovernanceDenied"
     assert records[0]["error_category"] == "governance_denied"
 
@@ -735,7 +738,10 @@ async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
         await service.run_action("tool.execute", {"tool_name": "calculator"})
 
     records = _log_records(store)
-    assert records and records[0]["decision"] == "denied"
+    # task-32280 fix round: the tool is set to Off -- "Blocked (Off)", not
+    # "Denied by you" (nothing was ever offered for a person to refuse, as
+    # this test's own `gate_denied` category says a few lines down).
+    assert records and records[0]["decision"] == "denied-policy"
     assert records[0]["status"] == "blocked"
     assert records[0]["ok"] is False
     assert records[0]["server_key"] == "builtin:tldw_chatbook"
@@ -857,7 +863,9 @@ async def test_advanced_tool_execute_gate_check_exception_records_gate_error_tok
         await service.run_action("tool.execute", {"tool_name": "calculator"})
 
     records = _log_records(store)
-    assert records and records[0]["decision"] == "denied"
+    # task-32280 fix round: the gate RAISED -- it resolved nothing, so
+    # neither a person nor a setting refused this call.
+    assert records and records[0]["decision"] == "denied-unresolved"
     assert records[0]["status"] == "blocked"
     assert records[0]["error_category"] == "gate_error"
     assert records[0]["error_category"] != "gate_denied"
@@ -1681,7 +1689,17 @@ def _install_local_hub_execution_provider(
 def test_local_hub_outcome_vocabulary_is_closed():
     hints = get_type_hints(LocalHubExecutionOutcome)
 
-    assert set(get_args(hints["decision"])) == {"allowed", "approved", "denied"}
+    # task-32280 fix round: "denied" narrowed to mean a person's card Deny,
+    # so the refusals that are NOT that got their own tokens.
+    assert set(get_args(hints["decision"])) == {
+        "allowed",
+        "approved",
+        "denied",
+        "denied-policy",
+        "denied-killswitch",
+        "denied-timeout",
+        "denied-unresolved",
+    }
     assert set(get_args(hints["status"])) == {
         "success",
         "blocked",
@@ -1768,7 +1786,8 @@ def test_local_hub_outcome_vocabulary_is_closed():
             "blocked",
             "blocked",
             "permission_denied",
-            "denied",
+            # task-32280 fix round: a configured Off is "Blocked (Off)".
+            "denied-policy",
             "deny",
             False,
             False,
@@ -1784,7 +1803,8 @@ def test_local_hub_outcome_vocabulary_is_closed():
             "blocked",
             "blocked",
             "permission_unresolved",
-            "denied",
+            # task-32280 fix round: the gate raised -- nobody decided.
+            "denied-unresolved",
             "unresolved",
             False,
             False,
@@ -1800,7 +1820,8 @@ def test_local_hub_outcome_vocabulary_is_closed():
             "outcome",
             "blocked",
             "permission_off",
-            "denied",
+            # task-32280 fix round: refused by the permissions, not a person.
+            "denied-policy",
             "deny",
             False,
             False,
@@ -1816,7 +1837,9 @@ def test_local_hub_outcome_vocabulary_is_closed():
             "stale",
             "stale",
             "local_tool_ineligible",
-            "denied",
+            # task-32280 fix round: the tool was not eligible -- nobody
+            # was asked, and nothing was configured Off.
+            "denied-unresolved",
             "unavailable",
             False,
             False,
@@ -2139,8 +2162,10 @@ async def test_local_hub_refusal_and_crash_use_structured_facts_not_result_text(
     assert outcome.status == expected_status
     assert outcome.error_category == expected_category
     assert outcome.provider_terminal == terminal.value
+    # task-32280 fix round: a provider refusal under a `deny` final gate is
+    # the permissions, not the person.
     assert outcome.decision == (
-        "denied" if terminal is LocalProviderTerminal.NOT_STARTED else "allowed"
+        "denied-policy" if terminal is LocalProviderTerminal.NOT_STARTED else "allowed"
     )
     assert "secret" not in outcome.result.error
     assert str(tmp_path) not in outcome.result.error
@@ -2744,6 +2769,37 @@ def test_local_hub_recursive_result_redaction_shares_one_payload_with_audit(
     assert '"credential": "***"' in outcome.result.error
     assert len(outcome.result.content.encode("utf-8")) < 33_000
     assert outcome.result.content.endswith("… [truncated]")
+
+
+def test_local_hub_kill_switch_refusal_is_not_recorded_as_policy_off(tmp_path):
+    """task-32280 fix round regression.
+
+    `LocalToolProvider.invoke_detailed()`'s kill-switch branch has no
+    `LocalToolInvocationReason` member for the switch, so it tags its
+    result `PERMISSION_OFF` (the closest existing reason, purely for
+    typing) while `final_gate="kill_switch"` carries the true fact.
+    `_refusal_decision_for_hub_test()` used to trust the reason first,
+    so this exact combination -- the one the provider actually produces
+    -- recorded "denied-policy" ("Blocked (Off)") for a call no per-tool
+    permission ever touched. The switch must win.
+    """
+    service, _fake, _client, _store = _service(tmp_path)
+    root = tmp_path.resolve()
+    detail = LocalToolInvocationResult(
+        result=ToolResult.blocked("local tools are disabled by the kill switch"),
+        final_gate="kill_switch",
+        approval_consumed=False,
+        reason_code=LocalToolInvocationReason.PERMISSION_OFF,
+        dispatch_started=False,
+        provider_terminal=LocalProviderTerminal.NOT_STARTED,
+    )
+
+    outcome = service._local_hub_outcome_from_detail(detail, root, 1)
+
+    assert outcome.decision == KILL_SWITCH_DENIED_DECISION == "denied-killswitch"
+    assert outcome.status == "blocked"
+    assert outcome.error_category == "permission_off"
+    assert outcome.final_gate == "kill_switch"
 
 
 @pytest.mark.parametrize(

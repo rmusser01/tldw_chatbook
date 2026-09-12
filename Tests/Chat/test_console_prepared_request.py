@@ -115,6 +115,39 @@ def test_semantic_request_is_immutable_and_preserves_complete_units() -> None:
         request.active_request = ()  # type: ignore[misc]
 
 
+def test_shrinking_request_preserves_capture_durability_and_reasoning_replay() -> None:
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
+    policy = ReasoningReplayPolicy(mode="current", source="Explicit setting")
+    request = replace(
+        build_console_request(
+            [
+                {"role": "user", "content": "old"},
+                {"role": "assistant", "content": "old answer"},
+                {"role": "user", "content": "current"},
+            ],
+            message_provenance=tuple(
+                SavedRevisionTraceProvenance(new_opaque_id()) for _ in range(3)
+            ),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            capture_policy=FrozenTracePolicy(
+                new_opaque_id(), "credentials-v1", False, None
+            ),
+        ),
+        reasoning_replay=policy,
+        capture_durability="temporary",
+    )
+    shrunk = request.without_oldest_units(1)
+    assert not shrunk.compactable
+    assert shrunk.active_request == request.active_request
+    assert shrunk.reasoning_replay is policy
+    assert shrunk.capture_durability == "temporary"
+
+
 def test_fenced_tool_loop_rows_have_a_distinct_provider_neutral_category() -> None:
     request = build_console_request(
         [

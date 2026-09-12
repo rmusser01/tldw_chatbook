@@ -115,6 +115,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import asyncio
+from importlib import import_module
+import inspect
 import threading
 import time
 from typing import Any, TYPE_CHECKING
@@ -145,7 +147,12 @@ from ...Chat.reply_sentence_sequencer import SentenceSequencer
 from ...Widgets.Console import ConsoleComposerBar
 
 if TYPE_CHECKING:
+    from ...Chat.console_voice_controls import ControlKind
     from ...TTS.profile_types import CharacterRef
+    from ...Widgets.Console.console_voice_preview import (
+        VoicePreviewProjection,
+        VoiceStatusAnnouncementThrottle,
+    )
     from ...Widgets.Console.console_control_bar import (
         ConsoleAutoSpeakResumeRequested,
         ConsoleAutoSpeakRetryRequested,
@@ -156,16 +163,35 @@ if TYPE_CHECKING:
 logger = logger.bind(module="ChatScreen")
 
 
+def _load_default_speculative_voice_factory() -> Callable[..., Any]:
+    """Load the cold speculative composition root away from the UI loop."""
+
+    module = import_module("tldw_chatbook.Chat.console_speculative_voice_session")
+    factory = getattr(module, "create_console_speculative_voice_session", None)
+    if not callable(factory):
+        raise TypeError("speculative voice factory is unavailable")
+    return factory
+
+
 #: Task 5 (VAD-degraded honesty carrier): shown once per hands-free ENTRY
 #: (not once per app run, unlike `VAD_UNAVAILABLE_MESSAGE` -- entering the
 #: loop is the moment this limitation actually starts to matter) when
 #: `webrtcvad` is unavailable. Reuses `VAD_UNAVAILABLE_MESSAGE`'s own
 #: framing (see `console_voice_input.VoiceVadUnavailable`'s docstring):
 #: without it, the silence gate that drives auto-send/barge-in never fires.
+#:
+#: TASK-32495 copy correction: the earlier draft recommended spoken
+#: "Console, stop." as an exit -- impossible advice in exactly this mode,
+#: where segments only finalize at capture stop so mid-capture spoken
+#: commands can never fire (`VoiceVadUnavailable`'s own docstring). It also
+#: hid where retained text goes: in degraded mode NOTHING is ever
+#: auto-sent (the 60 s capture limit exits the loop and inserts the text
+#: into the draft, `_handle_console_dictation_limit`), so it must say so.
 CONSOLE_HANDS_FREE_DEGRADED_MESSAGE = (
     "Hands-free is degraded: voice-activity detection (webrtcvad) is not "
     "installed, so it cannot auto-send on a pause or hear a spoken barge-in. "
-    'Use the mic button, "Console, stop.", or Esc/ctrl+shift+h to end a turn.'
+    "Nothing is sent automatically -- retained speech lands in your draft. "
+    "Use the mic button or Esc/ctrl+shift+h to end a capture."
 )
 
 
@@ -235,6 +261,96 @@ class ConsoleHandsFreeSession:
     countdown_remaining: float = 0.0
     pending_session_id: str | None = None
     pending_existing_assistant_ids: frozenset[str] = frozenset()
+    #: TASK-32494 whole-reply escalation bookkeeping: utterances this reply
+    #: dispatched vs. how many reported failure. A reply in which EVERY
+    #: utterance failed is indistinguishable from silence to the user (the
+    #: sequencer skips failed utterances and keeps moving), so the terminal
+    #: tap escalates to a visible notice once per reply. Reset in
+    #: `_begin_console_hands_free_reply`.
+    utterances_dispatched: int = 0
+    utterances_failed: int = 0
+    #: One-way latch for `_maybe_escalate_all_failed_reply` -- both settle
+    #: points (completion tap, drained tap) evaluate the same condition, so
+    #: whichever fires second must not re-notify. Reset per reply.
+    escalation_shown_for_reply: bool = False
+
+
+def speculative_voice_qualified() -> bool:
+    """Resolve the qualification gate only at requested voice entry."""
+    from ...Chat.console_voice_settings import speculative_voice_qualified as qualified
+
+    return qualified()
+
+
+class _SpeculativeHandsFreeFacade:
+    """Preserve the existing dictation/mic exit contract for the new engine."""
+
+    def __init__(
+        self,
+        owner: "ConsoleHandsFreeController",
+        engine: Any,
+    ) -> None:
+        self._owner = owner
+        self._engine = engine
+
+    @property
+    def state(self) -> str:
+        state = getattr(self._engine, "state", "listening")
+        return str(getattr(state, "value", state))
+
+    def enter(self, *, capture_live: bool) -> None:
+        self._owner._enter_qualified_console_voice_engine(
+            self._engine,
+            capture_live=capture_live,
+        )
+
+    def on_exit_request(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+        self._owner._close_qualified_console_voice(ControlKind.HANDS_FREE_EXIT)
+
+    def on_escape_request(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+        self._owner._close_qualified_console_voice(ControlKind.ESCAPE)
+
+    def on_microphone_disabled(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+        self._owner._close_qualified_console_voice(ControlKind.MICROPHONE_DISABLED)
+
+    def on_stop_request(self) -> None:
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+        self._owner._close_qualified_console_voice(ControlKind.STOP)
+
+    def on_segment_no_final(self) -> None:
+        """Ignore completion from a recorder superseded during adoption."""
+
+    def on_voice_final(self) -> None:
+        """Ignore completion from a recorder superseded during adoption."""
+
+    def on_speech_resumed(self) -> None:
+        """The qualified engine owns post-AEC acoustic admission directly."""
+
+    def on_composer_key(self) -> None:
+        """Typed keys keep their ordinary composer behavior in this engine."""
+
+    def on_capture_ended(self, **_kwargs: Any) -> None:
+        """Ignore a stale legacy capture callback after qualified adoption."""
+
+
+@dataclass
+class ConsoleSpeculativeHandsFreeSession:
+    """One qualified view engine, isolated from the legacy sequencer shape."""
+
+    controller: _SpeculativeHandsFreeFacade
+    engine: Any
+    generation: int
 
 
 class ConsoleHandsFreeController:
@@ -281,6 +397,9 @@ class ConsoleHandsFreeController:
         request_auto_speak_retry: Callable[[], None],
         sync_auto_speak_controls: Callable[[bool, bool, bool], None],
         sync_hands_free_state: Callable[[bool], None],
+        runtime_accessor: Callable[[], Any],
+        project_voice_preview: Callable[[VoicePreviewProjection], None],
+        clear_voice_preview: Callable[[], None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -349,6 +468,10 @@ class ConsoleHandsFreeController:
             request_auto_speak_retry: Late-bound coordinator retry request.
             sync_auto_speak_controls: Presentation-only auto-speak state edge.
             sync_hands_free_state: Presentation-only Hands-free state edge.
+            runtime_accessor: App-owned Console runtime for shared promotion and
+                orphan-supervisor authorities.
+            project_voice_preview: View-only provisional transcript projection.
+            clear_voice_preview: View-only provisional transcript removal.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -369,10 +492,18 @@ class ConsoleHandsFreeController:
         self._request_auto_speak_retry_fn = request_auto_speak_retry
         self._sync_auto_speak_controls_fn = sync_auto_speak_controls
         self._sync_hands_free_state_fn = sync_hands_free_state
+        self._runtime_accessor = runtime_accessor
+        self._project_voice_preview_fn = project_voice_preview
+        self._clear_voice_preview_fn = clear_voice_preview
+        self._voice_status_announcer: VoiceStatusAnnouncementThrottle | None = None
 
         # The pipeline engine's own state, moved verbatim from
         # `ChatScreen.__init__`.
-        self._console_hands_free: ConsoleHandsFreeSession | None = None
+        self._console_hands_free: (
+            ConsoleHandsFreeSession | ConsoleSpeculativeHandsFreeSession | None
+        ) = None
+        self._qualified_voice_generation = 0
+        self._qualified_voice_startup_generation: int | None = None
         #: True once `_install_console_hands_free_store_tap` has wrapped the
         #: store's `append_stream_chunk`/`mark_message_*` methods. The store
         #: itself is a lazily-created singleton for this screen instance
@@ -400,6 +531,471 @@ class ConsoleHandsFreeController:
         are not mounted (pre-mount, mid-teardown).
         """
         self._sync_hands_free_state_fn(active)
+
+    def _run_qualified_console_voice_result(self, result: Any) -> bool:
+        """Supervise optional async view cleanup without retaining text."""
+
+        if not inspect.isawaitable(result):
+            return True
+        try:
+            self.run_worker(
+                result,
+                group="console-speculative-voice-lifecycle",
+                exclusive=False,
+                exit_on_error=False,
+            )
+            return True
+        except Exception:
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
+            logger.opt(exception=True).warning(
+                "Could not supervise speculative voice lifecycle cleanup"
+            )
+            return False
+
+    def _announce_qualified_voice_status(self, status: str) -> None:
+        """Call the optional accessibility sink without using TTS or toasts."""
+
+        announce = getattr(
+            self.app_instance,
+            "console_voice_status_announcer",
+            None,
+        )
+        if callable(announce):
+            try:
+                announce(status)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Console voice status announcement failed"
+                )
+
+    def _qualified_console_voice_is_current(self, generation: int) -> bool:
+        """Return whether callbacks still belong to the active view entry."""
+
+        session = self._console_hands_free
+        return self._qualified_voice_startup_generation == generation or (
+            isinstance(session, ConsoleSpeculativeHandsFreeSession)
+            and session.generation == generation
+        )
+
+    def _project_qualified_voice_phase(self, generation: int, status: str) -> None:
+        """Show a content-free startup/listening phase for one generation."""
+        from ...Widgets.Console.console_voice_preview import VoicePreviewProjection
+
+        self._project_qualified_voice_preview(
+            generation,
+            VoicePreviewProjection(
+                turn_id=f"voice-generation-{generation}",
+                attempt_epoch=0,
+                user_text="",
+                assistant_text="",
+                status=status,
+            ),
+        )
+
+    def _project_qualified_voice_preview(
+        self,
+        generation: int,
+        projection: VoicePreviewProjection,
+    ) -> None:
+        """Project text while announcing status transitions only."""
+
+        if not self._qualified_console_voice_is_current(generation):
+            return
+        try:
+            if self._voice_status_announcer is None:
+                from ...Widgets.Console.console_voice_preview import VoiceStatusAnnouncementThrottle
+
+                self._voice_status_announcer = VoiceStatusAnnouncementThrottle(
+                    self._announce_qualified_voice_status
+                )
+            self._voice_status_announcer.observe(projection.status)
+            self._project_voice_preview_fn(projection)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Console voice preview projection failed"
+            )
+
+    def _clear_qualified_voice_preview(self, generation: int) -> None:
+        """Clear a preview only while its originating view entry is current."""
+
+        if not self._qualified_console_voice_is_current(generation):
+            return
+        try:
+            self._clear_voice_preview_fn()
+        except Exception:
+            logger.opt(exception=True).warning("Console voice preview removal failed")
+
+    def _notify_native_voice_failure(
+        self, generation: int, failure: BaseException | None
+    ) -> bool:
+        """Report categorical native failures once, without reviving a stale view."""
+        from ...Audio.native_duplex_stream import (
+            AudioShutdownUnconfirmed,
+            NativeDuplexUnavailable,
+        )
+        if isinstance(failure, AudioShutdownUnconfirmed):
+            message = (
+                "Audio shutdown unconfirmed. Voice is unavailable until audio "
+                "closure is confirmed; restart the app if it remains unavailable."
+            )
+        elif isinstance(failure, NativeDuplexUnavailable):
+            message = (
+                "Native duplex unavailable. Rebuild or install the matching native "
+                "audio component, then restart the app."
+            )
+        else:
+            return False
+        if (
+            self.is_mounted
+            and self._qualified_voice_generation == generation
+            and getattr(self, "_native_voice_failure", None)
+            != (generation, type(failure))
+        ):
+            self._native_voice_failure = (generation, type(failure))
+            self.app_instance.notify(message, severity="error")
+        return True
+
+    async def _supervise_native_voice_cleanup(
+        self, result: Any, generation: int
+    ) -> None:
+        """Observe native closure on the UI loop after synchronous view fencing."""
+        from ...Audio.native_duplex_stream import (
+            AudioShutdownUnconfirmed,
+            NativeDuplexUnavailable,
+        )
+        try:
+            await result
+        except (AudioShutdownUnconfirmed, NativeDuplexUnavailable) as failure:
+            self._notify_native_voice_failure(generation, failure)
+
+    def _fail_qualified_console_voice_entry(
+        self, generation: int, failure: BaseException | None = None
+    ) -> None:
+        """Fail one current startup closed without touching a replacement."""
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+
+        if not (
+            self._qualified_console_voice_is_current(generation)
+            or self._qualified_voice_startup_generation == generation
+        ):
+            return
+        self._close_qualified_console_voice(
+            ControlKind.TEARDOWN,
+            expected_generation=generation,
+        )
+        from ...Chat.console_voice_preflight import (
+            VoicePreparationError,
+            voice_failure_message,
+        )
+
+        if type(failure) is VoicePreparationError and failure.category == "stale":
+            return
+        if not self._notify_native_voice_failure(generation, failure):
+            self.app_instance.notify(
+                voice_failure_message(failure.category, startup=True)
+                if type(failure) is VoicePreparationError
+                else "Speculative voice could not start. Check voice and provider settings, then try again.",
+                severity="error",
+            )
+
+    def _on_qualified_console_voice_runtime_failure(
+        self,
+        generation: int,
+        failure: BaseException,
+    ) -> None:
+        """Project an asynchronous audio-pump failure onto its live view."""
+
+        if not self._qualified_console_voice_is_current(generation):
+            return
+        logger.warning(
+            "Qualified speculative voice runtime failed failure_class={}",
+            type(failure).__name__,
+        )
+        self._fail_qualified_console_voice_entry(generation, failure)
+
+    async def _supervise_qualified_console_voice_entry(
+        self,
+        result: Any,
+        generation: int,
+    ) -> None:
+        """Contain an asynchronous entry failure to its originating view."""
+
+        try:
+            await result
+        except asyncio.CancelledError:
+            raise
+        except Exception as failure:
+            logger.warning(
+                "Qualified speculative voice startup failed failure_class={}",
+                type(failure).__name__,
+            )
+            self._fail_qualified_console_voice_entry(generation, failure)
+        else:
+            self._project_qualified_voice_phase(generation, "listening")
+
+    def _enter_qualified_console_voice_engine(
+        self,
+        engine: Any,
+        *,
+        capture_live: bool,
+    ) -> None:
+        """Enter one already-validated view engine, supervising async startup."""
+
+        session = self._console_hands_free
+        if (
+            not isinstance(session, ConsoleSpeculativeHandsFreeSession)
+            or session.engine is not engine
+        ):
+            return
+        generation = session.generation
+        try:
+            result = engine.enter(capture_live=capture_live)
+        except Exception as failure:
+            logger.warning(
+                "Qualified speculative voice startup failed failure_class={}",
+                type(failure).__name__,
+            )
+            self._fail_qualified_console_voice_entry(generation, failure)
+            return
+        if inspect.isawaitable(result):
+            supervision = self._supervise_qualified_console_voice_entry(
+                result,
+                generation,
+            )
+            if not self._run_qualified_console_voice_result(supervision):
+                close = getattr(result, "close", None)
+                if callable(close):
+                    close()
+                self._fail_qualified_console_voice_entry(generation)
+        else:
+            self._project_qualified_voice_phase(generation, "listening")
+
+    def _close_qualified_console_voice(
+        self,
+        reason: ControlKind,
+        *,
+        expected_generation: int | None = None,
+    ) -> None:
+        """Fence one provisional view synchronously, then release its resources."""
+
+        session = self._console_hands_free
+        if not isinstance(session, ConsoleSpeculativeHandsFreeSession):
+            startup_generation = self._qualified_voice_startup_generation
+            if startup_generation is None or (
+                expected_generation is not None
+                and startup_generation != expected_generation
+            ):
+                return
+            self._qualified_voice_startup_generation = None
+            try:
+                self._clear_voice_preview_fn()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Console voice preview removal failed"
+                )
+            self._sync_hands_free_switch(False)
+            return
+        if (
+            expected_generation is not None
+            and session.generation != expected_generation
+        ):
+            return
+        # Invalidate the view callbacks before invoking engine code. A broken
+        # or delayed engine therefore cannot repaint this view or a later one.
+        self._console_hands_free = None
+        try:
+            # Contract: this method advances the attempt fence before it
+            # returns. Any returned awaitable performs bounded cleanup only.
+            cleanup = session.engine.fence_and_close(reason)
+        except Exception as failure:
+            cleanup = None
+            self._notify_native_voice_failure(session.generation, failure)
+            logger.warning(
+                "Speculative voice view cleanup failed to start failure_class={}",
+                type(failure).__name__,
+            )
+        try:
+            self._clear_voice_preview_fn()
+        except Exception:
+            logger.opt(exception=True).warning("Console voice preview removal failed")
+        self._sync_hands_free_switch(False)
+        if isinstance(cleanup, asyncio.Future):
+            # The app-owned process already retains the original close task.
+            # A future callback survives Textual cancelling unmounted workers,
+            # without leaving an unstarted observer coroutine behind.
+            def closed(done):
+                try:
+                    done.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as failure:
+                    self._notify_native_voice_failure(session.generation, failure)
+
+            cleanup.add_done_callback(closed)
+            return
+        if inspect.isawaitable(cleanup):
+            if not self._run_qualified_console_voice_result(
+                self._supervise_native_voice_cleanup(cleanup, session.generation)
+            ):
+                close = getattr(cleanup, "close", None)
+                if callable(close):
+                    close()
+
+    async def _construct_qualified_console_voice(
+        self,
+        *,
+        capture_live: bool,
+        generation: int,
+    ) -> None:
+        """Load, compose, and enter one generation without a cold UI-loop import."""
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+
+        try:
+            from ...Chat.console_voice_preflight import VoicePreparationError
+
+            if self._console_dictation_state != "idle":
+                raise VoicePreparationError("stale")
+            controller = self._runtime_accessor().chat_controller
+            if controller is None:
+                raise VoicePreparationError("session_unavailable")
+            stamp = await controller.validate_speculative_voice_entry()
+            if self._qualified_voice_startup_generation != generation:
+                return
+            factory = getattr(
+                self.app_instance,
+                "console_speculative_voice_session_factory",
+                None,
+            )
+            default_factory = factory is None
+            if factory is None:
+                factory = await asyncio.to_thread(
+                    _load_default_speculative_voice_factory
+                )
+            if self._qualified_voice_startup_generation != generation:
+                return
+            if not controller.is_speculative_voice_entry_current(stamp):
+                raise VoicePreparationError("stale")
+            if self._console_dictation_state != "idle":
+                raise VoicePreparationError("stale")
+            if not callable(factory):
+                raise TypeError("speculative voice factory is unavailable")
+            runtime = self._runtime_accessor()
+            engine = factory(
+                **(
+                    {
+                        "worker": runtime.voice_worker,
+                        "process_supervisor": runtime.voice_process_supervisor,
+                        "entry_current": lambda: (
+                            self._qualified_console_voice_is_current(generation)
+                            and self._console_dictation_state == "idle"
+                            and controller.is_speculative_voice_entry_current(stamp)
+                        ),
+                    }
+                    if default_factory
+                    else {}
+                ),
+                app_instance=self.app_instance,
+                view=self._screen,
+                promotion_owner=runtime.voice_promotion_owner,
+                dispatch_supervisor=runtime.voice_dispatch_supervisor,
+                project_preview=lambda projection: (
+                    self._project_qualified_voice_preview(generation, projection)
+                ),
+                clear_preview=lambda: self._clear_qualified_voice_preview(generation),
+                on_runtime_failure=lambda failure: (
+                    self._on_qualified_console_voice_runtime_failure(
+                        generation,
+                        failure,
+                    )
+                ),
+            )
+            if not callable(getattr(engine, "enter", None)) or not callable(
+                getattr(engine, "fence_and_close", None)
+            ):
+                raise TypeError("speculative voice factory returned an invalid session")
+        except asyncio.CancelledError:
+            raise
+        except Exception as failure:
+            logger.warning(
+                "Could not construct speculative voice session failure_class={}",
+                type(failure).__name__,
+            )
+            if self._console_dictation_state != "idle":
+                failure = VoicePreparationError("stale")
+            self._fail_qualified_console_voice_entry(generation, failure)
+            return
+
+        if self._qualified_voice_startup_generation != generation:
+            cleanup = engine.fence_and_close(ControlKind.TEARDOWN)
+            self._run_qualified_console_voice_result(cleanup)
+            return
+        try:
+            entry_current = (
+                self._console_dictation_state == "idle"
+                and controller.is_speculative_voice_entry_current(stamp)
+            )
+            entry_failure = VoicePreparationError("stale")
+        except Exception:
+            entry_current = False
+            entry_failure = VoicePreparationError("unexpected")
+        if not entry_current:
+            cleanup = engine.fence_and_close(ControlKind.TEARDOWN)
+            self._run_qualified_console_voice_result(cleanup)
+            self._fail_qualified_console_voice_entry(generation, entry_failure)
+            return
+        facade = _SpeculativeHandsFreeFacade(self, engine)
+        self._voice_status_announcer = None
+        self._console_hands_free = ConsoleSpeculativeHandsFreeSession(
+            controller=facade,
+            engine=engine,
+            generation=generation,
+        )
+        self._qualified_voice_startup_generation = None
+        self._sync_hands_free_switch(True)
+        facade.enter(capture_live=capture_live)
+
+    def _try_enter_qualified_console_voice(self, *, capture_live: bool) -> bool:
+        """Select the gated view engine; return whether the gate handled entry."""
+
+        if not speculative_voice_qualified():
+            return False
+        self._qualified_voice_generation += 1
+        generation = self._qualified_voice_generation
+        self._qualified_voice_startup_generation = generation
+        if self._console_dictation_state != "idle":
+            self._qualified_voice_startup_generation = None
+            self._sync_hands_free_switch(False)
+            self.app_instance.notify(
+                "Finish dictation before starting Hands-free.", severity="warning"
+            )
+            return True
+        self._sync_hands_free_switch(True)
+        self._project_qualified_voice_phase(generation, "preparing")
+        startup = self._construct_qualified_console_voice(
+            capture_live=capture_live,
+            generation=generation,
+        )
+        if not self._run_qualified_console_voice_result(startup):
+            self._fail_qualified_console_voice_entry(generation)
+        return True
+
+    def request_console_hands_free_state(self, enabled: bool) -> None:
+        """Apply an explicit visible-switch state without inverting twice."""
+
+        active = (
+            self._qualified_voice_startup_generation is not None
+            or self._console_hands_free is not None
+            or self._console_realtime is not None
+        )
+        if (enabled is True) == active:
+            return
+        self.action_toggle_console_hands_free()
 
     async def _resolve_console_auto_speak_destination(
         self,
@@ -567,6 +1163,12 @@ class ConsoleHandsFreeController:
         -- the toggle never tears state down directly, so the exit runs the
         same reasoned `ExitLoop` path every other exit route uses.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+        if self._qualified_voice_startup_generation is not None:
+            self._close_qualified_console_voice(ControlKind.HANDS_FREE_EXIT)
+            return
         if self._console_hands_free is not None:
             self._console_hands_free.controller.on_exit_request()
             return
@@ -608,6 +1210,8 @@ class ConsoleHandsFreeController:
                 is already open and should be adopted as the loop's first
                 turn; forwarded verbatim to whichever engine is selected.
         """
+        if self._qualified_voice_startup_generation is not None:
+            return
         if self._console_hands_free is not None:
             self._enter_console_hands_free_pipeline_loop(capture_live=capture_live)
             return
@@ -621,6 +1225,10 @@ class ConsoleHandsFreeController:
                 self.app_instance.notify(
                     CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE, severity="warning"
                 )
+                # TASK-32495: the Switch gesture flips the widget visually
+                # before this refusal runs -- repaint it back so the control
+                # never claims a mode that refused to start.
+                self._sync_hands_free_switch(False)
                 return
             self._enter_console_realtime_loop(capture_live=capture_live)
             return
@@ -647,6 +1255,58 @@ class ConsoleHandsFreeController:
         existing = self._console_hands_free
         if existing is not None:
             existing.controller.enter(capture_live=capture_live)
+            return
+        # TASK-32495 entry preflight (mic half): refuse BEFORE the session
+        # exists when dictation cannot run at all, with the probe's own
+        # reason+remedy -- previously the loop started, the first capture
+        # failed asynchronously, and the Switch stayed ON over a dead
+        # microphone. A probe crash is not a refusal (same rule as
+        # `_console_pipeline_hands_free_blocker`); the capture itself
+        # would surface a real failure and exit the loop.
+        try:
+            availability = console_voice_input.probe()
+        except Exception:  # noqa: BLE001 - a probe crash is not a refusal
+            logger.opt(exception=True).debug(
+                "Console hands-free: dictation availability probe crashed"
+            )
+            availability = None
+        if availability is not None and not availability.ok:
+            reason = availability.reason or "dictation is unavailable"
+            remedy = str(availability.remedy or "").strip()
+            self.app_instance.notify(
+                f"{reason} {remedy}".strip(), severity="error"
+            )
+            self._sync_hands_free_switch(False)
+            return
+        # TASK-32495 entry preflight (playback half): with no way to play
+        # ANY format, replies will be silent -- warn once per app run but
+        # still enter (mic-only dictation-with-spoken-commands use is
+        # legitimate, and the adaptive-format/remedy paths in the TTS
+        # layer own the per-failure signal). Imported function-locally:
+        # this module is on the UI-ready path and playback_capability
+        # drags the streaming-sink/audio-player modules into the census
+        # ratchet when imported eagerly (PR #2638 CI).
+        try:
+            from ...TTS.playback_capability import locally_playable_formats
+
+            playable = locally_playable_formats()
+        except Exception:  # noqa: BLE001 - a probe crash is not a warning
+            logger.opt(exception=True).debug(
+                "Console hands-free: playback capability probe crashed"
+            )
+            playable = None
+        if playable is not None and not playable:
+            if not getattr(
+                self.app_instance, "_console_hands_free_playback_warned", False
+            ):
+                self.app_instance._console_hands_free_playback_warned = True
+                self.app_instance.notify(
+                    "No audio output on this machine: hands-free replies will "
+                    "be silent. Install a player (e.g. mpv) or set Speech "
+                    "settings ▸ Output format to WAV.",
+                    severity="warning",
+                )
+        if self._try_enter_qualified_console_voice(capture_live=capture_live):
             return
         if self._console_hands_free_vad_degraded:
             self.app_instance.notify(
@@ -677,8 +1337,14 @@ class ConsoleHandsFreeController:
         and closed the capture -- this just stops the tick timer and clears
         the composer's borrowed hands-free chip state.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
         session = self._console_hands_free
         if session is None:
+            return
+        if isinstance(session, ConsoleSpeculativeHandsFreeSession):
+            self._close_qualified_console_voice(ControlKind.HANDS_FREE_EXIT)
             return
         if session.tick_timer is not None:
             session.tick_timer.stop()
@@ -696,7 +1362,7 @@ class ConsoleHandsFreeController:
     def _tick_console_hands_free(self) -> None:
         """`set_interval(0.1, ...)`: the controller's only clock input."""
         session = self._console_hands_free
-        if session is None:
+        if session is None or isinstance(session, ConsoleSpeculativeHandsFreeSession):
             return
         session.controller.tick(time.monotonic())
         self._repaint_console_hands_free_chip()
@@ -812,7 +1478,7 @@ class ConsoleHandsFreeController:
         outstanding.
         """
         session = self._console_hands_free
-        if session is None:
+        if session is None or isinstance(session, ConsoleSpeculativeHandsFreeSession):
             return
         controller = session.controller
         if controller.state == "listening":
@@ -915,6 +1581,9 @@ class ConsoleHandsFreeController:
         session.sequencer.begin_reply()
         session.reply_id = None
         session.toast_shown_for_reply = False
+        session.utterances_dispatched = 0
+        session.utterances_failed = 0
+        session.escalation_shown_for_reply = False
 
     def _console_hands_free_exit_loop(self) -> None:
         """`ExitLoop`: the controller deliberately does NOT emit
@@ -1299,6 +1968,38 @@ class ConsoleHandsFreeController:
         session.controller.on_reply_started()
         session.sequencer.reply_completed()
         session.controller.on_reply_finished()
+        self._maybe_escalate_all_failed_reply(session)
+
+    def _maybe_escalate_all_failed_reply(
+        self, session: "ConsoleHandsFreeSession"
+    ) -> None:
+        """TASK-32494 whole-reply escalation, once per reply.
+
+        Generation SUCCEEDED but every dispatched utterance failed to play
+        -- to the user this reply was silent from start to finish, and
+        playback failures never post their own per-utterance toast (the
+        synthesis-side `toast_shown_for_reply` latch cannot cover them).
+        Evaluated from BOTH settle points (the completion tap and the
+        sequencer-drained tap) because either can land first: only when
+        the FSM has actually completed the reply (`state == "listening"`
+        requires BOTH `on_reply_finished` and `on_sequencer_drained`) are
+        the utterance counters final.
+        """
+        if session.escalation_shown_for_reply:
+            return
+        if session.controller.state != "listening":
+            return
+        if (
+            session.utterances_dispatched > 0
+            and session.utterances_failed >= session.utterances_dispatched
+        ):
+            session.escalation_shown_for_reply = True
+            self.app_instance.notify(
+                "Reply speech failed: that reply could not be spoken. Check "
+                "audio output -- install a player (e.g. mpv) or set Speech "
+                "settings ▸ Output format to WAV.",
+                severity="error",
+            )
 
     def _dispatch_console_hands_free_speak(self, text: str) -> None:
         """`SentenceSequencer`'s `speak` callable: dispatch one utterance.
@@ -1314,33 +2015,56 @@ class ConsoleHandsFreeController:
         if session is None:
             return
         session.controller.on_first_utterance()
+        session.utterances_dispatched += 1
         token = session.sequencer.current_utterance_token
         self.run_worker(
-            self._speak_console_hands_free_utterance(text, token),
+            self._speak_console_hands_free_utterance(text, token, session),
             exclusive=False,
             group="console-hands-free-speech",
             exit_on_error=False,
         )
 
     async def _speak_console_hands_free_utterance(
-        self, text: str, token: int | None
+        self,
+        text: str,
+        token: int | None,
+        dispatching_session: "ConsoleHandsFreeSession",
     ) -> None:
         """Speak one utterance via the cooldown-free `speak_utterance` entry.
 
         `token` is `session.sequencer.current_utterance_token`, captured
         synchronously at dispatch time (binding carrier: production callers
         MUST thread it through into `utterance_finished(ok, token=...)` --
-        see that method's docstring). `quiet` implements the "at most one
-        failure toast per reply" policy: the first failed utterance in a
-        reply shows its toast and latches `toast_shown_for_reply`; every
-        later utterance in the SAME reply then passes `quiet=True` and only
-        logs.
+        see that method's docstring). `dispatching_session` is the session
+        that DISPATCHED this utterance (PR #2638 Qodo #4): a worker may not
+        start until after its loop exited and a replacement was entered,
+        and re-reading `self._console_hands_free` at worker start would
+        bind the utterance to that replacement -- its failure counters
+        would then flag a perfectly healthy reply as all-failed. The guard
+        below pins the dispatching session and abandons stale workers.
+
+        `quiet` implements the "at most one failure toast per reply"
+        policy: the first failed utterance in a reply shows its toast and
+        latches `toast_shown_for_reply`; every later utterance in the SAME
+        reply then passes `quiet=True` and only logs.
         """
-        session = self._console_hands_free
-        if session is None:
+        session = dispatching_session
+        if self._console_hands_free is not session:
+            # The loop that dispatched this utterance is gone (exited, or
+            # replaced by a re-entry); its sequencer was torn down with it,
+            # so there is nothing live to report into. Touch no session.
             return
         handler = await self.app_instance._ensure_tts_handler()
+        if self._console_hands_free is not session:
+            return
         if handler is None:
+            # PR #2638 Qodo #1: a missing TTS handler is a failure for THIS
+            # utterance like any other. Without recording it here, a reply
+            # whose handler never initializes drains with zero counted
+            # failures and never reaches `_maybe_escalate_all_failed_reply`
+            # -- a fully silent reply with no visible notice.
+            session.toast_shown_for_reply = True
+            session.utterances_failed += 1
             session.sequencer.utterance_finished(False, token=token)
             return
         quiet = session.toast_shown_for_reply
@@ -1354,6 +2078,7 @@ class ConsoleHandsFreeController:
                 return
             if not ok:
                 session.toast_shown_for_reply = True
+                session.utterances_failed += 1
             session.sequencer.utterance_finished(ok, token=token)
 
         await handler.speak_utterance(text, on_finished=_on_finished, quiet=quiet)
@@ -1375,6 +2100,7 @@ class ConsoleHandsFreeController:
         if session is None:
             return
         session.controller.on_sequencer_drained()
+        self._maybe_escalate_all_failed_reply(session)
 
     async def _deliver_console_hands_free_capture_ended(
         self, scheduled_for: "ConsoleHandsFreeSession", had_segments: bool
@@ -1400,6 +2126,8 @@ class ConsoleHandsFreeController:
         CURRENT session is still identically the one this was scheduled
         for.
         """
+        if isinstance(scheduled_for, ConsoleSpeculativeHandsFreeSession):
+            return
         deadline = (
             time.monotonic() + self._CONSOLE_HANDS_FREE_CAPTURE_ENDED_WAIT_SECONDS
         )
@@ -1455,9 +2183,17 @@ class ConsoleHandsFreeController:
         is a promise the docs make about hands-free, not about one
         engine's implementation of it.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+        if self._qualified_voice_startup_generation is not None:
+            self._close_qualified_console_voice(ControlKind.ESCAPE)
         hands_free = self._console_hands_free
         if hands_free is not None:
-            hands_free.controller.on_exit_request()
+            if isinstance(hands_free, ConsoleSpeculativeHandsFreeSession):
+                hands_free.controller.on_escape_request()
+            else:
+                hands_free.controller.on_exit_request()
         realtime = self._console_realtime
         if realtime is not None:
             realtime.controller.on_exit_request()
@@ -1468,8 +2204,18 @@ class ConsoleHandsFreeController:
         binding (`action_exit_console_hands_free` above) only lights up
         while there is something for it to exit."""
         return (
-            self._console_hands_free is not None or self._console_realtime is not None
+            self._qualified_voice_startup_generation is not None
+            or self._console_hands_free is not None
+            or self._console_realtime is not None
         )
+
+    def prepare_for_navigation(self) -> None:
+        """Fence provisional qualified voice when navigation is confirmed."""
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+
+        self._close_qualified_console_voice(ControlKind.NAVIGATION)
 
     def teardown(self) -> None:
         """Abandon the pipeline loop's timer during screen unmount.
@@ -1483,7 +2229,16 @@ class ConsoleHandsFreeController:
         no further TTS/dictation calls are safe to issue against a screen
         that is being torn down.
         """
+        from ...Chat.console_voice_controls import (
+            ControlKind,
+        )
+        if self._qualified_voice_startup_generation is not None:
+            self._close_qualified_console_voice(ControlKind.TEARDOWN)
+            return
         hands_free = self._console_hands_free
+        if isinstance(hands_free, ConsoleSpeculativeHandsFreeSession):
+            self._close_qualified_console_voice(ControlKind.TEARDOWN)
+            return
         if hands_free is not None and hands_free.tick_timer is not None:
             hands_free.tick_timer.stop()
         self._console_hands_free = None

@@ -1919,3 +1919,53 @@ async def test_next_send_payload_estimate_none_falls_back_to_factory():
         modal = app.screen
         header = modal.query_one("#console-inspector-next-send-header", Static)
         await _wait_until(pilot, lambda: "~9 tokens" in str(header.renderable))
+
+
+# --- TASK-32336: human role names in the Current Context viewer ---------------
+
+
+@pytest.mark.asyncio
+async def test_current_context_titles_render_human_role_names() -> None:
+    """TASK-32336: the audit surface must not show internal enum reprs.
+
+    ``ConsoleChatMessage.role`` is a ``ConsoleMessageRole`` (str-mixin
+    Enum); on the supported runtime (>=3.11) its f-string form is the
+    qualified "ConsoleMessageRole.USER", so every Current Context
+    collapsible used to read "[ConsoleMessageRole.USER] complete".
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    async def _snapshot() -> ConsoleContextSnapshot:
+        return ConsoleContextSnapshot(
+            current_messages=[
+                SimpleNamespace(
+                    role=ConsoleMessageRole.USER, status="complete", content="hi"
+                ),
+                SimpleNamespace(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    status="streaming",
+                    content="there",
+                ),
+            ],
+            next_send_payload={},
+        )
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            snapshot_factory=_snapshot,
+            initial_tab=TAB_NEXT_SEND,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        body = modal.query_one("#console-inspector-next-send-current-body")
+        titles = [
+            _rendered_title(collapsible) for collapsible in body.query(Collapsible)
+        ]
+        assert "[User] complete" in titles
+        assert "[Assistant] streaming" in titles
+        assert not any("ConsoleMessageRole" in title for title in titles)

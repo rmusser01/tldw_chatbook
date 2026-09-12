@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleMessageRole,
     ConsoleThinkingActivityRef,
+    console_activity_status_word,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -142,6 +143,10 @@ from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Widgets.Console.console_voice_preview import (
+        ConsoleVoicePreview,
+        VoicePreviewProjection,
+    )
     from textual.screen import Screen
 
 
@@ -1463,26 +1468,11 @@ class ConsoleMessageHeader(Horizontal):
     """Stable one-line speaker header with its sole visible speech control."""
 
     BUNDLED_CSS = """
-    ConsoleMessageHeader {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-    }
-
+    ConsoleMessageHeader {width:100%;height:1;min-height:1;}
     ConsoleMessageHeader > .console-transcript-speaker-label {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
+        width:1fr;height:1;min-height:1;overflow:hidden;text-overflow:ellipsis;}
     ConsoleMessageHeader > .console-message-speech-presentation {
-        width: 14;
-        min-width: 14;
-        height: 1;
-        min-height: 1;
-    }
+        width:14;min-width:14;height:1;min-height:1;}
     """
 
     def __init__(
@@ -2648,6 +2638,25 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript.focus()
 
 
+class ConsoleThinkingEditRequested(Message):
+    """Bubbled when the user asks to edit a thinking block's text.
+
+    TASK-32312: posted by ``ConsoleTranscript.action_invoke_selected_action``
+    for a selected thinking disclosure row (the keyboard mirror of the
+    thinking-row copy seam). Anchored by projected activity id -- the owning
+    screen resolves the displayable block from the transcript's display
+    model and owns the block-scoped edit modal.
+
+    Args:
+        activity_id: Projected thinking activity row identifier (the
+            deterministic uuid5 of the owner message and block ids).
+    """
+
+    def __init__(self, activity_id: str) -> None:
+        super().__init__()
+        self.activity_id = activity_id
+
+
 class ConsoleReviewNotesRequested(Message):
     """Bubbled when the user asks to see a message's review notes.
 
@@ -3126,6 +3135,10 @@ class ConsoleTranscript(VerticalScroll):
         # appends USER + ASSISTANT placeholder together, so the tail
         # alone can miss the send (PR #697 review).
         self._seen_message_ids: set[str] = set()
+        # Speculative voice text is a separate, ephemeral projection. It is
+        # never inserted into ``_messages`` or the durable row/grouping path.
+        self._voice_preview_projection: VoicePreviewProjection | None = None
+        self._voice_preview_widget: ConsoleVoicePreview | None = None
         #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
         #: that detaches the reader can refresh the pill without a status source.
         self._last_run_status = "idle"
@@ -3255,6 +3268,15 @@ class ConsoleTranscript(VerticalScroll):
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
+        self._voice_preview_widget = None
+        if self._voice_preview_projection is not None:
+            from tldw_chatbook.Widgets.Console.console_voice_preview import ConsoleVoicePreview
+
+            self._voice_preview_widget = ConsoleVoicePreview(
+                self._voice_preview_projection,
+                id="console-voice-preview",
+            )
+            yield self._voice_preview_widget
         # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
         # `sync_jump_indicator` shows it while the reader is scrolled up.
         pill = ConsoleTranscriptJumpPill(
@@ -3278,6 +3300,33 @@ class ConsoleTranscript(VerticalScroll):
         )
         hint.display = False
         yield hint
+
+    def set_voice_preview(self, projection: VoicePreviewProjection) -> None:
+        """Show one ephemeral speculative voice projection."""
+        from tldw_chatbook.Widgets.Console.console_voice_preview import (
+            ConsoleVoicePreview,
+            VoicePreviewProjection,
+        )
+
+        if type(projection) is not VoicePreviewProjection:
+            raise TypeError("projection must be a VoicePreviewProjection")
+        self._voice_preview_projection = projection
+        if not self.is_mounted:
+            return
+        if self._voice_preview_widget is None:
+            self._voice_preview_widget = ConsoleVoicePreview(
+                projection, id="console-voice-preview"
+            )
+            self.mount(self._voice_preview_widget, before="#console-transcript-jump-pill")
+        else:
+            self._voice_preview_widget.set_projection(projection)
+
+    def clear_voice_preview(self) -> None:
+        """Hide and forget provisional voice text without touching messages."""
+
+        self._voice_preview_projection = None
+        if self._voice_preview_widget is not None:
+            self._voice_preview_widget.clear()
 
     async def recompose(self) -> None:
         """Detach screen-owned message overflow UI before rebuilding rows."""
@@ -4716,6 +4765,61 @@ class ConsoleTranscript(VerticalScroll):
                 self._suppress_boundary_hydration = False
         self._schedule_prune_check()
 
+    def mounted_message_content_ids(self) -> frozenset[str]:
+        """Return message IDs whose exact transcript content is attached.
+
+        Assistant media rows live inside ``ConsoleAssistantTurnWidget`` rather
+        than in this widget's top-level ``_row_widgets`` map. This method is
+        the transcript-owned successful-render evidence seam: ordinary
+        messages require their body, while generated image/video messages
+        require their exact nested card and its composed content.
+        """
+
+        def _mounted_card(
+            turn: ConsoleAssistantTurnWidget,
+            card_type: type[ConsoleGenerationCard] | type[ConsoleVideoCard],
+            message_id: str,
+        ) -> bool:
+            for child in turn.adjunct_stack.children:
+                if not isinstance(child, card_type):
+                    continue
+                if child.parent is not turn.adjunct_stack or not child.is_attached:
+                    continue
+                if getattr(getattr(child, "spec", None), "message_id", None) != message_id:
+                    continue
+                if child.children and all(
+                    nested.parent is child and nested.is_attached
+                    for nested in child.children
+                ):
+                    return True
+            return False
+
+        mounted: set[str] = set()
+        for message in self._messages:
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                owner = self._row_widgets.get(f"assistant-turn:{message.id}")
+                if not isinstance(owner, ConsoleAssistantTurnWidget):
+                    continue
+                if owner.parent is not self or not owner.is_attached:
+                    continue
+                answer = owner.answer_widget
+                if answer.parent is not owner or not answer.is_attached:
+                    continue
+                if message.video_metadata is not None:
+                    if _mounted_card(owner, ConsoleVideoCard, message.id):
+                        mounted.add(message.id)
+                elif message.generation_metadata:
+                    if _mounted_card(owner, ConsoleGenerationCard, message.id):
+                        mounted.add(message.id)
+                else:
+                    mounted.add(message.id)
+                continue
+
+            row = self._row_widgets.get(f"message:{message.id}")
+            if row is not None and row.parent is self and row.is_attached:
+                mounted.add(message.id)
+        return frozenset(mounted)
+
     def _scroll_reveal_target_into_view(self, widget: Widget) -> None:
         """Scroll a just-revealed jump target to the top of the viewport."""
         try:
@@ -5025,6 +5129,42 @@ class ConsoleTranscript(VerticalScroll):
         ref = self._thinking_activity_refs.get(activity_id)
         return ref.assistant_message_id if ref is not None else None
 
+    def thinking_editable_block(self, activity_id: str) -> tuple[str, str, str] | None:
+        """Resolve one displayable block for the block-scoped edit seam.
+
+        Args:
+            activity_id: Projected thinking activity row identifier.
+
+        Returns:
+            A ``(assistant_message_id, block_id, text)`` tuple for a
+            displayable block on a terminal (non-streaming) assistant owner,
+            or ``None`` for unknown rows, content-free proprietary evidence,
+            and live rows whose partial text must never prefill an editor.
+        """
+        ref = self._thinking_activity_refs.get(activity_id)
+        if ref is None:
+            return None
+        assistant = next(
+            (
+                message
+                for message in self._messages
+                if message.id == ref.assistant_message_id
+            ),
+            None,
+        )
+        if assistant is None or assistant.status in {"pending", "streaming"}:
+            return None
+        envelope = assistant.thinking
+        if not isinstance(envelope, ThinkingEnvelope):
+            return None
+        block = next(
+            (block for block in envelope.blocks if block.block_id == ref.block_id),
+            None,
+        )
+        if not isinstance(block, DisplayableThinkingBlock):
+            return None
+        return ref.assistant_message_id, ref.block_id, block.text
+
     def _thinking_display_message(self, activity_id: str) -> ConsoleChatMessage | None:
         """Build a bounded display-only row for selection/copy/Inspector seams."""
         ref = self._thinking_activity_refs.get(activity_id)
@@ -5251,7 +5391,7 @@ class ConsoleTranscript(VerticalScroll):
                     else:
                         activity_header = (
                             f"{activity_presentation.label} · "
-                            f"{activity_presentation.status}"
+                            f"{console_activity_status_word(activity_presentation.status)}"
                         )
                     lines.append(activity_header)
                     activity_body = _message_body(activity)
@@ -5546,6 +5686,14 @@ class ConsoleTranscript(VerticalScroll):
                 if callable(copy_to_clipboard):
                     copy_to_clipboard(thinking_detail)
                 return
+        if action_id == "edit" and (
+            self.thinking_owner_message_id(message_id) is not None
+        ):
+            # TASK-32312: thinking disclosures carry no action buttons
+            # (``action_widgets=()``); like copy, edit is a keyboard seam
+            # here and the owning screen opens the block-scoped modal.
+            self.post_message(ConsoleThinkingEditRequested(message_id))
+            return
         if action_id == "tool-output" and self._activity_can_expand(message_id):
             self.toggle_tool_output(message_id)
             return
@@ -5721,6 +5869,34 @@ class ConsoleTranscript(VerticalScroll):
             return None
         return widget
 
+    def _fold_row_action_menus_for_pointer(self) -> None:
+        """Fold rail row-action menus on a transcript press (ADR-068).
+
+        The screen-level outside-click dismissal returns early for
+        transcript targets -- this widget owns its in-area interaction --
+        and this widget's own cleanup only knew its selection UI, so a
+        press on the transcript (most of the screen) left a conversation or
+        workspace action menu floating. Fold both registries here with no
+        opener focus-restore: the press already expresses the user's focus
+        intent. Imports stay function-local per ADR-097 (this module is on
+        the boot path; the menu modules must not be).
+        """
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            conversation_action_menus_on_screen,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            workspace_action_menus_on_screen,
+        )
+
+        for menu in conversation_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+        for menu in workspace_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+
     async def on_mouse_down(self, event: MouseDown) -> None:
         """Dismiss More, then arm a drag on a left press over selectable text."""
         if self._kb_selection_row is not None:
@@ -5737,6 +5913,7 @@ class ConsoleTranscript(VerticalScroll):
         # proceeds; the active opener is exempt so its Button.Pressed can
         # keep owning the menu's open/reopen lifecycle.
         await self._dismiss_message_more_for_pointer(press_control)
+        self._fold_row_action_menus_for_pointer()
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
         # open a press on another row's body never reaches this

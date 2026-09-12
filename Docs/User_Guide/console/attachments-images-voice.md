@@ -46,7 +46,8 @@ button appears for clearing what's staged. While dictating, a status chip
 No slash command attaches files. The **Attach context** action in the top
 control bar is different — it opens the "Console context" rail (source
 staging is done from Library — see [Context & RAG](context-and-rag.md)),
-not the file picker.
+not the file picker. (That control is labeled **Context rail** as of
+2026-09; older documentation called it "Attach context".)
 
 ### What "attach" actually does — images vs. everything else
 
@@ -136,22 +137,64 @@ is never sent automatically, so you can edit before pressing Enter.
   config.toml (defaults: faster-whisper, English). Only local providers
   are used — audio never leaves your machine.
 
-### Hands-free — the voice conversation loop
+### Hands-free voice conversation
 
-Using the floating companion alongside voice? See the [Persona Buddy guide](../buddy.md)
-for selection, animation meaning, and troubleshooting.
+Use the visible **Hands-free** switch beside **Speak replies**, separately
+from one-shot Mic dictation. The optional **Ctrl+Shift+H** binding works only
+where the terminal delivers it; use the switch on macOS. Its state reflects
+the actual session, including failed startup.
 
-Dictation's big sibling: instead of one capture at a time, **Hands-free**
-(`Ctrl+Shift+H`, or the control bar's **Hands-free** switch next to
-**Speak replies**) runs a continuous speak → transcribe → reply →
-speak-back loop. The switch is the touch route — on a phone over
-`--serve` there is no chorded keyboard, and the switch's state always
-reflects the real session (if the microphone is unavailable the loop
-won't start, and the switch says so by not engaging).
+Packaged platforms remain unqualified and use the existing legacy pipeline.
+The speculative pipeline described below is available through the exact-HEAD
+[source-only development launcher](../../Development/TTS/speculative-duplex-voice.md#source-only-development-and-release-status).
+It listens, transcribes incrementally, asks the configured model, and speaks
+the answer. After 700 ms of silence by default, it may start a speculative reply.
 
-`Esc` (or the switch again) exits the loop. The optional **Realtime
-engine** under Settings ▸ Speech & TTS swaps the pipeline for a
-low-latency provider session.
+Speech detected at any point while that reply is being generated or spoken
+extends the same user turn. The obsolete reply is stopped and hidden, the new
+words are added to the rolling transcript, and generation restarts from the
+updated turn. Once the assistant finishes speaking, later speech starts a new
+turn. **Stop**, **Esc**, the **Mic** control, or the **Hands-free** switch can
+end the active voice operation without waiting for a spoken command.
+
+The transcription mode is shown as one of these capabilities:
+
+- **Native live** — preferred when the selected speech-to-text backend emits
+  revisions while audio arrives.
+- **Rolling-window fallback** — re-transcribes a bounded overlapping window
+  when native streaming is unavailable. A remote backend may therefore
+  process some audio more than once.
+
+Echo cancellation is on by default. While it warms up, or whenever it is
+unhealthy or unavailable, the Console closes microphone speech admission
+during assistant playback and reports safe **half duplex**. Turning echo
+cancellation off under **Settings ▸ Speech & TTS ▸ Pipeline conversation** is
+for troubleshooting only and also forces half duplex.
+
+Response eagerness is configurable from 500 through 3000 ms in the same
+Settings block: **Fast** is 700 ms, **Balanced** is 1200 ms, and
+**Deliberate** is 2000 ms. Shorter pauses reduce the wait but can create more
+restarts. Cancelled model, speech-to-text, or text-to-speech work may still be
+billed; rolling-window remote transcription can also process overlapping
+audio more than once.
+
+Cancelled audio, transcripts, and reply text remain temporary and are not
+written to messages, logs, traces, notifications, sync, or export. Only the
+winning user/assistant pair is saved. In a temporary chat, exchange capture
+is unavailable for the voice attempt; saving the chat later does not
+retroactively create a trace for it.
+
+The provider-native **Realtime engine** is unchanged and remains a separate
+option. The legacy `dictation.acoustic_barge_in` key belongs only to Realtime,
+and `dictation.handsfree_send_delay_seconds` belongs only to the legacy
+pipeline during rollout. Neither key is migrated or interpreted as the new
+response-eagerness setting.
+
+Leaving or covering Console stops view-owned microphone, playback, and
+unaccepted speculative work. Returning does not restart Hands-free. Accepted
+chat/agent turns and already-claimed winning voice saves remain app-owned;
+navigation does not cancel them. Explicit Stop, confirmed session close, and
+confirmed app quit are their cancellation boundaries.
 
 ## Common tasks
 
@@ -168,22 +211,30 @@ low-latency provider session.
 5. **Dictate a message** — click **Mic**, wait for the chip to show `● 0:00`,
    speak, click **Rec ●** to stop, wait for "◌ Transcribing…" to finish,
    then edit the inserted text and press Enter.
+6. **Start a voice conversation** — turn on the visible **Hands-free** switch,
+   speak naturally, and interrupt a speculative answer by
+   continuing to talk. Turn **Hands-free** off to leave the mode.
 
 ## Keyboard & commands
 
 | Key / command | Action |
 |---|---|
 | Alt+V | Paste an image from the clipboard |
+| Ctrl+Shift+H (terminal-dependent; not reliable on macOS) | Optional alternative to the visible Hands-free switch |
 | `/generate-image [:backend] [@style] <prompt>` | Generate an image for this session |
 
-Dictation has no keyboard shortcut — the **Mic** button is the only way to
-start it.
+One-shot dictation has no dedicated keyboard shortcut — use the **Mic**
+button. Use the visible **Hands-free** switch for a voice conversation;
+**Ctrl+Shift+H** is optional only where the terminal delivers it reliably.
+On macOS, use the switch.
 
 ## Related settings & docs
 
 - `[chat.images]` in config.toml — `max_size_mb`, `save_location`,
   `supported_formats`, `show_attach_button`, resize options.
 - `[transcription]` — dictation provider, model, and language.
+- `[dictation]` — speculative response eagerness and the troubleshooting-only
+  pipeline echo-cancellation switch.
 - `[image_generation]` — backends and `default_backend` for
   `/generate-image`.
 - `[console]` — composer paste-collapse behavior (affects inserted text
