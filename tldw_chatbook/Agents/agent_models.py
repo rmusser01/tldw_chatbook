@@ -187,6 +187,13 @@ READ_AGENT_MESSAGES_TOOL_NAME = "read_agent_messages"
 MESSAGE_TOOL_NAMES = frozenset(
     {REPORT_TO_SUPERVISOR_TOOL_NAME, READ_AGENT_MESSAGES_TOOL_NAME}
 )
+# Chat fork/spawn (2026-09-11 spec, ADR-150): the two primary-agent tools
+# for handing a parallel workstream to the user -- fork_chat copies this
+# chat's active history into a new chat, new_chat starts an empty one. Each
+# call lands on a user-confirmation card and the new chat opens in the
+# background; schemas live in tool_catalog.py beside the other runtime tools.
+FORK_CHAT_TOOL_NAME = "fork_chat"
+NEW_CHAT_TOOL_NAME = "new_chat"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -206,6 +213,8 @@ RUNTIME_TOOL_NAMES = frozenset(
         DISCARD_AGENT_WORKTREE_TOOL_NAME,
         REPORT_TO_SUPERVISOR_TOOL_NAME,
         READ_AGENT_MESSAGES_TOOL_NAME,
+        FORK_CHAT_TOOL_NAME,
+        NEW_CHAT_TOOL_NAME,
     }
 )
 

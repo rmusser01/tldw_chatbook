@@ -173,6 +173,8 @@ from .project_instruction_runtime import (
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     DISCARD_AGENT_WORKTREE_SCHEMA,
+    NEW_CHAT_TOOL_SCHEMA,
+    FORK_CHAT_TOOL_SCHEMA,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
     MERGE_AGENT_WORKTREE_SCHEMA,
@@ -665,6 +667,23 @@ class RunLogRequestPlan:
     min_recent_rounds: int
 
 
+
+def _chat_create_runtime_schemas(
+    agent_kind: str,
+    fork_chat_tool: "Callable[[dict], ToolResult] | None",
+    new_chat_tool: "Callable[[dict], ToolResult] | None",
+) -> list[ToolSchema]:
+    """ADR-150: fork_chat/new_chat are primary-only in v1 (sub-agents: TASK-32480)."""
+    if agent_kind != AGENT_KIND_PRIMARY:
+        return []
+    schemas: list[ToolSchema] = []
+    if fork_chat_tool is not None:
+        schemas.append(FORK_CHAT_TOOL_SCHEMA)
+    if new_chat_tool is not None:
+        schemas.append(NEW_CHAT_TOOL_SCHEMA)
+    return schemas
+
+
 def build_first_request_schema_plan(
     registry: ToolCatalogRegistry,
     allowed_tools: tuple[str, ...],
@@ -682,6 +701,8 @@ def build_first_request_schema_plan(
     progress_available: bool = False,
     reporting_available: bool = False,
     worktree_merge_enabled: bool = False,
+    fork_chat_enabled: bool = False,
+    new_chat_enabled: bool = False,
     fleet_max_live: int | None = None,
     agent_kind: str = AGENT_KIND_PRIMARY,
     direct_system_prompt: str | None = None,
@@ -707,6 +728,10 @@ def build_first_request_schema_plan(
             approve merge_agent_worktree/discard_agent_worktree -- like
             run_skill_script_enabled, this disclosure is additionally gated
             beyond fleet_active alone.
+        fork_chat_enabled: Whether the primary may fork this chat into a new
+            chat (ADR-150; confirmation-gated).
+        new_chat_enabled: Whether the primary may create a fresh chat
+            (ADR-150; confirmation-gated).
         fleet_max_live: Maximum live agents recorded in the frozen plan.
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
@@ -782,6 +807,10 @@ def build_first_request_schema_plan(
             runtime.append(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA)
         if run_skill_script_enabled:
             runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
+        if fork_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
+            runtime.append(FORK_CHAT_TOOL_SCHEMA)
+        if new_chat_enabled and agent_kind == AGENT_KIND_PRIMARY:
+            runtime.append(NEW_CHAT_TOOL_SCHEMA)
         log_active = bool(
             agent_kind == AGENT_KIND_PRIMARY
             and run_log_active
@@ -1962,6 +1991,8 @@ class AgentService:
         | None = None,
         post_tool_call: Callable[[str, str, dict, str, bool, str], None]
         | None = None,
+        fork_chat_tool: Callable[[dict], ToolResult] | None = None,
+        new_chat_tool: Callable[[dict], ToolResult] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         run_log_request_plan: RunLogRequestPlan | None = None,
         fleet_coordinator: FleetCoordinator | None = None,
@@ -2130,6 +2161,9 @@ class AgentService:
         # never fires PostToolUse: behavior is byte-identical to before
         # this seam existed.
         self._post_tool_call = post_tool_call
+        # Primary-only by design (ADR-150): children never create chats in v1.
+        self._fork_chat_tool = fork_chat_tool
+        self._new_chat_tool = new_chat_tool
         # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
         # per service instance -- `bind()` latches permanently (see its own
         # docstring), so a writer built here in __init__ and reused across
@@ -4730,6 +4764,14 @@ class AgentService:
                     and self._prepare_managed_skill_promotion_tool is not None
                 ),
                 run_skill_script_enabled=self._run_skill_script_tool is not None,
+                fork_chat_enabled=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and self._fork_chat_tool is not None
+                ),
+                new_chat_enabled=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and self._new_chat_tool is not None
+                ),
                 run_log_active=bool(
                     agent_kind == AGENT_KIND_PRIMARY and writer.is_active
                 ),

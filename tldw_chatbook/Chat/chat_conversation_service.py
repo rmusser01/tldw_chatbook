@@ -1227,6 +1227,80 @@ class ChatConversationService:
             "depth_cap": depth_cap,
         }
 
+    def copy_conversation_active_path(
+        self, source_conversation_id: str, target_conversation_id: str
+    ) -> dict[str, Any]:
+        """Copy the source conversation's active path into the target, verbatim.
+
+        Walks the active-leaf ancestry (root -> leaf) of ``source_conversation_id``
+        and re-inserts each message into ``target_conversation_id`` with fresh ids
+        and remapped parents, preserving sender/role/content, images, usage,
+        metadata, provider-continuation payloads, and timestamps. Runs inside a
+        single transaction: a mid-copy failure rolls back everything. Sibling
+        branches off the active path are NOT copied (fork = the path the user
+        sees; combine with rewind for mid-conversation forks).
+
+        Returns:
+            ``{"copied": <int>, "leaf_message_id": <new id of the copied leaf>}``
+
+        Raises:
+            ValueError: ``empty_history`` when the source has no messages.
+        """
+        tree = self.get_conversation_tree(
+            source_conversation_id, root_limit=10_000, depth_cap=10_000
+        )
+        nodes: dict[str, dict[str, Any]] = {}
+
+        def _walk(node: dict[str, Any]) -> None:
+            nodes[str(node["id"])] = node
+            for child in node.get("children") or []:
+                _walk(child)
+
+        for root in tree.get("root_threads") or []:
+            _walk(root)
+        if not nodes:
+            raise ValueError("empty_history")
+
+        leaf_id = self.db.get_conversation_active_leaf(source_conversation_id)
+        if leaf_id is None or leaf_id not in nodes:
+            # Conversations created outside the Console have no leaf pointer;
+            # fall back to the most recent message by timestamp.
+            leaf_id = max(nodes, key=lambda i: str(nodes[i].get("timestamp") or ""))
+
+        path: list[dict[str, Any]] = []
+        cursor: str | None = leaf_id
+        while cursor is not None and cursor in nodes:
+            path.append(nodes[cursor])
+            cursor = nodes[cursor].get("parent_message_id")
+        path.reverse()
+
+        id_map: dict[str, str] = {}
+        with self.db.transaction():
+            for node in path:
+                old_id = str(node["id"])
+                new_id = self.db.add_message(
+                    {
+                        "conversation_id": target_conversation_id,
+                        "sender": node.get("sender") or node.get("role") or "user",
+                        "content": node.get("content") or "",
+                        "role": node.get("role"),
+                        "parent_message_id": id_map.get(str(node.get("parent_message_id"))),
+                        "image_data": node.get("image_data"),
+                        "image_mime_type": node.get("image_mime_type"),
+                        "timestamp": node.get("timestamp"),
+                        "usage_json": node.get("usage_json"),
+                        "metadata_json": node.get("metadata_json"),
+                        "provider_continuation_json": node.get("provider_continuation_json"),
+                    }
+                )
+                if new_id is None:
+                    raise RuntimeError("copy_active_path: message insert failed")
+                id_map[old_id] = str(new_id)
+
+        new_leaf = id_map.get(str(leaf_id))
+        self.db.set_conversation_active_leaf(target_conversation_id, new_leaf)
+        return {"copied": len(path), "leaf_message_id": new_leaf}
+
     def record_message_rag_context(
         self,
         conversation_id: str,

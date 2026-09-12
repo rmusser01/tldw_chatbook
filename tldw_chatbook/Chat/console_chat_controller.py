@@ -749,6 +749,10 @@ _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: `request_skill_script_confirm`'s own wait loop (fallback used when no
 #: `skill_script_confirm_timeout_seconds` seam is injected).
 _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
+#: Same ADR-067 contract as `_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS`,
+#: for `request_chat_create_confirm`'s own wait loop (fallback used when no
+#: `chat_create_confirm_timeout_seconds` seam is injected).
+_DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
 #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
 #: seam is injected).
@@ -4311,6 +4315,32 @@ class ConsoleChatController:
         #: skill-script confirm (round-keyed registry + retained payloads).
         self.set_pending_question: Callable[[dict | None], None] | None = None
         self.ask_user_timeout_seconds: Callable[[], float] | None = None
+        #: Agent-initiated chat creation (fork_chat/new_chat) confirm
+        #: bridge -- mirrors the skill-script block above piece for piece
+        #: (see `request_chat_create_confirm`). One addition: the "remember"
+        #: decision is session-SCOPED here -- `_chat_create_session_grants`
+        #: maps owning session id -> tool names the user granted standing
+        #: permission for in that session, and a granted (session, tool)
+        #: short-circuits subsequent rounds (no card) until the session
+        #: closes.
+        self._pending_chat_create_lock = threading.Lock()
+        self._pending_chat_create_rounds: dict[str, dict[str, Any]] = {}
+        #: Retained payload per ROUND, keyed by `request_id` -- the mounted
+        #: card is the session's FIFO head, exactly like the sibling maps.
+        self._parked_chat_create_payloads: dict[str, dict[str, Any]] = {}
+        self._chat_create_session_grants: dict[str, set[str]] = {}
+        #: UI-thread callback that pushes/clears the pending chat-create
+        #: confirm payload into the owning screen's state. Invoked through
+        #: self.app.call_from_thread from request_chat_create_confirm.
+        #: Mirrors set_pending_skill_script.
+        self.set_pending_chat_create: Callable[[dict | None], None] | None = None
+        #: Optional test override for the confirm timeout, mirroring
+        #: `skill_script_confirm_timeout_seconds`.
+        self.chat_create_confirm_timeout_seconds: Callable[[], float] | None = None
+        #: Task 7 wires this: completion callback invoked once a confirmed
+        #: chat-create lands. Declared here (unused until then) so the init
+        #: block is not touched twice across the task split.
+        self.complete_agent_chat_create: Callable[..., None] | None = None
         self._pending_question_rounds = self._interrupt_host.registries["question"]
         self._pending_question_lock = self._interrupt_host.lock
         self._parked_question_payloads = self._interrupt_host.payloads["question"]
@@ -12819,6 +12849,9 @@ class ConsoleChatController:
     ) -> ConsoleChatSession | None:
         """Delete a session only after its runtime-owned work was drained."""
 
+        # ADR-150: session-scoped chat-create remember grants die with the session.
+        self._chat_create_session_grants.pop(session_id, None)
+
         state = self._session_close_states.pop(ticket.close_id, None)
         if state is None or state[0] != ticket:
             raise RuntimeError("Console session close ticket is stale.")
@@ -14037,6 +14070,7 @@ class ConsoleChatController:
             )
         self._remount_parked_skill_install(session_id)
         self._remount_parked_skill_script(session_id)
+        self._remount_parked_chat_create(session_id)
 
     def active_session_changed(self) -> None:
         """Pause stale heads and derive the newly active session's head."""
@@ -15784,6 +15818,7 @@ class ConsoleChatController:
         # the badge discard and the FIFO-head re-derive per affected
         # session stay here, exactly as the per-kind sweeps did them.
         swept = self._interrupt_host.revoke_for_run(run_id, _REVOCATION_STAMPS)
+        chat_create_swept = self._revoke_chat_create_rounds(run_id)
         with self._pending_question_lock:
             self._question_bounces.pop(run_id, None)
         total = 0
@@ -15794,6 +15829,7 @@ class ConsoleChatController:
                     self.discard_pending_round(session_id, round_id)
                 with contextlib.suppress(Exception):
                     self._interrupt_host.remount_head(kind, session_id)
+        total += len(chat_create_swept)
         if total:
             logger.info("Revoked pending approval rounds for cancelled run")
         return total
@@ -15878,6 +15914,79 @@ class ConsoleChatController:
         return self._interrupt_host.revoke_for_run(
             run_id, {"skill_script": _REVOCATION_STAMPS["skill_script"]}
         )["skill_script"]
+
+
+    @staticmethod
+    def _discard_chat_create_orphan(db: Any, conversation_id: str) -> None:
+        """Best-effort soft-delete of a just-created chat-create conversation.
+
+        Final-review fix wave (Finding 3b): when the fork copy fails after
+        ``create_conversation`` already committed, the orphaned row would
+        surface in the workspace listing with no explanation -- the spec
+        contracts "transaction rolled back; nothing created". Mirrors
+        ``ChatPersistenceService._discard_created_conversation``'s pattern
+        (soft-delete via the db seam, optimistic-locked, idempotent when the
+        row is already deleted); every failure only debug-logs and never
+        masks the executor outcome's original error kind.
+        """
+        try:
+            row = db.get_conversation_by_id(conversation_id, include_deleted=True)
+            if row is None or row.get("deleted"):
+                return
+            db.soft_delete_conversation(
+                conversation_id, expected_version=int(row["version"])
+            )
+        except Exception:  # noqa: BLE001 — discard is best-effort by contract
+            logger.opt(exception=True).debug(
+                "Failed to discard orphaned chat-create conversation "
+                f"(conversation_id={conversation_id})"
+            )
+
+    def _revoke_chat_create_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
+        """Fail this run's ``fork_chat``/``new_chat`` confirms closed.
+
+        Registry work only, under ``_pending_chat_create_lock`` and then
+        (sequentially, never nested) ``_approval_state_lock`` for the
+        retained-payload slot. Mirrors ``_revoke_skill_script_rounds``
+        exactly.
+
+        Args:
+            run_id: The cancelled/abandoned run.
+
+        Returns:
+            ``(request_id, session_id)`` for each revoked confirm.
+        """
+        revoked: list[tuple[str, str | None]] = []
+        with self._pending_chat_create_lock:
+            for request_id, state in list(self._pending_chat_create_rounds.items()):
+                if state.get("run_id") != run_id:
+                    continue
+                state["revoked"] = True
+                # Defense in depth -- the post-wait `revoked` guard in
+                # `request_chat_create_confirm` is what actually denies.
+                decision = state.get("decision")
+                if isinstance(decision, dict):
+                    decision["allow"] = False
+                    decision["remember"] = False
+                self._pending_chat_create_rounds.pop(request_id, None)
+                session_id = state.get("session_id") or None
+                revoked.append((request_id, session_id))
+                event = state.get("event")
+                if event is not None:
+                    event.set()
+        # PR0: mirrors `request_chat_create_confirm`'s `finally` exactly --
+        # each round drops exactly its OWN retained payload, so a
+        # still-armed sibling keeps its own copy. Runs outside the critical
+        # section above because `_unpark_round_payload` takes the
+        # (non-reentrant) same lock.
+        for round_id_to_drop, _session_id in revoked:
+            self._unpark_round_payload(
+                self._parked_chat_create_payloads, round_id_to_drop
+            )
+        return revoked
+
+    # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
+
 
     def request_skill_install_confirm(
         self, url: str, *, session_id: str | None = None
@@ -16301,6 +16410,633 @@ class ConsoleChatController:
             return list(self._pending_skill_script_rounds)
 
     # -- Worktree-merge confirm bridge (TASK-28238 phase 2 Task 6) -----------
+
+
+    def _enrich_chat_create_confirm_payload(
+        self, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Fill the confirm card's fork facts, default title, and run id.
+
+        Final-review fix wave (Finding 1): the card renders
+        ``fork_source_title`` / ``fork_message_count`` (its "Copies N
+        messages from '<title>'" line) and a non-empty header title, but no
+        production payload producer ever set the fork keys -- every card
+        read "Copies ? messages from ''" -- and an agent-omitted title left
+        the header blank until the executor computed its default
+        post-confirm. The controller is the only side holding
+        store/persistence/db access at arm time, so it enriches here,
+        BEFORE the round is armed.
+
+        EVERYTHING is best-effort: any failure degrades -- the fork line's
+        keys are omitted, a fork title falls back to the owning session's
+        display title so the header still renders -- and can never block,
+        delay, or deny the round.
+        """
+        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+        enriched = dict(payload)
+        tool = str(enriched.get("tool") or "")
+        try:
+            title = str(enriched.get("title") or "").strip()
+            if tool == "fork_chat":
+                session = next(
+                    (
+                        s
+                        for s in self.store.sessions()
+                        if s.id == str(enriched.get("session_id") or "")
+                    ),
+                    None,
+                )
+                conversation_id = (
+                    getattr(session, "persisted_conversation_id", None)
+                    if session is not None
+                    else None
+                )
+                if (
+                    session is not None
+                    and not session.ephemeral
+                    and conversation_id
+                ):
+                    # The tree-read leg carries its OWN guard so a failure
+                    # here degrades to the session-title fallback below
+                    # instead of skipping it.
+                    try:
+                        database = (
+                            getattr(self.store.persistence, "db", None)
+                            if self.store.persistence
+                            else None
+                        )
+                        tree = ChatConversationService(
+                            database
+                        ).get_conversation_tree(
+                            str(conversation_id),
+                            root_limit=10_000,
+                            depth_cap=10_000,
+                        )
+                        conversation_row = dict(
+                            tree.get("conversation") or {}
+                        )
+                        source_title = str(
+                            conversation_row.get("title") or ""
+                        )
+                        # Count definition -- ACTIVE-PATH LENGTH, not total
+                        # tree nodes: the executor's
+                        # copy_conversation_active_path copies exactly the
+                        # leaf-to-root ancestry, so the card must not count
+                        # off-path siblings the fork drops.
+                        nodes: dict[str, Mapping[str, Any]] = {}
+
+                        def _walk(node: Mapping[str, Any]) -> None:
+                            nodes[str(node["id"])] = node
+                            for child in node.get("children") or []:
+                                _walk(child)
+
+                        for root in tree.get("root_threads") or []:
+                            _walk(root)
+                        leaf = (
+                            database.get_conversation_active_leaf(
+                                str(conversation_id)
+                            )
+                            if database is not None
+                            else None
+                        )
+                        if leaf is None or leaf not in nodes:
+                            # Mirrors copy_conversation_active_path's own
+                            # fallback: a missing/dangling pointer means
+                            # the most recent message by timestamp.
+                            leaf = (
+                                max(
+                                    nodes,
+                                    key=lambda i: str(
+                                        nodes[i].get("timestamp") or ""
+                                    ),
+                                )
+                                if nodes
+                                else None
+                            )
+                        count = 0
+                        cursor = leaf
+                        while cursor is not None and cursor in nodes:
+                            count += 1
+                            cursor = nodes[cursor].get("parent_message_id")
+                        enriched["fork_source_title"] = source_title
+                        enriched["fork_message_count"] = count
+                        if not title:
+                            # Same default formula the executor applies
+                            # post-confirm, so the card header matches the
+                            # title that would actually be created.
+                            title = (
+                                f"Fork of {source_title or 'chat'}"[:120]
+                            )
+                    except Exception:  # noqa: BLE001 — omit the fork line only
+                        logger.opt(exception=True).debug(
+                            "chat-create confirm fork enrichment degraded; "
+                            "card omits the fork line"
+                        )
+                if not title and session is not None:
+                    # Degraded fork path (tree read failed, ephemeral
+                    # source, or unpersisted source): default the title
+                    # from the SESSION's display title -- the header must
+                    # never render empty.
+                    title = f"Fork of {session.title or 'chat'}"[:120]
+            elif not title:
+                title = "New Chat"
+            if title:
+                enriched["title"] = title
+            # Run attribution: the bridge payload already carries run_id;
+            # normalize it so the card can render "requested by agent run".
+            if enriched.get("run_id"):
+                enriched["run_id"] = str(enriched["run_id"])
+        except Exception:  # noqa: BLE001 — enrichment never blocks the round
+            logger.opt(exception=True).debug(
+                "chat-create confirm payload enrichment degraded"
+            )
+        return enriched
+
+    def request_chat_create_confirm(
+        self, payload: dict[str, Any], *, session_id: str | None = None
+    ) -> dict[str, bool]:
+        """WORKER THREAD: ask the user to confirm an agent-initiated chat create.
+
+        Mirrors request_skill_script_confirm for the fork_chat/new_chat
+        tools, with one addition: a session-scoped "remember" grant store.
+        A prior allow+remember decision for ``(session_id, tool)`` (recorded
+        in ``_chat_create_session_grants``) short-circuits this call with
+        ``{"allow": True, "remember": True}`` before any round is armed --
+        no card, no wait. Grants die with their session (``close_session``
+        pops the whole set).
+
+        Each call arms a fresh round under a newly-generated request id
+        (embedded in the payload handed to the UI as ``"request_id"``) so
+        that ``resolve_pending_chat_create`` can reject a decision left
+        over from a prior, already-torn-down round -- see that method's
+        docstring for why this matters.
+
+        Carries the SAME park/mount/retain contract as
+        ``request_skill_script_confirm`` -- see that method's docstring for
+        the full mount-vs-park/retain rationale, identical here.
+
+        Args:
+            payload: Confirm details to render ({"tool" ("fork_chat"|
+                "new_chat"), "title", "opening_prompt", "instructions"});
+                "fork_source_title"/"fork_message_count" (fork_chat only),
+                a default "title" when the agent omitted one, and a
+                normalized "run_id" are enriched by
+                ``_enrich_chat_create_confirm_payload`` before arming, and
+                "timeout_seconds", "request_id", "session_id" and
+                "deadline_monotonic" keys are added before marshaling to
+                the UI.
+            session_id: The run's OWNING session, scoping the cancel check
+                (``_is_session_cancelled``), the park/mount decision, and
+                the remember-grant lookup. ``None`` preserves the
+                viewed-session fallback and never parks.
+
+        Returns:
+            ``{"allow": bool, "remember": bool}``. Every non-Allow path
+            (deny, cancel, stop, timeout, no wired UI) returns
+            ``allow=False``.
+        """
+        from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+        if self.app is None or self.set_pending_chat_create is None:
+            return {"allow": False, "remember": False}
+
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        tool = str(payload.get("tool") or "")
+        # Session-scoped remember: a standing grant for this (session, tool)
+        # pair short-circuits -- no card is armed at all.
+        if tool in self._chat_create_session_grants.get(owning_session_id, set()):
+            return {"allow": True, "remember": True}
+
+        # Final-review fix wave (Finding 1): enrich the payload BEFORE the
+        # round is armed -- fork_source_title/fork_message_count (the card's
+        # fork line), a default title when the agent omitted one, and run-id
+        # attribution. Entirely best-effort; see the helper.
+        enriched_payload = self._enrich_chat_create_confirm_payload(payload)
+
+        event = threading.Event()
+        decision: dict[str, bool] = {}
+        request_id = str(uuid4())
+        # Arm-time cancel binding, identical to the sibling bridges' -- see
+        # `_bind_round_cancel_signal`.
+        round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # The visit's teardown Event, captured at ARM time for the same
+        # reason the run's cancel event is -- see `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
+        # Same run-ownership stamp the sibling bridges carry -- a revoked
+        # round must fail closed even against a late Allow.
+        chat_create_round_state: dict[str, Any] = {
+            "event": event,
+            "decision": decision,
+            "session_id": owning_session_id,
+            "run_id": current_run_id(),
+            # Re-read after the wait: a late Allow must not stick. See
+            # `revoke_approval_rounds_for_run`.
+            "revoked": False,
+        }
+        with self._pending_chat_create_lock:
+            self._pending_chat_create_rounds[request_id] = chat_create_round_state
+
+        timeout_seconds = (
+            self.chat_create_confirm_timeout_seconds()
+            if self.chat_create_confirm_timeout_seconds is not None
+            else _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS
+        )
+        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # for a decision or the owning run's cancellation.
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
+        card_payload = dict(enriched_payload)
+        card_payload["timeout_seconds"] = timeout_seconds
+        card_payload["request_id"] = request_id
+        card_payload["session_id"] = owning_session_id
+        # See `_head_round_payload`'s remaining-time snapshot. None when
+        # ADR-067 armed no deadline.
+        card_payload["deadline_monotonic"] = deadline
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
+        )
+        # Legacy `session_id is None` callers never park and never queue --
+        # they keep the unconditional mount below.
+        is_head = True
+        if session_id is not None:
+            self.add_pending_round(session_id, request_id)
+            # Keyed by ROUND; the return says whether THIS round is its
+            # session's FIFO head. A non-head round must not mount: an
+            # older sibling is still holding the card.
+            is_head = self._park_round_payload(
+                self._parked_chat_create_payloads, request_id, card_payload
+            )
+        try:
+            if is_parked:
+                if self.app is not None and self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            elif is_head:
+                self._marshal_pending_chat_create(card_payload)
+            # ADR-067: mark the owning run as waiting on a human decision
+            # (see the sibling bridges' identical wrap for the why).
+            with use_human_input_wait(
+                str(chat_create_round_state.get("run_id") or "")
+            ):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
+            # A revoked round denies unconditionally, without consulting
+            # `decision` at all -- an Allow delivered just after the child
+            # was cancelled must not authorize the create. Mirrors the
+            # sibling bridges' identical post-wait guard.
+            with self._pending_chat_create_lock:
+                was_revoked = bool(chat_create_round_state.get("revoked"))
+            if was_revoked:
+                return {"allow": False, "remember": False}
+            allow = bool(decision.get("allow", False))
+            remember = bool(decision.get("remember", False))
+            # Record a standing grant only on an allow that ALSO asked to
+            # be remembered -- a remembered deny must not poison later
+            # rounds into auto-allowing.
+            if allow and remember:
+                self._chat_create_session_grants.setdefault(
+                    owning_session_id, set()
+                ).add(tool)
+            return {"allow": allow, "remember": remember}
+        finally:
+            with self._pending_chat_create_lock:
+                self._pending_chat_create_rounds.pop(request_id, None)
+            # Drop exactly THIS round's retained payload -- each round owns
+            # its own key, so no still-armed sibling guard is needed.
+            self._unpark_round_payload(
+                self._parked_chat_create_payloads, request_id
+            )
+            if session_id is not None:
+                # Discard ONLY this round's own id -- the badge clears only
+                # once every bridge round for this session has resolved.
+                self.discard_pending_round(session_id, request_id)
+            # Re-derive the card from the session's remaining FIFO head
+            # rather than deciding whether to CLEAR it -- a legacy
+            # no-session round passes None so `_remount_head` re-derives
+            # for the session active WHEN THE CALLBACK RUNS; a
+            # session-attributed round keeps its exact-match owning id.
+            try:
+                self._remount_head(
+                    self._parked_chat_create_payloads,
+                    self.set_pending_chat_create,
+                    owning_session_id if session_id is not None else None,
+                )
+            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
+                logger.opt(exception=True).debug(
+                    "Failed to marshal chat-create remount during teardown"
+                )
+
+    def _remount_parked_chat_create(self, session_id: str) -> None:
+        """Re-derive the mounted chat-create confirm card for ``session_id``.
+
+        Called from `switch_session`/`new_session`/`close_session` exactly
+        like the sibling confirm cards' own re-derive -- mounts
+        ``session_id``'s retained payload (if any) and clears whatever the
+        departing session had shown, all in one call. A no-op when no UI
+        bridge is wired.
+
+        Already runs on the UI thread, so it calls `_head_round_payload`
+        directly rather than `_remount_head`.
+
+        Args:
+            session_id: The session now being activated/viewed.
+        """
+        if self.set_pending_chat_create is None:
+            return
+        self.set_pending_chat_create(
+            self._head_round_payload(self._parked_chat_create_payloads, session_id)
+        )
+
+    def _marshal_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a chat-create confirm payload to the UI thread.
+
+        Args:
+            payload: The pending confirm dict to show, or None to hide it.
+        """
+        if self.app is not None and self.set_pending_chat_create is not None:
+            self.app.call_from_thread(self.set_pending_chat_create, payload)
+
+    def resolve_pending_chat_create(
+        self, allow: bool, remember: bool, request_id: str | None = None
+    ) -> None:
+        """UI THREAD: apply the user's decision, releasing the worker thread.
+
+        ``request_id`` must be the exact ``"request_id"`` value the pending
+        confirm's payload carried (``request_chat_create_confirm`` embeds a
+        fresh one per round, and the confirm card built in a later task
+        MUST echo it back here unchanged). This is a strict match: a
+        resolve carrying no id, or an id from any round other than the one
+        currently armed, is silently dropped rather than resolved.
+
+        Same hazard class as ``resolve_pending_skill_script``: if round 1
+        ends (deadline, cancel, stop, conversation switch) and the agent
+        immediately issues a second fork_chat/new_chat call arming round 2,
+        a ``Button.Pressed`` queued for round 1 just before its teardown
+        could otherwise be handled after round 2 is armed -- resolving
+        round 2 (a chat the user never saw) with round 1's stale click.
+        Widget messages and ``call_from_thread`` calls are separate
+        queues, so ordering across a round boundary is not guaranteed.
+
+        Args:
+            allow: True to create the chat this once.
+            remember: True to also grant this tool standing permission in
+                the owning session.
+            request_id: The armed round's id, as echoed back by the UI.
+                ``None`` (the default) never matches an armed round, so an
+                un-migrated or malformed caller fails closed by omission.
+        """
+        if request_id is None:
+            return
+        with self._pending_chat_create_lock:
+            round_state = self._pending_chat_create_rounds.get(request_id)
+        if round_state is None:
+            return
+        round_state["decision"]["allow"] = bool(allow)
+        round_state["decision"]["remember"] = bool(remember)
+        round_state["event"].set()
+
+    def pending_chat_create_ids(self) -> list[str]:
+        """Return the request ids of every currently-armed chat-create round.
+
+        Returns:
+            The armed round ids, in insertion order. Empty when none is
+            pending. Exposed for tests and for any surface that needs to
+            know whether a decision is outstanding.
+        """
+        with self._pending_chat_create_lock:
+            return list(self._pending_chat_create_rounds)
+
+    def execute_agent_chat_create(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """WORKER THREAD: create the confirmed chat and marshal UI completion.
+
+        TASK-32482 Task 7. Runs ONLY after ``request_chat_create_confirm``
+        returned an allow (the bridge closure enforces that ordering), so
+        every failure below is fail-closed: nothing is created, and the
+        outcome's ``kind`` tells the model (and the run log) why.
+
+        For ``fork_chat`` the new conversation copies the source's active
+        path verbatim (``ChatConversationService.copy_conversation_active_
+        path``) and records fork lineage (``parent_conversation_id`` +
+        ``forked_from_message_id`` -- both FK-enforced, so only real
+        persisted ids are ever passed). For ``new_chat`` a fresh
+        conversation is created in the owning session's workspace scope.
+        Both stamp the ``console_agent_handoff`` metadata key (``draft``/
+        ``created_via``/``source_run_id``) Task 8 rehydrates from.
+
+        On success the UI-thread completion (``complete_agent_chat_create``)
+        is marshaled via ``app.call_from_thread`` with the new session's
+        placement inputs; the executor itself returns the outcome dict the
+        bridge closure renders into the ToolResult.
+
+        Args:
+            payload: ``{"tool" ("fork_chat"|"new_chat"), "session_id",
+                "run_id", "title", "opening_prompt", "instructions"}``.
+
+        Returns:
+            ``{"ok": True, "title", "conversation_id", "workspace_id",
+            "copied_messages", "draft_set"}`` on success, else
+            ``{"ok": False, "kind", "error"}`` with ``kind`` one of
+            ``session_gone``, ``payload_too_large``,
+            ``source_not_persisted``, ``character_conflict``,
+            ``empty_history``, ``execution_failed``.
+        """
+        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+        tool = str(payload.get("tool") or "")
+        session_id = str(payload.get("session_id") or "")
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return {
+                "ok": False,
+                "kind": "session_gone",
+                "error": "source session not found",
+            }
+        title = str(payload.get("title") or "").strip()
+        opening_prompt = str(payload.get("opening_prompt") or "")
+        instructions = str(payload.get("instructions") or "")
+        # Mirrors the bridge closures' caps (CHAT_CREATE_PAYLOAD_MAX);
+        # duplicated here so the executor stays safe even if wired to a
+        # caller other than the closures.
+        if len(opening_prompt) > 20_000 or len(instructions) > 20_000:
+            return {
+                "ok": False,
+                "kind": "payload_too_large",
+                "error": "payload exceeds 20000 chars",
+            }
+        persistence = self.store.persistence
+        db = getattr(persistence, "db", None)
+        if persistence is None or db is None:
+            return {
+                "ok": False,
+                "kind": "execution_failed",
+                "error": "persistence unavailable",
+            }
+
+        source_conv: str | None = None
+        source_row: dict[str, Any] | None = None
+        source_leaf: str | None = None
+        # Final-review fix wave (Finding 3): tracked so a post-create
+        # failure can discard the orphaned row (see the except handlers).
+        new_conv: str | None = None
+        copied = 0
+        if tool == "fork_chat":
+            source_conv = session.persisted_conversation_id
+            if session.ephemeral or not source_conv:
+                return {
+                    "ok": False,
+                    "kind": "source_not_persisted",
+                    "error": "the current chat is temporary; nothing to fork",
+                }
+        elif not title:
+            title = "New Chat"
+
+        handoff_metadata = {
+            "console_agent_handoff": {
+                "draft": opening_prompt,
+                "created_via": tool,
+                "source_run_id": str(payload.get("run_id") or ""),
+            }
+        }
+        try:
+            if tool == "fork_chat":
+                # Fix round 1: the source-tree and active-leaf READS live
+                # inside this try (they used to run before it), so a DB
+                # read failure returns kind `execution_failed` from THIS
+                # method's outcome contract instead of escaping to the
+                # calling closure as an uncaught worker-thread exception.
+                tree = ChatConversationService(db).get_conversation_tree(
+                    str(source_conv), root_limit=10_000, depth_cap=10_000
+                )
+                source_row = dict(tree.get("conversation") or {})
+                # The title preference order (final-review fix wave,
+                # Finding 1): an explicitly provided payload title -- which
+                # for a UI-wired call may be the confirm card's enriched
+                # default -- always wins; the executor's own default below
+                # stays the fallback for callers that pass none.
+                if not title:
+                    title = f"Fork of {source_row.get('title') or 'chat'}"[:120]
+                if instructions and source_row.get("character_id"):
+                    return {
+                        "ok": False,
+                        "kind": "character_conflict",
+                        "error": (
+                            "character chats keep their persona; fork without "
+                            "instructions"
+                        ),
+                    }
+                # Final-review fix wave (Finding 3a): pre-create emptiness
+                # check. An empty source must return `empty_history` BEFORE
+                # create_conversation runs -- otherwise the created row
+                # survives the failure and surfaces in the workspace listing
+                # unexplained, breaking the spec's "transaction rolled
+                # back; nothing created" contract. (The copy's own
+                # ValueError("empty_history") guard below stays as
+                # defense-in-depth for a race that empties the source
+                # between this read and the copy.)
+                tree_message_nodes: list[Mapping[str, Any]] = []
+
+                def _collect(node: Mapping[str, Any]) -> None:
+                    tree_message_nodes.append(node)
+                    for child in node.get("children") or []:
+                        _collect(child)
+
+                for root in tree.get("root_threads") or []:
+                    _collect(root)
+                if not tree_message_nodes:
+                    return {
+                        "ok": False,
+                        "kind": "empty_history",
+                        "error": "nothing to fork yet; use new_chat",
+                    }
+                # The normalized tree conversation dict carries no
+                # active-leaf pointer; read the durable one directly. Both
+                # lineage kwargs below are FK-enforced -- pass exactly this
+                # value (possibly None), never a synthetic id.
+                source_leaf = db.get_conversation_active_leaf(str(source_conv))
+                new_conv = persistence.create_conversation(
+                    conversation_title=title,
+                    scope_type=source_row.get("scope_type") or "global",
+                    workspace_id=source_row.get("workspace_id"),
+                    system_prompt=instructions or source_row.get("system_prompt"),
+                    character_id=source_row.get("character_id"),
+                    assistant_kind=source_row.get("assistant_kind"),
+                    assistant_id=source_row.get("assistant_id"),
+                    assistant_authority_id=source_row.get("assistant_authority_id"),
+                    metadata=handoff_metadata,
+                    parent_conversation_id=source_conv,
+                    forked_from_message_id=source_leaf,
+                )
+                copy_outcome = ChatConversationService(db).copy_conversation_active_path(
+                    str(source_conv), new_conv
+                )
+                copied = int(copy_outcome["copied"])
+            else:
+                workspace_id = session.workspace_id
+                scope = (
+                    "global"
+                    if workspace_id in (None, CONSOLE_GLOBAL_WORKSPACE_ID)
+                    else "workspace"
+                )
+                new_conv = persistence.create_conversation(
+                    conversation_title=title,
+                    scope_type=scope,
+                    workspace_id=None if scope == "global" else workspace_id,
+                    system_prompt=instructions or None,
+                    metadata=handoff_metadata,
+                )
+        except ValueError as exc:
+            # Final-review fix wave (Finding 3b): a failure after the row
+            # was created discards it best-effort so no orphan surfaces in
+            # the workspace listing; the discard can never mask the
+            # original error kind.
+            if new_conv is not None:
+                self._discard_chat_create_orphan(db, new_conv)
+            if "empty_history" in str(exc):
+                return {
+                    "ok": False,
+                    "kind": "empty_history",
+                    "error": "nothing to fork yet; use new_chat",
+                }
+            return {"ok": False, "kind": "execution_failed", "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            if new_conv is not None:
+                self._discard_chat_create_orphan(db, new_conv)
+            return {"ok": False, "kind": "execution_failed", "error": str(exc)}
+
+        completion_workspace_id = (
+            (source_row or {}).get("workspace_id")
+            if tool == "fork_chat"
+            else session.workspace_id
+        )
+        if self.app is not None and self.complete_agent_chat_create is not None:
+            self.app.call_from_thread(
+                self.complete_agent_chat_create,
+                session_id=session_id,
+                conversation_id=new_conv,
+                title=title,
+                tool=tool,
+                opening_prompt=opening_prompt,
+                workspace_id=completion_workspace_id,
+            )
+        return {
+            "ok": True,
+            "title": title,
+            "conversation_id": new_conv,
+            "workspace_id": completion_workspace_id,
+            "copied_messages": copied,
+            "draft_set": bool(opening_prompt),
+        }
+
+
 
     def _resolve_ask_user_timeout_seconds(self) -> float:
         """PRD A7: the question deadline -- seam, else env, else config, else 0.
@@ -25751,6 +26487,18 @@ class ConsoleChatController:
                     )
                     if self.set_pending_skill_script is not None
                     or self._interrupt_host.has_retained_decision_target(session_id)
+                    else None
+                ),
+                request_chat_create_confirm=(
+                    functools.partial(
+                        self.request_chat_create_confirm, session_id=session_id
+                    )
+                    if self.set_pending_chat_create is not None
+                    else None
+                ),
+                execute_agent_chat_create=(
+                    self.execute_agent_chat_create
+                    if self.complete_agent_chat_create is not None
                     else None
                 ),
                 # TASK-28238 phase 2 Task 6/Task 7: same "advertised must

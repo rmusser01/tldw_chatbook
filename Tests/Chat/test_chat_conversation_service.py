@@ -1833,3 +1833,173 @@ def test_list_conversations_character_scope_filters_before_pagination(tmp_path):
         assert unfiltered["pagination"]["total"] == 3
     finally:
         db.close_connection()
+
+@pytest.fixture
+def service_with_db(tmp_path):
+    """Real in-memory-file DB + service pair for the fork copy primitive (task-2)."""
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test-client")
+    try:
+        yield db, ChatConversationService(db)
+    finally:
+        db.close_connection()
+
+
+def _seed_chain(db, service, conv_id, texts):
+    """Seed a linear parent->child chain; returns message ids in order."""
+    ids = []
+    parent = None
+    for sender, text in texts:
+        mid = db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": sender,
+                "content": text,
+                "parent_message_id": parent,
+            }
+        )
+        ids.append(str(mid))
+        parent = mid
+    db.set_conversation_active_leaf(conv_id, ids[-1])
+    return ids
+
+
+def test_copy_active_path_copies_and_remaps(service_with_db):
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    ids = _seed_chain(db, service, src, [("user", "hello"), ("assistant", "hi"), ("user", "go")])
+    dst = service.create_conversation(title="Dst")
+
+    outcome = service.copy_conversation_active_path(src, dst)
+
+    assert outcome["copied"] == 3
+    copied = db.get_messages_for_conversation(dst)
+    assert [m["content"] for m in copied] == ["hello", "hi", "go"]
+    assert [m["sender"] for m in copied] == ["user", "assistant", "user"]
+    # parents remapped: each copied message's parent is the previous copied one
+    assert copied[0]["parent_message_id"] is None
+    assert copied[1]["parent_message_id"] == copied[0]["id"]
+    assert copied[2]["parent_message_id"] == copied[1]["id"]
+    # ids are fresh, not the source's
+    assert {m["id"] for m in copied}.isdisjoint(set(ids))
+    # active leaf points at the copied leaf
+    assert db.get_conversation_active_leaf(dst) == copied[-1]["id"] == outcome["leaf_message_id"]
+
+
+def test_copy_active_path_ignores_inactive_branch(service_with_db):
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    root = db.add_message({"conversation_id": src, "sender": "user", "content": "root"})
+    kept = db.add_message({"conversation_id": src, "sender": "assistant", "content": "kept",
+                           "parent_message_id": root})
+    db.add_message({"conversation_id": src, "sender": "assistant", "content": "dropped",
+                    "parent_message_id": root})
+    db.set_conversation_active_leaf(src, kept)
+    dst = service.create_conversation(title="Dst")
+
+    outcome = service.copy_conversation_active_path(src, dst)
+
+    assert outcome["copied"] == 2
+    contents = [m["content"] for m in db.get_messages_for_conversation(dst)]
+    assert contents == ["root", "kept"]
+
+
+def test_copy_active_path_falls_back_to_latest_when_no_leaf(service_with_db):
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    # Explicit distinct timestamps: the DB clock has millisecond precision, so
+    # same-millisecond seeding can tie the fallback's latest-timestamp pick
+    # (max() keeps the first candidate) and flake this test.
+    root = db.add_message({
+        "conversation_id": src, "sender": "user", "content": "a",
+        "timestamp": "2026-01-01T00:00:00.001Z",
+    })
+    db.add_message({
+        "conversation_id": src, "sender": "assistant", "content": "b",
+        "parent_message_id": root,
+        "timestamp": "2026-01-01T00:00:00.002Z",
+    })
+    db.set_conversation_active_leaf(src, None)  # API-created conversation, never opened
+    dst = service.create_conversation(title="Dst")
+
+    outcome = service.copy_conversation_active_path(src, dst)
+
+    assert outcome["copied"] == 2
+
+
+def test_copy_active_path_empty_history_raises(service_with_db):
+    db, service = service_with_db
+    src = service.create_conversation(title="Empty")
+    dst = service.create_conversation(title="Dst")
+    with pytest.raises(ValueError, match="empty_history"):
+        service.copy_conversation_active_path(src, dst)
+
+
+def test_copy_active_path_preserves_fields(service_with_db):
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    mid = db.add_message({
+        "conversation_id": src, "sender": "assistant", "content": "tool stuff",
+        "role": "tool", "metadata_json": '{"k": 1}', "usage_json": '{"tokens": 5}',
+    })
+    db.set_conversation_active_leaf(src, mid)
+    dst = service.create_conversation(title="Dst")
+
+    service.copy_conversation_active_path(src, dst)
+
+    copied = db.get_messages_for_conversation(dst)[0]
+    assert copied["role"] == "tool"
+    assert copied["metadata_json"] == '{"k": 1}'
+    assert copied["usage_json"] == '{"tokens": 5}'
+    assert copied["provider_continuation_json"] is None
+
+
+def test_copy_active_path_preserves_provider_continuation(service_with_db):
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    checkpoint = json.dumps({
+        "schema_version": 1, "checkpoint_revision": 1,
+        "provider": "deepseek", "protocol": "responses",
+        "model": "deepseek-v4-flash", "api_base_url": "https://api.deepseek.com/v1",
+        "state": "active",
+        "rounds": [{"assistant_content": "", "reasoning_blocks": [],
+                    "calls": [{"call_id": "call_active", "name": "lookup",
+                               "arguments": "{}", "state": "pending"}]}],
+    })
+    mid = db.add_message({
+        "conversation_id": src, "sender": "assistant", "content": "partial answer",
+        "role": "assistant", "provider_continuation_json": checkpoint,
+    })
+    db.set_conversation_active_leaf(src, mid)
+    dst = service.create_conversation(title="Dst")
+
+    outcome = service.copy_conversation_active_path(src, dst)
+
+    assert outcome["copied"] == 1
+    copied = db.get_messages_for_conversation(dst)[0]
+    assert copied["role"] == "assistant"
+    # add_message canonicalizes the payload's JSON encoding on write; the
+    # checkpoint's value must survive the copy (json.loads equality, not
+    # string identity).
+    assert json.loads(copied["provider_continuation_json"]) == json.loads(checkpoint)
+
+
+def test_copy_active_path_atomic_rollback(service_with_db, monkeypatch):
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    _seed_chain(db, service, src, [("user", "a"), ("assistant", "b"), ("user", "c")])
+    dst = service.create_conversation(title="Dst")
+
+    real_add_message = db.add_message
+    calls = {"n": 0}
+
+    def flaky_add_message(msg_data):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("boom mid-copy")
+        return real_add_message(msg_data)
+
+    monkeypatch.setattr(db, "add_message", flaky_add_message)
+    with pytest.raises(RuntimeError, match="boom mid-copy"):
+        service.copy_conversation_active_path(src, dst)
+    monkeypatch.undo()
+    assert db.get_messages_for_conversation(dst) == []  # nothing created

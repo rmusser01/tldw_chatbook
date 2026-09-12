@@ -5,6 +5,9 @@ from textual.containers import Container, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_create_confirm_card import (
+    ChatCreateConfirmCard,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_resume_panel import ChatResumePanel
 from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
     SkillInstallConfirmCard,
@@ -55,6 +58,7 @@ class ChatTaskCards(Container):
         yield ChatApprovalCard(id="chat-approval-card")
         yield SkillInstallConfirmCard(id="chat-skill-install-card")
         yield SkillScriptConfirmCard(id="chat-skill-script-card")
+        yield ChatCreateConfirmCard(id="chat-create-card")
         yield Vertical(id="console-watchlists-operation-cards")
         yield ChatResumePanel(id="chat-resume-panel")
 
@@ -121,6 +125,7 @@ class ChatTaskCards(Container):
             task_state.has_pending_approval()
             or task_state.has_pending_skill_install()
             or task_state.has_pending_skill_script()
+            or task_state.has_pending_chat_create()
             or task_state.has_pending_question()
             or bool(task_state.followed_watchlists_operations)
             or task_state.has_resume_content()
@@ -141,6 +146,7 @@ class ChatTaskCards(Container):
         yield ("pending_approval", self._set_approval)
         yield ("pending_skill_install", self.query_one(SkillInstallConfirmCard).set_install)
         yield ("pending_skill_script", self.query_one(SkillScriptConfirmCard).set_script)
+        yield ("pending_chat_create", self.query_one(ChatCreateConfirmCard).set_payload)
         # Generated lazily so the question card is created (mounted) only
         # after the three fixed cards have synced, as before the table.
         question_card = self._question_card(create=bool(task_state.pending_question))
