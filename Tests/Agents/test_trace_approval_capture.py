@@ -352,7 +352,7 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
             conversation_id="conv-1",
             messages=[{"role": "user", "content": "run it"}],
             config=AgentConfig(
-                model="model",
+                model="gpt-4o",
                 system_prompt="system",
                 allowed_tools=(
                     "credential_result",
@@ -366,6 +366,16 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
 
         assert outcome.status == "done"
         durable = db.get_run(run_id)["steps"]
+        succeeded_tools = {
+            step.get("tool_name")
+            for step in durable
+            if step.get("kind") == "tool_succeeded"
+        }
+        assert succeeded_tools == {
+            "credential_result",
+            "hidden_reasoning_result",
+            "path_result",
+        }
         serialized = repr(durable)
         for secret_fragment in (
             "ghp_",

@@ -98,10 +98,12 @@ from .agent_models import (
     ToolCall,
     ToolLoadSelection,
     ToolResult,
+    ToolReviewValue,
     ToolSchema,
     clamp_child_budget,
     contain_child_budget,
     definition_from_row,
+    normalize_tool_review,
     # Aliased: `_run_one` below has its own `definition_fingerprint: str |
     # None` keyword parameter (the audit value to persist), and that
     # parameter shadows this module-level function for the rest of
@@ -1924,8 +1926,9 @@ class AgentService:
         on_step: Callable[[AgentStep, str, str], None] | None = None,
         skill_runner: SkillRunner | None = None,
         skill_file_bindings: SkillFileBindings | None = None,
-        review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
-        | None = None,
+        review_tool_calls: (
+            Callable[[list[ToolCall], str], dict[str, ToolReviewValue]] | None
+        ) = None,
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
@@ -3227,13 +3230,12 @@ class AgentService:
             verdicts = review(calls) or {}
             for call in calls:
                 key = call.call_id or call.name
-                verdict = verdicts.get(key, verdicts.get(call.name, "proceed"))
+                selected = verdicts.get(key, verdicts.get(call.name, "proceed"))
+                verdict = normalize_tool_review(selected).verdict
                 if verdict != "proceed":
                     self._fire_post_tool_dispatch(
                         call,
-                        ToolResult(
-                            ok=False, error=str(verdict), outcome="review_denied"
-                        ),
+                        ToolResult(ok=False, error=verdict, outcome="review_denied"),
                         0.0,
                         run_id,
                     )

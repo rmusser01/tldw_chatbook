@@ -388,6 +388,30 @@ class ToolCall:
     rationale: str = ""
 
 
+ApprovalDecision: TypeAlias = Literal["approved", "denied"]  # noqa: UP040
+
+
+@dataclass(frozen=True)
+class ToolReviewDecision:
+    """A review verdict with optional authoritative approval provenance."""
+
+    verdict: str
+    approval_decision: ApprovalDecision | None = None
+
+
+ToolReviewValue: TypeAlias = str | ToolReviewDecision  # noqa: UP040
+
+
+def normalize_tool_review(value: ToolReviewValue) -> ToolReviewDecision:
+    """Normalize one selected review value without inferring provenance."""
+    if isinstance(value, ToolReviewDecision):
+        fact = value.approval_decision
+        return ToolReviewDecision(
+            value.verdict, fact if fact in ("approved", "denied") else None
+        )
+    return ToolReviewDecision(value)
+
+
 @dataclass(frozen=True)
 class ToolResult:
     ok: bool
@@ -396,18 +420,28 @@ class ToolResult:
     # Optional refusal provenance lets the runtime distinguish a permission
     # block from an ordinary failed dispatch without interpreting payload text.
     outcome: ToolOutcome | None = None
+    approval_decision: ApprovalDecision | None = field(default=None, kw_only=True)
 
     @classmethod
-    def blocked(cls, error: str) -> ToolResult:
+    def blocked(
+        cls, error: str, *, approval_decision: ApprovalDecision | None = None
+    ) -> ToolResult:
         """Return a permission/policy refusal with structured provenance.
 
         Args:
             error: User-visible refusal reason.
+            approval_decision: Optional authoritative approval fact supplied by
+                the review owner. This metadata never grants permission.
 
         Returns:
             A failed tool result explicitly classified as blocked.
         """
-        return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
+        return cls(
+            ok=False,
+            error=error,
+            outcome=TOOL_OUTCOME_BLOCKED,
+            approval_decision=approval_decision,
+        )
 
 
 @dataclass(frozen=True)

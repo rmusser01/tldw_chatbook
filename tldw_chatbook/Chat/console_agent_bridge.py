@@ -78,6 +78,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolOutcome,
     ToolResult,
+    ToolReviewValue,
     ToolSchema,
     definition_from_row,
 )
@@ -5180,8 +5181,9 @@ class ConsoleAgentBridge:
         # PR2a Task 5: `(calls, run_id)` -- forwarded straight to
         # `AgentService(review_tool_calls=...)`, which binds each run's own
         # id in before handing it to `LoopDeps`.
-        review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
-        | None = None,
+        review_tool_calls: (
+            Callable[[list[ToolCall], str], dict[str, ToolReviewValue]] | None
+        ) = None,
         on_steer_ready: Callable[[Callable[[str], str | None]], None] | None = None,
         # TASK-28227: fired once the run's mailbox registers, with a bound
         # `redirect(text) -> refusal | None` -- the Redirect button's and
