@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_history_budget import (
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
+from tldw_chatbook.Chat.sampling_params import params_to_dict
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
@@ -116,6 +117,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
+)
+from .agent_routing import (
+    RoutingError,
+    load_agents_routing_config,
+    resolve_spawn_target,
 )
 from .agent_runtime import (
     LoopDeps,
@@ -240,6 +246,36 @@ def __getattr__(name: str):
 
 
 TRUNCATION_NOTICE = "\n[truncated]"
+
+
+class SpawnAdmissionRefusal(ToolResult):
+    """The spawn tool's ADMISSION-time refusal (ADR-147, TASK-32477).
+
+    The routing resolver rejected WHERE the child would run, so the refusal
+    happens before any budget or fleet work: no child run row exists, the
+    sub-agent spawn counter was not incremented, and no fleet slot was
+    reserved. ``error`` is prefixed with the machine-readable ``[<code>]``
+    so the supervisor model can pick another target or ask the user. A
+    distinct type (not merely ``ToolResult(ok=False)``) keeps "never
+    admitted" distinguishable from "ran and failed" for any consumer that
+    needs the two apart; the dataclass fields are inherited unchanged.
+    """
+
+
+#: ``AgentConfig.sampling_params`` keys -> ``chat_api_call`` kwarg names,
+#: verified against the real signature (Chat/Chat_Functions.py ``def
+#: chat_api_call``); the key set is exactly ``KNOWN_SAMPLING_PARAM_KEYS``
+#: (Chat/sampling_params.py), which the preset/registry validators enforce
+#: upstream, so a direct map lookup can never miss for resolver-produced
+#: params.
+_CHAT_CALL_PARAM_MAP = {
+    "temperature": "temp", "top_p": "topp", "min_p": "minp", "top_k": "topk",
+    "max_tokens": "max_tokens", "seed": "seed",
+    "presence_penalty": "presence_penalty", "frequency_penalty": "frequency_penalty",
+    "reasoning_effort": "reasoning_effort", "reasoning_summary": "reasoning_summary",
+    "verbosity": "verbosity", "thinking_effort": "thinking_effort",
+    "thinking_budget_tokens": "thinking_budget_tokens",
+}
 
 #: ``[agents]`` key sizing the fleet: how many sub-agents of one turn may
 #: be live at once. **A value of 1 means the fleet is OFF** and every spawn
@@ -2030,6 +2066,7 @@ class AgentService:
         runtime_capacity: RuntimeCapacity | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        app_config: Mapping[str, Any] | None = None,
     ) -> None:
         from .execution_capacity import RuntimeCapacity
         from .automatic_work_runtime import current_automatic_work
@@ -2306,6 +2343,15 @@ class AgentService:
         self.confirm_project_instruction_dispatch = confirm_project_instruction_dispatch
         self.project_instruction_context = project_instruction_context
         self.on_ephemeral_runtime_warning = on_ephemeral_runtime_warning
+        # ADR-147 (TASK-32477 Task 6): the app-config mapping the spawn
+        # resolver reads (custom-endpoint registry, api_settings,
+        # chat_defaults). Tests inject an explicit dict; production callers
+        # (the Console bridge) pass nothing and ``_app_config`` falls back
+        # to ``config.load_settings()`` -- which is exactly what the app
+        # itself holds (``app.py`` assigns ``self.app_config =
+        # load_settings()``), cached, so the resolver sees Settings saves
+        # without any new wiring through the bridge.
+        self._injected_app_config = app_config
         self._startup_instruction_snapshot: InstructionSnapshot | None = None
         self._tool_protocol_cache: dict[tuple[str, ...], str] = {}
         self._run_log_requested = bool(
@@ -2368,6 +2414,30 @@ class AgentService:
         )
 
     # -- internals -------------------------------------------------------
+
+    @property
+    def _app_config(self) -> Mapping[str, Any]:
+        """The app-config mapping the spawn resolver reads (ADR-147).
+
+        The injected mapping when one was supplied at construction (tests);
+        otherwise ``config.load_settings()`` -- the same cached mapping the
+        Textual app holds as ``app.app_config`` -- resolved lazily at spawn
+        time so a Settings save made after boot is honored. An unreadable
+        or non-mapping config degrades to ``{}``, which makes any routed
+        (non-inherit) spawn refuse loudly through the resolver's own
+        ``unknown_endpoint_slug``/``provider_not_ready`` errors rather than
+        silently mis-routing.
+        """
+        if self._injected_app_config is not None:
+            return self._injected_app_config
+        try:
+            from tldw_chatbook.config import load_settings
+
+            loaded = load_settings()
+        except Exception:  # noqa: BLE001 -- config unreadable; see docstring
+            logger.warning("app config unavailable for spawn routing; using {}")
+            return {}
+        return loaded if isinstance(loaded, Mapping) else {}
 
     def _build_model_request(
         self,
@@ -2977,6 +3047,17 @@ class AgentService:
             if suppress_cut:
                 self._primary_cut_suppress.add(run_id)
             try:
+                # ADR-147 (Task 6): this run's OWN resolved sampling params
+                # and base_url ride the call -- for a spawned child they are
+                # the resolver's target (never the parent's params, which
+                # simply are not on its config); both stay absent for a
+                # primary, leaving every pre-existing call byte-identical.
+                # Keys are drawn from KNOWN_SAMPLING_PARAM_KEYS by the
+                # upstream validators, so the map lookup is total.
+                for param_key, param_value in config.sampling_params:
+                    call_kwargs[_CHAT_CALL_PARAM_MAP[param_key]] = param_value
+                if config.base_url:
+                    call_kwargs["api_base_url"] = config.base_url
                 resp = self.chat_call(
                     api_endpoint=api_endpoint,
                     messages_payload=payload,
@@ -4623,6 +4704,14 @@ class AgentService:
         # `None` (the default) means both tools fail closed with "no
         # approval surface is available in this session".
         request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
+        # ADR-147 (Task 6): the spawn resolver's target, snapshotted onto
+        # this run's row (schema v19). Only the spawn closure passes these
+        # (for children); every other caller keeps the None defaults, and
+        # the row's resolved_* columns stay NULL.
+        resolved_provider: str | None = None,
+        resolved_model: str | None = None,
+        resolved_base_url: str | None = None,
+        resolved_params_json: str | None = None,
     ) -> tuple[str, RunOutcome]:
         # PR3a-1 Task 3 -- THE WRITER THIS RUN RECORDS THROUGH, resolved
         # ONCE, here, and closed over by every log closure below instead of
@@ -4679,6 +4768,10 @@ class AgentService:
                 spawn_event_id=spawn_event_id,
                 run_id=requested_run_id,
                 work_chain_id=self._work_chain_id,
+                resolved_provider=resolved_provider,
+                resolved_model=resolved_model,
+                resolved_base_url=resolved_base_url,
+                resolved_params_json=resolved_params_json,
             )
             lifecycle_owner_seq = 0
             lifecycle_event_id = (
@@ -5226,6 +5319,12 @@ class AgentService:
                         resumed_from_run_id=child_kwargs.get("resumed_from_run_id"),
                         spawn_event_id=child_kwargs.get("spawn_event_id"),
                         work_chain_id=self._work_chain_id,
+                        resolved_provider=child_kwargs.get("resolved_provider"),
+                        resolved_model=child_kwargs.get("resolved_model"),
+                        resolved_base_url=child_kwargs.get("resolved_base_url"),
+                        resolved_params_json=child_kwargs.get(
+                            "resolved_params_json"
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001 — spawn refusal, never parent abort
                     fleet.finish(
@@ -5556,6 +5655,8 @@ class AgentService:
             inline: bool = False,
             spawn_step_index: int | None = None,
             isolation: str | None = None,
+            provider: str = "",
+            model: str = "",
         ) -> ToolResult:
             nonlocal sub_agent_spawns
             # Task-12 review Finding 2: this closure is THE single spawn
@@ -5628,6 +5729,26 @@ class AgentService:
                         ok=False,
                         error=(f"unknown agent '{agent}'; available: {available}"),
                     )
+            # ADR-147 (Task 6): resolve WHERE the child runs before touching
+            # budget or fleet capacity. A refusal is an admission refusal:
+            # no child run, no slot consumed, the coded error back to the
+            # supervisor model. `resolved` (the named preset, when given) is
+            # an input here; the legacy preset `model`-only override below
+            # is gone -- the resolver owns that path now.
+            try:
+                target = resolve_spawn_target(
+                    self._app_config,
+                    parent_provider=api_endpoint,
+                    parent_model=config.model,
+                    preset=resolved,
+                    override_provider=provider,
+                    override_model=model,
+                    routing=load_agents_routing_config(),
+                )
+            except RoutingError as err:
+                return SpawnAdmissionRefusal(
+                    ok=False, error=f"[{err.code}] {err}"
+                )
             if sub_agent_spawns >= config.budget.max_subagents:
                 return ToolResult(ok=False, error="sub-agent budget exhausted")
             sub_agent_spawns += 1
@@ -5732,7 +5853,11 @@ class AgentService:
                     if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
                 )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
-            child_model = config.model
+            # The resolver owns model/provider selection now (ADR-147): the
+            # legacy inline `if resolved.model: child_model = ...` preset
+            # override lives INSIDE resolve_spawn_target, so a preset model
+            # with no provider keeps its same-endpoint behavior there.
+            child_model = target.model or config.model
             if resolved is not None:
                 # IDENTITY CONTRACT: console_agent_bridge._is_subagent
                 # prefix-matches the base prompt -- instructions APPEND,
@@ -5740,8 +5865,6 @@ class AgentService:
                 child_system_prompt = (
                     child_system_prompt + "\n\n" + resolved.instructions
                 )
-                if resolved.model:
-                    child_model = resolved.model
                 if resolved.tool_allowlist:
                     # Intersection, never union (spec §3 invariant 1): the
                     # definition narrows the inherited set; unknown names
@@ -5770,6 +5893,11 @@ class AgentService:
                 workspace_context_note=config.workspace_context_note,
                 personal_context_block=config.personal_context_block,
                 response_reserve_tokens=config.response_reserve_tokens,
+                # The resolved target's own endpoint override and sampling
+                # params (ADR-147) -- empty/None on the plain inherit path's
+                # built-in providers, populated for routed children.
+                base_url=target.base_url,
+                sampling_params=target.params,
             )
             spawn_event_id = (
                 self._resolved_control_event_id(run_id, spawn_step_index, STEP_SPAWN)
@@ -5798,7 +5926,19 @@ class AgentService:
                 conversation_id=conversation_id,
                 messages=[{"role": "user", "content": spawn_task}],
                 config=child_config,
-                api_endpoint=api_endpoint,
+                api_endpoint=target.provider,
+                # ADR-147 snapshot (schema v16): the resolved target frozen
+                # onto the child run row so resume/continuation (Task 8)
+                # reuses IT rather than live re-resolution. Params persist
+                # as JSON only when the resolver produced any.
+                resolved_provider=target.provider,
+                resolved_model=child_model,
+                resolved_base_url=target.base_url,
+                resolved_params_json=(
+                    json.dumps(params_to_dict(target.params))
+                    if target.params
+                    else None
+                ),
                 agent_kind=AGENT_KIND_SUBAGENT,
                 task=spawn_task,
                 parent_run_id=run_id,
@@ -7627,11 +7767,13 @@ class AgentService:
                 trace_step_index=step_index,
                 dispatch_call_id=call_id,
             ),
-            spawn_at_step=lambda task, step_index, agent_name, isolation: spawn(
+            spawn_at_step=lambda task, step_index, agent_name, isolation, provider=None, model=None: spawn(
                 task,
                 agent=agent_name,
                 spawn_step_index=step_index,
                 isolation=isolation,
+                provider=provider or "",
+                model=model or "",
             ),
             find_tools=find_tools,
             load_schemas=load_schemas,

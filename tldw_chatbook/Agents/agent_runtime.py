@@ -2623,6 +2623,15 @@ def run_agent_loop(
                         # stray JSON `null` must not become the truthy
                         # string "None".
                         isolation = str(call.args.get("isolation") or "").strip() or None
+                        # ADR-147 (Task 6): ad-hoc routing args. Same
+                        # `.get(...) or ""` coercion as `agent` above: an
+                        # explicit JSON null must not become the truthy
+                        # string "None". The resolver (inside deps.spawn)
+                        # gates them on `[agents] spawn_override_enabled`;
+                        # absent/blank means inherit, byte-identical to
+                        # before.
+                        override_provider = str(call.args.get("provider") or "").strip()
+                        override_model = str(call.args.get("model") or "").strip()
                         if not task:
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
@@ -2645,31 +2654,54 @@ def run_agent_loop(
                                 args=display_call_arguments,
                             )
                             if deps.spawn_at_step is not None:
+                                # Routing overrides ride as kwargs ONLY when
+                                # set (same guard as the spawn path below):
+                                # 4-positional-arg spawn_at_step doubles in
+                                # pre-existing tests never see them.
+                                route_kwargs: dict[str, str] = {}
+                                if override_provider:
+                                    route_kwargs["provider"] = override_provider
+                                if override_model:
+                                    route_kwargs["model"] = override_model
                                 result = deps.spawn_at_step(
                                     task,
                                     spawn_step.index,
                                     agent_name or None,
                                     isolation,
+                                    **route_kwargs,
                                 )
                             elif agent_name:
-                                # `isolation=` is passed only when set: many
+                                # `isolation=` (and the ADR-147 routing
+                                # overrides) are passed only when set: many
                                 # unit tests build a bare `LoopDeps` with a
                                 # narrow single/double-arg `spawn` double
                                 # (no `spawn_at_step`, no `**kwargs`) that
-                                # never exercises isolation -- an
-                                # unconditional kwarg would break every one
-                                # of them for a feature they never opt into.
+                                # never exercises them -- an unconditional
+                                # kwarg would break every one of them for a
+                                # feature they never opt into.
+                                extra: dict[str, object] = {}
+                                if isolation:
+                                    extra["isolation"] = isolation
+                                if override_provider:
+                                    extra["provider"] = override_provider
+                                if override_model:
+                                    extra["model"] = override_model
                                 result = (
-                                    deps.spawn(
-                                        task, agent=agent_name, isolation=isolation
-                                    )
-                                    if isolation
+                                    deps.spawn(task, agent=agent_name, **extra)
+                                    if extra
                                     else deps.spawn(task, agent=agent_name)
                                 )
                             else:
+                                extra = {}
+                                if isolation:
+                                    extra["isolation"] = isolation
+                                if override_provider:
+                                    extra["provider"] = override_provider
+                                if override_model:
+                                    extra["model"] = override_model
                                 result = (
-                                    deps.spawn(task, isolation=isolation)
-                                    if isolation
+                                    deps.spawn(task, **extra)
+                                    if extra
                                     else deps.spawn(task)
                                 )
                             # Named-agent resolution (fleet spec §4) gave

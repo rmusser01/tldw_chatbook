@@ -273,10 +273,19 @@ def resolve_spawn_target(
             f"final target '{provider}/{model}' matches no allowlist entry",
             level="override")
 
-    check = readiness if readiness is not None else _default_readiness
-    blocked = check(app_config, provider)
-    if blocked is not None:
-        raise RoutingError("provider_not_ready", blocked, level=source)
+    # Readiness gates only NEW targets. When the child lands on the parent's
+    # own provider -- plain inherit, or an override/preset that resolves back
+    # to it -- the parent's own send path already owns that provider's
+    # readiness: the child fails or succeeds exactly where the parent would.
+    # Re-checking here would additionally refuse every spawn in embedded or
+    # headless runs that never configure a credential (the fleet harness
+    # drives AgentService against scripted chats on 'groq' with no key),
+    # without protecting anything the parent has not already exposed.
+    if provider != parent_provider:
+        check = readiness if readiness is not None else _default_readiness
+        blocked = check(app_config, provider)
+        if blocked is not None:
+            raise RoutingError("provider_not_ready", blocked, level=source)
 
     params = resolve_child_params(
         app_config, provider, model,

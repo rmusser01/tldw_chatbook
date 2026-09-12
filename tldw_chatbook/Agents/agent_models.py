@@ -868,6 +868,15 @@ class AgentConfig:
             default so existing request bytes are unchanged.
         response_reserve_tokens: Non-negative output-token capacity excluded
             from project-instruction input admission.
+        base_url: The resolved request-pinned endpoint override handed to
+            ``chat_api_call`` (ADR-147 spawn routing); ``None`` for a
+            primary and for children inheriting a built-in provider.
+        sampling_params: The resolved target's own sampling/API params as
+            ``(key, value)`` pairs (keys from
+            ``Chat.sampling_params.KNOWN_SAMPLING_PARAM_KEYS``), applied to
+            this run's model calls; empty for a primary. A child NEVER
+            inherits its parent's params — these come from the resolver's
+            six-layer stack for the child's own provider.
     """
 
     model: str
@@ -879,6 +888,11 @@ class AgentConfig:
     workspace_context_note: str = ""
     personal_context_block: str = ""
     response_reserve_tokens: int = 2048
+    # ADR-147 (TASK-32477 Task 6): the spawn resolver's target for THIS run.
+    # Both stay empty for a primary; ``AgentService``'s spawn closure fills
+    # them on a child's config from the resolved SpawnTarget.
+    base_url: str | None = field(default=None, kw_only=True)
+    sampling_params: tuple[tuple[str, object], ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         if self.response_reserve_tokens < 0:

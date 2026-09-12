@@ -118,6 +118,25 @@ def test_provider_not_ready():
     except RoutingError as e:
         assert e.code == "provider_not_ready" and "no API key" in str(e)
 
+def test_inherit_parent_never_readiness_gated():
+    # The parent's own provider readiness is the parent's admission problem:
+    # the Console send path already refused an unconfigured provider before
+    # any turn ran. An inheriting child must spawn even when the readiness
+    # probe would block -- the fleet harness drives AgentService keyless.
+    t = resolve_spawn_target(APP_CFG, parent_provider="moonshot",
+        parent_model="kimi-k2", routing=CFG_OFF, readiness=NOT_READY)
+    assert (t.provider, t.model, t.source) == ("moonshot", "kimi-k2", "inherit")
+
+def test_override_back_to_parent_provider_never_readiness_gated():
+    # Same principle via the override path: routing that resolves back to the
+    # parent's provider adds no new target, so readiness is not consulted.
+    cfg = AgentsRoutingConfig(spawn_override_enabled=True,
+        spawn_override_allowlist=("moonshot",))
+    t = resolve_spawn_target(APP_CFG, parent_provider="moonshot",
+        parent_model="kimi-k2", override_model="kimi-k2-thinking",
+        routing=cfg, readiness=NOT_READY)
+    assert (t.provider, t.model) == ("moonshot", "kimi-k2-thinking")
+
 def test_no_model_resolved_only_when_routed_and_unconfigured():
     preset = AgentDefinition(name="r", instructions="i", provider="custom-ep:qwen-local")
     try:
