@@ -5530,6 +5530,8 @@ class ConsoleAgentBridge:
                 and request_skill_install_confirm is not None
             ),
             run_skill_script_enabled=script_tool_enabled,
+            fork_chat_enabled=bool(fork_chat_tool is not None),
+            new_chat_enabled=bool(new_chat_tool is not None),
             worktree_merge_enabled=request_worktree_merge_confirm is not None,
             agent_messages=planning_messages,
             agent_definitions=runtime_definitions,
