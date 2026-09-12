@@ -125,7 +125,9 @@ editor's own Back control returns to its list.
   background refresh never rewrites the field under your hands, and it never
   moves your place in the Items list beside it. Tab out of any of them —
   title, body or keywords — takes effect before the next keystroke, so
-  typing straight through a Tab puts the rest where you meant it.
+  typing straight through a Tab puts the rest where you meant it, and it
+  lands on the next control **inside the editor** rather than in the
+  browse chrome above it (see "Editor keys" below).
 - **New note view** — opens from the rail's "New note": a "Blank note"
   button and a "From a template…" row that unfolds the eight templates.
   (**Ctrl+N** / **n** skip this view: they make the blank note itself.)
@@ -381,7 +383,7 @@ own. Nothing is ever painted as half a word.
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
 | **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
-| **Delete** (Info → Danger) | Asks inline, in place — Info stays open, the prompt renders where Delete was pressed: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
+| **Delete** (Info → Danger) | Asks inline, in place — Info stays open and the prompt renders inside the Info box, on the row directly under the Delete button that raised it: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. Cancelling puts focus back on Delete and leaves Info scrolled exactly where it was. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 Opening a note shows "Loading note…" only while the note is being read. If a
 read takes longer than about three seconds the editor stops waiting and shows
@@ -408,6 +410,25 @@ Notes does not use **Ctrl+S**, and there is no replacement Notes save
 shortcut. Use the visible **Save** button when you want an immediate Library
 notes save; normal Tab navigation and **F6** can reach it. Autosave continues to
 handle ordinary typing.
+
+#### Editor keys
+
+| Key | What it does |
+|---|---|
+| **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Body, and back round to "‹ Notes". Tab out of the body no longer wraps round to the "Library notes / Folder files" switch above the pane, where typed characters went nowhere. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
+| **F6** / **Shift+F6** | Leave the editor for the Notes list or the Library rail. This is the way out of the editor's Tab cycle; **Escape** is the other (it returns to the list). |
+| **Ctrl+End** / **Ctrl+Home** | Jump the caret to the end or the start of the note body. `End` and `Home` still move within the current line. |
+| **Escape** | Returns to the list — one press, from Edit, Preview, or Info. From Info it goes back to the editor first. |
+
+Arriving in the **Title** by keyboard puts the caret at the end of the
+existing title; it does not select the title, so one keystroke can no longer
+replace it. Select the text yourself (Shift+Home, or drag) when you do want
+to overwrite. The keyword boxes behave the same way.
+
+The footer names whichever editor control has focus as an "enter …" chip, so
+focus is never unaccounted for: Tab onto "‹ Notes" and the footer reads
+"enter back to list", onto Save and it reads "enter save note". While the
+body or a field has focus there is no enter chip, because Enter types.
 
 When the note body has keyboard focus, only its boundary becomes more
 prominent. The body background and editor size stay unchanged, so focusing
@@ -451,6 +472,13 @@ returns the row to the folder tree, not only the count).*
 Undo opens the restored note's folder, including when a branch reload
 fails; task-32254: a third part tells apart two rows that share title,
 folder and age; task-32272: one selection count, not two that disagree).*
+
+*Verified against fix/library-notes-w3-editor-keys — 2026-09-11 at 235x52
+and 100x30 (task-32246: Tab out of the body stays in the editor and the
+footer names where focus is; task-32247: Ctrl+End reaches the end of a
+37 KB note and is on the footer; task-32253: Shift+Tab into the Title no
+longer selects it; task-32268: the delete prompt renders inside the Info
+box under Delete).*
 
 ### New note view
 
