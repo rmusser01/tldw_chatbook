@@ -43,6 +43,7 @@ def inventory_diagnostic(inventory):
  return {'issues':inventory.issues,'blocking':blocking,'ancestor_pairs':ancestor_pairs}
 from Tests.Backup_Recovery.thread_diagnostics import observe_threads,observe_recovery_failures
 from Tests.Backup_Recovery.admission_diagnostics import observe_admission
+from Tests.Backup_Recovery.loop_diagnostics import observe_loop_profile
 async def main():
  home=Path.home()
  stop_diagnostics=observe_threads(home/'seed-stacks.log',interval=60)
@@ -60,6 +61,7 @@ async def main():
   entered.set();assert release.wait(180 if sys.platform=='win32' else 15);return writer(*args,**kwargs)
  archive_writer.write_archive=held_writer
  monitoring=asyncio.create_task(monitor_app(app))
+ stop_loop=lambda:None
  try:
   note=app.chachanotes_db.add_note('Before backup','Captured native value.')
   options={'staging_parent':home}
@@ -69,6 +71,7 @@ async def main():
   assert details['capacity'] and all(row['sufficient'] for row in details['capacity'])
   assert preview.complete,inventory_diagnostic(preview)
   operation=service.start_backup((selector,),preview.scope_digest,destination,options=options,password=None)
+  stop_loop=observe_loop_profile(home/'seed-loop-profile.log')
   async with asyncio.timeout(300 if sys.platform=='win32' else 65):
    while not entered.is_set():
     assert service.status(operation)['state']=='running',dict(service.status(operation))
@@ -95,6 +98,7 @@ async def main():
    assert db.execute('SELECT 1 FROM notes WHERE id=?',(after,)).fetchone() is None
   assert not blocked_attempts()
  finally:
+  stop_loop()
   release.set();archive_writer.write_archive=writer
   await asyncio.to_thread(service.close)
   monitoring.cancel();await asyncio.gather(monitoring,return_exceptions=True)

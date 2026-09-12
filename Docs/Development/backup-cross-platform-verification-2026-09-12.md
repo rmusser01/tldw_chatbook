@@ -16,7 +16,7 @@ seconds) and Linux SSH suite (69 reader/admission checks: 16.01 seconds; F9 thre
 112.15 seconds; two-profile: 68.24 seconds; combined: 276.60 seconds). Linux public
 source SHA256: `9206be22c7aa1a410958c048746d637661277c3cc05cbb8a820aa01a804e3035`.
 
-The next test-only replacement diagnostic samples current-process/native-thread
+The test-only replacement diagnostic samples current-process/native-thread
 CPU every five seconds using the existing psutil dependency. Only numeric IDs,
 CPU times and Python-thread association are retained: top 32 threads and last 12
 samples. Unavailable thread data is explicit, never reported as zero. Group/token
@@ -24,6 +24,22 @@ timing remains, with native-call wrappers disabled. Three regression failures
 preceded the passing ten-case diagnostic suite; Ruff/Bandit and embedded-child
 compilation pass. A fixed workflow choice runs the one shared failing replacement
 case. No production code, assertions or deadlines change in this diagnostic.
+
+Windows [34725309476](https://github.com/rmusser01/tldw_chatbook/actions/runs/34725309476)
+at `135fd148186443e535ae5c724540b148857bd440` passes native 42/42 but
+expires at the seed's 300-second observer before packaging; no recovery failure
+was recorded. All 12 artifact hashes and the 2,030-file installed receipt verify.
+The 52.007-second admission group consumes 7.859 seconds on its own thread and
+56.750 process CPU seconds. The final 54.687-second sampling window records
+50.109 main-thread CPU seconds versus 7.844 backup-thread seconds. All four sparse
+main-thread samples are inside Windows completion-port polling. The last pause
+checks occur during cleanup, so they do not explain the active capture delay.
+The next diagnostic profiles only five seconds on the main event-loop thread,
+retaining bounded code metadata and timings to distinguish callback churn from
+completion-port churn. No production or deadline changes are inferred yet.
+Actual Linux diagnostic/admission scope at this revision passes 72 cases in
+16.11 seconds; public source SHA256 is
+`999173a1c296247e41cee1557ab379fe00e4b092bdc5601b5d45beb3499171a5`.
 
 Observer-free Windows [34723928412](https://github.com/rmusser01/tldw_chatbook/actions/runs/34723928412)
 at `4810bfddaedaf7e29f68ee9f5d707418f6bf3ec6` passes native 294/294 and

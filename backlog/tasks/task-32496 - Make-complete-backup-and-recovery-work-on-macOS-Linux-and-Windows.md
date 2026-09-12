@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-12 23:23
+updated_date: 2026-09-12 23:40
 ---
 
 ## Description
@@ -86,6 +86,10 @@ Blocking-native-wait correction: final corrected two heldgate regressions fail a
 Committed/pushed3b4a348889c808d821b9a183bc60ea9725ddc56d nativeblockingwait; fullWindows34724659597 active. ActualmacOS installed combined replacement/laterrollback passes191.70s on sameproductiondiff precommit. Linux exactrevisionfullsuite running; macOSF9/two-profile remaining. No deadline/config/workflow changes included.
 3b4a Windowsreplacement+rollback still realAdmissionTimeout after finalgroups; nativeblocking did not establish performancefix. Stop further productionoptimizations while attributionunresolved. Next test-only diagnostic: existingpsutildependency samples ONLY currentprocess/thread numericCPU (boundedtop32/last12 every5s), add native thread ID to group timing, group/token-only observer skips allNative wrappers. Fixed replacement-diagnostic CIselection runsjust sharedfailingcase. All productioncode/deadlines/assertions unchanged. Pythonis_alive stack is nonblockingprobe, notproofUIstall. Mac3b4a F9three88.32s/two-profile53.44s/combined191.70s pass; Linux69/F9/two-profile pass, combinedrunning.
 CPUdiagnostic tests: initialtwoRED for missinghelper/flag, AccessDenied regressionRED, then10PASS0.71s. KeepsNative methodsunwrapped in group-onlymode, samplesownprocessonly with32thread/12samplebounds; unavailablethreaddata isNone+AccessDeniedclass (neverfabricatedzero). Ruffclean; helperBandit0 andtestsBandit-ll0; all embeddedchildrencompile andworkflowYAMLparse. Independentreviewpending. Linux3b4a completedallPASS: readers69 16.01s/F9three112.15s/installedtwo-profile68.24s/combined276.60s; sourceSHA9206be22c7aa1a410958c048746d637661277c3cc05cbb8a820aa01a804e3035. Windows3b4a completednative294pass/product57pass2AdmissionTimeouts/all116hashesverified.
+Reviewedtest-onlyCPUdiagnostic committed/pushed135fd148186443e535ae5c724540b148857bd440. SingleWindows replacement-diagnostic run34725309476 active. Independentreviewnofindings: currentprocessonlynumericmetadata, Native wrappersdisabled, fixedexistingtestcase, allassertions/deadlinesunchanged. No productionchangeafter3b4a.
+135fd1481 actualLinuxreader/admission/CPUdiagnostic suite passes72 tests16.11s, no skips. PubliccodeloadSHA999173a1c296247e41cee1557ab379fe00e4b092bdc5601b5d45beb3499171a5. SingleWindowsdiagnostic34725309476 ongoing; no additional productionedits.
+Windows single-case diagnostic34725309476 exact135fd: native42 pass; seed300s observer expired before packaging, no product AdmissionTimeout recorded. Verified12 artifact hashes, installed receipt2030files, clean source9848. CPU: main50.109/59.844 process seconds over54.687wall; backup7.844. Important correction: last pause_requested groups occur at cleanup (774s), not during capture. During capture all4 sparse main stacks are windows_events._poll GetQueuedCompletionStatus; no busy caller yet proven. Next bounded5s same-main-thread cProfile diagnostic during backup to distinguish ready callback churn from completion-port churn. No production/deadline change; existing native review agent owns isolated diagnostic helper/tests.
+Bounded main-loop profile helper implemented by existing native review agent; root reviewed and integrated only into seed and support checks. Three tests first RED then GREEN; combined13 diagnostic tests pass0.86s. Ruff/helperBandit0/testsBandit0(excluding assert B101), embedded-child compilation and diffcheck pass. Five-second timer may run longer if loop blocks; receipt records actual elapsed/threadCPU. No production changes, no deadline changes. Dispatch next exact-SHA replacement-diagnostic after commit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
