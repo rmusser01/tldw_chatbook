@@ -32,10 +32,6 @@ BULK_READER_INSTRUCTIONS = (
     "decisions. These findings guide the caller's direct source verification."
 )
 BULK_READER_TOOLS = ["fs_list", "fs_read", "fs_glob", "fs_grep"]
-TASK_1_EVIDENCE = (
-    Path(__file__).parents[2]
-    / ".superpowers/sdd/2026-09-12-agent-settings-followups/task-1-evidence"
-)
 
 
 def _painted_text(svg: str) -> str:
@@ -136,10 +132,6 @@ async def test_save_reports_deduped_runtime_tools_after_warning_reload(runs_db, 
         assert status_text.count("wait_agents") == 1
         assert "22 enabled definitions" in status_text
         svg = pilot.app.export_screenshot(simplify=True)
-        TASK_1_EVIDENCE.mkdir(parents=True, exist_ok=True)
-        capture_path = TASK_1_EVIDENCE / f"save-status-{size[0]}x{size[1]}.svg"
-        if not capture_path.exists():
-            capture_path.write_text(svg, encoding="utf-8")
         painted = " ".join(_painted_text(svg).split())
         assert "Ignored runtime-only tools: spawn_subagent, wait_agents." in painted
         assert "22 enabled definitions" in painted
