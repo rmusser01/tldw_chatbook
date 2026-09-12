@@ -44,9 +44,9 @@ Reason: additive bounded provider/review/runtime control provenance; existing ac
 
 **Interfaces:** Produces `ApprovalDecision`, `ToolReviewDecision`, `ToolReviewValue`, `normalize_tool_review`, keyword-only `ToolResult.approval_decision`, `_effective_review_decision`; consumes existing ToolCall and ToolResult.
 
-- [ ] Before implementation, verify root created ADR-154, linked unchanged ADR-078, moved TASK-18929 In Progress through Backlog CLI, reconciled the setting criterion to default3/explicit0 and added this plan. Accepted ADR-078 stays unchanged.
+- [x] Before implementation, verify root created ADR-154, linked unchanged ADR-078, moved TASK-18929 In Progress through Backlog CLI, reconciled the setting criterion to default3/explicit0 and added this plan. Accepted ADR-078 stays unchanged.
 
-- [ ] Write failing compatibility tests:
+- [x] Write failing compatibility tests:
 
 ```python
 from dataclasses import dataclass
@@ -74,8 +74,8 @@ def test_new_tool_result_field_does_not_shift_subclass_positionals():
     assert denied.approval_decision == 'denied'
 ```
 
-- [ ] Run `python -m pytest Tests/Agents/test_denial_provenance.py -q`; expect missing new symbols/signature failure, not environment/import failure.
-- [ ] Implement minimal shared types:
+- [x] Run `python -m pytest Tests/Agents/test_denial_provenance.py -q`; expect missing new symbols/signature failure, not environment/import failure.
+- [x] Implement minimal shared types:
 
 ```python
 ApprovalDecision: TypeAlias = Literal['approved', 'denied']
@@ -105,10 +105,10 @@ def blocked(cls, error: str, *, approval_decision: ApprovalDecision | None = Non
                approval_decision=approval_decision)
 ```
 
-- [ ] Preserve exact lookup compatibility by adding `_effective_review_decision(call, verdicts, *, call_id=None)` with the existing call-id-first/name fallback and normalize only the selected value; `_effective_review_verdict` delegates and returns `.verdict`. In service observation use `normalize_tool_review(selected).verdict`, so observed error remains a string. Change type annotations only where needed; do not stringify or flatten values while merging hooks.
-- [ ] Restore the inherited durable trace fixture to exercise real tool results: its placeholder `model` selects progressive discovery, so the scripted immediate calls are refused as undisclosed and no result reaches redaction. Use the existing known `gpt-4o` fixture model for that single test and assert successful execution of all three synthetic tools before checking redacted/omitted states. Do not change production disclosure or permission behavior. Root baseline and isolated known-model control are recorded in this plan workspace.
-- [ ] Add call-id-over-name, name fallback, absent proceed, malformed approval-fact, mixed string/structured callback and observer error-text tests. Run focused new tests plus `Tests/Agents/test_agent_runtime_review_hook.py` and `test_trace_approval_capture.py`; expect unchanged dispatch/refusal/Trace behavior.
-- [ ] Review checkpoint: verify the already-created ADR-154 and updated TASK setting criterion are linked. Root records the focused passing evidence and commits only this slice when authorized.
+- [x] Preserve exact lookup compatibility by adding `_effective_review_decision(call, verdicts, *, call_id=None)` with the existing call-id-first/name fallback and normalize only the selected value; `_effective_review_verdict` delegates and returns `.verdict`. In service observation use `normalize_tool_review(selected).verdict`, so observed error remains a string. Change type annotations only where needed; do not stringify or flatten values while merging hooks.
+- [x] Restore the inherited durable trace fixture to exercise real tool results: its placeholder `model` selects progressive discovery, so the scripted immediate calls are refused as undisclosed and no result reaches redaction. Use the existing known `gpt-4o` fixture model for that single test and assert successful execution of all three synthetic tools before checking redacted/omitted states. Do not change production disclosure or permission behavior. Root baseline and isolated known-model control are recorded in this plan workspace.
+- [x] Add call-id-over-name, name fallback, absent proceed, malformed approval-fact, mixed string/structured callback and observer error-text tests. Run focused new tests plus `Tests/Agents/test_agent_runtime_review_hook.py` and `test_trace_approval_capture.py`; expect unchanged dispatch/refusal/Trace behavior.
+- [x] Review checkpoint: verify the already-created ADR-154 and updated TASK setting criterion are linked. Root records the focused passing evidence and commits only this slice when authorized.
 
 ### Task 2: Attach facts at authoritative decisions
 
