@@ -83,7 +83,7 @@ class AgentLiveUsageEvent:
 live_usage_sink: Callable[[AgentLiveUsageEvent], None] | None = None
 ```
 
-The adapter uses one monotonic sequence allocator for its lifetime (or an equivalently bounded active-scope allocator), never an unpruned dictionary of finished run IDs. It assigns an increasing sequence per attributed run and emits `started` before consuming a model stream, `text` for each actual provider textual delta, `provider_usage` after normalizing observable usage snapshots, and `finished` from `finally`. Structured tool-call objects and locally synthesized fallback copy do not contribute bytes. Reasoning/thinking text received from the provider is output text and contributes when it is represented as a textual delta.
+The adapter uses one monotonic sequence allocator for its lifetime (or an equivalently bounded active-scope allocator), never an unpruned dictionary of finished run IDs. It assigns an increasing sequence per attributed run and emits `started` before consuming a model stream, `text` for each actual provider textual delta, `provider_usage` from explicit observable provider output fields, and `finished` from `finally`. Structured tool-call objects and locally synthesized fallback copy do not contribute bytes. Reasoning/thinking text received from the provider is output text and contributes when it is represented as a textual delta.
 
 ### Gateway emission provenance
 
@@ -91,7 +91,7 @@ The adapter may opt into an optional keyword-only `ConsoleProviderGateway.stream
 
 ## Validation and arbitration
 
-Provider output counts are accepted only from recognized output/completion fields after the existing partial usage normalization, with `type(value) is int and value >= 0`. This deliberately rejects booleans, floats, numeric strings, negatives, missing fields, and aggregate-only totals. Zero is a valid provider observation; malformed later payloads cannot erase a valid provider value.
+Provider output counts are accepted only from recognized explicit output/completion fields in raw terminal payloads or partial usage snapshots, before final-budget normalization, with `type(value) is int and value >= 0`. This deliberately rejects booleans, floats, numeric strings, negatives, missing fields, and aggregate-only totals. Zero is a valid provider observation; malformed later payloads cannot erase a valid provider value.
 
 Before provider observation, local output tokens are:
 
@@ -135,9 +135,11 @@ Expected implementation files:
 
 - `tldw_chatbook/Agents/agent_service.py`
 - `tldw_chatbook/Chat/console_agent_bridge.py`
+- `tldw_chatbook/Chat/console_provider_gateway.py`
 - `tldw_chatbook/UI/Console_Modules/agent.py`
 - `Tests/Agents/test_agent_service.py`
 - `Tests/Chat/test_console_agent_bridge.py`
+- `Tests/Chat/test_console_provider_gateway.py`
 - `Tests/UI/test_console_turn_activity_line.py`
 - `Tests/UI/test_console_fleet_panel.py`
 - `Tests/UI/test_console_fleet_survivor_tick.py`
