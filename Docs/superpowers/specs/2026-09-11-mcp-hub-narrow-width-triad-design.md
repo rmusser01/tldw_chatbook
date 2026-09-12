@@ -56,7 +56,11 @@ usable. Adopted as a baseline layer under (a), not as the fix.
 ## Design (approach a + c)
 
 **Grid switch** (`mcp_workbench.compose()` + BUNDLED_CSS + the
-`_agentic_terminal.tcss` lockstep copy): introduce one wrapper —
+`widget_defaults_{self,scoped}.tcss` lockstep copy — regenerate with
+`tldw_chatbook/css/build_css.py`, never hand-edit): the shipped selector
+is `.mcp-compact` ON `#mcp-hub-grid` itself (the class is toggled on the
+grid by the existing `_sync_compact_class`, so `#mcp-hub-grid.mcp-compact
+{ layout: vertical; }` — no descendant combinator). Introduce one wrapper —
 `#mcp-hub-grid` contains `#mcp-hub-main-row` (a `Horizontal` holding the
 rail and canvas, which keep their existing ids) and the inspector as a
 sibling. At wide widths the grid is horizontal (`main-row | inspector`,

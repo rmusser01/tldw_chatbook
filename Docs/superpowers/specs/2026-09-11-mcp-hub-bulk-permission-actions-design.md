@@ -68,9 +68,11 @@ already does for scoping. Rejected (YAGNI).
 
 **Interaction contract**
 - Both keys are bindings on `MCPPermissionsMode` (like `space`), posting
-  one new message each (`BulkStateRequested`, `BulkClearRequested`)
-  carrying the cursor row's `(server_key, profile_context)` — the
-  workbench remains the single writer.
+  one new message each — `BulkStateRequested(server_key, tool_names,
+  new_state, profile_context)` / `BulkClearRequested(server_key,
+  tool_names, profile_context)`. The canvas (which alone knows the
+  visible filter) computes `tool_names` and — for bulk-set — the cursor
+  row's next cycled state; the workbench remains the single writer.
 - Both keys operate on the cursor row's **server scope**: any tool row
   or that server's default row. The **global row is excluded** — it owns
   no server, and both keys no-op against it (the existing hint Static,
@@ -99,12 +101,19 @@ already does for scoping. Rejected (YAGNI).
 
 **Write path** (`mcp_workbench`)
 - Iterate visible tool rows of the server; skip raw-shell rows (and say
-  so in the echo when any were skipped: `· 1 skipped (raw shell)`).
-- Every write through `_call_profile_scoped(service.set_tool_state, ...)`
-  under the SAME validated `PermissionProfileContext` as a single press;
-  on the first failure, stop and surface the service's own error text
-  (no partial-success silence) — partial writes are safe because each is
-  an independent, idempotent store write.
+  so in the echo when any were skipped: `· 1 skipped (raw shell)`) and,
+  separately, vanished Allow targets (`· N unavailable`).
+- Every write through `_call_profile_scoped(service.set_tool_state, ...)`;
+  the incoming `PermissionProfileContext` is validated ONCE, then a FRESH
+  context is re-derived from `_tool_policy_inventory()` before EACH write —
+  each write changes the profile digest, so write #2 with write #1's
+  context fails `stale_profile` (the single-press path never hits this; it
+  writes once). A mid-batch selection change stops the batch with the
+  stale toast, and partial writes still resync before any toast so
+  already-written rows are never hidden.
+- On the first failure, stop and surface the service's own error text
+  after that resync — partial writes are safe because each is an
+  independent, idempotent store write.
 - One `_sync_permissions_mode(echo=...)` after the batch; `update_states`
   fans out to Tools mode exactly as a single press does.
 - Built-in rows participate (hash-free), gated tools cannot appear by
@@ -130,9 +139,11 @@ already does for scoping. Rejected (YAGNI).
 
 ## Open questions (for reviewer)
 
-1. Should bulk writes record a single aggregated execution-log entry, or
-   is per-row logging (current behavior per write) acceptable? (Design:
-   per-row, unchanged — audit granularity should not decrease.)
+1. Audit granularity: permission POLICY writes (single or bulk) do not
+   create execution-log rows — those record EXECUTIONS; policy writes are
+   observable through the store and the matrix resync. Resolved during
+   review: no aggregated log entry needed; the matrix echo is the
+   user-facing acknowledgement.
 2. Should `shift+space` on a server-default row apply the server
    default's next state, or the *global* cycle? (Design: the row's own
    next state, identical to what a plain Space on that row would
