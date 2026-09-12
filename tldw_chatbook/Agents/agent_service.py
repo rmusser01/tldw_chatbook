@@ -5084,7 +5084,9 @@ class AgentService:
                         # exactly (round 2, item 4).
                         try:
                             fleet.finish(handle.handle_id, RUN_ERROR, error=refusal)
-                            self._set_terminal_status(child_run_id, RUN_ERROR)
+                            self._set_terminal_status(
+                                child_run_id, RUN_ERROR, result=refusal
+                            )
                         except Exception:  # noqa: BLE001 — refusal must reach parent
                             logger.warning("could not persist failed sub-agent launch")
                         return None, SpawnAdmissionRefusal(ok=False, error=refusal)
@@ -5657,11 +5659,16 @@ class AgentService:
                 # No child was created, so this costs no spawn slot --
                 # same rule as the cap/unknown-agent refusals above.
                 sub_agent_spawns -= 1
+                from tldw_chatbook.Agents.agent_worktree import (
+                    unsupported_execution_boundary,
+                )
+
+                refusal = unsupported_execution_boundary()
                 return ToolResult(
                     ok=False,
                     error=(
-                        "worktree isolation refused [no_fleet]: isolation "
-                        "requires fleet mode (max_live_subagents > 1)"
+                        f"worktree isolation refused [{refusal.reason_code}]: "
+                        f"{refusal.message}"
                     ),
                 )
             if fleet is None or inline:
