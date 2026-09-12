@@ -502,6 +502,7 @@ class Admission:
             while True:
                 self._check(deadline, cancel)
                 trial = ExitStack()
+                blocked_request = None
                 try:
                     with self._lock(
                         parent, "registry.lock", fcntl.LOCK_SH, deadline, cancel
@@ -526,7 +527,11 @@ class Admission:
                                     )
                                     requested.callback(os.close, fd)
                                     self._observe_gate(parent, name, fd)
-                                    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                                    try:
+                                        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                                    except BlockingIOError:
+                                        blocked_request = name
+                                        raise
                                     self._observe_gate(parent, name, fd)
                         group = self._groups(registry, names, recovery_journal)
                         if any(registry.entries[n].pending for n in group):
@@ -557,7 +562,21 @@ class Admission:
                     break
                 except BlockingIOError:
                     trial.close()
-                    time.sleep(0.01)
+                    if blocked_request is None:
+                        time.sleep(0.01)
+                    else:
+                        # Wait on one held native descriptor without registry
+                        # authority or repeated filesystem/ACL reconstruction.
+                        # This grants no admission: release the temporary gate
+                        # before re-reading the registry and all target roots.
+                        with self._lock(
+                            parent,
+                            self._key(blocked_request, "gate"),
+                            fcntl.LOCK_SH,
+                            deadline,
+                            cancel,
+                        ) as fd:
+                            self._observe_gate(parent, blocked_request, fd)
                 except BaseException:
                     trial.close()
                     raise

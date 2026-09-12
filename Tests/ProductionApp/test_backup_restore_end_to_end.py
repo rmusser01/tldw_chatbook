@@ -45,23 +45,27 @@ except SystemExit as error:assert error.code in (None,0),error
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.profile_open import opened_receipt
 from tldw_chatbook.config import get_cli_config_path
+from Tests.Backup_Recovery.thread_diagnostics import observe_threads
 import tldw_chatbook
 assert Path(tldw_chatbook.__file__).resolve()==Path(expected['package'])/'tldw_chatbook'/'__init__.py'
 assert opened_receipt(profile,control,attempt) is None
 async def main():
  app=TldwCli()
- async with app.run_test(size=(100,36)):
-  async with asyncio.timeout(60 if sys.platform=='win32' else 20):
-   while not getattr(app,'_recovery_open_checked',False):await asyncio.sleep(.03)
-  assert opened_receipt(profile,control,attempt) is not None
-  assert app._initial_screen_pushed and app._ui_ready
-  assert str(get_cli_config_path())==expected['config']
-  assert str(app.chachanotes_db.db_path)==expected['core']
-  assert app.chachanotes_db.get_note_by_id(expected['note'])['content']=='Captured through F9'
-  assert app.chachanotes_db.get_note_by_id(expected['after']) is None
-  assert 'synthetic-f9-secret' not in get_cli_config_path().read_text()
-  assert not blocked_attempts(),blocked_attempts()
- (fixture/'ui-opened.json').write_text(json.dumps({'profile':profile,'attempt':attempt,'opened':True}))
+ stop_diagnostics=observe_threads(fixture/'ui-child-stacks.log',interval=10)
+ try:
+  async with app.run_test(size=(100,36)):
+   async with asyncio.timeout(60 if sys.platform=='win32' else 20):
+    while not getattr(app,'_recovery_open_checked',False):await asyncio.sleep(.03)
+   assert opened_receipt(profile,control,attempt) is not None
+   assert app._initial_screen_pushed and app._ui_ready
+   assert str(get_cli_config_path())==expected['config']
+   assert str(app.chachanotes_db.db_path)==expected['core']
+   assert app.chachanotes_db.get_note_by_id(expected['note'])['content']=='Captured through F9'
+   assert app.chachanotes_db.get_note_by_id(expected['after']) is None
+   assert 'synthetic-f9-secret' not in get_cli_config_path().read_text()
+   assert not blocked_attempts(),blocked_attempts()
+  (fixture/'ui-opened.json').write_text(json.dumps({'profile':profile,'attempt':attempt,'opened':True}))
+ finally:stop_diagnostics()
 asyncio.run(main())
 """
 

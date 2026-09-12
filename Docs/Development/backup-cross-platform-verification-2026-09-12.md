@@ -4,6 +4,38 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Windows matrix [34720655217](https://github.com/rmusser01/tldw_chatbook/actions/runs/34720655217)
+at `bbc83d6c56155eac13cef174b6bb9633a322b203` passed the installed-wheel
+two-profile restore/open case, encrypted F9 flow, all 33 support checks and
+42 native checks in every job. Plain and credential-inclusive F9 flows created
+and restored their archives, then hit Textual readiness timeouts opening the
+restored app. Replacement expired during its seed backup; rollback seed capture
+reported AdmissionTimeout. No replacement attempt is counted as passed on Windows.
+
+The ordinary gate preflight eliminated competing root scans, but the wait still
+reopened registry/gate files and checked their ACLs repeatedly. One final root
+scan took 69.235 seconds; the other 518 group calls totaled 4.483 seconds. The
+wait now uses one native gate descriptor outside registry authority, preserves
+its original deadline/cancellation, observes gate identity, and releases the
+temporary gate before all fresh registry/root checks. Three regressions first
+failed for repeated registry reads, then passed with the fix. Full admission
+scope passed 37 tests; lifecycle/recovery scope passed 33. Independent review
+found no issues and separately passed eight gate/cancellation/remap tests.
+Touched production Bandit found zero issues. The current diff also passes actual
+installed-wheel macOS plaintext F9 create/restore/open (54.05 seconds). A bounded
+Python-owned stack observer in the restored test child will identify its startup
+stall; it records no locals or values and changes no application behavior. All
+109 artifact hashes from the completed Windows matrix match. Next Windows
+verification is pending.
+
+Actual `bbc83d6c5` product tests pass on macOS: three F9 modes 125.68 seconds,
+installed-wheel two-profile 66.19 seconds, combined replacement/later rollback
+257.78 seconds. The same revision passes on the supplied Linux SSH host:
+51 reader/admission checks 12.50 seconds; F9 three modes 123.78 seconds;
+installed-wheel two-profile 71.26 seconds; combined replacement/later rollback
+283.14 seconds. Linux public codeload SHA256:
+`45e5e99dc7caee6e22a88384bb3602851a6934c53b7a6df589607f039bd45e6d`.
+
 Windows matrix [34719523728](https://github.com/rmusser01/tldw_chatbook/actions/runs/34719523728)
 at `ec2c668f731b3b830549c2f423f99b3072cc73a9` passed the complete encrypted-
 credential F9 create/restore/open flow and all 24 support cases. All seven jobs
