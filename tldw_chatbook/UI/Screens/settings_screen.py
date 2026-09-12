@@ -3988,7 +3988,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.SPEECH_TTS,
                 "Speech & TTS",
-                "Application-wide speech, TTS, voice, audio.cpp, audio_cpp, OpenAI, "
+                "Application-wide speech, TTS, voice, audio.cpp, OpenAI, "
                 "ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk defaults and setup.",
                 "Global",
             ),
@@ -8458,6 +8458,14 @@ class SettingsScreen(BaseAppScreen):
             if not validation.valid:
                 return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
+            if category is SettingsCategoryId.SPEECH_TTS:
+                # task-2708: the generic contract below is false here -- this
+                # category resolves its draft through the leave modal instead
+                # of carrying it across a category switch.
+                return (
+                    "State: Unsaved changes | Save (s) or Revert (r) — leaving "
+                    "Speech & TTS resolves this draft: save or discard first."
+                )
             return "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
         # task-1717: lead with the persistence badge -- the footer hints
         # already honestly come and go with each category's save model,

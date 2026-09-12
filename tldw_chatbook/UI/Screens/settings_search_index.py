@@ -552,6 +552,8 @@ def build_field_search_index() -> None:
                 ("settings-speech-model-value", "Model value"),
                 ("settings-speech-voice-value", "TTS voice"),
                 ("settings-speech-voice-value", "Voice value"),
+                # The raw id stays in the SEARCH vocabulary only (power users
+                # grep by config id); visible descriptions use "audio.cpp".
                 ("settings-speech-configure-provider", "audio.cpp audio_cpp"),
                 ("settings-speech-configure-provider", "OpenAI"),
                 ("settings-speech-configure-provider", "ElevenLabs"),

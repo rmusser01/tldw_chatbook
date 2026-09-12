@@ -589,7 +589,7 @@ async def test_global_panel_states_scope_and_mounts_only_selected_provider() -> 
         assert "Studio preferences" in text
         assert screen.query_one("#settings-speech-default-provider", Select)
         assert screen.query_one("#settings-speech-configure-provider", Select)
-        assert screen.query_one("#settings-speech-open-lab", Button)
+        assert screen.query_one("#settings-speech-open-lab-bottom", Button)
         assert len(screen.query(".settings-speech-provider-form")) == 1
 
         configure = screen.query_one("#settings-speech-configure-provider", Select)
@@ -603,18 +603,15 @@ async def test_scope_banner_points_to_the_two_profile_surfaces() -> None:
 
     Voice profiles are a Speech Lab concept and per-character assignment
     lives in the Roleplay character editor (ADR-039 scope separation) --
-    neither is managed from this panel. The card is a static note, not a
-    control: it reuses the existing "Open Speech Lab" button rather than
-    adding a second, competing affordance.
+    neither is managed from this panel. The card is a two-line static
+    note; the single "Open Speech Lab" action lives with the Save actions.
     """
     app = _PanelHarness()
     async with app.run_test(size=(150, 60)):
         note = app.query_one("#settings-speech-profile-surfaces-note", Static)
         assert str(note.renderable) == (
-            "Voice profiles are managed in Lab > Speech > Voice Profiles — "
-            "open Speech Lab, above, to get there. Per-character voices are "
-            "assigned in the Roleplay character editor's Voice & Speech "
-            "section, not here."
+            "Voice profiles: Speech Lab (open it from the actions below). "
+            "Per-character voices: the Roleplay character editor."
         )
 
 
@@ -1243,8 +1240,8 @@ async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
-        field = screen.query_one("#settings-speech-model-value", Input)
-        field.value = "dismissal-draft"
+        field = screen.query_one("#settings-speech-voice-value", Select)
+        field.value = "echo"
         field.focus()
         panel._ask_leave_choice = AsyncMock(return_value="cancel")
         await pilot.pause()
@@ -1252,7 +1249,7 @@ async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
         assert await screen.flush_pending_work() is False
 
         assert screen.active_category == SettingsCategoryId.SPEECH_TTS.value
-        assert field.value == "dismissal-draft"
+        assert field.value == "echo"
         assert host.focused is field
 
 
@@ -2283,7 +2280,7 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         screen = await _open_speech_tts(host, pilot)
-        screen.query_one("#settings-speech-model-value", Input).value = "draft-model"
+        screen.query_one("#settings-speech-model-value", Select).value = "tts-1"
         await pilot.click("#settings-speech-restore-defaults")
         await pilot.pause()
         await pilot.click("#settings-speech-revert")
@@ -3206,8 +3203,10 @@ async def test_settings_generic_save_and_revert_actions_route_to_speech_panel() 
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
-        model_value = screen.query_one("#settings-speech-model-value", Input)
-        model_value.value = f"{model_value.value}-draft"
+        model_value = screen.query_one("#settings-speech-model-value", Select)
+        model_value.value = (
+            "tts-1-hd" if model_value.value != "tts-1-hd" else "tts-1"
+        )
         await pilot.pause()
         request_save = Mock()
         revert_to_saved = AsyncMock()
@@ -3241,8 +3240,8 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
             for widget in panel.query(Static)
             if widget.display and widget.is_on_screen
         ).casefold()
-        assert "task: set up" in visible_copy
         assert "current status" in visible_copy
+        assert "provider setup" in visible_copy
         assert "revision" not in visible_copy
         assert "effective source" not in visible_copy
 
@@ -3346,7 +3345,7 @@ async def test_managed_guided_selection_provenance_stays_in_collapsed_details() 
             for widget in panel.query(Static)
             if widget.display and widget.is_on_screen
         ).casefold()
-        assert "task: set up audio.cpp" in visible_copy
+        assert "provider setup" in visible_copy
         assert "current status:" in visible_copy
         assert "selection source" not in visible_copy
 
@@ -3516,8 +3515,11 @@ async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus() ->
             "#settings-speech-tts-panel",
             SpeechTTSSettingsPanel,
         )
-        model = screen.query_one("#settings-speech-model-value", Input)
-        model.value = "unsaved-exact-model"
+        model = screen.query_one("#settings-speech-model-value", Select)
+        dirty_value = (
+            "tts-1-hd" if model.value != "tts-1-hd" else "tts-1"
+        )
+        model.value = dirty_value
         model.focus()
         panel._ask_leave_choice = AsyncMock(return_value="cancel")
         await pilot.pause()
@@ -3527,8 +3529,8 @@ async def test_dirty_speech_category_cancel_preserves_owner_draft_and_focus() ->
         await pilot.pause()
 
         assert screen.active_category == SettingsCategoryId.SPEECH_TTS.value
-        assert screen.query_one("#settings-speech-model-value", Input).value == (
-            "unsaved-exact-model"
+        assert screen.query_one("#settings-speech-model-value", Select).value == (
+            dirty_value
         )
         assert host.focused is model
         assert panel.has_unsaved_changes() is True
@@ -4252,3 +4254,122 @@ async def test_default_profile_dirty_check_does_not_depend_on_provider_validity(
         await pilot.pause()
 
         assert panel.has_unsaved_changes() is True
+
+
+def _kokoro_defaults_state():
+    state = load_global_speech_tts_state({})
+    state.defaults.provider_id = "kokoro"
+    state.defaults.model_mode = "exact"
+    state.defaults.model_id = "kokoro"
+    state.defaults.voice_mode = "exact"
+    state.defaults.voice_id = "af_heart"
+    return state
+
+
+@pytest.mark.asyncio
+async def test_legacy_voice_value_select_offers_known_voices() -> None:
+    """Recognition over recall: the legacy Voice value control offers the
+    provider's labeled voices instead of a free-text box, and a pick both
+    lands in the draft and dirties it (the 2026-09-11 critique's P1)."""
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        voice = app.query_one("#settings-speech-voice-value", Select)
+        assert voice.value == "af_heart"
+        # Raises if the labeled Kokoro voices are not real options.
+        voice.value = "bf_emma"
+        await pilot.pause()
+
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        assert panel.state.defaults.voice_id == "bf_emma"
+        assert panel.has_unsaved_changes() is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_saved_voice_stays_selectable_as_custom() -> None:
+    """A saved voice the known list does not carry stays selectable as an
+    explicit '(custom)' option -- the never-drop-a-saved-value rule the
+    audio.cpp exact choices already follow."""
+    state = _kokoro_defaults_state()
+    state.defaults.voice_id = "my_cloned_voice"
+    app = _PanelHarness(state=state, configure_provider="kokoro")
+    async with app.run_test(size=(150, 60)):
+        voice = app.query_one("#settings-speech-voice-value", Select)
+        assert voice.value == "my_cloned_voice"
+
+
+@pytest.mark.asyncio
+async def test_custom_entry_modal_sets_voice_id() -> None:
+    """Picking Custom… opens the free-text editor; a confirmed ID becomes
+    the draft value and stays selected after the card rebuild."""
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        voice = app.query_one("#settings-speech-voice-value", Select)
+        voice.value = "__custom__"
+        await pilot.pause()
+
+        modal = app.screen
+        assert isinstance(
+            modal, speech_tts_settings_panel_module._CustomIdModal
+        )
+        modal.query_one("#settings-speech-custom-id-value", Input).value = (
+            "af_sky"
+        )
+        await pilot.click("#settings-speech-custom-id-confirm")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        assert panel.state.defaults.voice_id == "af_sky"
+        assert (
+            app.query_one("#settings-speech-voice-value", Select).value
+            == "af_sky"
+        )
+
+
+@pytest.mark.asyncio
+async def test_browse_voices_button_navigates_to_speech_lab() -> None:
+    """The Voice value row bridges to Speech Lab with the default provider
+    staged, so a discovered voice no longer has to be retyped from memory."""
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-browse-voices", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.navigation, "expected a navigation event"
+        assert app.navigation[0].screen_name == "stts"
+
+
+@pytest.mark.asyncio
+async def test_local_provider_forms_surface_dependency_and_model_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The install extra and the model-download story live in the Kokoro
+    form itself, not only inside the collapsed Scope inspector (the
+    2026-09-11 critique's first-run dead-end P1)."""
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "speech_local_dependency_availability",
+        lambda **_kwargs: SpeechLocalDependencyAvailability(
+            stt=False, kokoro=False, chatterbox=False, higgs=False
+        ),
+    )
+    app = _PanelHarness(
+        state=_kokoro_defaults_state(), configure_provider="kokoro"
+    )
+    async with app.run_test(size=(150, 60)):
+        status = app.query_one(
+            "#settings-speech-kokoro-dependency-status", Static
+        )
+        assert "tldw_chatbook[local_tts]" in str(status.renderable)
+        assert "not installed" in str(status.renderable)
+        guidance = app.query_one(
+            "#settings-speech-kokoro-model-guidance", Static
+        )
+        assert "kokoro-v0_19.onnx" in str(guidance.renderable)
