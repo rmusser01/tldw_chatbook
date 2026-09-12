@@ -3893,11 +3893,13 @@ def test_isolated_spawn_refuses_before_git_or_child_and_plain_sibling_runs(
         assert chat.child_calls["plain task"]
         assert coordinator.live_count() == 0
         assert service._agent_worktrees == {}
-        child_rows = db.list_runs("c", agent_kind="subagent")
-        assert child_rows, "the refused child's run row must exist"
-        assert all(row["status"] in TERMINAL_RUN_STATUSES for row in child_rows), (
-            child_rows
-        )
+        child_rows = {
+            row["task"]: row for row in db.list_runs("c", agent_kind="subagent")
+        }
+        refused = child_rows["iso task"]
+        assert refused["status"] == RUN_ERROR
+        assert "unsupported_execution_boundary" in refused["result"]
+        assert child_rows["plain task"]["status"] == RUN_DONE
     finally:
         join_fleet_children(service)
 
@@ -3970,7 +3972,10 @@ def test_isolated_spawn_refuses_without_fleet(db, monkeypatch):
     assert outcome.status == RUN_DONE
     assert service._fleet is None
     results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
-    assert results and all("no_fleet" in r for r in results), results
+    assert results and all(
+        "unsupported_execution_boundary" in r and "retained for manual review" in r
+        for r in results
+    ), results
     # No child was created -- the refusal costs no spawn slot.
     assert db.count_subagent_runs("c") == 0
 
