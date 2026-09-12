@@ -1,5 +1,5 @@
 ---
-id: TASK-32459
+id: TASK-32477
 title: 'MCP Hub: duplicate-row surface labels (Wave D spec deferral)'
 status: Done
 assignee: []

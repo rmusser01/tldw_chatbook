@@ -1,5 +1,5 @@
 ---
-id: TASK-32457
+id: TASK-32475
 title: 'MCP Hub UX Wave F: bulk permission actions'
 status: Done
 assignee: []
