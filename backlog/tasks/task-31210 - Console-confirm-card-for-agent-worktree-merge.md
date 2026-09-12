@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03 11:45'
-updated_date: '2026-09-12 20:29'
+updated_date: '2026-09-12 21:19'
 labels:
   - agents
   - console
@@ -45,5 +45,5 @@ Execution qualification remains open: actual Git2.39.5 temp-repository tests sho
 
 ADR-158 (backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md) changes only migration order: caps18→19, recovery later19→20 after execution qualification. Recheck actual schema before source edits; all existing authority and definition-policy requirements remain binding.
 
-First execute Docs/superpowers/plans/2026-09-12-agent-worktree-interim-safety.md: refuse unqualified agent-driven creation/merge/discard without shared-tree fallback, align disclosure, and retain checkouts during automatic/failed-start cleanup. This implements the existing unsupported-authority and retention criteria; it does not complete functional recovery.
+The interim prerequisite Docs/superpowers/plans/2026-09-12-agent-worktree-interim-safety.md is implemented and independently reviewed in 93ee16a144 and 534ad2c890. Fleet and inline worktree requests refuse unsupported_execution_boundary without shared fallback; Console preview/live omit mutation tools; confirmed calls cannot reach Git helpers; automatic/failed-start cleanup retains existing work while retiring provider routes. Final targeted Console/service selection: 25 passed, 246 deselected, no new skips; changed-hunk static checks passed with inherited dependency warnings qualified. This does not complete functional recovery or any acceptance criterion requiring a qualified mutation backend; the task stays In Progress.
 <!-- SECTION:PLAN:END -->
