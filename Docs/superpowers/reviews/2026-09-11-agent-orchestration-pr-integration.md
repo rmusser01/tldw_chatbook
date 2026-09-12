@@ -19,7 +19,9 @@ checkout. Integration evidence is in the worktree's
 
 The integration was reviewed against dev
 `d30d8c516cc901b4b017f5214483c56ae10ccda8`; final rebase also includes dev
-`4f7c9f89f5302e78d19ae5f4cfedf168e88cd3d2` (Settings and endpoint follow-ups). Current dev's lifecycle custody, worktree confinement,
+`d8516accde3a39c30cf41b06709cc359d2a9034d` (Settings, endpoint and registered
+Improve My Prompt follow-ups), then the nonbehavioral MCP documentation merge
+`eda6e13747ddcf538702e65ff156941f8ee80826`. Current dev's lifecycle custody, worktree confinement,
 causal steering, provider routing, activity receipts, and extracted Console
 controllers remain authoritative. Historical extraction plans are provenance;
 upstream canonical TASK-3070 records are retained.
@@ -98,12 +100,14 @@ Screen measures 24,389 lines / 743 methods, versus dev's 24,390 / 743; no guard
 threshold was raised. Historical smaller Screen counts and old diagnostic drift
 in the original ledger do not describe this integrated revision.
 
-## Gates still pending
+## Merge verification
 
-- Publish the final reviewed head and resolve external review feedback.
-- Resolve Qodo and other actionable PR review comments, require green CI, and merge.
-  TASK-32493 is Done after clean-runner verification; final follow-up heads
-  must rerun the required checks before merge.
+Qodo's four review threads are resolved and its follow-up report has zero bugs
+and zero rule violations. The published correction passed all 1,125 fast-lane
+tests, the required artifact gate and UI latency CI
+([run 34671810651](https://github.com/rmusser01/tldw_chatbook/actions/runs/34671810651)).
+The final latest-dev reconciliation must pass its own head checks before merge.
+TASK-32493 is Done after clean-runner verification.
 
 ## Qodo review follow-up
 
@@ -122,7 +126,20 @@ CI also exposed a startup scheduling difference: archive actions could load for
 an empty native-session list before `_ui_ready`, raising Linux's count to 974
 against the 973 cap. Blank-session refresh now skips that read, and unclaimed
 archive resume paths defer their imports. Saved-session reads and late handoff
-claims retain their owner fences. The corrected head requires fresh CI.
+claims retain their owner fences. The corrected head passed UI latency CI.
+
+The subsequent dev prompt-registration change adds one ready-time import. To
+retain the same 973-module cap, execution capacity now initializes on first
+execution access. WorkOrigin is shared lightweight model data with a compatible
+legacy reexport; bridges obtain the runtime's single locked capacity lazily.
+Replacement and disposal prevent new allocation under closed ownership. The
+Agent selection passed 191 cases, the bridge/lazy selection passed 299, and
+51 focused ownership/admission/automatic cases passed (counts overlap). The
+latest-dev ready census passes at 973/973. The final combined import, worker,
+CSS, ready and lazy-capacity selection passed 23 tests. Both shutdown entrypoints
+retain the existing Canvas/receipt publication lock while serializing the
+capacity lifetime latch; 17 targeted lazy/receipt tests pass, including two
+regressions that failed before restoring that lock boundary.
 
 ## Intentional capability boundaries
 

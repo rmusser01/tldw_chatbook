@@ -460,12 +460,17 @@ assert 'tldw_chatbook.Agents.fleet_message_tools' not in sys.modules
 assert 'tldw_chatbook.Agents.fleet_messages' not in sys.modules
 assert 'tldw_chatbook.Agents.automatic_work_budget' not in sys.modules
 assert 'tldw_chatbook.Agents.automatic_work_runtime' not in sys.modules
+assert 'tldw_chatbook.Agents.execution_capacity' not in sys.modules
 # Name-based anti-forgery checks do not require loading the queue or schemas.
 assert 'read_agent_messages' in tool_catalog.MESSAGE_TOOL_NAMES
 from tldw_chatbook.Agents.tool_catalog import READ_AGENT_MESSAGES_SCHEMA, REPORT_TO_SUPERVISOR_SCHEMA
 assert READ_AGENT_MESSAGES_SCHEMA.name == 'read_agent_messages'
 assert REPORT_TO_SUPERVISOR_SCHEMA.name == 'report_to_supervisor'
 assert 'tldw_chatbook.Agents.fleet_messages' not in sys.modules
+from tldw_chatbook.Agents.agent_models import WorkOrigin
+from tldw_chatbook.Agents.execution_capacity import WorkOrigin as LegacyWorkOrigin
+assert LegacyWorkOrigin is WorkOrigin
+assert agent_service.WorkOrigin is WorkOrigin
 """
     completed = subprocess.run(
         [sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=False

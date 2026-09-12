@@ -11,15 +11,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from enum import Enum
 from threading import Lock
 from typing import Literal
 from uuid import uuid4
 
-
-class WorkOrigin(Enum):
-    MANUAL = "manual"
-    AUTOMATIC = "automatic"
+from .agent_models import WorkOrigin as WorkOrigin
 
 
 class CapacityRefused(RuntimeError):

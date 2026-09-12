@@ -12,6 +12,7 @@ import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
@@ -22,6 +23,14 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
+
+
+class WorkOrigin(Enum):
+    """Trusted admission origin shared by runtime owners."""
+
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"

@@ -30,6 +30,7 @@ from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
     from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
@@ -40,14 +41,8 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from tldw_chatbook.Agents.execution_capacity import (
-    ExecutionOwner,
-    OwnedOperation,
-    RuntimeCapacity,
-    WorkOrigin,
-    current_execution_owner,
-)
 from tldw_chatbook.Agents.agent_models import (
+    WorkOrigin,
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     FIND_TOOLS_NAME,
@@ -2382,6 +2377,8 @@ class _ModelCallLifeline:
 
     def start(self, *, owner: ExecutionOwner | None = None) -> None:
         """Own the driver before start; failed starts have no physical work."""
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
         with self._shutdown_lock:
             if self._shutdown_requested or self._thread.ident is not None:
                 raise RuntimeError("model lifeline cannot be restarted")
@@ -4665,12 +4662,16 @@ class ConsoleAgentBridge:
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         change_finalization_coordinator: Any | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
+        runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
         message_store: MessageStore | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
         self._message_store_lock = threading.RLock()
-        self.runtime_capacity = runtime_capacity or RuntimeCapacity.from_settings()
+        self._runtime_capacity = runtime_capacity
+        self._runtime_capacity_factory = runtime_capacity_factory
+        self._runtime_capacity_lock = threading.RLock()
+        self._runtime_capacity_closed = False
         self._db = agent_runs_db
         # TASK-1971: optional Agent Change Review turn tracker. None (the
         # default, and every pre-existing construction site) disables
@@ -7745,6 +7746,82 @@ class ConsoleAgentBridge:
                 self._fleet_survivor_services.pop(conversation_id, None)
 
     @property
+    def runtime_capacity(self) -> RuntimeCapacity:
+        """Return shared admission, allocating once on first execution access.
+
+        Returns:
+            Injected, runtime-supplied, or standalone admission capacity.
+
+        Raises:
+            RuntimeError: Closed ownership would require a new allocation.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity is None:
+                if self._runtime_capacity_closed:
+                    raise RuntimeError("bridge capacity is closed")
+                if self._runtime_capacity_factory is None:
+                    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+                    self._runtime_capacity = RuntimeCapacity.from_settings()
+                else:
+                    self._runtime_capacity = self._runtime_capacity_factory()
+            return self._runtime_capacity
+
+    @runtime_capacity.setter
+    def runtime_capacity(self, value: RuntimeCapacity) -> None:
+        """Replace idle admission while preserving explicit capacity injection.
+
+        Args:
+            value: Capacity to use for subsequent execution admission.
+
+        Raises:
+            RuntimeError: This bridge's ownership has closed.
+            ValueError: Replacement would detach active execution ownership.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity is value:
+                return
+            if self._runtime_capacity_closed:
+                raise RuntimeError("bridge capacity is closed")
+            if (
+                self._runtime_capacity is not None
+                and self._runtime_capacity.snapshot().executions
+            ):
+                raise ValueError("cannot replace capacity of an active bridge")
+            self._runtime_capacity = value
+            self._runtime_capacity_factory = None
+
+    def bind_runtime_capacity(
+        self,
+        factory: Callable[[], RuntimeCapacity],
+        *,
+        existing_capacity: RuntimeCapacity | None = None,
+    ) -> None:
+        """Bind shared runtime admission without forcing its first allocation.
+
+        Args:
+            factory: Runtime supplier that returns its locked shared capacity.
+            existing_capacity: Already allocated runtime capacity, if any.
+
+        Raises:
+            RuntimeError: This bridge has permanently closed its ownership.
+            ValueError: Rebinding would detach active execution ownership.
+        """
+        with self._runtime_capacity_lock:
+            if self._runtime_capacity_closed:
+                raise RuntimeError("bridge capacity is closed")
+            if self._runtime_capacity_factory == factory:
+                return
+            if (
+                self._runtime_capacity is not None
+                and self._runtime_capacity is not existing_capacity
+                and self._runtime_capacity.snapshot().executions
+            ):
+                raise ValueError("cannot replace capacity of an active bridge")
+            self._runtime_capacity = existing_capacity
+            self._runtime_capacity_factory = factory
+
+    @property
     def message_store(self):
         """Create the shared progress store only when execution needs it."""
         with self._message_store_lock:
@@ -7822,6 +7899,8 @@ class ConsoleAgentBridge:
 
     def close_all_progress(self) -> None:
         """Permanently invalidate progress before worker shutdown."""
+        with self._runtime_capacity_lock:
+            self._runtime_capacity_closed = True
         with self._message_store_lock:
             self._progress_closed = True
             if self._message_store is not None:

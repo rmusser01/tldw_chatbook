@@ -28,6 +28,7 @@ from loguru import logger
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
+    from .execution_capacity import ExecutionOwner, RuntimeCapacity
     from .agent_worktree import AgentWorktree
     from .fleet_messages import MessageInbox, MessageReader, MessageSender
     from .run_log import RunLogWriter
@@ -53,6 +54,7 @@ from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_history_budget import count_console_messages_tokens
 
 from .agent_models import (
+    WorkOrigin,
     MESSAGE_TOOL_NAMES,
     AGENT_LIFECYCLE_INDEX_BASE,
     AGENT_KIND_PRIMARY,
@@ -145,13 +147,6 @@ from .run_context import (
 )
 from .run_log import _setting
 from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
-from .execution_capacity import (
-    CapacityRefused,
-    ExecutionOwner,
-    RuntimeCapacity,
-    WorkOrigin,
-    current_execution_owner,
-)
 from .run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
     RUN_LOG_EVICT_ENABLED_KEY,
@@ -1828,6 +1823,7 @@ def _call_with_timeout(
     after its human decision still trips the ceiling promptly, and
     cancellation is checked every slice regardless.
     """
+    from .execution_capacity import CapacityRefused
     from .automatic_work_budget import AutomaticWorkRefused
     from .automatic_work_runtime import current_automatic_work
 
@@ -2001,6 +1997,7 @@ class AgentService:
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
     ) -> None:
+        from .execution_capacity import RuntimeCapacity
         from .automatic_work_runtime import current_automatic_work
 
         if type(propagate_trace_call_persistence_errors) is not bool:
@@ -3276,6 +3273,8 @@ class AgentService:
                 for want of a stamp it can no longer find -- instead of
                 a loud ``TypeError`` at the call site.
         """
+        from .execution_capacity import CapacityRefused, current_execution_owner
+
         # Captured as the deps are built, which is immediately before the
         # loop records its own `started`. Being marginally early makes the
         # remaining-budget clamp conservative, which is the safe direction.
@@ -4610,6 +4609,8 @@ class AgentService:
         # permanently -- and nothing here does that: a child shares its
         # parent's writer, which is its own tree's writer, exactly as
         # before.
+        from .execution_capacity import CapacityRefused, current_execution_owner
+
         writer = run_log_writer if run_log_writer is not None else self.run_log_writer
         trusted_guidance_role: Literal["primary", "subagent"] = (
             "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary"

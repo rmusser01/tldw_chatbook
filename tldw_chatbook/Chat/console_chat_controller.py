@@ -325,7 +325,7 @@ from tldw_chatbook.Chat.library_preparation import (
     library_preparation_event_for_outcome,
 )
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
-from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+from tldw_chatbook.Agents.agent_models import WorkOrigin
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     PromptQueueMutationResult,

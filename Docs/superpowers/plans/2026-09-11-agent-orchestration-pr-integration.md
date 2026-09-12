@@ -17,4 +17,14 @@ Pinned integration base: d30d8c516cc901b4b017f5214483c56ae10ccda8. Historical PR
 5. Integration verification: fresh targeted suites, privacy/static/architecture checks, independent task reviews then whole-branch review. Fix proven regressions.
 6. Publish: update PR with force-with-lease, mark ready, obtain Qodo review, address actionable comments and required checks, update to any subsequent dev changes, merge and verify.
 
-Task5 amendment, TASK-32493: add seven bounded provider-free modules to the existing serial PR fast lane under ADR-103, including the six local SemLock-blocked callback cases. Existing required gate, dependencies, and event cadence remain unchanged. Verify exact non-overlapping target contract and clean-runner results.
+Task5 amendment, TASK-32493: add eight bounded provider-free modules to the existing serial PR fast lane under ADR-103, including the six local SemLock-blocked callback cases. Existing required gate, dependencies, and event cadence remain unchanged. Verify exact non-overlapping target contract and clean-runner results.
+
+## Latest-dev boot reconciliation
+
+Dev d8516accde3a39c30cf41b06709cc359d2a9034d adds the registered Improve-My-Prompt module; the combined ready census rises to 974 against the unchanged 973 cap. Defer the workstream's execution-capacity module until actual execution rather than changing either registry behavior or the cap.
+
+ADR required: no new ADR. ADR paths: backlog/decisions/134-fleet-admission-and-automatic-work-budgets.md and backlog/decisions/097-boot-budget-ratchets.md. Reason: preserve the existing runtime-wide admission authority and defaults while completing its intended lazy construction; no resource, ownership, or scheduling policy changes.
+
+1. Keep WorkOrigin as canonical lightweight model data, re-exported from execution_capacity for compatibility. Localize service imports used only at execution.
+2. Give bridges a lazy capacity supplier bound to the owning runtime. Serialize first allocation, preserve explicit capacity injection and replacement checks, and refuse allocation after disposal. Keep runtime disposal noncreating and close the same shared capacity if it exists.
+3. Prove ordinary imports/construction/inspection do not load or allocate capacity; prove real execution, parallel first use, replacement and disposal retain one owner and limits. Rerun targeted runtime/admission/lifecycle and boot tests, then independent review before pushing the rebase.

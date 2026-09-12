@@ -143,6 +143,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
     from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
     from tldw_chatbook.Chat.console_voice_promotion import (
         VoicePromotionOwner,
@@ -951,6 +952,7 @@ class ConsoleRuntime:
                 mutated.
         """
         self._execution_capacity = None
+        self._execution_capacity_lock = threading.RLock()
         self._app = app
         self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
         # -- setters, for the screen handles that now READ THROUGH here ----
@@ -1578,24 +1580,47 @@ class ConsoleRuntime:
         self._provider_gateway = value
 
     @property
-    def execution_capacity(self):
-        """Allocate shared admission only when agent work first needs it."""
-        if self._execution_capacity is None:
-            from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
-            self._execution_capacity = RuntimeCapacity.from_settings()
-        return self._execution_capacity
+    def execution_capacity(self) -> RuntimeCapacity:
+        """Return shared admission, allocating once unless runtime disposal won.
+
+        Returns:
+            The runtime's capacity, including its closed snapshot after disposal.
+
+        Raises:
+            RuntimeError: A disposed runtime has no existing capacity.
+        """
+        return self._get_execution_capacity()
+
+    def _get_execution_capacity(self) -> RuntimeCapacity:
+        with self._execution_capacity_lock:
+            if self._execution_capacity is None:
+                if self._disposed:
+                    raise RuntimeError("runtime capacity is disposed")
+                from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+                self._execution_capacity = RuntimeCapacity.from_settings()
+            return self._execution_capacity
 
     def set_agent_bridge(self, value: Any) -> None:
-        """Replace the agent-bridge handle."""
+        """Replace the bridge and lazily bind native execution admission.
+
+        Args:
+            value: Native bridge, compatible test double, or None to rebuild.
+
+        Raises:
+            RuntimeError: Native admission would bind to disposed ownership.
+            ValueError: Rebinding would detach an active bridge's capacity.
+        """
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
-        if (
-            isinstance(value, ConsoleAgentBridge)
-            and value.runtime_capacity is not self.execution_capacity
-        ):
-            if value.runtime_capacity.snapshot().executions:
-                raise ValueError("cannot replace capacity of an active bridge")
-            value.runtime_capacity = self.execution_capacity
+        if isinstance(value, ConsoleAgentBridge):
+            with self._execution_capacity_lock:
+                if self._disposed:
+                    raise RuntimeError("runtime capacity is disposed")
+                existing_capacity = self._execution_capacity
+            value.bind_runtime_capacity(
+                self._get_execution_capacity, existing_capacity=existing_capacity
+            )
         if self._agent_bridge is not value:
             close_progress = getattr(self._agent_bridge, "close_all_progress", None)
             if callable(close_progress):
@@ -3308,7 +3333,7 @@ class ConsoleRuntime:
             self._change_review_coordinator = change_coordinator
         self._agent_bridge = ConsoleAgentBridge(
             agent_runs_db=runs_db,
-            runtime_capacity=self.execution_capacity,
+            runtime_capacity_factory=self._get_execution_capacity,
             store=store_factory(),
             provider_gateway=provider_gateway_factory(),
             skills_service=skills_service,
@@ -4096,7 +4121,9 @@ class ConsoleRuntime:
         except BaseException:
             abort_provisional_fences()
             raise
-        self._disposed = True
+        with self._execution_capacity_lock:
+            with self._canvas_native_lock:
+                self._disposed = True
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         self._admission_fenced_sessions.update(session_ids)
@@ -4143,9 +4170,12 @@ class ConsoleRuntime:
         def remaining_seconds() -> float:
             return max(0.0, deadline - loop.time())
 
-        with self._canvas_native_lock:
-            self._disposed = True
-            self._canvas_native_view_binding = None
+        # Capacity allocation precedes the existing Canvas/receipt publication
+        # lock; no Canvas critical section acquires capacity admission.
+        with self._execution_capacity_lock:
+            with self._canvas_native_lock:
+                self._disposed = True
+                self._canvas_native_view_binding = None
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         for turn_id in tuple(self._turn_recoveries):
@@ -4179,8 +4209,9 @@ class ConsoleRuntime:
         close_progress = getattr(self._agent_bridge, "close_all_progress", None)
         if callable(close_progress):
             close_progress()
-        if self._execution_capacity is not None:
-            self._execution_capacity.close()
+        with self._execution_capacity_lock:
+            if self._execution_capacity is not None:
+                self._execution_capacity.close()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
         canvas_gateway = self._canvas_gateway
