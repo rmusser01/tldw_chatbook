@@ -99,8 +99,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 5,
-      "diagnostic_digest": "311b013f046a8779745f",
+      "call_count": 7,
+      "diagnostic_digest": "b52824b1cd9279881984",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/run_webhooks.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11568,6 +11568,6 @@
     "persistent_sink_files": 12,
     "task_31551_calls": 55,
     "task_492_calls": 1388,
-    "task_494_calls": 7719
+    "task_494_calls": 7721
   }
 }
