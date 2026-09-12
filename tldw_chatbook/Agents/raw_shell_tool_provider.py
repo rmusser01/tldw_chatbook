@@ -42,8 +42,11 @@ RAW_SHELL_APPROVAL_WARNING = (
     "This command runs with the full authority of the OS user and is not "
     "workspace confined. The command and output may persist in a local log."
 )
+#: task-32278: quotes the card's decision label, which was shortened to fit
+#: the closed Select -- keep the two in step (`_RAW_SHELL_DECISION_OPTIONS`
+#: in `Widgets/Chat_Widgets/chat_approval_card.py`).
 RAW_SHELL_SESSION_SCOPE_NOTICE = (
-    "Allow all raw shell commands for this Console session covers future raw "
+    "\"All shell · session\" covers future raw "
     "shell commands, not only this displayed command. It clears on Disarm or "
     "when Chatbook exits."
 )

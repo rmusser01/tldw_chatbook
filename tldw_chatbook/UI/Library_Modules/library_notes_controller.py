@@ -2387,9 +2387,24 @@ class LibraryNotesController:
         preferences: AdaptiveReaderLayoutPreferences,
     ) -> AdaptiveReaderLayoutPreferences:
         """Derive the Library-only work-first override."""
+        if self._import_review_owns_the_pane():
+            # task-32250 AC#6: approving 59 database writes is the task in
+            # hand. The review used to get about 120 of 235 columns -- and
+            # spend the loss on the row's own outcome clause -- while the
+            # Notes list it is not about kept its share.
+            return dataclasses.replace(
+                preferences, library_open=False, items_open=False
+            )
         if self._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE:
             return dataclasses.replace(preferences, library_open=False)
         return preferences
+
+    def _import_review_owns_the_pane(self) -> bool:
+        """Return whether Import once is mid-decision in the work pane."""
+        if self._library_notes_view != "import":
+            return False
+        snapshot = getattr(self, "_library_note_import_snapshot", None)
+        return getattr(snapshot, "phase", "") in {"review", "importing"}
     def _set_library_notes_source(
         self,
         source: Literal["database", "files"],
@@ -4592,6 +4607,7 @@ class LibraryNotesController:
         self, snapshot: LibraryNoteImportSnapshot
     ) -> None:
         """Retain completion while patching the DOM only on its visible route."""
+        owned_before = self._import_review_owns_the_pane()
         self._library_note_import_snapshot = snapshot
         if (
             self.is_mounted
@@ -4599,6 +4615,10 @@ class LibraryNotesController:
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._library_notes_view == "import"
         ):
+            # Entering or leaving the review changes who owns the pane
+            # (task-32250 AC#6), and only this seam sees that transition.
+            if self._import_review_owns_the_pane() != owned_before:
+                self._sync_library_notes_reader_layout_from_shell()
             _sync_library_canvas(self, "notes")
     def _refresh_after_library_note_import(self) -> None:
         """Refresh local list/count and folder tree after execution settles."""

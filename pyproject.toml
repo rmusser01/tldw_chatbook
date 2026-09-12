@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.2.0"
+version = "0.2.1"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -533,6 +533,9 @@ exclude = [
     "assets/tiktoken_cache/manifest.json",
 ]
 "tldw_chatbook.Canvas" = [
+    "guides/basics.md",
+    "guides/controls.md",
+    "guides/repair.md",
     "static/canvas_shell.html",
     "static/canvas_shell.css",
     "static/canvas_shell.js",

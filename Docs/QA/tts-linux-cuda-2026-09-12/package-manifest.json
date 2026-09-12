@@ -1,0 +1,170 @@
+[
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-01/evidence.json",
+    "packaged_path": "runs/kokoro-cuda-01/evidence.json",
+    "sha256": "521805a7ce6f33f86a8f3845b12f793cac9ccf42653e35bd53d1b30bacbf41a4",
+    "bytes": 542043
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-01/content.json",
+    "packaged_path": "runs/kokoro-cuda-01/content.json",
+    "sha256": "c571e9c82ed36afaa2ee3c166526e98b95016950b71957e8307c5359c6fe53a6",
+    "bytes": 7689
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-cuda-01.exit",
+    "packaged_path": "provenance/kokoro-cuda-01.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-cuda-01-asr.exit",
+    "packaged_path": "provenance/kokoro-cuda-01-asr.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-cuda-01-process-exit.json",
+    "packaged_path": "provenance/kokoro-cuda-01-process-exit.json",
+    "sha256": "705692165397f8d18500340d84de7a60fb116945e2f7254723cf5f6ce8105745",
+    "bytes": 123
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-cuda-01-routing-summary.json",
+    "packaged_path": "provenance/kokoro-cuda-01-routing-summary.json",
+    "sha256": "ab17c86b8da090d91afbbf12d1e12d2cde0371e0f3cc1ae3c1ff3f551c8fba3d",
+    "bytes": 1471
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-onnx-01/evidence.json",
+    "packaged_path": "runs/kokoro-onnx-01/evidence.json",
+    "sha256": "fcd5eaf8c77a82266d845cf79393c293ef1119ffc3e9350ba07f03e5720545f4",
+    "bytes": 538793
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-onnx-01/content.json",
+    "packaged_path": "runs/kokoro-onnx-01/content.json",
+    "sha256": "ef0c398ca085a1182294a8bb06e98e97fb36cf270d6cda4a1d44f6f259b7bc5a",
+    "bytes": 7707
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-onnx-01.exit",
+    "packaged_path": "provenance/kokoro-onnx-01.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-onnx-01-asr.exit",
+    "packaged_path": "provenance/kokoro-onnx-01-asr.exit",
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "bytes": 2
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-onnx-01-process-exit.json",
+    "packaged_path": "provenance/kokoro-onnx-01-process-exit.json",
+    "sha256": "97a73a340cf66797c222a500c44bb2133afc9ce5a9ce98ea17d7a9e09a914ada",
+    "bytes": 106
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-onnx-01-routing-summary.json",
+    "packaged_path": "provenance/kokoro-onnx-01-routing-summary.json",
+    "sha256": "22a3f39d9bbed2de988a76d2d884f4f20513daf69827a6d7aea5dd0946ab699f",
+    "bytes": 1379
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/host-before.json",
+    "packaged_path": "provenance/host-before.json",
+    "sha256": "538552bd105bc748a24a432c5c2e3d3517dfbbf28fe6f856b3973caf407ffae3",
+    "bytes": 889
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/wheel-identity.json",
+    "packaged_path": "provenance/wheel-identity.json",
+    "sha256": "482342cb88198db586ec5db8b5a4679ecb3d30d53209d04e42ce73e25f5c81e7",
+    "bytes": 291729
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-assets.json",
+    "packaged_path": "provenance/kokoro-assets.json",
+    "sha256": "7ad0e7a85f376b019f8f41cfea50161183ad5d59b312b1d40512b11b61b5bb85",
+    "bytes": 1127
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/kokoro-freeze.txt",
+    "packaged_path": "provenance/kokoro-freeze.txt",
+    "sha256": "1d6d67188450873a4f1849cd378fc4a2df56dff563fb647dea48975b0136b84d",
+    "bytes": 3288
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-freeze.txt",
+    "packaged_path": "provenance/chatterbox-freeze.txt",
+    "sha256": "6f68d3cc881282445c01a81b298474e0774dbbd10a68f1d11b2ba893cfda4826",
+    "bytes": 3243
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-assets.json",
+    "packaged_path": "provenance/chatterbox-assets.json",
+    "sha256": "d890d216149b4146d1c46b9d90fb7d2689177bc348cf281ec51f6d7f9d5cdfdc",
+    "bytes": 1748
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/synthetic-reference.json",
+    "packaged_path": "provenance/synthetic-reference.json",
+    "sha256": "c31a9a384b9103cf7dd9e4361765dd159b529e58d78e7d6d4f04fededd47dffe",
+    "bytes": 465
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/runtime-install-attempt1.log",
+    "packaged_path": "provenance/runtime-install-attempt1.log",
+    "sha256": "271a0be6353eb5f16bf9eec5c94a2438fb30cf6098347a5db60bef9d41f69a41",
+    "bytes": 828119
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/reused-assets-manifest.json",
+    "packaged_path": "provenance/reused-assets-manifest.json",
+    "sha256": "5f82259dcb15baf4cc6a65ffacb2a9c5db428b71fb29da2d34eb2c70306f8cdd",
+    "bytes": 1664
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-kokoro-cuda-01.sh",
+    "packaged_path": "recipes/run-kokoro-cuda-01.sh.txt",
+    "sha256": "cf84d44134510245c97e9aed42fc52b750359867bc70576819f332a773738e10",
+    "bytes": 687
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-kokoro-onnx-01.sh",
+    "packaged_path": "recipes/run-kokoro-onnx-01.sh.txt",
+    "sha256": "cc40ae52ae85c596e99f13f575b353a899bf26e891a9e5856021084bf0b4a956",
+    "bytes": 686
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/guard-asr.py",
+    "packaged_path": "recipes/guard-asr.py.txt",
+    "sha256": "9da74985979619edac7e1cfa8128189f623a73809a79914119603e9c778bfe11",
+    "bytes": 772
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/observe-routing.py",
+    "packaged_path": "recipes/observe-routing.py.txt",
+    "sha256": "1db6363a0d79281fdbc745dd0cdbaa90d9cc232c3eda3e0bdb8aced349c0a775",
+    "bytes": 446
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/setup-runtimes.sh",
+    "packaged_path": "recipes/setup-runtimes.sh.txt",
+    "sha256": "21e9230874210c3867093f040c05eddb748b44f1903e1a13791e20b12d6cd554",
+    "bytes": 1331
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/download-kokoro.py",
+    "packaged_path": "recipes/download-kokoro.py.txt",
+    "sha256": "e25e96876c4e1113343654b79118ba5e2081089cbd5e524c2c22f772d2097a4b",
+    "bytes": 910
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/download-chatterbox.py",
+    "packaged_path": "recipes/download-chatterbox.py.txt",
+    "sha256": "334a96a34f2a237e0903ae5ebcb7fbb5f1e3073edc896031020b8e1ef855c915",
+    "bytes": 1310
+  }
+]

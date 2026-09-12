@@ -1,0 +1,9 @@
+{
+  "os_release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.6\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+  "kernel": "6.12.107+deb13-amd64",
+  "nvidia": "NVIDIA GeForce RTX 3090, GPU-be33f524-cd83-d095-722b-a1fb790a61a3, 610.57.04, 24576 MiB, 24096 MiB",
+  "sinks": "55\talsa_output.usb-Logitech_Logi_USB_Headset_000000000000-00.analog-stereo\tPipeWire\ts16le 2ch 48000Hz\tSUSPENDED\n57\talsa_output.pci-0000_15_00.6.iec958-stereo\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n",
+  "default_sink": "alsa_output.pci-0000_15_00.6.iec958-stereo",
+  "user_config_exists": true,
+  "user_config_sha256": "a2adc30fd269e9e7a521f672801ee954332d009abf52800757857d4df8575e18"
+}

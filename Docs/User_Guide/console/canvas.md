@@ -5,6 +5,17 @@ a chart, calculator, form, diagram, small simulation, or polished single-page
 document. Ordinary prose and short code snippets are usually clearer in chat.
 Canvas accepts one complete, self-contained HTML document per revision.
 
+When a substantial visual or interaction would materially help, the assistant
+should first offer one in a short sentence describing the artifact and its
+benefit. It should wait for acceptance before loading detailed guides,
+delegating, or generating source. A decline keeps the work in chat without
+repeating the same offer; no answer does not count as acceptance. Explicit
+Canvas creation requests and requested edits already authorize that work, so
+they need no extra offer. Consent covers that artifact and bounded corrections;
+unrelated artifacts or unrequested redesigns need a new offer. If the context
+no longer establishes consent, the assistant should clarify. These are model
+instructions, not a host-enforced approval gate or a token-budget guarantee.
+
 Mermaid code fences offer the same **Open in Canvas** and **Open as new**
 actions. The diagram text is escaped into a text-only declaration in a complete
 HTML document. HTML fence identities remain stable when Mermaid fences appear
@@ -22,6 +33,27 @@ cycles, configuration directives, themes, HTML/Markdown labels and upstream
 Mermaid browser APIs. The assistant receives bounded guidance for the selected
 profile, including complete examples and shared limits. Historical revisions
 keep their exact profile, even when the creation default changes.
+
+## Optional `$canvas` skill
+
+Ordinary Canvas use does not require installing a skill. The built-in
+`canvas_guide` tool supplies focused product guidance after a request or accepted
+offer, loading only the topics needed for the work.
+
+To use the optional explicit shortcut, obtain the repository's
+[`Docs/Examples/skills/canvas` directory](../../Examples/skills/canvas/SKILL.md)
+and import that folder through **Library > Skills**. Review its content and
+approve trust there before invoking it; import alone does not grant trust.
+The example is not automatically installed or trusted and should not overwrite
+an existing customized skill without your choice.
+
+Use `$canvas Create a savings calculator` or include `$canvas` in a concrete
+request. It expands inline in the owning Console conversation, retaining that
+run's available tools without starting a child run. Bare `$canvas` asks for
+clarification before authoring. Missing, locked, or untrusted invocations follow
+normal skill availability and trust handling; a refused invocation must never
+be silently replaced with ordinary Canvas work. An embedded blocked mention
+stays literal with a notice. Changes to an imported skill require fresh review.
 
 ## Create or open a Canvas
 

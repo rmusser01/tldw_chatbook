@@ -652,3 +652,102 @@ def test_windows_relative_root_and_duplicate_identity_fail_closed(
 
     with pytest.raises(NotesSyncFilesystemError, match="duplicate_stable_identity"):
         filesystem.observe()
+
+
+def _snapshot(*, owner_user: int, owner_group: int, mode: int) -> sync_paths.SafeSyncBytes:
+    """One synthetic descriptor state, the only input `_metadata_issue` reads."""
+
+    return sync_paths.SafeSyncBytes(
+        relative_path=Path("note.md"),
+        content=b"body",
+        identity=sync_paths.SafeSyncFileIdentity(device=1, inode=2, link_count=1),
+        mode=mode,
+        size=4,
+        mtime_ns=0,
+        ctime_ns=0,
+        owner_user=owner_user,
+        owner_group=owner_group,
+        flags=0,
+        extended_attributes=(),
+        has_extended_acl=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("owner_user", "owner_group", "mode", "issue"),
+    [
+        # TASK-32244 AC#1: supplementary-group membership counts. This is the
+        # `elif owner_group in os.getgroups()` branch, which the chowned-file
+        # test could never reach -- chowning only the group leaves
+        # `owner_user == os.geteuid()` true, so that test measured S_IWUSR.
+        ("foreign", "supplementary", 0o664, None),
+        ("foreign", "supplementary", 0o644, "unsupported_metadata"),
+        # AC#1's other half: owner match, read by the owner bits.
+        ("self", "foreign", 0o644, None),
+        ("self", "foreign", 0o444, "unsupported_metadata"),
+        # Neither: another local user's file is refused however permissive its
+        # mode is. The mode bits are the weakest proxy here -- replacement is a
+        # rename governed by the directory -- and AC#1 asks only for owner
+        # match and supplementary-group membership.
+        ("foreign", "foreign", 0o666, "unsupported_metadata"),
+        ("foreign", "foreign", 0o777, "unsupported_metadata"),
+    ],
+)
+def test_admission_reads_ownership_not_the_process_primary_group(
+    owner_user: str, owner_group: str, mode: int, issue: str | None
+) -> None:
+    """TASK-32244: owner or supplementary group, and nothing wider."""
+
+    supplementary = next(
+        (gid for gid in os.getgroups() if gid != os.getegid()), None
+    )
+    if supplementary is None:
+        pytest.skip("caller belongs to a single group")
+    foreign_group = max(os.getgroups()) + 1000
+    assert foreign_group not in os.getgroups()
+    snapshot = _snapshot(
+        owner_user=os.geteuid() if owner_user == "self" else os.geteuid() + 1,
+        owner_group=(
+            supplementary if owner_group == "supplementary" else foreign_group
+        ),
+        mode=mode,
+    )
+
+    assert PosixNotesSyncFilesystem._metadata_issue(snapshot) == issue
+
+
+def test_writable_file_outside_the_process_primary_group_is_admitted(
+    tmp_path: Path,
+) -> None:
+    """TASK-32244: a real file whose group is not the process egid is admitted."""
+
+    foreign = next((gid for gid in os.getgroups() if gid != os.getegid()), None)
+    if foreign is None:
+        pytest.skip("caller belongs to a single group")
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "note.md"
+    target.write_bytes(b"body")
+    os.chown(target, -1, foreign)
+
+    with PosixNotesSyncFilesystem(root) as filesystem:
+        observed = filesystem.observe("note.md")
+
+    assert observed.observation.relative_path == "note.md"
+
+
+def test_file_the_caller_cannot_write_still_withholds_writable_admission(
+    tmp_path: Path,
+) -> None:
+    """TASK-32244: the relaxation must not admit a file sync cannot replace."""
+
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "note.md"
+    target.write_bytes(b"body")
+    target.chmod(0o444)
+
+    with PosixNotesSyncFilesystem(root) as filesystem:
+        with pytest.raises(NotesSyncFilesystemError, match="unsupported_metadata"):
+            filesystem.observe("note.md")
+        assert filesystem.observe("note.md", require_writable=False)

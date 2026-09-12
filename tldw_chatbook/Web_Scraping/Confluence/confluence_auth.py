@@ -214,11 +214,18 @@ class ConfluenceAuth:
             True if authentication is successful, False otherwise
         """
         try:
-            # Try to get current user info
-            with self._session_lock:
-                response = self.session.get(
-                    f"{self.base_url}/rest/api/user/current", timeout=10
-                )
+            # Try to get current user info. TASK-589: routes through the
+            # egress guard like every other request in this module -- a raw
+            # session.get here bypassed SSRF protection (including the
+            # metadata hard-block) on a caller-named base_url.
+            response = guarded_fetch_requests(
+                f"{self.base_url}/rest/api/user/current",
+                session=self.session,
+                max_bytes=MAX_FETCH_BYTES_PAGE,
+                trusted_origins=origin_set(self.base_url),
+                timeout=10,
+                headers={"Accept": "application/json"},
+            )
 
             if response.status_code == 200:
                 user_data = response.json()

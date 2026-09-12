@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## A process's No route to host can be an app privacy denial
+
+**TASK-32459, 2026-09-10.** curl and Python sockets to the user-authorized
+llama.cpp endpoint failed immediately, including outside the execution sandbox.
+The initial report incorrectly called the server unreachable from the Mac.
+The user could load its UI in Firefox. A route lookup found the target on en0;
+macOS nehelper logs explicitly said
+`Local network denied by preference for ChatGPT (com.openai.codex)`.
+
+Attribute connection evidence to the process that produced it. Check the
+route and app-specific network permission diagnostics before asking the user to
+repair a working server. Sandbox escalation does not grant macOS Local Network
+permission. Obtain approval to change that privacy setting; do not route around
+the denial through another app.
+
+The same sample initially constructed provider resolution manually, skipping
+native-tool capability discovery, and attempted an edit before confirming the
+temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
+committed, reachable source resolved those harness defects. Keep that headless
+bridge evidence separate from the full Console UI and durable persistence.
+
 ## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured
@@ -2427,6 +2448,15 @@ test suite's profile fixtures; a missing-dependency guard can itself initialize
 configuration before model loading begins. Receipts are retained in
 `Docs/QA/tts-macos-burndown-2026-09-09/review/`.
 
+**PR #2648, 2026-09-12 follow-up.** A stronger final check rejected nine
+installed profile-core files that were missing from the source census: their
+sources live under `packages/tldw_profile_core/src/`, not alongside the app.
+The wheel was correct; the observer's package-root assumption was not. Retaining
+the failed prerequisite, mapping both declared source roots and comparing complete
+sets produced a 2,350-file match in both environments before the final playback
+run. Read packaging source-root mappings before claiming whole-install identity;
+a matching subset of application hashes does not cover separately rooted packages.
+
 ## Discard recovery must survive a completed uncaptured turn
 
 PR #2561 review (2026-09-09) reproduced a missing combination after the
@@ -2521,7 +2551,6 @@ thinking. A live native calculator exchange on port 9099 retained its exact
 thinking in `/apply-template` and returned 221. Keep wire-field, rendered-prompt,
 and transcript-retention assertions separate; only claim the layer verified.
 
-
 ## Observe populated rails across cache expiry, not just initial layout
 
 **TASK-32311, 2026-09-10.** Portrait resize tests settled, but the user saw the
@@ -2552,6 +2581,117 @@ believing either result: a zero count in the tree you thought you were
 testing means you are testing the wrong tree, not that the code is missing.
 After any suspicious run, `pwd` plus `git -C <tree> status` is one second
 of insurance against a split-brain patch.
+
+## A performance claim gets re-measured at the commit it was made on, before you go hunting (TASK-32260, 2026-09-11)
+
+**What happened.** The critique reported Library opening in 12.6 s on a
+27-item profile against 2.7 s on an empty one — a 12x gap, cause untraced.
+Rebuilding the profile with the same seed script and driving the same open
+at 235x52 gave 0.68 s to the painted shell and 1.01 s fully settled. Rather
+than argue about the machine, I added a detached worktree at the critique's
+OWN base commit (`git worktree add --detach ... e6cb464239`), re-seeded a
+profile with THAT tree's code, and measured the same open: 1.24 s. Two
+numbers, one branch apart, and the reported gap in neither — which
+distinguishes "already fixed by something in the 509 intervening commits"
+from "never reproducible", and those call for completely different work.
+The likeliest real cause was the measuring session: the same crit-base tree
+booted in 9.1 s cold against 4.1 s warm, and that review ran several app
+instances at once.
+
+**What to do.** Before optimising anything from a reported number, measure
+it (a) on your branch and (b) at the commit the report names, with the same
+fixture. A detached worktree plus a re-seed is ten minutes. Then ship the
+pin the report should have had: a budget test on a fixture that HAS content,
+with an assertion that the content really reached the screen — an
+open-latency test on an empty profile is how a 12x claim stands for a week.
+
+## A peer's ad-hoc script in the shared scratch dir shadowed a real package (wave-3, 2026-09-11)
+
+**What happened.** Several wave agents shared one scratch directory. A peer
+had written `click.py` and `find.py` there as tmux helpers. Running my own
+probe from that cwd made `import click` load the peer's script, which read
+`sys.argv[1]` and exited — so the app probe died with a bare `NOT FOUND` on
+stderr and exit 1, no traceback, and it only misbehaved when PYTHONPATH
+pointed at my worktree, which sent me looking for a sitecustomize that did
+not exist.
+
+**The same hazard bit the test baseline, harder.** The wave also shared a
+detached `devbase` worktree at the merge-base, and a peer had left it DIRTY
+(a modified `test_library_notes_wave_list.py` plus an untracked new test
+file). My branch-vs-base FAILED-set diff for that one file was therefore
+comparing against a peer's edits, and it read as "base has a failure my
+branch does not" — i.e. as though my change had fixed something. It had
+not; the failing test only existed in the peer's copy. `git status` in the
+"base" worktree took two seconds and dissolved it.
+
+**What to do.** Run scratch scripts from a directory only you write to
+(`<scratch>/<group>-scripts/`), never from the shared wave root. Create
+your OWN detached base worktree for test comparisons and remove it when
+done — never reuse a shared one, and `git status` it before trusting a
+single number out of it. When a Python process dies with output that
+belongs to no code you can find, list `*.py` in the cwd before anything
+else: `sys.path[0]` is the cwd, and a one-word filename there outranks
+site-packages.
+
+## A blank modal in a tmux capture was two modals, not a broken picker (task-32250 wave, 2026-09-11)
+
+**What happened.** Driving Library ▸ Notes ▸ Add from files ▸ Import once, the
+`FileOpen` picker rendered as an empty box: a border fragment down the right of
+the work pane and nothing inside it. Three sessions reproduced it, and an
+isolated `run_test` harness — with and without the app stylesheet — laid the
+dialog out perfectly, which made it look like an app-level regression. It was
+not. The drive script was clicking a Textual `Button` twice (focus, then
+activate) and THEN pressing Enter, so the same action fired twice and pushed
+two modals; what the capture showed was one dialog painted over another. With
+one click and one Enter, plus a settle pause, the picker rendered normally,
+breadcrumbs and all — about forty minutes after it was written off as broken.
+
+**What to do.** In this app a click on a Button focuses it and a second click
+or Enter activates it, so "click twice" and "click then Enter" are two
+presses, not one. Before concluding a widget is broken, check the screen for a
+SECOND instance of what you just opened, and confirm the same fragment
+survives a single, unambiguous activation. An isolated harness that renders
+the widget fine is evidence about the driver, not about the widget.
+
+## Helper scripts in a shared wave scratchpad get overwritten by peers (task-32250 wave, 2026-09-11)
+
+**What happened.** I wrote a tmux driver at `scratchpad/wave3/drive.py` and
+used it for a dozen captures. A later call failed with `NameError: name 'cap'
+is not defined` — a peer implementer working the same wave had written their
+own `drive.py` at the same path, and my imports were silently resolving to
+theirs. The failure looked like a Python import bug, not a file swap.
+
+**What to do.** The wave directory is shared by every implementer in the wave.
+Put helper scripts in a per-task subdirectory (`scratchpad/wave3/tools-<group>/`)
+and import them by that absolute path. A `NameError` for a symbol you know you
+defined means you are reading a different file, the same way an
+`AttributeError` for a symbol your feature defines means the wrong tree.
+
+## A provider can satisfy the response envelope and still ignore the task (2026-09-11)
+
+**What happened.** Live-verifying a new default "Improve My Prompt" optimizer
+template (four-section Situation/Task/Objective/Knowledge structure), the
+end-to-end flow looked green: real DeepSeek call, valid `prompt_rewrite` JSON,
+draft replaced, modal closed, Undo armed. But the rewritten prompt was a lazy
+near-copy ("write a short poem about tea" -> "Write a short poem about tea.").
+The suite was green; the strict-JSON envelope parse was green; the improvement
+was useless. `console_auxiliary_attempts` was empty, so the DB could not
+confirm the call — only replaying the EXACT app-built payload via curl
+reproduced it. Both deepseek-chat and deepseek-reasoner returned the near-copy.
+The same model given the template as a plain user message produced the full
+four sections, so the packaging (system role + untrusted-JSON payload +
+envelope instruction LAST) was the cause: the terminal "JSON object only"
+instruction is what the model recency-anchors on. Appending a final
+task-re-anchor line ("Now apply the full transformation defined above... never
+a minor edit, summary, or near-copy") restored full compliance on both models.
+
+**What to do.** For structured-output optimizer prompts, verify content
+quality, not just envelope validity: a schema-conformant response can still
+be a no-op. Put the output-contract instruction BEFORE the final task
+directive, and end the system prompt with a recency anchor that names the
+required output shape and forbids near-copies. When the DB has no attempt
+row, replay the exact request payload against the provider before believing
+any UI state.
 
 ## A new menu label can ship pre-truncated — only the running app says so (task-32146, 2026-09-11)
 

@@ -909,9 +909,12 @@ def test_resolve_by_key_non_mapping_tool_entry_does_not_raise():
 
 
 def test_cycle_ui_state_full_loop():
-    assert cycle_ui_state(None) == "allow"
-    assert cycle_ui_state("allow") == "ask"
-    assert cycle_ui_state("ask") == "deny"
+    # Wave B (2026-09-11 UX program): the first press from Inherit lands
+    # on Ask, not Allow -- the most permissive state is never the first
+    # stop from the default posture.
+    assert cycle_ui_state(None) == "ask"
+    assert cycle_ui_state("ask") == "allow"
+    assert cycle_ui_state("allow") == "deny"
     assert cycle_ui_state("deny") is None
 
 

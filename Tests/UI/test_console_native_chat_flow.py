@@ -7099,7 +7099,7 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
         assert "Get started" in console_text
         assert "Connect a provider (API key or local server)" in console_text
         assert "Send your first message" in console_text
-        assert "Attach context" in console_text
+        assert "Context rail" in console_text
         assert "Search Library" in console_text
 
 

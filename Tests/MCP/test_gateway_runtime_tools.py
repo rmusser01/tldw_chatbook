@@ -41,6 +41,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
+    LOCAL_USER_DENY_REFUSAL,
 )
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.MCP import local_server_tools
@@ -536,6 +537,15 @@ LOCAL_FAILURES = [
         "tool_permission_denied",
         "This local tool is disabled by operator policy.",
         id="operator-deny",
+    ),
+    # Qodo #7: the operator's own Deny split off LOCAL_DENY_REFUSAL. It must
+    # still map to a permission denial here, not degrade to the generic
+    # local-tool failure the remote caller cannot act on.
+    pytest.param(
+        LOCAL_USER_DENY_REFUSAL,
+        "tool_permission_denied",
+        "This local tool was denied by the operator.",
+        id="operator-card-deny",
     ),
     pytest.param(
         LOCAL_KILL_SWITCH_REFUSAL,

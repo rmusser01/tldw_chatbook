@@ -21,6 +21,7 @@ class WorkspaceTreeConversation:
     selected: bool
     run_marker: str
     star_enabled: bool = True
+    progress_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,7 @@ def build_workspace_tree_state(
     membership_unknown: Mapping[str, bool] | None = None,
     active_workspace_id: str | None = None,
     query: str = "",
+    progress_counts: Mapping[str, int] | None = None,
 ) -> tuple[WorkspaceTreeWorkspace, ...]:
     """Build the named-workspace projection without I/O or UI dependencies.
 
@@ -60,6 +62,7 @@ def build_workspace_tree_state(
         membership_unknown: Whether workspace membership is incomplete by ID.
         active_workspace_id: Currently active workspace ID, if any.
         query: Case-insensitive workspace or conversation-title filter.
+        progress_counts: Pending reports keyed by exact live native session ID.
 
     Returns:
         Named workspace nodes with deterministic conversation ordering.
@@ -124,6 +127,9 @@ def build_workspace_tree_state(
                         selected=bool(row.selected),
                         run_marker=str(row.run_marker or ""),
                         star_enabled=bool(row.star_enabled),
+                        progress_count=max(
+                            0, int((progress_counts or {}).get(row.native_session_id or "", 0))
+                        ),
                     )
                     for row in sorted(
                         workspace_rows,

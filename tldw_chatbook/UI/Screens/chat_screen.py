@@ -307,6 +307,7 @@ from ...Chat.console_command_grammar import (
 )
 from ...MCP.permission_prompt_reducer import format_permission_prompt_report
 from ...Chat.console_prefill import (
+    armed_prefill_row_value,
     ACTION_CLEAR,
     ACTION_ERROR,
     ACTION_ONE_SHOT,
@@ -322,10 +323,12 @@ from ...Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunStatus,
     FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
     ConsoleWorkspaceContext,
+    console_pending_round_copy_for,
     derive_console_session_title,
 )
 from ...UI.character_display_text import sanitize_character_display_label
@@ -468,6 +471,7 @@ from ...Chat.console_rail_state import (
     resolve_console_rail_priority,
     serialize_console_rail_stored_preferences,
     serialize_console_rail_updated_preferences,
+    console_rail_right_open_explicit,
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -803,6 +807,8 @@ CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # scan). Network work -- the `gh` PR/checks fetch -- is a separate tier with
 # its own 60s TTL and never rides this tick; see
 # `UI/Console_Modules/environment.py`.
+#: TASK-32327: how long the responsive rail-collapse notice stays up.
+CONSOLE_RAIL_COLLAPSE_NOTICE_TIMEOUT_SECONDS = 6
 CONSOLE_ENVIRONMENT_POLL_SECONDS = 10.0
 # DOM ids of the Inspect-rail `ConsoleInspectorSection`s whose rows are
 # focus-restorable (`UI/Console_Modules/right_rail.py`), keyed by the
@@ -883,13 +889,27 @@ CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
 CONSOLE_PANE_COLLAPSED_STAND_IN = {
     "console-right-rail": "console-inspector-rail-handle",
 }
+#: TASK-32321: each rail's FIRST target is a content control, not the
+#: collapse button -- F6 used to land on the one control whose Enter hides
+#: the pane the user just entered (verified live: one F6 + one reflexive
+#: Enter collapsed the whole rail). The collapse buttons stay as fallbacks
+#: one stop later. Right rail follows TASK-24703's alt+i reasoning
+#: (authority summary first); left rail targets the pinned Terminal action.
 CONSOLE_FOCUS_TARGETS_BY_PANE = {
-    "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
+    "console-left-rail": (
+        "console-terminal-open",
+        "console-context-rail-collapse",
+        "console-left-rail",
+    ),
     "console-transcript-surface": (
         "console-native-transcript",
         "console-transcript-surface",
     ),
-    "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
+    "console-right-rail": (
+        "console-send-authority-summary",
+        "console-inspector-rail-collapse",
+        "console-right-rail",
+    ),
     "console-native-composer": ("console-native-composer",),
 }
 #: TASK-2154.11 (AC-02): Tab/Shift+Tab cycle WITHIN the focused widget's
@@ -1168,6 +1188,11 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     # is only discoverable by reading the source. This is the footer/F1
     # vocabulary the Console teaches from.
     ("Alt+I", "inspect"),
+    # task-32277: same reasoning as Alt+I directly above -- the approval
+    # card had no key binding at all before this, so its accelerator is
+    # only discoverable if the footer teaches it.
+    ("Alt+A", "approval"),
+    ("Alt+C", "context rail"),
     ("Ctrl+P", "palette"),
 )
 
@@ -1180,7 +1205,12 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
 #: toggle already gets for the same reason.
 CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
     ("Alt+I", "inspect"),
-    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Alt+I"),
+    ("Alt+C", "context rail"),
+    *(
+        pair
+        for pair in CONSOLE_WORKBENCH_SHORTCUTS
+        if pair[0] not in ("Alt+I", "Alt+C")
+    ),
 )
 
 #: TASK-2154.8 (FR-06): while the first-run setup modal locks the composer,
@@ -1222,6 +1252,12 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             # precisely where the rail's edge handle is hidden and Alt+I is
             # the only route in. F1 is the surface that never truncates.
             ("Alt+I", "open and focus the Inspect rail"),
+            # task-32277 review (Minor, promoted): same TASK-24704 gap class
+            # -- the footer advertises Alt+A but this never-truncating
+            # reference didn't.
+            ("Alt+A", "Review pending approval"),
+            ("Alt+C", "open or close the Context rail"),
+            ("Handle badges", "'N appr' = N approvals pending; 'art' = artifact ready"),
             ("Escape", "return to the composer"),
         ),
     ),
@@ -1319,6 +1355,20 @@ CONSOLE_FLEET_MARKER_LEGEND = (
     "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
     "· ◈ sub-agent ended in background "
     "— clears once you visit that tab. Qn is the unsent prompt count."
+)
+
+#: Qodo #5: the decision cards a ◆-marked session can be waiting on, in the
+#: same kind precedence `console_chat_models.console_pending_round_copy`
+#: uses for the copy -- approval, then question, then the confirmations --
+#: so the card the user is sent to is the one the run chip named.
+#: `worktree_merge` is the fifth `KIND_SETTER_ATTRS` kind and has no entry:
+#: `set_pending_worktree_merge` is never wired on this screen, so no such
+#: card is ever mounted here. Add its selector the day it is.
+CONSOLE_DECISION_CARD_SELECTORS: tuple[str, ...] = (
+    "#chat-approval-card",
+    "#chat-question-card",
+    "#chat-skill-install-card",
+    "#chat-skill-script-card",
 )
 
 
@@ -1898,6 +1948,19 @@ class ChatScreen(BaseAppScreen):
         # this binding is the way back, and it is why it must not itself be
         # gated on the rail being displayed.
         Binding("alt+i", "toggle_console_inspector_rail", "Inspect", show=True),
+        # task-32277: Tab never reached the approval card from the composer
+        # (12 presses cycled the header action bar instead), and the only
+        # other entry points -- the "Approvals: N pending" status chip and
+        # the inspector's below-the-fold Review button -- both disappear at
+        # common widths. This routes through the same seam as the
+        # inspector's button (`_route_console_pending_approval_focus`).
+        Binding("alt+a", "review_pending_approval", "Approval", show=True),
+        # TASK-32320: the left rail's own toggle -- alt+c mirrors alt+i
+        # (C for Context) with the same not-gated-on-display and
+        # focus-into-the-rail contract. 'c' as a bare htop key would be
+        # swallowed by the focused transcript's own bindings, so it rides
+        # the alt chord like its sibling.
+        Binding("alt+c", "toggle_console_context_rail", "Context", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         # ctrl+shift+h, not alt+h: on macOS terminals "alt" is the Option
         # key, which types a composed character (˙) unless the profile
@@ -2383,25 +2446,16 @@ class ChatScreen(BaseAppScreen):
     def on_console_inspector_section_view_all(
         self, message: ConsoleInspectorSection.ViewAllRequested
     ) -> None:
-        """Force a full (both-tier) Environment refresh from the "Refresh" tail.
+        """Route the Agents history action or explicitly refresh Environment.
 
-        Only the Environment section mounts a tail today, and its label is
-        "Refresh" (task-9), so this is the panel's explicit re-fetch: it
-        busts the 60s ``gh`` TTL, which is the entire point of pressing it.
-
-        TASK-31664 AC#3 (round-1 review I1/I2): the button flips to
-        "Refreshing…" only if the controller actually dispatched something
-        (checked AFTER the call, via ``pending_ack_tiers`` -- never armed
-        unconditionally BEFORE it, which is what let the ack wedge forever
-        on an ``UNKNOWN_ROOT``/rail-closed no-op call that would never
-        land). It stays up until every tier the press dispatched has
-        landed -- not just the fast local one -- so the ~12 measured
-        seconds a fresh `gh` fetch can take are never indistinguishable
-        from a dead control. ``_land_console_environment`` clears it once
-        ``pending_ack_tiers`` is empty. Never armed here by the 10s
-        automatic poll (which never sets ``force_net``), so that cadence
-        never flickers it.
+        Environment refresh bypasses the network TTL. Its busy state starts
+        only after a refresh dispatch and ends when all dispatched tiers land;
+        automatic polling does not change that button acknowledgement.
         """
+        if message.section_id == CONSOLE_AGENT_FLEET_SECTION_ID:
+            message.stop()
+            self._agent.open_fleet_history()
+            return
         if message.section_id != ENVIRONMENT_SECTION_ID:
             return
         message.stop()
@@ -2538,6 +2592,11 @@ class ChatScreen(BaseAppScreen):
                 self.query_one(ConsoleAgentSteeringBar).clear_draft()
             except Exception:  # noqa: BLE001 -- a mid-recompose bar is fine
                 pass
+        else:
+            try:
+                self.query_one(ConsoleAgentSteeringBar).show_delivery_refusal()
+            except Exception:  # noqa: BLE001 -- the bar may have unmounted
+                pass
 
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
@@ -2559,6 +2618,8 @@ class ChatScreen(BaseAppScreen):
         self._set_console_rail_preference(
             left_open=preference_changes["left_open"],
             right_open=preference_changes.get("right_open"),
+            # Derived conflict resolution, not an Inspector gesture.
+            explicit_right_toggle=False,
         )
 
     @on(Button.Pressed, "#console-inspector-rail-collapse")
@@ -2616,6 +2677,58 @@ class ChatScreen(BaseAppScreen):
         # destructive, and is the thing they came to read. Falls back to the
         # pane's normal targets if it is not mounted.
         self.call_after_refresh(self._focus_opened_console_inspector_rail)
+
+    def action_toggle_console_context_rail(self) -> None:
+        """Toggle the Context rail; mirror alt+i's contract (TASK-32320).
+
+        Qodo 2614 #3/#4 fixes, and why direction is VISIBILITY-derived:
+
+        * (#3) Opening routes through ``console_context_reveal_preferences``
+          like the handle and control-bar routes do, so a compact-band
+          Inspector conflict is actually resolved instead of silently
+          winning against the rail the user just asked for.
+        * (#4) Direction comes from EFFECTIVE visibility, not raw widget
+          display nor the stored preference alone. Preference-derived
+          direction silently breaks the conflict case (a priority-collapsed
+          rail with an open preference would record a CLOSE on a press
+          that meant "show me"); display-derived direction could not
+          record anything while force-hidden. The visibility contract:
+          Alt+C SHOWS the rail (reveal path -- write-through records the
+          explicit marker per TASK-2154.2 even when the value is already
+          True, and conflicts are resolved); Alt+C HIDES it when shown
+          (preference False). While force-hidden below the width budget
+          the press is the way BACK (TASK-24604's alt+i contract), and
+          the preference flips when the rail is visible.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        available_columns = self._console_rail_available_columns()
+        rail_state = self._current_console_rail_state(
+            available_columns=available_columns
+        )
+        opening = not rail_state.left_open
+        if not opening:
+            self._set_console_rail_preference(left_open=False)
+            self._focus_console_workbench_target("console-native-composer")
+            return
+        preference_changes = console_context_reveal_preferences(
+            rail_state, available_columns
+        )
+        # The right_open change (when present) is a DERIVED conflict
+        # resolution, not an Inspector gesture -- see the serializer.
+        self._set_console_rail_preference(
+            left_open=preference_changes["left_open"],
+            right_open=preference_changes.get("right_open"),
+            explicit_right_toggle=False,
+        )
+        # The rail is already composed (it defaults open and only display
+        # flips), so focus can land immediately; still deferred one refresh
+        # so a just-reopened rail has mounted its targets.
+        self.call_after_refresh(self._focus_opened_console_context_rail)
+
+    def _focus_opened_console_context_rail(self) -> None:
+        """Place the caret on the left rail's first non-destructive target."""
+        self._focus_console_workbench_target("console-left-rail")
 
     def _focus_opened_console_inspector_rail(self) -> None:
         """Place the caret on the rail's most useful non-destructive target."""
@@ -4667,6 +4780,8 @@ class ChatScreen(BaseAppScreen):
             self._set_console_rail_preference(
                 left_open=preference_changes["left_open"],
                 right_open=preference_changes.get("right_open"),
+                    # Derived conflict resolution, not an Inspector gesture.
+                    explicit_right_toggle=False,
             )
         elif action_id == "run-library-rag":
             self._open_console_library_search()
@@ -5034,7 +5149,29 @@ class ChatScreen(BaseAppScreen):
         shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
         if self._console_inspector_active():
             shortcuts = (("n/p", "Sections"), *shortcuts)
+        # TASK-32322: with focus inside a rail, Tab is region-locked -- the
+        # exits are F6 and Esc, taught at the point of need. Preceded by
+        # nothing (prepended like the others: footer degradation drops
+        # hints from the END).
+        if self._console_rail_focus_active():
+            shortcuts = (("Esc", "composer · F6 panes"), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_rail_focus_active(self) -> bool:
+        """Return whether live focus is inside either mounted rail (TASK-32322)."""
+        from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+        focused = self.app.focused
+        if not isinstance(focused, Widget):
+            return False
+        for rail_id in ("console-left-rail", "console-right-rail"):
+            try:
+                rail = self.query_one(f"#{rail_id}")
+            except (NoMatches, QueryError):
+                continue
+            if focused is rail or rail in focused.ancestors:
+                return True
+        return False
 
     def _console_inspector_active(self) -> bool:
         """Return whether live focus is the Inspector rail or a descendant."""
@@ -7272,6 +7409,9 @@ class ChatScreen(BaseAppScreen):
         # the (expensive) effective rail state only happens when the band
         # actually changes, not on every pixel of a resize drag.
         self._last_console_workspace_width_band: str | None = None
+        #: TASK-32327: rails whose responsive-collapse notice has
+        #: fired this session (once per rail, never per resize tick).
+        self._console_rail_collapse_notified: set[str] = set()
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
         # Fleet-UX expert review F2 (task-1232): one-time coach-mark shown
@@ -9035,6 +9175,12 @@ class ChatScreen(BaseAppScreen):
         if row_id == ENV_ROW_COMMIT_PUSH:
             self._open_change_review_current_mode()
             return
+        if row_id == "env-file-more":
+            # TASK-32333: the Changes block's overflow tail ("… N more —
+            # Review opens all") opens the same working-tree view as its
+            # neighbours -- destination follows the surface that offers it.
+            self._open_change_review_current_mode()
+            return
         if row_id == ENV_ROW_PR_OPEN and snapshot.pr.url:
             try:
                 self.app.open_url(snapshot.pr.url)
@@ -9302,7 +9448,7 @@ class ChatScreen(BaseAppScreen):
             fleet_previous_summary = fleet_section.summary
             fleet_section.sync_state(fleet_section_state)
             fleet_section.styles.display = (
-                "block" if fleet_section_state.rows else "none"
+                "block" if fleet_section_state.rows or fleet_section_state.summary else "none"
             )
             if fleet_focus_row_id is not None and (
                 tuple(fleet_section_state.rows) != tuple(fleet_previous_rows)
@@ -13100,7 +13246,11 @@ class ChatScreen(BaseAppScreen):
             # were using to show one they never asked for. Between 118 and
             # 128 columns that swap happened on a single column of resize.
             return False
-        if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
+        if console_rail_right_open_explicit(stored_preferences):
+            # TASK-32328: only an EXPLICIT Inspector toggle kills the
+            # auto-open band. Key presence alone used to -- but implicit
+            # writers store ``right_open`` too, permanently disabling the
+            # heuristic for users who never chose.
             return False
         if (
             available_columns is None
@@ -13466,6 +13616,7 @@ class ChatScreen(BaseAppScreen):
         right_open: bool | None = None,
         section_updates: Mapping[str, bool] | None = None,
         notify_on_failure: bool = True,
+        explicit_right_toggle: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
         if left_open is not None or right_open is not None or "character" in (section_updates or {}):
@@ -13528,6 +13679,7 @@ class ChatScreen(BaseAppScreen):
                 left_open=left_open,
                 right_open=right_open,
                 character_toggled=character_toggled,
+                explicit_right_toggle=explicit_right_toggle,
             )
             rail_state_config[preference_key.value] = serialized
             self._save_console_rail_preferences(
@@ -14305,7 +14457,8 @@ class ChatScreen(BaseAppScreen):
         if one_shot:
             prefill_rows.append(
                 ConsoleDisplayRow(
-                    "Prefill (next send only)", describe_prefill_preview(one_shot)
+                    "Prefill (next send only)",
+                    armed_prefill_row_value(one_shot),
                 )
             )
         session_settings = active_session.settings
@@ -14314,7 +14467,7 @@ class ChatScreen(BaseAppScreen):
         )
         if pinned:
             prefill_rows.append(
-                ConsoleDisplayRow("Prefill (pinned)", describe_prefill_preview(pinned))
+                ConsoleDisplayRow("Prefill (pinned)", armed_prefill_row_value(pinned))
             )
         return (
             ConsoleDisplayRow(
@@ -14586,9 +14739,60 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _console_provider_blocker_copy(self) -> str:
-        """Return concise Console recovery copy for provider/model setup gaps."""
+        """Return concise Console recovery copy for provider/model setup gaps.
+
+        task-32345: ``wait_for_active_run`` means "a turn is already in
+        flight", not a provider/model misconfiguration -- the same
+        distinction ``_console_setup_blocked_reason``/``_console_send_
+        blocked_reason`` already carve out below. Left in, an otherwise
+        fully-configured provider read "Setup: Provider configuration
+        required" for the entire duration of EVERY active run, including
+        one parked on a healthy pending approval -- which then made the
+        pinned authority line's ``recovery_required`` check (any "Next
+        action" row present) read "Recovery required" over "Waiting for
+        approval". Four call sites read this method; each was re-verified
+        against this narrower meaning:
+
+        - ``_build_console_inspector_state`` (~L13873): the Setup/Blocked-
+          impact/Next-action Inspector rows -- the case above. Now absent
+          during a merely-active run, present only for a real gap.
+        - ``_build_console_workbench_state`` (~L14511): feeds
+          ``provider_status`` (the Provider/Model mode chips' "blocked"/
+          "ready") and, via ``can_send = ... and not blocker``,
+          ``send_available``. ``send_available`` is UNCHANGED by this
+          narrowing: ``can_send`` is independently gated by
+          ``run_allows_send`` (``run_state.is_send_allowed``), whose
+          False-set is the EXACT complement of ``CONSOLE_ACTIVE_RUN_
+          STATUSES`` (both derived from the same 9-member ``ConsoleRun
+          Status``), so ``can_send`` -- and therefore ``send_available`` --
+          was already ``False`` for every active run independent of this
+          copy; only ``provider_status`` changes, from an inaccurate
+          "blocked" to "ready" during a healthy active run (the header's
+          own ``status`` field already special-cased ``run_active`` over
+          ``blocker`` for the identical reason, TASK-347 -- the mode chips
+          had no such override and inherited the same bug this task fixes
+          elsewhere).
+        - ``_sync_console_transcript_guidance`` (~L14692): feeds the EMPTY-
+          transcript setup card/modal only. ``build_console_setup_card_
+          state`` returns ``quiet`` (ignoring this copy entirely) whenever
+          ``has_messages`` is true, and a run cannot become active before
+          the turn's own user message is persisted -- so this consumer
+          never observes a non-empty value from this method during an
+          active run either way; unaffected in practice.
+        - ``UI/Console_Modules/prompts.py`` (~L1208, Improve-prompt
+          ``unavailable_reason``): Improve calls the provider gateway on
+          its OWN, independent of the main turn's stream, so it must stay
+          unavailable while a run is active regardless of provider health.
+          That gate no longer reads this method at all -- it checks
+          ``_console_run_active()`` directly (``console_run_active``, a
+          dedicated constructor dependency on ``ConsolePromptsController``)
+          so its behavior does not depend on this copy's definition.
+        """
         _settings, readiness = self._active_console_settings_readiness()
-        if readiness.operability == "ready_to_send":
+        if (
+            readiness.operability == "ready_to_send"
+            or readiness.recovery_action == "wait_for_active_run"
+        ):
             return ""
         return build_console_readiness_presentation(readiness).detail
 
@@ -15795,6 +15999,9 @@ class ChatScreen(BaseAppScreen):
                     agent_cancel_all_visible=(
                         self._agent._console_agent_cancel_all_visible()
                     ),
+                    open_agent_progress=lambda: self._agent.open_fleet_progress(),
+                    agent_progress_state=lambda: self._agent.progress_state(),
+                    refresh_progress_navigation=lambda: self._sync_console_workspace_context(),
                     show_character_section=show_character_avatar,
                     character_context_controller=self._character_context,
                     character_avatar_widget_builder=character_avatar_widget_builder,
@@ -16910,10 +17117,10 @@ class ChatScreen(BaseAppScreen):
 
     async def _consume_pending_conversation_resume(self) -> None:
         """Consume recovery only while Console owns the visible screen."""
-        if self.app.screen is not self:
+        handoffs = self.app_instance.pending_handoffs
+        if self.app.screen is not self or not handoffs.has_pending(HandoffChannel.CONSOLE_CONVERSATION_RESUME):
             return
         from ..Console_Modules.archive import consume_conversation_resume
-
         await consume_conversation_resume(self)
 
     @on(Button.Pressed, "#console-archive-chat")
@@ -17828,6 +18035,13 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_transcript_guidance()
 
     def _native_run_status_copy(self) -> str:
+        """Return the viewed session's run-status copy for the hidden compat mode bar.
+
+        task-32345: kept in agreement with ``_console_active_run_copy``'s
+        (the VISIBLE run chip's) pending-approval override -- two copies of
+        the same fact must never disagree, even though only one of them is
+        ever seen.
+        """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
         image_edit = (
@@ -17847,6 +18061,8 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state
         if run_state.status is ConsoleRunStatus.IDLE:
             return ""
+        if controller.has_pending_approval_round(session_id or ""):
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
     def _console_active_run_copy(self) -> str:
@@ -17857,6 +18073,13 @@ class ChatScreen(BaseAppScreen):
         this is gated on ``CONSOLE_ACTIVE_RUN_STATUSES``, the run chip's
         visibility contract. Falls back to the status value when a
         transition set no visible copy.
+
+        task-32345: ``run_state.visible_copy`` is a snapshot taken once at
+        dispatch start ("Agent running.") and never updated mid-turn -- an
+        approval round parking partway through leaves it stale. Checked
+        here, on every read, instead: the controller's own round registry
+        (``has_pending_approval_round``), not the run state, is the live
+        truth for "is a card waiting on the user right now".
         """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
@@ -17875,6 +18098,23 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return ""
+        # `has_pending_approval_round` reads the controller's round
+        # registry, which `run_round` (console_interrupt_rounds.py) feeds
+        # for ALL FIVE interrupt-round kinds -- approval, skill_install,
+        # skill_script, worktree_merge, and question -- not just MCP
+        # approvals. `_console_pending_approval_count` / `ConsoleInspector
+        # State.pending_approval_count` (console_display_state.py) instead
+        # count the viewed session's mounted APPROVAL card only.
+        #
+        # Qodo #4 (the rider this comment used to describe, now done): that
+        # generic predicate answers "is anything waiting" -- right for the
+        # gate above, wrong for the copy -- so a question card used to
+        # render "Waiting for your approval" while the inspector correctly
+        # showed zero pending approvals. The KIND now picks the sentence;
+        # an approval among the outstanding rounds still wins, which is
+        # what keeps this and the inspector's count agreeing.
+        if controller.has_pending_approval_round(session_id or ""):
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
     def _sync_console_mode_bar(self) -> None:
@@ -18127,8 +18367,8 @@ class ChatScreen(BaseAppScreen):
         if controller is None:
             return False
         wake = getattr(controller, "fleet_wake", None)
-        delivering_read = getattr(wake, "delivering_conversation_id", None)
-        wake_delivering = callable(delivering_read) and delivering_read() is not None
+        delivering_read = getattr(wake, "delivering_conversation_ids", None)
+        wake_delivering = callable(delivering_read) and bool(delivering_read())
         review_coordinator = self._console_runtime().change_review_coordinator
         review_pending = (
             review_coordinator.publication_signal.snapshot().pending > 0
@@ -19593,15 +19833,12 @@ class ChatScreen(BaseAppScreen):
 
                 self.call_after_refresh(_restore_stop_button)
 
-    @on(Button.Pressed, "#console-attach-context")
-    async def handle_console_attach_context(self, event: Button.Pressed) -> None:
-        """Open the native Console file picker and stage the selected attachment."""
-        await self._handle_console_attach_context(event)
-
-    @on(Button.Pressed, "#console-staged-context-attach")
-    async def handle_console_staged_context_attach(self, event: Button.Pressed) -> None:
-        """Open the native Console file picker from the staged-context empty state."""
-        await self._handle_console_attach_context(event)
+    # TASK-32337: the two ``@on(Button.Pressed)`` handlers that used to
+    # live here ("#console-attach-context" and
+    # "#console-staged-context-attach") are removed -- no widget mounts
+    # either id anywhere (the tray's Attach button was removed by its
+    # redesign, and the file-picker flow is reached through the composer
+    # menu's "Attach file" entry, which routes via ComposerMenuAction).
 
     async def _handle_console_attach_context(
         self, event: Button.Pressed | None = None
@@ -20164,53 +20401,115 @@ class ChatScreen(BaseAppScreen):
         if card.is_mounted:
             card.finish_undo_all(success=success)
 
-    @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
-    def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
-        """Focus the pending approval card from the Console inspector seam."""
-        event.stop()
-        if self._console_pending_approval_count() <= 0:
-            # PRD A4: the chip's focus action is how keyboard-only users
-            # reach a question card that deliberately never steals focus.
-            question = next(
-                (c for c in self.query("#chat-question-card") if c.display), None
+    def _route_console_pending_approval_focus(
+        self, *, notify_missing: bool = True
+    ) -> bool:
+        """Focus the pending decision card, or notify none is pending.
+
+        task-32277: the single seam every approval-review entry point
+        routes through -- the inspector's Review approval button, the
+        Alt+A binding, and a tab-strip click on a session wearing the
+        NEEDS_APPROVAL (``◆``) marker. Moved out of
+        ``handle_console_inspector_review_approval`` verbatim so a third
+        (or fourth) caller cannot drift from it.
+
+        Qodo #5: that ``◆`` marker is worn for ALL FIVE interrupt-round
+        kinds (``console_interrupt_rounds.KIND_SETTER_ATTRS``), but this
+        knew only approvals and questions -- a pending skill-install or
+        skill-script confirm reached the "no approval" warning instead of
+        its own mounted card. The scan now walks every decision card in the
+        same kind precedence the copy uses (approval first, then question,
+        then the confirmations), so it cannot disagree with what the run
+        chip is telling the user is waiting.
+
+        Args:
+            notify_missing: Whether to warn when nothing is focusable. The
+                tab-strip caller passes ``False`` and falls back to normal
+                tab activation instead -- a stale marker must not turn a
+                tab press into an error toast.
+
+        Returns:
+            Whether a card was found and focused.
+        """
+        if self._console_pending_approval_count() > 0:
+            card = self._first_displayed_console_decision_card(
+                "#chat-approval-card"
             )
-            if question is not None:
-                with contextlib.suppress(Exception):
-                    question.scroll_visible(animate=False)
-                target = next(
-                    iter(question.query("RadioSet, SelectionList, Input")), None
-                )
-                if target is not None:
-                    target.focus()
-                return
+            if card is not None:
+                self._focus_console_decision_card(card)
+                return True
+        else:
+            # PRD A4: this focus action is how keyboard-only users reach a
+            # question card that deliberately never steals focus -- and,
+            # since Qodo #5, the skill/merge confirms that never had a
+            # route at all.
+            for selector in CONSOLE_DECISION_CARD_SELECTORS:
+                card = self._first_displayed_console_decision_card(selector)
+                if card is not None:
+                    self._focus_console_decision_card(card)
+                    return True
+        if notify_missing:
             self.app_instance.notify(
                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
             )
-            return
-        card = next(
-            (
-                candidate
-                for candidate in self.query("#chat-approval-card")
-                if candidate.display
-            ),
+        return False
+
+    def _first_displayed_console_decision_card(self, selector: str) -> Any | None:
+        """Return the one displayed card matching ``selector``, if any."""
+        return next(
+            (candidate for candidate in self.query(selector) if candidate.display),
             None,
         )
-        if card is None:
-            self.app_instance.notify(
-                CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
-            )
-            return
-        try:
+
+    def _focus_console_decision_card(self, card: Any) -> None:
+        """Scroll one decision card into view and focus its first control.
+
+        `ChatApprovalCard` owns `focus_first_decision` (``set_batch``, the
+        card's sole production entry point, is the only body it ever
+        renders, so a displayed card's action is always its "Submit"
+        button). The other four kinds have no such method, so their first
+        interactive control is focused directly -- Buttons included, which
+        is what a confirm card's Approve/Deny pair is made of.
+        """
+        with contextlib.suppress(Exception):
             card.scroll_visible(animate=False)
-        except Exception:
-            pass
-        # `set_batch` (the card's sole production entry point, task-914) is
-        # the only body it ever renders, so a displayed card's action is
-        # always its "Submit" button.
-        try:
-            card.focus_first_decision()
-        except Exception:
-            pass
+        focus_first = getattr(card, "focus_first_decision", None)
+        if callable(focus_first):
+            with contextlib.suppress(Exception):
+                focus_first()
+            return
+        # Two passes, not one selector: a single "…, Button" query returns
+        # DOM order, which would hand a question card's focus to whatever
+        # button happens to be mounted above its RadioSet. The original
+        # question-card behaviour is the first pass, unchanged.
+        for selector in ("RadioSet, SelectionList, Input", "Button"):
+            with contextlib.suppress(Exception):
+                target = next(iter(card.query(selector)), None)
+                if target is not None:
+                    target.focus()
+                    return
+
+    @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
+    def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
+        """Focus the pending approval card from the Console inspector seam.
+
+        Args:
+            event: The inspector's "Review approval" button press. Stopped
+                here so it never reaches the screen's generic
+                ``on_button_pressed`` fallback.
+        """
+        event.stop()
+        self._route_console_pending_approval_focus()
+
+    def action_review_pending_approval(self) -> None:
+        """Alt+A: same route as the inspector's Review approval button.
+
+        task-32277: Tab never reached the approval card from the composer,
+        and the two prior entry points (the status chip, the inspector
+        button) both disappear at common widths -- see the ``alt+a``
+        `Binding`'s own comment in ``BINDINGS`` for the live-UX evidence.
+        """
+        self._route_console_pending_approval_focus()
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID}")
     def handle_console_inspector_save_chatbook(self, event: Button.Pressed) -> None:
@@ -21585,7 +21884,18 @@ class ChatScreen(BaseAppScreen):
         rail_state = self._current_console_rail_state(
             available_columns=event.size.width
         )
+        # TASK-32327: capture which rails the user could SEE before this
+        # band crossing, so a responsive force-close (not a user toggle --
+        # preferences are never rewritten here) can be named out loud
+        # instead of the rail silently vanishing.
+        left_was_open = bool(left_rail.display)
+        right_was_open = bool(right_rail.display)
         self._sync_console_rail_visibility_if_changed(rail_state)
+        self._notify_console_responsive_rail_collapse(
+            rail_state=rail_state,
+            left_was_open=left_was_open,
+            right_was_open=right_was_open,
+        )
         for focused_in_rail, focused_in_handle, rail_open, rail, handle, buttons in (
             (
                 focused_in_left_rail,
@@ -21616,6 +21926,62 @@ class ChatScreen(BaseAppScreen):
             button = self.query_one(button_selector, Button)
             if target.display and button.display:
                 button.focus()
+
+    def _notify_console_responsive_rail_collapse(
+        self,
+        *,
+        rail_state: "ConsoleRailState",
+        left_was_open: bool,
+        right_was_open: bool,
+    ) -> None:
+        """Name a responsive force-collapse once per session per rail (TASK-32327).
+
+        The width rules (force-collapse below 150/100 cols, single-pane
+        below 84, Inspector-priority in the 100-150 band) hide rails the
+        user had open WITHOUT rewriting their stored preference -- silent
+        disappearance from the user's point of view. This posts one
+        transient notice per rail per session naming what happened and how
+        to reopen, and deliberately skips rails whose stored preference
+        already says closed (the rule and the user then agree).
+        """
+        notices: list[tuple[str, str]] = []
+        if (
+            left_was_open
+            and not rail_state.left_open
+            and "left" not in self._console_rail_collapse_notified
+        ):
+            self._console_rail_collapse_notified.add("left")
+            notices.append(
+                (
+                    "Context rail collapsed — the terminal is too narrow "
+                    "for it. Reopen it from the Context handle "
+                    "(or widen the terminal).",
+                    "warning",
+                )
+            )
+        if (
+            right_was_open
+            and not rail_state.right_open
+            and "right" not in self._console_rail_collapse_notified
+        ):
+            self._console_rail_collapse_notified.add("right")
+            notices.append(
+                (
+                    "Inspector rail collapsed — the terminal is too narrow "
+                    "for it. Reopen it with Alt+I "
+                    "(or widen the terminal).",
+                    "warning",
+                )
+            )
+        for message, severity in notices:
+            try:
+                self.app_instance.notify(
+                    message,
+                    severity=severity,
+                    timeout=CONSOLE_RAIL_COLLAPSE_NOTICE_TIMEOUT_SECONDS,
+                )
+            except Exception:  # noqa: BLE001 -- a notice must never break layout
+                logger.debug("console rail collapse notice failed", exc_info=True)
 
     @on(DescendantBlur)
     @on(DescendantFocus)
@@ -23663,9 +24029,46 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()
-            await self._session._handle_console_session_tab_press(
-                button_id.removeprefix("console-session-tab-")
-            )
+            session_id = button_id.removeprefix("console-session-tab-")
+            controller = self._ensure_console_chat_controller()
+            if controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL:
+                # task-32277: a tab wearing the ◆ marker routes straight to
+                # the approval card instead of the normal activate/rename
+                # tab press. A non-viewed session's round is PARKED (see
+                # `run_marker_for`'s NEEDS_APPROVAL precedence and
+                # `ConsoleChatController.switch_session`'s park/re-mount
+                # behaviour), so it has to be activated first for its card
+                # to be the one that mounts.
+                #
+                # This branch is checked before `_handle_console_session_
+                # tab_press` below, whose own contract is "press the
+                # already-active tab to rename it" -- so a ◆ tab press
+                # intentionally pre-empts that rename gesture even when
+                # `session_id` IS already the active/viewed session; the
+                # user still reaches rename for a ◆ tab via the session
+                # switcher's own rename choice
+                # (`_apply_console_switcher_choice`'s "rename" kind). It
+                # pre-empts it only when there IS a card to route to,
+                # though -- see the fallback below.
+                was_active = controller.store.active_session_id == session_id
+                if not was_active:
+                    await self._session._activate_native_console_session(session_id)
+                # Qodo #5: the ◆ marker covers every interrupt kind, so the
+                # route below now finds skill/question cards too -- but a
+                # marker can still outlive its card. When nothing is
+                # focusable, fall back to the ordinary tab press rather
+                # than warning "No approval is pending" at someone who just
+                # clicked a tab; activating the session (above) already did
+                # the normal thing for a non-viewed one.
+                if not self._route_console_pending_approval_focus(
+                    notify_missing=False
+                ):
+                    if was_active:
+                        await self._session._handle_console_session_tab_press(
+                            session_id
+                        )
+                return
+            await self._session._handle_console_session_tab_press(session_id)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

@@ -1,0 +1,7 @@
+{
+  "source_audio": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-01/audio/speech-lab.wav",
+  "source_sha256": "d8aa12779a0130f1a14802d067a8445a37d2e6b064084dfe0e7e307e1f792efb",
+  "generated_by": "Kokoro CUDA af_heart, known validation text, no human speaker",
+  "reference_path": "/home/ml-user/tts-linux-cuda-20260912/models/synthetic-reference/synthetic.wav",
+  "reference_sha256": "923f17649669a6f256b8602a3c924288bf04b256d8addec3c5f1b8d83d0bbd00"
+}

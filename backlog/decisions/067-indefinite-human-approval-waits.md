@@ -32,9 +32,9 @@ approval timeout at or above the wrapper ceiling would let the wrapper fire
 first, report the call failed, abandon the waiting thread — and a late approval
 would then execute the tool for real (double execution). Pausing the clock
 removes the race at the root: the wrapper cannot expire while the human wait it
-is hosting is still live. Cancellation was already closed by
-`revoke_approval_rounds_for_run` and is unaffected; a genuinely hung tool still
-times out after `seconds` of execution time.
+is hosting is still live. Cancellation uses `revoke_approval_rounds_for_run`; the TASK-13215 clarification
+below closes late admission and serializes final decisions. A genuinely hung
+tool still times out after `seconds` of execution time.
 
 `[mcp] approval_timeout_seconds` keeps its key and semantics for positive
 values; `<= 0` now means "wait indefinitely" (previously such values armed a
@@ -60,9 +60,8 @@ deadline in the past, i.e. an immediate auto-deny). The card's countdown copy
 ## Consequences
 
 - A pending approval no longer expires; a session can sit in NEEDS_APPROVAL
-  indefinitely and revive when the user returns. Stopping the run, switching
-  conversations away and back, and teardown still deny/clear promptly (those
-  paths resolve the round, they do not wait).
+  indefinitely and revive when the user returns. Stopping the run and owning-round teardown still deny/clear promptly.
+  Navigation retains live rounds for remounting, as clarified by ADR-094.
 - Per-call wall-clock is now "execution time, excluding human-decision waits".
   A tool that arms a human wait and then hangs *after* the decision still dies
   at the full ceiling (the deadline re-arms while paused, it does not vanish).
@@ -71,3 +70,30 @@ deadline in the past, i.e. an immediate auto-deny). The card's countdown copy
   default; if a consumer ever appears it must adopt the same `<= 0` semantics.
 - Tests that rely on auto-deny inject positive seam values (e.g. 0.05) and are
   unaffected by the default flip.
+
+## TASK-13215 clarification: revocation lifetime and decision commitment
+
+The interrupt host retains an in-memory set of revoked run IDs for each swept
+kind for its entire lifetime. Revocation remembers the owner even when no round
+is armed; the return count still reports only rounds actually swept. Both early
+controller registration and host registration consult that fence under the same
+lock, so a delayed MCP/local approval or skill-script fallback fails closed
+without publishing a card, badge, or retained payload. Primary-only kinds using
+`check_revoked=False` retain their existing contract. Empty owners are not swept;
+a revocable unowned admission emits one content-free warning and preserves the
+legacy direct-call behavior.
+
+The complete tool-approval verdict snapshot commits under the same lock as
+revocation, with a fresh revoked-state check. If revocation wins first, every
+verdict is unresolved deny. If a complete approval snapshot wins first,
+revocation cannot retroactively retract that decision or a tool side effect.
+A batch cannot contain partial approvals caused by a sweep between row reads.
+Audit and UI callbacks run outside the non-reentrant lock. Payload cleanup
+continues to remove exact round IDs, preserving sibling payloads and remounts.
+
+Memory grows with distinct revoked runs per kind. No TTL, eviction, navigation,
+session closure, or logical-run completion clears these fences: an abandoned
+provider daemon can still reach a fallback after logical completion. Safe
+reclamation requires proof that every physical invocation has drained and is
+outside this fix; host disposal releases its sets. This restores the existing
+cancellation contract without adding a provider dispatch authority boundary.
