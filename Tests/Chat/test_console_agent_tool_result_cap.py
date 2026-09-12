@@ -701,3 +701,11 @@ def test_availability_continues_empty_scan_and_rechecks_authority(
     assert not calls[0].slices and calls[0].next_cursor is not None
     assert len(entries) - before == len(calls)
     assert (len(calls) == 1) if revoke else (len(calls) > 1)
+
+
+def test_run_log_page_validation_error_remains_explicit(paged_authority):
+    from tldw_chatbook.Agents.run_log_paging import RunLogPageCursor
+
+    bridge, _manager, _snapshot, primary, _child, _entries = paged_authority
+    with pytest.raises(ValueError, match="invalid run-log cursor"):
+        bridge.load_run_log_page(primary, cursor=RunLogPageCursor(-1, 0))

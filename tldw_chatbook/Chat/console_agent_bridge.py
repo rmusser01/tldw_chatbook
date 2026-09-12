@@ -8718,6 +8718,9 @@ class ConsoleAgentBridge:
             load_record_metadata_page,
             load_record_page,
         )
+        from tldw_chatbook.Chat.console_scratch_space import (
+            ConsoleScratchSpaceUnavailable,
+        )
 
         if self._store is not None and authority is None:
             return None
@@ -8744,7 +8747,7 @@ class ConsoleAgentBridge:
                 return loader(
                     log_dir, cursor=cursor, run_id=run_id if owner != run_id else None
                 )
-        except Exception:  # noqa: BLE001 -- stale authority and unreadable logs fail closed
+        except (OSError, ConsoleScratchSpaceUnavailable):
             return None
 
     def load_run_log_text(self, run_id: str) -> str:
