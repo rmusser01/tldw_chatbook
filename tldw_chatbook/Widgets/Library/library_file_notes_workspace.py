@@ -32,9 +32,9 @@ from tldw_chatbook.config import (
     get_user_data_dir,
 )
 from tldw_chatbook.Library.library_browse_location import (
+    browse_start_directory,
     claim_browse_directory,
     remember_browse_directory,
-    validated_browse_directory,
 )
 from tldw_chatbook.Library.library_structural_wait import (
     STRUCTURAL_WAIT_PATIENCE_SECONDS,
@@ -62,6 +62,7 @@ from tldw_chatbook.Notes.file_notes_conflict_compare import (
     build_conflict_comparison,
 )
 from tldw_chatbook.Notes.file_notes_git_commit import (
+    session_note_count,
     CommitOutcome,
     CommitRecoveryProjection,
     CommitReviewHandle,
@@ -1922,17 +1923,49 @@ class LibraryFileNotesWorkspace(Vertical):
             f"{opened.size:,} bytes."
         )
 
+    @staticmethod
+    def _frontmatter_disclosure_copy(opened: OpenedFileNote) -> str:
+        """Say that hidden frontmatter exists and survives an edit.
+
+        task-32264: the editor shows the body only, and writes the
+        frontmatter back byte-for-byte -- so an Obsidian user had no way
+        to know whether their properties survived the round trip. The
+        answer is that they do; this says so.
+        """
+        lines = opened.frontmatter_lines
+        # Two whole sentences rather than interpolated fragments: three
+        # words have to agree (line/lines, is/are, it/they), and the
+        # plural wording is the one that ships (review F8).
+        if lines == 1:
+            return (
+                "1 line of YAML frontmatter above this body is hidden here "
+                "and kept exactly as it is on disk."
+            )
+        return (
+            f"{lines} lines of YAML frontmatter above this body are hidden "
+            "here and kept exactly as they are on disk."
+        )
+
     def _sync_large_file_preview(self) -> None:
-        """Render or hide the retained large-file preview disclosure."""
+        """Render or hide what the editor is NOT showing of the open file.
+
+        Two disclosures share the one line: the large-file excerpt, and
+        the preserved-but-hidden YAML frontmatter (task-32264).
+        """
         if not self._active or not self.is_mounted:
             return
         status = self.query_one("#file-notes-preview-status", Static)
         opened = self._opened
-        if opened is None or not opened.is_excerpt:
+        disclosures = []
+        if opened is not None and opened.is_excerpt:
+            disclosures.append(self._large_file_preview_copy(opened))
+        if opened is not None and opened.frontmatter_lines:
+            disclosures.append(self._frontmatter_disclosure_copy(opened))
+        if not disclosures:
             status.update("")
             status.display = False
             return
-        status.update(self._large_file_preview_copy(opened))
+        status.update(" · ".join(disclosures))
         status.display = True
 
     def compose(self) -> ComposeResult:
@@ -6289,10 +6322,11 @@ class LibraryFileNotesWorkspace(Vertical):
         last-used directory. The stored value is persisted user state, so it
         is validated in ``library_browse_location`` before it is used.
         """
-        remembered = validated_browse_directory(
+        # task-32251 AC#5: nothing remembered yet falls through to the
+        # folder `[notes] sync_directory` already names, then home.
+        return browse_start_directory(
             get_cli_setting("file_notes", "browse", None)
         )
-        return remembered if remembered is not None else Path.home()
 
     @on(Button.Pressed, "#file-notes-use-sync-folder")
     def _use_configured_sync_folder(self, event: Button.Pressed) -> None:
@@ -7277,7 +7311,7 @@ class LibraryFileNotesWorkspace(Vertical):
         count = 0 if review is None else review.review.included_note_count
         self._commit_view_phase = "executing"
         self._git_panel_widget.render_commit_executing(CommitExecutionProjection(count))
-        self._set_action_status(f"Committing {count} session notes…")
+        self._set_action_status(f"Committing {session_note_count(count)}…")
 
     async def _observe_commit_outcome(
         self,
@@ -7343,14 +7377,14 @@ class LibraryFileNotesWorkspace(Vertical):
             self._clear_commit_draft_after_success()
             snapshot = self._session_owner.snapshot(key.binding)
             if snapshot.trusted_repository == key.repository:
-                note_label = "note" if result.committed_note_count == 1 else "notes"
                 self._git_last_action = _GitLastAction(
                     binding=key.binding,
                     repository=key.repository,
                     changes=snapshot.changes,
                     text=(
-                        f"Committed {result.committed_note_count} session "
-                        f"{note_label}; unrelated changes untouched."
+                        "Committed "
+                        f"{session_note_count(result.committed_note_count)}; "
+                        "unrelated changes untouched."
                     ),
                 )
                 self._sync_git_last_action()
@@ -7741,16 +7775,16 @@ class LibraryFileNotesWorkspace(Vertical):
             message += "."
 
         if result.state == "success" and affected:
-            note = "session note" if affected == 1 else "session notes"
+            note = session_note_count(affected)
             if result.action == "stage":
                 core = (
-                    f"{affected} {note} staged; Chatbook targeted only "
+                    f"{note} staged; Chatbook targeted only "
                     "eligible session paths."
                 )
             else:
                 entry = "entry" if affected == 1 else "entries"
                 core = (
-                    f"{affected} {note} unstaged; Chatbook restored only its "
+                    f"{note} unstaged; Chatbook restored only its "
                     f"owned session {entry}."
                 )
             return " ".join(part for part in (core, message, counts_text) if part)

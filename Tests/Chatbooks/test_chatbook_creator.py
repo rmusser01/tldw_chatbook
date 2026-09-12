@@ -277,6 +277,64 @@ class TestChatbookCreator:
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_a_write_failure_names_the_destination_not_the_partial(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        """task-32251 AC#4: a live export reported the raw errno of a temp file.
+
+        The message was ``Error creating chatbook: [Errno 2] No such file
+        or directory: '.../notes-bundle.zip.partial'`` -- an internal noun
+        the user never chose, for a folder that did not exist.
+        """
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "gone" / "notes-bundle.zip"
+
+        success, message, _ = chatbook_creator.create_chatbook(
+            name="Test Chatbook",
+            description="A test chatbook",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+
+        assert success is False
+        assert ".partial" not in message
+        assert "Errno" not in message
+        assert str(output_path) in message
+        assert message.startswith("Could not write the bundle to ")
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_an_oserror_outside_packaging_is_not_called_a_write_failure(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path, monkeypatch
+    ):
+        """Review F6: only the packaging step may claim the bundle failed.
+
+        An OSError raised while READING a source (or the DB) reporting
+        "Could not write the bundle to <destination>" is a confident wrong
+        answer about a destination that is perfectly writable.
+        """
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+
+        def unreadable(*args, **kwargs):
+            raise OSError(5, "Input/output error")
+
+        monkeypatch.setattr(chatbook_creator, "_create_readme", unreadable)
+        output_path = tmp_path / "bundle.zip"
+
+        success, message, _ = chatbook_creator.create_chatbook(
+            name="Test Chatbook",
+            description="A test chatbook",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+
+        assert success is False
+        assert "Could not write the bundle" not in message
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
     def test_create_chatbook_reports_packaging_progress(
         self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
     ):
