@@ -30,6 +30,7 @@ class ConsoleRoleplayContext:
     user_name_override: str | None = None
     character_system_template: str | None = None
     character_name_snapshot: str | None = None
+    persona_system_template: str | None = None
 
 
 def parse_console_roleplay_context(raw_metadata: object) -> ConsoleRoleplayContext:
@@ -69,10 +70,18 @@ def parse_console_roleplay_context(raw_metadata: object) -> ConsoleRoleplayConte
         except ValueError:
             pass
 
+    persona_system_template = owned_context.get("persona_system_template")
+    if persona_system_template is not None and (
+        not isinstance(persona_system_template, str)
+        or not persona_system_template.strip()
+    ):
+        return ConsoleRoleplayContext()
+
     return ConsoleRoleplayContext(
         user_name_override=user_name_override,
         character_system_template=character_system_template,
         character_name_snapshot=character_name_snapshot,
+        persona_system_template=persona_system_template,
     )
 
 
@@ -108,10 +117,18 @@ def merge_console_roleplay_context(
         context.character_name_snapshot
     )
 
+    persona_system_template = context.persona_system_template
+    if (
+        not isinstance(persona_system_template, str)
+        or not persona_system_template.strip()
+    ):
+        persona_system_template = None
+
     if (
         user_name_override is None
         and character_system_template is None
         and character_name_snapshot is None
+        and persona_system_template is None
     ):
         metadata.pop(ROLEPLAY_CONTEXT_METADATA_KEY, None)
     else:
@@ -130,6 +147,11 @@ def merge_console_roleplay_context(
             **(
                 {"character_name_snapshot": character_name_snapshot}
                 if character_name_snapshot is not None
+                else {}
+            ),
+            **(
+                {"persona_system_template": persona_system_template}
+                if persona_system_template is not None
                 else {}
             ),
         }
