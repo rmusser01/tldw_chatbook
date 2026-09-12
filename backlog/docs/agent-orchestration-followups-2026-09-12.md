@@ -28,7 +28,12 @@ supersedes its pending-integration and remaining-work labels.
   repository through its administrative links. Nested root pins alone do not
   meet the accepted authority contract. No new mutation path is enabled. The
   test-harness prerequisite is fixed and independently reviewed in `32557b80f2`
-  (four affected subprocess tests passed); recovery itself remains incomplete.
+  (four affected subprocess tests passed). Interim safeguards are also reviewed
+  (`93ee16a144`, `534ad2c890`): all agent worktree creation/merge/discard refuses,
+  preview/live disclosure agrees, and automatic checkout deletion is disabled.
+  Ordinary agents remain available; existing work is retained. The final affected
+  Console/service selection passed 25 tests with no new skips. Functional
+  recovery itself remains incomplete.
 - Four of the eight requested outcome areas are complete. The parent stays open
   until the remaining implementation and combined branch review finish. No new
   PR, push or merge has been performed for this continuation.
