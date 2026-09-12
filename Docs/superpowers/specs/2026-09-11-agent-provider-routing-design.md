@@ -4,7 +4,7 @@ Date: 2026-09-11
 Status: Approved design (pre-plan)
 Governance: ADR required (provider/runtime boundary + cross-module interface);
 the ADR also **amends ADR-146** (registry entries gain a `params` table —
-precedent: ADR-020 amends ADR-002). Backlog task to be created at plan time.
+precedent: ADR-020 amends ADR-002). ADR-147 written; Backlog TASK-32477.
 
 ## Problem
 
@@ -26,9 +26,12 @@ ollama, or a `custom-ep:` registry entry from ADR-146 / PR #2617).
    `[agents] subagent_default_provider/model`; when unset, children inherit
    the parent's provider+model (today's behavior).
 3. **Override scope: flag + allowlist.** Ad-hoc args require
-   `[agents] spawn_override_enabled = true` AND the requested provider must be
-   in `[agents] spawn_override_allowlist`. Presets are user-authored and
-   therefore unrestricted by the allowlist.
+   `[agents] spawn_override_enabled = true` AND the requested target must
+   match `[agents] spawn_override_allowlist`. Allowlist entries are either a
+   bare provider id (`llama_cpp`, `custom-ep:qwen-local`) or a
+   `provider/model-glob` form (`llama_cpp/qwen3.8-*`; fnmatch,
+   case-insensitive) that additionally constrains the model. Presets are
+   user-authored and therefore unrestricted by the allowlist.
 4. **Children never inherit the parent's sampling/API params.** A child's
    params are built fresh for its resolved provider+model — uniform rule,
    including the plain-inherit path (behavior change, see "Sampling / API
@@ -54,6 +57,14 @@ ollama, or a `custom-ep:` registry entry from ADR-146 / PR #2617).
 - Ad-hoc sampling params in spawn tool args (params come only from
   user-authored stores: presets, registry entries, config — never from
   model-generated args).
+- **Preset `fallback_models` chains** — user-configured ordered fallbacks for
+  retryable pre-tool-activity provider failures (pi-subagents
+  `fallbackModels` semantics). Valuable but a large surface (budgeting,
+  continuation, admission); deferred to follow-up TASK-32479.
+- **A thinking-level ceiling** (`subagent_max_thinking`): weak need here —
+  params are all user-authored, so there is little to guard against.
+- Provider-scoped role overrides (`agentOverridesByProvider`-style matrices):
+  the preset + default layers express the same intent without a matrix.
 - Named route registry as a separate config entity (rejected approach 2).
 - Policy-file rules engine (rejected approach 3).
 - Per-provider budget accounting; unpriced local models keep the existing
@@ -98,12 +109,15 @@ Each level fills only blanks left by the levels above:
 
 1. **Ad-hoc spawn args** (`provider`, `model` from the spawn tool call).
    Honored only when `spawn_override_enabled` is true; when `provider` is
-   given it must appear in `spawn_override_allowlist`. A model-only ad-hoc
-   arg swaps the model on whatever provider levels 2–4 resolve.
+   given, `provider/model` must match `spawn_override_allowlist` (bare
+   provider entries match any model; `provider/model-glob` entries match via
+   fnmatch, case-insensitive). A model-only ad-hoc arg swaps the model on
+   whatever provider levels 2–4 resolve.
    **Final-provider guard:** whenever ANY ad-hoc arg is present, the final
-   resolved provider must be allowlisted or equal to the parent's provider —
-   otherwise `provider_not_allowlisted`. (Closes the hole where a model-only
-   arg rides a paid `subagent_default_provider` the user never allowlisted.)
+   resolved `provider/model` must match the allowlist or the provider must
+   equal the parent's provider — otherwise `provider_not_allowlisted`.
+   (Closes the hole where a model-only arg rides a paid
+   `subagent_default_provider` the user never allowlisted.)
 2. **Preset routing fields** — the spawned `AgentDefinition`'s `provider`
    and `model`.
 3. **Sub-agent default** — `[agents] subagent_default_provider` /
@@ -114,8 +128,9 @@ Each level fills only blanks left by the levels above:
 The winner is validated through the existing seams:
 `resolve_console_provider_identities` (`Chat/console_provider_support.py`)
 for display/readiness/execution keys (custom-ep aware), then readiness
-(missing credential / no reachable endpoint → `RoutingError`), producing a
-full `ConsoleProviderSelection` for the child. Tool shaping needs no change:
+(`get_provider_readiness`, `Chat/provider_readiness.py:476` — missing
+credential / no reachable endpoint → `RoutingError`), producing a full
+`ConsoleProviderSelection` for the child. Tool shaping needs no change:
 `provider_supports_native_tools` is already evaluated per run inside
 `_make_call_model` (`agent_service.py:1314,1565`). Unknown local models fall
 back to default token-window handling, same as any unlisted model today.
@@ -140,10 +155,12 @@ Precedence, highest first:
 3. **Console saved defaults** — `[console.provider_defaults.<provider>]`
    (empty for `custom-ep:` targets today: PR #2617 writes registry-provider
    saves to `chat_defaults`; layers degrade gracefully when empty).
-4. **Registry entry `params`** — `[custom_endpoints.<slug>.params]`, projected
-   into the provider-settings layer (custom-ep targets only; slots above the
-   global chat_defaults because endpoint-authored tuning is more specific
-   than global defaults).
+4. **Registry entry `params`** — `[custom_endpoints.<slug>.params]`, fed to
+   `build_default_console_session_settings` via a new optional
+   `extra_sources` parameter slotting after saved_defaults and before
+   chat_defaults (custom-ep targets only; endpoint-authored tuning is more
+   specific than global defaults). Empty by default, so session defaults
+   stay byte-identical.
 5. **Global `[chat_defaults]`**.
 6. **Raw `[api_settings.<provider>]` scalars**, then function fallbacks
    (0.7 / 0.95 / …).
@@ -153,9 +170,10 @@ keep the run loop's own streaming policy.
 
 This is a **uniform rule**: even a plain same-provider child gets fresh
 provider-default params rather than the parent's session-tweaked values.
-**Behavior change:** today a plain spawn inherits the session's live sampling
-params; after this change it gets the provider's configured defaults. Called
-out in the ADR and the user guide.
+**Behavior change:** today a plain spawn sends no sampling kwargs at all and
+`chat_api_call` falls back to its own internal config resolution; after this
+change the child's params are resolved explicitly through the six-layer
+stack, logged, and snapshotted. Called out in the ADR and the user guide.
 
 The merged params get exactly the capability treatment a fresh send to that
 provider/model would get — the gateway already consults `model_capabilities`
@@ -167,9 +185,10 @@ model is handled by the existing `repair_request_fits_model_window` path.
 Ad-hoc spawn args carry **no** params (see Security policy).
 
 Implementation note: `build_default_console_session_settings`' source tuple
-and merge helpers (`_float_setting_from_sources` etc.) are private. The plan
-extracts them into `Chat/sampling_params.py` so the resolver composes the
-six layers while session defaults stay byte-identical.
+and merge helpers (`_float_setting_from_sources` etc.,
+`console_session_settings.py:1561-1640`) are private. The plan extracts them
+into `Chat/sampling_params.py` so the resolver composes the six layers while
+session defaults stay byte-identical.
 
 ## Data model changes
 
@@ -182,14 +201,17 @@ six layers while session defaults stay byte-identical.
 - New field `params`: optional mapping of sampling-param name → value.
   Validated via `Chat/sampling_params.py` (known-name typo guard + per-key
   type checks); unknown keys are validation errors.
+- `definition_fingerprint` extends to `provider` and `params` — both shape
+  what actually ran, and the fingerprint is that audit identity.
 - No `base_url` field: built-in providers resolve URLs from `api_settings`;
   additional local endpoints are `custom-ep:` registry entries (their
   entries carry URL + credentials, ADR-146). Presets name the slug.
 - `validate_agent_definition` additionally checks `provider` is a known
-  built-in provider id or matches the `custom-ep:<slug>` form. Registry
-  existence is **not** checked at validation time (entries can be deleted
-  between authoring and spawn); that surfaces as a spawn-time
-  `RoutingError` instead.
+  built-in provider id (`supported_console_provider_readiness_keys()`,
+  lazy-imported) or matches the `custom-ep:<slug>` form. Registry existence
+  is **not** checked at validation time (entries can be deleted between
+  authoring and spawn); that surfaces as a spawn-time `RoutingError`
+  instead.
 - The definition dict serialization (`agent_models.py:417`) gains `provider`
   and `params`.
 
@@ -211,8 +233,9 @@ New keys, shipped commented-out with defaults owned by
 - `subagent_default_provider` (string, empty = unset → inherit)
 - `subagent_default_model` (string, empty = provider's configured/default model)
 - `spawn_override_enabled` (bool, default false)
-- `spawn_override_allowlist` (list of provider ids, may include
-  `custom-ep:<slug>` entries; default empty)
+- `spawn_override_allowlist` (list of entries; each entry is a provider id —
+  including `custom-ep:<slug>` — optionally followed by `/` and a
+  case-insensitive model glob; default empty)
 
 ### Database (`DB/AgentRuns_DB.py`, `_CURRENT_SCHEMA_VERSION` 15 → 16)
 
@@ -243,8 +266,9 @@ not move an already-spawned child — snapshot semantics.)
   nothing else; no params, no URLs.
 - The args are **omitted from the tool schema entirely** when
   `spawn_override_enabled` is false — the model cannot attempt what is not
-  advertised. Schema construction (identity-path schema referenced at
-  `agent_service.py:1170`) becomes config-dependent.
+  advertised. Schema construction (`build_spawn_schema`,
+  `Agents/tool_catalog.py:86`; call site `agent_service.py:2514`) becomes
+  config-dependent.
 - When enabled, the schema description enumerates the allowlisted provider
   ids with their configured models (from `api_settings` and registry cached
   `CustomEndpointEntry.models`), so the master chooses real targets instead
@@ -261,9 +285,10 @@ not move an already-spawned child — snapshot semantics.)
   presets, so a prompt-injected master can neither point a child at an
   arbitrary endpoint to exfiltrate context nor crank params (e.g. max
   reasoning budget) on a paid provider.
-- The allowlist is the cost/injection guard for ad-hoc routing, strengthened
-  by the final-provider guard (resolution level 1): with ad-hoc args present,
-  the child lands only on an allowlisted provider or the parent's own.
+- The allowlist is the cost/injection guard for ad-hoc routing — bare
+  provider entries or `provider/model-glob` entries — strengthened by the
+  final-provider guard (resolution level 1): with ad-hoc args present, the
+  child lands only on an allowlisted target or the parent's own provider.
   Presets are trusted because the user authored them.
 - No credential material flows through the resolver's outputs beyond what
   the existing gateway already handles; registry entries' `api_key` is
@@ -276,8 +301,8 @@ the master can pick another target or ask the user:
 
 - `override_disabled` — ad-hoc args present while the flag is off
   (defense-in-depth; the args are also absent from the schema).
-- `provider_not_allowlisted` — ad-hoc `provider` not in the allowlist, or
-  final-provider guard tripped by a model-only ad-hoc arg.
+- `provider_not_allowlisted` — ad-hoc `provider/model` matches no allowlist
+  entry, or the final-provider guard tripped on a model-only ad-hoc arg.
 - `unknown_provider` — id matches no built-in provider.
 - `unknown_endpoint_slug` — `custom-ep:<slug>` not in the registry.
 - `provider_not_ready` — missing credential or no reachable endpoint.
@@ -299,9 +324,14 @@ child's resolved target (e.g. "qwen-local · qwen3.8-27b").
   builder as Console settings so `custom-ep:` entries appear with their
   `display_name`, plus per-preset `params` editing (the known sampling keys).
 - Sub-agent default provider/model pickers.
-- `spawn_override_enabled` toggle and an allowlist multi-select.
+- `spawn_override_enabled` toggle and an allowlist editor (one entry per
+  line, `provider` or `provider/model-glob`).
 - Stale allowlist entries (deleted registry slugs) are flagged in the UI,
   not silently dropped from config.
+- A **"Test routing" dry-run action**: runs `resolve_spawn_target` for every
+  enabled preset and the configured default against live config and reports
+  each target's resolved provider/model/params summary and readiness —
+  catches config rot (deleted slugs, expired keys) before a run does.
 
 The endpoint editor (`Widgets/Console/console_endpoint_template_modal.py`)
 gains an optional `params` section for the same known sampling keys.
@@ -310,8 +340,9 @@ gains an optional `params` section for the same known sampling keys.
 
 - **Unit:** pure resolver matrix — every resolution level, blank-filling,
   each `RoutingError` variant, custom-ep slug resolution, model-only ad-hoc
-  args, and the final-provider guard (model-only ad-hoc onto a
-  non-allowlisted paid default is refused).
+  args, the final-provider guard (model-only ad-hoc onto a non-allowlisted
+  paid default is refused), and allowlist glob matching (`provider`,
+  `provider/exact-model`, `provider/prefix-*`, case-insensitivity, no-match).
 - **Unit (params):** the six-layer precedence stack, incl. preset-over-entry
   and entry-over-chat_defaults ordering; shared-validator typo/type
   rejection for both presets and registry entries; `streaming` excluded
@@ -326,9 +357,10 @@ gains an optional `params` section for the same known sampling keys.
   `provider` keeps same-endpoint override behavior; registry entries without
   `params` load unchanged; session defaults from
   `build_default_console_session_settings` are byte-identical before/after
-  the helper extraction.
+  the helper extraction and the `extra_sources` addition.
 - **Settings panel/modal tests:** picker populations include custom-ep
-  display names; stale allowlist slug flagging; params editing round-trips.
+  display names; stale allowlist slug flagging; params editing round-trips;
+  "Test routing" reports ready and not-ready targets correctly.
 - **Live verification** (per `backlog/docs/lessons-live-verification.md`):
   real local endpoint registered as `custom-ep:` with its own `params`,
   cheap cloud model as master, one two-step delegation exercised end to end,
@@ -342,8 +374,8 @@ gains an optional `params` section for the same known sampling keys.
 - Modified: `Agents/agent_models.py`, `Agents/agent_service.py` (spawn hook,
   schema gating), `DB/AgentRuns_DB.py` (v16 migration), `config.py`
   (template comments), `Chat/console_session_settings.py` (helper extraction
-  only — behavior-preserving), `Chat/custom_endpoint_registry.py` (entry
-  params), `Widgets/settings_agents_panel.py`,
+  + `extra_sources` — behavior-preserving), `Chat/custom_endpoint_registry.py`
+  (entry params), `Widgets/settings_agents_panel.py`,
   `Widgets/Console/console_endpoint_template_modal.py` (params editing),
   `Chat/console_agent_bridge.py` (rail summary target display).
 - Tests: new `Tests/Agents/test_agent_routing.py` plus integration,
@@ -351,10 +383,13 @@ gains an optional `params` section for the same known sampling keys.
 
 ## Rollout
 
-1. Create ADR in `backlog/decisions/` (amending ADR-146 for entry `params`)
-   and Backlog task; link both ways.
-2. Implement per the writing-plans output (pure resolver + params stack
-   first, then DB migration, then spawn integration, then UI).
+1. ADR-147 and Backlog TASK-32477 created and linked both ways; fallback
+   chains filed as follow-up TASK-32479.
+2. Implement per this plan (pure resolver + params stack first, then DB
+   migration, then spawn integration, then UI).
 3. Update `Docs/User_Guide/console/agent-runs-and-tools.md` with the new
-   `[agents]` keys, preset routing/params fields, and the plain-spawn
-   params behavior change.
+   `[agents]` keys, preset routing/params fields, the plain-spawn params
+   behavior change, and a short "route by task shape" tiering guide (fast
+   workhorse for recon/mechanical edits, mid-tier for routine delegation,
+   deep-bounded for hard well-scoped tasks, intent-strong model for
+   ambiguous judgment work).
