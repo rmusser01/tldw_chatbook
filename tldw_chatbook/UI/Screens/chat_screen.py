@@ -12606,6 +12606,61 @@ class ChatScreen(BaseAppScreen):
         points at `self._message` directly, bypassing this delegation."""
         return self._message._console_messages_from_conversation_tree(tree)
 
+    async def _resolve_resumed_character_name(self, character_id: int) -> str:
+        """Return a resumed character's display name from its card, or ``""``.
+
+        Args:
+            character_id: The persisted conversation's character id.
+
+        Returns:
+            The character card's name, or an empty string when the DB is
+            unavailable, the card is missing, or the fetch fails (best-effort:
+            the caller keeps ``character_id`` set regardless).
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return ""
+        try:
+            card = await asyncio.to_thread(db.get_character_card_by_id, character_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Resume: character card fetch failed; identity row falls back."
+            )
+            return ""
+        if not card:
+            return ""
+        return str(card.get("name") or "").strip()
+
+    async def _resolve_resumed_persona_name(
+        self, persona_id: str, runtime_backend: str
+    ) -> str:
+        """Return a resumed persona's display name from its profile, or ``""``.
+
+        Best-effort mirror of ``_resolve_resumed_character_name``: any
+        failure (missing scope service, missing profile, fetch error)
+        returns an empty string and the caller keeps the session unlabeled.
+        """
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        get_persona_profile = getattr(scope_service, "get_persona_profile", None)
+        if not callable(get_persona_profile):
+            return ""
+        try:
+            profile = await get_persona_profile(persona_id, mode=runtime_backend)
+            if hasattr(profile, "model_dump"):
+                profile = profile.model_dump(mode="json")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Resume: persona profile fetch failed; identity row falls back."
+            )
+            return ""
+        if not isinstance(profile, Mapping):
+            return ""
+        return str(profile.get("name") or "").strip()
+
     def _set_console_conversation_row_loading(
         self, conversation_id: str, loading: bool
     ) -> None:

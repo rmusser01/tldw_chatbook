@@ -702,6 +702,7 @@ async def hydrate_console_session(
         **({"prepared_data": prepared_data} if prepared_data is not None else {}),
         activate=False,
     )
+    session.persona_system_template = roleplay_context.persona_system_template
     try:
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)

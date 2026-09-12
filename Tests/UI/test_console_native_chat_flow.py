@@ -15088,3 +15088,134 @@ async def test_console_routine_send_fires_no_success_toast():
 
     success_toasts = [m for m, severity in notifications if severity == "success"]
     assert success_toasts == []
+
+
+@pytest.mark.asyncio
+async def test_console_resume_rehydrates_persona_name_from_profile():
+    """A resumed persona session re-resolves its display name, both backends."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-persona": {
+                "conversation": {
+                    "id": "local-persona",
+                    "title": "Chat with Archivist",
+                    "runtime_backend": "local",
+                    "assistant_kind": "persona",
+                    "assistant_id": "local-persona-abc",
+                    # No assistant_authority_id: personas are authority-free.
+                    # No character_id: personas carry no local projection.
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        name_lookup = AsyncMock(return_value="Archivist")
+        console._resolve_resumed_persona_name = name_lookup
+
+        assert (
+            await console._workspace._resume_console_workspace_conversation(
+                "local-persona"
+            )
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.runtime_backend == "local"
+        assert session.assistant_kind == "persona"
+        assert session.assistant_id == "local-persona-abc"
+        assert session.assistant_authority_id is None
+        assert session.assistant_name == "Archivist"
+        assert session.character_name is None
+        assert session.character_ref() is None
+        name_lookup.assert_awaited_once_with("local-persona-abc", "local")
+
+
+@pytest.mark.asyncio
+async def test_console_resume_persona_name_lookup_failure_stays_unlabeled():
+    """A failed profile lookup resumes the session without a persona name."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-persona": {
+                "conversation": {
+                    "id": "local-persona",
+                    "title": "Chat with Archivist",
+                    "runtime_backend": "local",
+                    "assistant_kind": "persona",
+                    "assistant_id": "local-persona-abc",
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        console._resolve_resumed_persona_name = AsyncMock(return_value="")
+
+        assert (
+            await console._workspace._resume_console_workspace_conversation(
+                "local-persona"
+            )
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.assistant_kind == "persona"
+        assert session.assistant_name is None
+
+
+@pytest.mark.asyncio
+async def test_console_resume_restores_persona_system_template_from_metadata():
+    """The trusted persona template rides the roleplay metadata envelope."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-persona": {
+                "conversation": {
+                    "id": "local-persona",
+                    "title": "Chat with Archivist",
+                    "runtime_backend": "local",
+                    "assistant_kind": "persona",
+                    "assistant_id": "local-persona-abc",
+                    "metadata": {
+                        "console_roleplay_context": {
+                            "version": 1,
+                            "persona_system_template": "Guide {{user}}.",
+                        },
+                    },
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        console._resolve_resumed_persona_name = AsyncMock(return_value="Archivist")
+
+        assert (
+            await console._workspace._resume_console_workspace_conversation(
+                "local-persona"
+            )
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.persona_system_template == "Guide {{user}}."
