@@ -6,7 +6,7 @@
 
 **Architecture:** Add bounded approval provenance to existing review and tool-result seams, then consume it with one ephemeral runtime counter. Preserve string-review compatibility and existing broad blocked display outcomes. Copy the configured limit through existing budget constructors and reuse the existing RUN_STUCK/Console terminal pipeline.
 
-**Tech Stack:** Python 3.11+, dataclasses, existing Textual Console, pytest, existing SQLite and local JSONL run-log fixtures; no dependencies or migration.
+**Tech Stack:** Python 3.11+, dataclasses, existing Textual Console, pytest, existing SQLite and local segmented run-log fixtures; no dependencies or migration.
 
 **Spec:** `Docs/superpowers/specs/2026-09-12-agent-denial-breaker-design.md`.
 
@@ -172,9 +172,9 @@ verdicts[key] = ToolReviewDecision(
 
 **Files:** Modify agent_models.py RunBudget and child helpers; agent_runtime.py both result paths and completed-batch boundary; console_agent_bridge.py budget resolver/intersection; config.py comment. Create `Tests/Agents/test_denial_circuit_breaker.py`; extend `Tests/Chat/test_console_agent_run_budget.py`.
 
-**Interfaces:** Consumes structured metadata from Tasks 1–2. Produces `RunBudget.denial_circuit_breaker_limit`, `RunOutcome.denial_count` (default0, terminal-only), and `RUN_STUCK` with STEP_ERROR and error JSONL event.
+**Interfaces:** Consumes structured metadata from Tasks 1–2. Produces `RunBudget.denial_circuit_breaker_limit`, `RunOutcome.denial_count` (default0, terminal-only), and `RUN_STUCK` with STEP_ERROR and error run-log event.
 
-- [ ] Add a focused runtime helper in the new test file; use actual `run_agent_loop`, native calls, and generous budgets so existing step/repeat guards do not mask this guard:
+- [x] Add a focused runtime helper in the new test file; use actual `run_agent_loop`, native calls, and generous budgets so existing step/repeat guards do not mask this guard:
 
 ```python
 import json
@@ -230,8 +230,8 @@ def test_approved_tail_resets_completed_batch_streak():
     assert len(model_calls) == 2
 ```
 
-- [ ] Run the new runtime tests; expect missing RunBudget field or absence of stuck behavior. Add parameterized disable/reset/legacy-string/successful-denial-copy cases before coding.
-- [ ] Add the strict field coercer in models, normalize only this new field in RunBudget post-init, and use it in bridge fresh `[agents]` resolution:
+- [x] Qualify the new runtime tests and parameterized disable/reset/legacy-string/successful-denial-copy cases. Process deviation: the core tests were first run after implementation; the intended preimplementation RED was missed. A later exact-BASE control produced 13 failures and proves sensitivity only. Final expanded selection passed 66 tests; independent Task3 review approved the code and retained this qualification.
+- [x] Add the strict field coercer in models, normalize only this new field in RunBudget post-init, and use it in bridge fresh `[agents]` resolution:
 
 ```python
 DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT = 3
@@ -264,7 +264,7 @@ denial_circuit_breaker_limit=coerce_denial_circuit_breaker_limit(
 
 Keep config-read exception fallback at default3 without resetting unrelated budget fields. Extend budget tests for missing,0,1,3,'0',' 4 ',True,False,-1,1.5,float('inf'),'bad'; check both child helpers and (0,3)/(3,0)/(3,2)/(0,0) intersections.
 
-- [ ] Implement the local accounting helper and call it only after each result/history settlement in both branches:
+- [x] Implement the local accounting helper and call it only after each result/history settlement in both branches:
 
 ```python
 consecutive_denials = 0
@@ -283,7 +283,7 @@ def account_denial(*, review: ToolReviewDecision, result: ToolResult | None,
 
 For pre-dispatch refusal pass `result=None` and the selected normalized review value. For invocation pass actual ToolResult; do not treat review's default proceed as approval. Restored_pending passes synthetic_restore=True. Do not put accounting in the up-front Trace loop.
 
-- [ ] At completed batch end, preserve cancellation first, then terminalize without another model call:
+- [x] At completed batch end, preserve cancellation first, then terminalize without another model call:
 
 ```python
 if deps.should_cancel():
@@ -297,9 +297,9 @@ if budget.denial_circuit_breaker_limit and consecutive_denials >= budget.denial_
     return _outcome(RUN_STUCK, denial_count=consecutive_denials)
 ```
 
-- [ ] Add one actual virtual CLI builder/provider/runtime integration: three explicit denials stop after a completed batch, while three identical defaulted unresolved choices do not. Assert the review still permits provider dispatch and final invocation facts govern the counter, including a later authority refusal overriding earlier approval/denial metadata.
-- [ ] Add count-across-turns, non-denial reset, explicit-approved failure, same-name distinct-ID review, legacy deny string exclusion, no extra model call, and fence-protocol tests. Extend actual `Tests/Agents/test_provider_continuation_runtime.py` fixtures for continuation refusal and restored_pending exclusion, settled history pairing and cancellation/persistence-error precedence. Keep every existing repeat guard unchanged.
-- [ ] Run new runtime tests, selected continuation cases and budget tests; expect green with complete output. Review/commit checkpoint after evidence.
+- [x] Add one actual virtual CLI builder/provider/runtime integration: three explicit denials stop after a completed batch, while three identical defaulted unresolved choices do not. Assert the review still permits provider dispatch and final invocation facts govern the counter, including a later authority refusal overriding earlier approval/denial metadata.
+- [x] Add count-across-turns, non-denial reset, explicit-approved failure, same-name distinct-ID review, legacy deny string exclusion, no extra model call, and fence-protocol tests. Extend actual `Tests/Agents/test_provider_continuation_runtime.py` fixtures for continuation refusal and restored_pending exclusion, settled history pairing and cancellation/persistence-error precedence. Keep every existing repeat guard unchanged.
+- [x] Run new runtime tests, selected continuation cases and budget tests; expect green with complete output. Review/commit checkpoint after evidence.
 
 ### Task 4: Terminal System row, retained history and fleet isolation
 
@@ -325,7 +325,8 @@ Construct controller/store/gateway with the real setup in `Tests/Chat/test_conso
 
 - [ ] Run `python -m pytest Tests/Chat/test_console_denial_terminal.py -q`; missing-placeholder System expectation should fail before the fix.
 - [ ] Keep normal placeholder branch unchanged. For missing-placeholder denial outcome, select or create failed assistant using existing store helpers, preserve its content and durable anchoring, then append `_append_failure_system_row(session_id, visible_copy)` exactly once. Use `getattr(outcome, 'denial_count', 0) > 0` as discriminator; do not parse reason text. Avoid adding the same explanation to assistant and System. Keep all unrelated error fallback behavior unchanged.
-- [ ] Extend actual service/run-log fixture: run through AgentService with local writer and SQLite, load JSONL records, assert one error record contains count, `status='stuck'`, correct child/primary run id, and no denial payload secrets. Assert stored STEP_ERROR independently. Update vocabulary docstrings to include error; do not add tables/types registry.
+- [ ] Extend actual service/run-log fixture: run through AgentService with local writer and SQLite, decode the existing logs.*.txt segments with run_log_format.iter_records, assert one error record contains count, `status='stuck'`, correct child/primary run id, and no denial payload secrets. Assert stored STEP_ERROR independently. Update vocabulary docstrings to include error; do not add tables/types registry.
+- [ ] Close the nonblocking Task3 restoration-coverage finding while extending retained-history evidence: add a noncancelled restored_pending case in Tests/Agents/test_provider_continuation_runtime.py that reaches a subsequent model call at limit1 without tripping. The existing cancellation case cannot independently detect accidental counting because cancellation takes precedence. Keep production restoration behavior unchanged unless the new test reproduces a defect; report a defect to root before broadening the fix.
 - [ ] Extend real fleet fixture with Event-gated sibling and denying child. Assert child status stuck, sibling still running then done after gate release, supervisor not cancelled/stuck by shared counter. Continue retained child and prove two fresh denials do not inherit its previous count3. Verify its first model history includes all replies from completed denied batch. Use Events and fixture timeouts; no sleeps or live model requests.
 - [ ] Run only terminal file, new run-log test selectors and added fleet selectors, then existing nearby failure/fleet cases touched by the change. Review evidence distinguishes pure-loop, service persistence and Console transcript guarantees. Root review/commit checkpoint.
 
@@ -345,7 +346,7 @@ Construct controller/store/gateway with the real setup in `Tests/Chat/test_conso
 
 - [ ] Verify the previously-created compatible extension decision at the verified ADR-154 path matches implementation; leave accepted ADR-078 unchanged. Link the new decision from plan/task/implementation notes and verify setting and authoritative/batch criteria match the adopted spec before marking items complete.
 - [ ] Run `rg -n 'ToolReviewValue|approval_decision|denial_circuit_breaker_limit|denial_count'` over modified source for self-review; inspect every provenance assignment and budget constructor for lost zero or broad blocked counting. Run repository-selected linter/formatter only on changed Python files. Do not run full suite without opt-in.
-- [ ] Record actual targeted commands/results in task notes, including no extra model call, completed native history, real System row, JSONL count, child isolation, reset on retry and cancellation precedence. Mark Done only after all repository DoD items are met; root owns CLI status and final commit. Do not claim live-model verification from deterministic fixtures.
+- [ ] Record actual targeted commands/results in task notes, including no extra model call, completed native history, real System row, run-log count, child isolation, reset on retry and cancellation precedence. Mark Done only after all repository DoD items are met; root owns CLI status and final commit. Do not claim live-model verification from deterministic fixtures.
 
 ## Plan self-review
 

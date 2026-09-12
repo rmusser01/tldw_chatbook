@@ -57,7 +57,7 @@ The setting acceptance criterion specifies default 3 and explicit 0 disable. Doc
 
 `_agent_failure_visible_copy` already surfaces the last STEP_ERROR without double-prefixing `Agent stopped:`. `_finalize_agent_failure` preserves normal streamed placeholder content and appends a System row. Its missing-placeholder fallback currently may only append a failed assistant. Use a structured additive `RunOutcome.denial_count: int = 0` field if a narrowly scoped fallback discriminator is needed; populate only on denial terminal outcomes. This avoids identifying the feature by parsing summary text, and requires no persisted schema. The fallback should emit the System row for denial_count > 0 after selecting/marking the failed assistant, without changing other failure behavior. Preserve existing assistant content and state transition; avoid appending duplicate explanation to the assistant when the System row carries it.
 
-Primary Console runs get the System explanation. Child runs retain STEP_ERROR, run-local JSONL and RUN_STUCK, and existing child completion delivery communicates it; do not fabricate child messages in the supervisor's transcript as if the supervisor tripped.
+Primary Console runs get the System explanation. Child runs retain STEP_ERROR, run-local segmented log and RUN_STUCK, and existing child completion delivery communicates it; do not fabricate child messages in the supervisor's transcript as if the supervisor tripped.
 
 ## ADR-154 compatible extension
 
