@@ -13414,3 +13414,10 @@ code.
 ## Completed first-run setup is not a send-ready Console (TASK-13154.4, 2026-09-12)
 
 Six approval-card tests still reached a blocking provider-setup modal after the app factory marked first-run setup complete. A fixed 250 ms grace appeared to repair focus/geometry, but review exposed its scheduling assumption. Waiting for the actual attach reconciliation and resume-state projection exposed six modal assertion failures; persisting the existing send-ready llama_cpp fixture made all six pass. Mounted decision tests need both the real provider-ready fixture and observable startup completion before injecting pending state. Do not replace those conditions with a longer pause or patch away setup guards.
+
+
+## Paging checks must reject full-history reads in ownership lookups
+
+**TASK-18601, 2026-09-12.** The bounded segment reader reconstructed a 3 MB UTF-8 record correctly, but the combined viewer review found that its parent-ownership helper still called `subagent_run`/`get_run`, hydrating the entire database step log before every page. Switching that helper to `get_run_metadata` removed the hidden allocation. A real SQLite/scratch-authority regression now makes `get_run` and `_batch_hydrate_steps` fail while reading first/later primary and child pages and probing availability; the final affected integration selection passed 61 tests.
+
+**What to do.** Qualify the whole read path, including target and ownership resolution. A page-size assertion proves little if a helper materializes the complete history first. Seed real stored history, forbid its hydration in the bounded path, and separately verify that metadata lookups run off the UI thread.
