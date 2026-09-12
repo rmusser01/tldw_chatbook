@@ -9903,6 +9903,97 @@ def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
     assert child["status"] == "cancelled", child["status"]
 
 
+def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path):
+    first_gate = threading.Event()
+    first_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "first job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["first child answer"],
+        gate=first_gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, first_gateway)
+
+    _run(bridge, store, session, aid, conversation_id=session.id)
+    assert first_gateway.entered_event.wait(5), "the first child never started"
+    first_gate.set()
+    _join_fleet_threads()
+    first_owner = bridge._retained_fleet_owners(session.id)
+    assert len(first_owner) == 1
+
+    second_gate = threading.Event()
+    second_gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "second job"})],
+            ["turn 2 final"],
+        ],
+        child_result=["second child answer"],
+        gate=second_gate,
+        needed=1,
+    )
+    bridge._gateway = second_gateway
+    second = _second_turn_message(store, session)
+    try:
+        _run(bridge, store, session, second, conversation_id=session.id)
+        assert second_gateway.entered_event.wait(5), "the second child never started"
+
+        retained = bridge._retained_fleet_owners(session.id)
+        assert len(retained) == 1
+        assert retained[0] is not first_owner[0]
+        live = bridge.fleet_snapshot(session.id)
+        assert len(live) == 1
+        assert live[0].task == "second job"
+        assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
+    finally:
+        second_gate.set()
+    _join_fleet_threads()
+
+    bridge._gateway = _ChunkGateway([["turn 3 final"]])
+    third = _second_turn_message(store, session)
+    _run(bridge, store, session, third, conversation_id=session.id)
+    assert bridge._retained_fleet_owners(session.id) == []
+
+
+def test_fleet_disabled_next_turn_keeps_a_live_survivor_owner(tmp_path, monkeypatch):
+    gate = threading.Event()
+    gateway = _FleetTwoChildGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "long job"})],
+            ["turn 1 final"],
+        ],
+        child_result=["child answer"],
+        gate=gate,
+        needed=1,
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    try:
+        _run(bridge, store, session, aid, conversation_id=session.id)
+        assert gateway.entered_event.wait(5), "the child never started"
+        owners_before = bridge._retained_fleet_owners(session.id)
+        assert len(owners_before) == 1
+
+        monkeypatch.setattr(
+            agent_service,
+            "_setting",
+            lambda key, default: (
+                1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+            ),
+        )
+        bridge._gateway = _ChunkGateway([["turn 2 final"]])
+        second = _second_turn_message(store, session)
+        _run(bridge, store, session, second, conversation_id=session.id)
+
+        assert bridge._retained_fleet_owners(session.id) == owners_before
+        live = bridge.fleet_snapshot(session.id)
+        assert len(live) == 1
+        assert bridge.cancel_subagent(session.id, live[0].handle_id) is True
+    finally:
+        gate.set()
+    _join_fleet_threads()
+
+
 def test_a_finished_childs_row_does_not_follow_the_conversation_forever(
     tmp_path,
 ):

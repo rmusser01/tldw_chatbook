@@ -4835,10 +4835,10 @@ class ConsoleAgentBridge:
         # service can actually stop it -- which is why
         # `AgentService.cancel_subagent` now refuses a handle it does not
         # own rather than reporting a success it cannot deliver. Each
-        # entry is dropped as soon as its last child settles
-        # (`_prune_settled_fleet_survivors`), so this holds at most one
-        # service per turn that left a child running, and live children
-        # are themselves capped by the coordinator above.
+        # Settled entries are dropped on the next turn boundary and on
+        # existing lifecycle/action cleanup paths. Until then, this can
+        # retain one settled service per completed survivor turn in addition
+        # to the live owners bounded by the coordinator above.
         self._fleet_survivor_services: dict[str, list[AgentService]] = {}
         # This lock protects the survivor-service list's read-modify-write
         # operations. The separate admission and activity locks above protect
@@ -7081,8 +7081,9 @@ class ConsoleAgentBridge:
         # cancel Event and approval-revoke callback live in THIS service
         # and nowhere else, so dropping the last reference to it is what
         # made a survivor unstoppable. Retained until its last child
-        # settles; `_prune_settled_fleet_survivors` does the dropping,
-        # lazily, off the read paths below. Retained on the identity-miss
+        # settles; `_prune_settled_fleet_survivors` does the dropping at
+        # the next turn boundary or an existing lifecycle/action cleanup
+        # path. Retained on the identity-miss
         # path too (a stale teardown from an overtaken run still owns its
         # own children) -- `service` is this call's own object either way.
         if service.live_subagent_handles():
@@ -7949,6 +7950,12 @@ class ConsoleAgentBridge:
             The conversation's coordinator, or ``None`` when the fleet is
             switched off.
         """
+        # TASK-15666: reclaim settled survivor owners at the same next-turn
+        # boundary that prunes terminal coordinator handles below. This must
+        # precede the kill-switch return so headless turns still clean up, and
+        # stay outside the admission lock because the helper owns its separate
+        # survivor-list lock. Live owners remain retained for cancellation.
+        self._prune_settled_fleet_survivors(conversation_id)
         # Read through the MODULE, not a from-import: `agent_service.
         # _setting` is what tests monkeypatch to flip the kill switch
         # (e.g. `test_inline_fleet_off_spawn_still_produces_a_live_
