@@ -109,7 +109,7 @@ The bridge updates the accumulator on every event but replaces the immutable `pu
 
 The existing 0.2-second primary transcript poll and 1-second survivor tick remain the only UI clocks. Snapshot equality continues to prevent unchanged DOM writes. No per-chunk Textual message, timer, worker, or repaint is added.
 
-`console_turn_activity_text` appends the live label to generating/thinking output and uses `turn_usage.started_at` to supply the pre-first-step elapsed base. Tool and approval branches keep their existing text and omit prior-call usage. `_fleet_row_from_handle` accepts `live_snapshot: AgentLiveSnapshot | None = None` and appends that child's live usage label without changing primary text, ordering, status, cancellation, steering, or terminal budget display.
+`console_turn_activity_text` appends the live label to generating/thinking output and uses `turn_usage.started_at` to supply the pre-first-step elapsed base. Tool and approval branches keep their existing text and omit prior-call usage. `_fleet_row_from_handle` accepts `live_snapshot: AgentLiveSnapshot | None = None` and appends that child's live usage label without changing primary text, ordering, status, cancellation, steering, or terminal budget display. While a nonzero live label is present, it uses the row component's existing secondary wrapping so task text and the count remain visible; terminal unread wrapping keeps its existing behavior. Active rows may occupy additional vertical space.
 
 ## Lifecycle and failures
 
