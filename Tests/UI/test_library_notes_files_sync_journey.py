@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import ast
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 import hashlib
 import inspect
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import textwrap
@@ -107,7 +110,6 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     plan_reconciliation,
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
-    NotesSyncRuntimeOwner,
     NotesSyncControlResult,
     NotesSyncRootRuntimeSnapshot,
     NotesSyncRuntimeSnapshot,
@@ -229,52 +231,257 @@ def _seed_real_conflict_authority(tmp_path: Path) -> tuple[Path, Path, Path]:
     return notes_path, state_path, sync_root
 
 
-async def _start_real_conflict_stack(
-    notes_path: Path, state_path: Path
-) -> tuple[
-    NotesSyncRuntimeOwner,
-    CharactersRAGDB,
-    NotesInteropService,
-    LibraryNotesSyncController,
-]:
-    """Build fresh production runtime/executor/controller objects over disk state."""
+@contextmanager
+def _real_notes_authority(
+    base_dir: Path,
+    notes_path: Path,
+    client_id: str,
+):
+    """Yield one private Notes database, folder, interop, and scope authority."""
 
-    database = CharactersRAGDB(notes_path, client_id="task-97-runtime")
-    interop = NotesInteropService(
-        base_db_directory=notes_path.parent,
-        api_client_id="task-97-runtime",
-        global_db_to_use=database,
-    )
-    scope_service = NotesScopeService(
-        local_notes_service=interop,
-        server_service=None,
-        folder_repository=LocalNoteFolderRepository(database),
-    )
-    owner = build_notes_sync_runtime_owner(
-        notes_scope_service=scope_service,
-        cutover_admitted=True,
-        profile_process_is_sole=True,
-        database_path=state_path,
-        migrate_legacy=lambda: None,
-        local_user_id="user-1",
-        recovery_capacity_bytes=1024 * 1024,
-    )
-    await owner.start()
-    controller = LibraryNotesSyncController(
-        runtime=owner,
-        import_controller=SimpleNamespace(begin_selection=lambda: None),
-    )
-    return owner, database, interop, controller
+    database = CharactersRAGDB(notes_path, client_id=client_id)
+    interop = None
+    try:
+        folders = LocalNoteFolderRepository(database)
+        interop = NotesInteropService(
+            base_db_directory=base_dir,
+            api_client_id=client_id,
+            global_db_to_use=database,
+        )
+        scope_service = NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+            folder_repository=folders,
+        )
+        yield database, folders, interop, scope_service
+    finally:
+        try:
+            if interop is not None:
+                interop.close_all_user_connections()
+        finally:
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
+            assert database.registered_connection_count() == 0
 
 
-async def _close_real_conflict_stack(
-    owner: NotesSyncRuntimeOwner,
-    database: CharactersRAGDB,
-    interop: NotesInteropService,
+@asynccontextmanager
+async def _real_conflict_stack(notes_path: Path, state_path: Path):
+    """Yield fresh production runtime/executor/controller objects over disk state."""
+
+    with _real_notes_authority(
+        notes_path.parent,
+        notes_path,
+        "task-97-runtime",
+    ) as (database, _folders, interop, scope_service):
+        owner = None
+        try:
+            owner = build_notes_sync_runtime_owner(
+                notes_scope_service=scope_service,
+                cutover_admitted=True,
+                profile_process_is_sole=True,
+                database_path=state_path,
+                migrate_legacy=lambda: None,
+                local_user_id="user-1",
+                recovery_capacity_bytes=1024 * 1024,
+            )
+            await owner.start()
+            controller = LibraryNotesSyncController(
+                runtime=owner,
+                import_controller=SimpleNamespace(begin_selection=lambda: None),
+            )
+            yield owner, database, interop, controller
+        finally:
+            if owner is not None:
+                await owner.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ("setup", "body", "cancel"))
+async def test_real_notes_authority_closes_only_owned_worker_connections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_phase: str,
 ) -> None:
-    await owner.shutdown()
-    interop.close_all_user_connections()
-    database.close_connection()
+    """The private authority drains joined worker handles on every exit path."""
+
+    databases = []
+    worker_connections = []
+    foreign = CharactersRAGDB(tmp_path / "foreign.sqlite", client_id="foreign")
+    foreign_connection = foreign.get_connection()
+    original_database = CharactersRAGDB
+    primary = (
+        asyncio.CancelledError("notes authority cancellation")
+        if failure_phase == "cancel"
+        else RuntimeError("notes authority failure")
+    )
+
+    def capture_database(*args, **kwargs):
+        database = original_database(*args, **kwargs)
+        databases.append(database)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connections.append(
+                executor.submit(database.get_connection).result(timeout=2.0)
+            )
+        return database
+
+    def fail_setup(*_args, **_kwargs):
+        raise primary
+
+    monkeypatch.setattr(f"{__name__}.CharactersRAGDB", capture_database)
+    if failure_phase == "setup":
+        monkeypatch.setattr(f"{__name__}.LocalNoteFolderRepository", fail_setup)
+    try:
+        with pytest.raises(type(primary)) as caught:
+            with _real_notes_authority(
+                tmp_path,
+                tmp_path / "owned.sqlite",
+                "owned",
+            ):
+                raise primary
+        assert caught.value is primary
+        assert len(databases) == len(worker_connections) == 1
+        assert databases[0].registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connections[0].execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        for database in [*databases, foreign]:
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
+
+
+def test_real_notes_authority_drains_database_after_interop_close_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interop close failure cannot skip exact private-database cleanup."""
+
+    databases = []
+    worker_connections = []
+    foreign = CharactersRAGDB(tmp_path / "foreign.sqlite", client_id="foreign")
+    foreign_connection = foreign.get_connection()
+    original_database = CharactersRAGDB
+    cleanup_error = RuntimeError("interop close failure")
+
+    def capture_database(*args, **kwargs):
+        database = original_database(*args, **kwargs)
+        databases.append(database)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connections.append(
+                executor.submit(database.get_connection).result(timeout=2.0)
+            )
+        return database
+
+    def fail_interop_close(_self):
+        raise cleanup_error
+
+    monkeypatch.setattr(f"{__name__}.CharactersRAGDB", capture_database)
+    monkeypatch.setattr(
+        NotesInteropService,
+        "close_all_user_connections",
+        fail_interop_close,
+    )
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            with _real_notes_authority(
+                tmp_path,
+                tmp_path / "owned.sqlite",
+                "owned",
+            ):
+                pass
+        assert caught.value is cleanup_error
+        assert len(databases) == len(worker_connections) == 1
+        assert databases[0].registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connections[0].execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        for database in [*databases, foreign]:
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ("start", "body_cancel", "shutdown"))
+async def test_real_conflict_stack_settles_owner_before_database_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_phase: str,
+) -> None:
+    """The actual runtime settles before exact private-database cleanup."""
+
+    notes_path, state_path, _sync_root = _seed_real_conflict_authority(tmp_path)
+    databases = []
+    worker_connections = []
+    owners = []
+    real_shutdowns = []
+    foreign = CharactersRAGDB(tmp_path / "foreign.sqlite", client_id="foreign")
+    foreign_connection = foreign.get_connection()
+    original_database = CharactersRAGDB
+    original_builder = build_notes_sync_runtime_owner
+    primary = (
+        asyncio.CancelledError("conflict stack cancellation")
+        if failure_phase == "body_cancel"
+        else RuntimeError(f"conflict stack {failure_phase} failure")
+    )
+
+    def capture_database(*args, **kwargs):
+        database = original_database(*args, **kwargs)
+        databases.append(database)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connections.append(
+                executor.submit(database.get_connection).result(timeout=2.0)
+            )
+        return database
+
+    def capture_owner(*args, **kwargs):
+        owner = original_builder(*args, **kwargs)
+        owners.append(owner)
+        original_start = owner.start
+        original_shutdown = owner.shutdown
+        real_shutdowns.append(original_shutdown)
+
+        if failure_phase == "start":
+
+            async def fail_after_start(*, force: bool = False) -> None:
+                await original_start(force=force)
+                raise primary
+
+            owner.start = fail_after_start
+        elif failure_phase == "shutdown":
+
+            async def fail_after_shutdown() -> None:
+                await original_shutdown()
+                assert owner.snapshot().status == "stopped"
+                raise primary
+
+            owner.shutdown = fail_after_shutdown
+        return owner
+
+    monkeypatch.setattr(f"{__name__}.CharactersRAGDB", capture_database)
+    monkeypatch.setattr(
+        f"{__name__}.build_notes_sync_runtime_owner",
+        capture_owner,
+    )
+    try:
+        with pytest.raises(type(primary)) as caught:
+            async with _real_conflict_stack(notes_path, state_path):
+                if failure_phase == "body_cancel":
+                    raise primary
+        assert caught.value is primary
+        assert len(owners) == len(real_shutdowns) == 1
+        assert owners[0].snapshot().status == "stopped"
+        assert len(databases) == len(worker_connections) == 1
+        assert databases[0].registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connections[0].execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        for shutdown in real_shutdowns:
+            await shutdown()
+        for database in [*databases, foreign]:
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
 
 
 def test_notes_guide_uses_only_shipped_sync_action_labels() -> None:
@@ -463,7 +670,19 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
         purpose = str(
             screen.query_one("#library-notes-database-purpose", Static).renderable
         )
-        assert "Library notes" in str(authority.renderable)
+        if size[0] >= 64:
+            assert str(authority.renderable).startswith("Library notes · ")
+        else:
+            source_strip = screen.query_one("#library-notes-source-strip")
+            database_source = screen.query_one("#library-notes-source-database", Button)
+            assert database_source.display
+            assert database_source.has_class("-selected")
+            assert str(database_source.label) == "Library notes"
+            assert database_source.region.width > 0
+            assert database_source.region.height > 0
+            assert source_strip.content_region.contains_region(database_source.region)
+            assert screen.region.contains_region(database_source.region)
+            assert not str(authority.renderable).startswith("Library notes · ")
         assert "use Sync to mirror" not in purpose
         assert "switch to Folder files" in purpose
         assert "choose Add from files" in purpose
@@ -513,30 +732,22 @@ async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
     receipt_path = tmp_path / "import-receipts.sqlite"
     source = tmp_path / "review-me.md"
     source.write_text("# Review me\n\nBody", encoding="utf-8")
-    database = CharactersRAGDB(notes_path, client_id="task-19012-import")
-    folders = LocalNoteFolderRepository(database)
-    interop = NotesInteropService(
-        base_db_directory=tmp_path,
-        api_client_id="task-19012-import",
-        global_db_to_use=database,
-    )
-    scope_service = NotesScopeService(
-        local_notes_service=interop,
-        server_service=None,
-        folder_repository=folders,
-    )
-    monkeypatch.setattr(
-        library_screen_module,
-        "get_notes_sync_state_db_path",
-        lambda: receipt_path,
-    )
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=[])
-    app.chachanotes_db = database
-    app.notes_scope_service = scope_service
-    host = _JourneyHarness(app)
+    with _real_notes_authority(
+        tmp_path,
+        notes_path,
+        "task-19012-import",
+    ) as (database, folders, _interop, scope_service):
+        monkeypatch.setattr(
+            library_screen_module,
+            "get_notes_sync_state_db_path",
+            lambda: receipt_path,
+        )
+        app = _build_test_app()
+        _seed_conversations(app, _two_conversations(), notes=[])
+        app.chachanotes_db = database
+        app.notes_scope_service = scope_service
+        host = _JourneyHarness(app)
 
-    try:
         async with host.run_test(size=(120, 36)) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
@@ -611,9 +822,6 @@ async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
             assert receipt.imported == 1
             assert folders.get_folder_by_path(("Inbox",)) is not None
             assert receipt_path.exists()
-    finally:
-        interop.close_all_user_connections()
-        database.close_connection()
 
 
 @pytest.mark.asyncio
@@ -1407,11 +1615,13 @@ async def test_real_authority_conflict_choice_journey_is_durable_and_undoable(
     notes_path, state_path, sync_root = _seed_real_conflict_authority(case)
     outside = case / "outside.md"
     outside.write_text("outside sentinel", encoding="utf-8")
-    owner, database, interop, controller = await _start_real_conflict_stack(
-        notes_path, state_path
-    )
     operation_id: str | None = None
-    try:
+    async with _real_conflict_stack(notes_path, state_path) as (
+        _owner,
+        database,
+        _interop,
+        controller,
+    ):
         await controller.check_root("root-1")
         reviewed = controller.snapshot.review
         assert reviewed.rows, controller.snapshot.status_line
@@ -1462,21 +1672,18 @@ async def test_real_authority_conflict_choice_journey_is_durable_and_undoable(
             assert database.count_notes() == (
                 2 if choice is NotesSyncConflictChoice.KEEP_BOTH else 1
             )
-    finally:
-        await _close_real_conflict_stack(owner, database, interop)
 
     assert outside.read_text(encoding="utf-8") == "outside sentinel"
     with PosixNotesSyncFilesystem(sync_root) as filesystem:
         with pytest.raises(NotesSyncFilesystemError, match="invalid_relative_path"):
             filesystem.observe("../outside.md")
 
-    (
-        fresh_owner,
+    async with _real_conflict_stack(notes_path, state_path) as (
+        _fresh_owner,
         fresh_database,
-        fresh_interop,
+        _fresh_interop,
         fresh_controller,
-    ) = await _start_real_conflict_stack(notes_path, state_path)
-    try:
+    ):
         await fresh_controller.check_root("root-1")
         fresh_token = fresh_controller.snapshot.review.observation_token
         await fresh_controller.show_resolution_history("root-1")
@@ -1502,8 +1709,6 @@ async def test_real_authority_conflict_choice_journey_is_durable_and_undoable(
         assert (sync_root / "note.md").read_text(encoding="utf-8") == "file side"
         assert fresh_database.count_notes() == 1
         assert fresh_controller.snapshot.history.rows[0].state == "undone"
-    finally:
-        await _close_real_conflict_stack(fresh_owner, fresh_database, fresh_interop)
 
 
 @pytest.mark.asyncio
