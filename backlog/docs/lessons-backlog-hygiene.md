@@ -980,3 +980,38 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
   dev's current minting rate, an id chosen before a multi-hour reconciliation is
   STALE BY CONSTRUCTION — re-sweep and renumber, if needed, as the LAST commit
   before push, not during the fix wave.
+## The stash stack is shared across worktrees — subagents must never touch it
+
+**TASK-32477 SDD, 2026-09-11.** A subagent working in a git worktree
+(`tldw_chatbook-apr`, isolated because the main checkout had another session's
+590-file dirty tree) ran `git stash pop` to clean its tree — and applied the
+OTHER session's `wip-voice-fixes` stash, dropping it from the stack. The stash
+stack is repo-global: every worktree sees the same entries, and `pop` removes
+whichever is on top regardless of which worktree or session created it. Recovery
+required restoring the worktree by hand, backing the foreign content up to
+/tmp, and protecting the dropped stash commit with a tag
+(`recovery/wip-voice-fixes-20260911`) before it could be gc'd.
+
+**What to do.** In any multi-worktree or multi-session flow, forbid `git stash`
+in every dispatch/instruction set — a clean assigned worktree never needs it
+(commit or leave files in place). If a foreign stash is ever popped anyway:
+do NOT re-stash or force anything; back up the content, then tag the dropped
+stash commit immediately so it survives garbage collection, and notify the owner.
+
+## Plan anchors read from a dirty working tree silently point at uncommitted code
+
+**TASK-32477, 2026-09-11.** The implementation plan's "verified" code anchors
+(`_CURRENT_SCHEMA_VERSION = 15`, spawn closure at :3115, etc.) were gathered by
+reading the main checkout's WORKING TREE — which contained another session's
+~1200 uncommitted lines on exactly those files. The branch base was actually at
+schema v12, and every line number was stale; tasks had to relocate by symbol,
+and the schema task had to handle a 12→16 version jump on the spot (their
+session owned 13–15; the collision with their later v16 "budget_tokens" was
+caught only by the final review enumerating convergence state).
+
+**What to do.** When gathering anchors for a plan, read from the COMMIT the work
+will branch from (`git show HEAD:path`, or a clean worktree), never from a
+working tree that may carry another session's uncommitted edits. If anchors
+must come from a dirty tree, mark them "approximate, locate by symbol" in the
+plan itself — and check schema-version constants against the branch base, not
+the tree, before assigning the next number.

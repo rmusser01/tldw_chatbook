@@ -1,7 +1,7 @@
 ---
 id: TASK-32477
 title: 'Agent provider routing: preset routing + gated spawn overrides'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-12 00:57'
 updated_date: '2026-09-12 17:42'
@@ -27,6 +27,12 @@ Let a Console master/control agent spawn sub-agents onto a specific provider+mod
 - [x] #5 Registry entries support optional params table (amends ADR-146)
 - [x] #6 No silent cross-provider fallback; RoutingError variants surface as spawn tool errors
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Full plan: Docs/superpowers/plans/2026-09-11-agent-provider-routing.md (executed via subagent-driven development; ledger at .superpowers/sdd/2026-09-11-agent-provider-routing/progress.md). Twelve tasks as executed: T1 sampling_params module; T2 registry entry params (amends ADR-146); T3 AgentDefinition provider/params with legacy-stable fingerprint; T4 AgentRuns schema v16 (12→16 jump — dev's 13–15 land separately; idempotent ALTERs, provably merge-safe); T5 pure resolver + six-layer params; T6 spawn integration (resolver hook before budget, child config, run snapshot); T6B PLAN AMENDMENT — _StreamingModelAdapter honors per-call routing kwargs (added after T6 review confirmed the production adapter swallowed api_endpoint/api_base_url/all sampling kwargs into **_ignored; without it the feature was inert in production); T7 spawn schema gating + roster visibility; T8 continuation reuses persisted snapshot (+ re-freeze onto resumed rows); T9 settings UI (preset routing, defaults, override policy, Test routing dry-run) + endpoint modal params; T10 config template (keys commented out) + user guide; T11 sandboxed live verification (6/6 PASS, evidence below). Follow-ups filed: TASK-32497 (rail resolved-target display), TASK-32498 (custom-ep/built-in conflation), TASK-32499 (polish bundle), TASK-32500 (pre-existing D2 defect), TASK-32479 (fallback_models, pre-existing).
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
