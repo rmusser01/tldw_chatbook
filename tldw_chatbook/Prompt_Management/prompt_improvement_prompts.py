@@ -59,9 +59,11 @@ The prompt to transform is provided as the `source_prompt` value in the user mes
 """
 
 # Non-negotiable guards kept alongside the owner-selected default so the
-# rewrite never executes the source and never corrupts protected material.
+# rewrite never executes the source, never corrupts protected material, and
+# never fabricates semantic content the preservation scan cannot detect.
 _REWRITE_SAFETY_INSTRUCTIONS = """Rewrite the source request; never answer it or carry out its requested work.
-Preserve placeholders, protected material, required output fields, and explicit safety and side-effect limits exactly.
+Preserve the requested artifact, intent, language, audience, genre, facts and claims, business invariants, approval and side-effect limits, required output fields, placeholders, and protected material exactly.
+Do not invent requirements, facts, evidence, metrics, names, tools, capabilities, or permissions.
 """
 
 _REWRITE_INSTRUCTIONS = """Return exactly one JSON object with kind "prompt_rewrite" and rewritten_prompt as a string. JSON object only."""
