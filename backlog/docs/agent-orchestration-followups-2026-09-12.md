@@ -15,13 +15,17 @@ supersedes its pending-integration and remaining-work labels.
   copy, real persistence, sibling isolation and resumed-run verification
   (`49b5569676`, `762941cec0`, `e85c7d16c3`, `a56f534fd4`, `86f2a79e76`).
   Their task notes contain scoped test results and evidence qualifications.
-- **In progress:** TASK-18923 live per-run usage. The service/adapter/bridge
-  backend is implemented and independently reviewed (`16c10faca7`,
-  `2f39215549`, `ca9418b33a`), including exact child attribution, explicit
-  provider provenance and terminal bookkeeping containment. UI rendering remains
-  to implement; the task is not complete. TASK-13154.5/.6/.7 Settings
-  resource ownership/tool-filter feedback, starter presets and definition wall
-  caps follow; parent TASK-13154 reconciliation remains open.
+- **Done and independently reviewed:** TASK-18923 live per-run usage, from
+  service/adapter/bridge attribution through primary/child Console rendering
+  (`16c10faca7`, `2f39215549`, `ca9418b33a`, `c1b2bf984b`, `3580bc6ae0`).
+  The UI gate passed 88 tests; exact test-owner cleanup was followed by 15 usage
+  selectors and 12 fleet-panel tests with zero regular-file descriptor growth.
+  Provider/local labels, zero omission, current-call reset and existing timer
+  ownership are verified; final accounting is unchanged. Scope and warning
+  qualifications are in the task notes.
+- **In progress:** TASK-13154.5/.6/.7 Settings resource ownership/tool-filter
+  feedback, starter presets and definition wall caps. Parent TASK-13154
+  reconciliation and the combined branch review remain open.
 - **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
   and prior-turn recovery. A real temporary-repository race demonstrated that
   Git running from a pinned linked child can advance a replacement parent
@@ -34,7 +38,7 @@ supersedes its pending-integration and remaining-work labels.
   Ordinary agents remain available; existing work is retained. The final affected
   Console/service selection passed 25 tests with no new skips. Functional
   recovery itself remains incomplete.
-- Four of the eight requested outcome areas are complete. The parent stays open
+- Five of the eight requested outcome areas are complete. The parent stays open
   until the remaining implementation and combined branch review finish. No new
   PR, push or merge has been performed for this continuation.
 
