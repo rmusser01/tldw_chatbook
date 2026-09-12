@@ -31,6 +31,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, _detect_cycle, run_agent_loop
+from tldw_chatbook.Agents.mcp_tool_provider import KILL_SWITCH_REFUSAL
 from tldw_chatbook.Agents.run_context import current_tool_call_id
 
 CALC = ToolSchema(
@@ -377,9 +378,7 @@ def test_tool_result_step_distinguishes_failure_and_provider_block() -> None:
             ModelTurn(text=fence("calculator", {"expression": "6*7"})),
             ModelTurn(text="done"),
         ],
-        invoke=lambda _call: ToolResult.blocked(
-            "tool execution is disabled by the kill switch"
-        ),
+        invoke=lambda _call: ToolResult.blocked(KILL_SWITCH_REFUSAL),
     )
 
     assert (

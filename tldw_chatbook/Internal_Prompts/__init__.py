@@ -16,6 +16,7 @@ from . import document_generation_prompts  # noqa: F401  (registers specs on imp
 # customizable, and could not affect anything -- their only consumer had no
 # caller. Recover the text from git history if the briefing work needs it.
 from . import character_prompts  # noqa: F401  (registers specs on import)
+from . import prompt_improvement_prompts  # noqa: F401  (registers specs on import)
 from .resolver import get_internal_prompt, render_internal_prompt, safe_substitute
 
 __all__ = [

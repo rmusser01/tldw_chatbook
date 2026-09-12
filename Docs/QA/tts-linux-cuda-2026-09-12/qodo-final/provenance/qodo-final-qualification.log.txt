@@ -1,0 +1,8 @@
+kokoro-cuda-03 medium content_passed
+kokoro-cuda-03 runtime passed
+kokoro-onnx-03 medium content_passed
+kokoro-onnx-03 runtime passed
+chatterbox-cuda-05 medium content_review_required
+chatterbox-cuda-05 small content_passed
+chatterbox-cuda-05 runtime passed
+QODO_RUNTIME_QUALIFICATION_PASSED; ASR review required=True

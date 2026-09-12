@@ -1,0 +1,49 @@
+from pathlib import Path
+import subprocess,json,hashlib,tarfile,zipfile,time,os,shutil,sys
+r=Path('/home/ml-user/tts-linux-cuda-20260912')
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def run(args,log,check=True):
+ with (r/'logs'/log).open('w') as f:p=subprocess.run(args,stdout=f,stderr=subprocess.STDOUT)
+ (r/'logs'/(log+'.exit')).write_text(str(p.returncode)+'\n')
+ if check and p.returncode:raise RuntimeError(f'{log}: exit {p.returncode}')
+ return p.returncode
+m=json.loads((r/'qodo-source-delta.json').read_text());src=r/'source-qodo'
+shutil.copytree(r/'source-rebased',src,ignore=shutil.ignore_patterns('build','*.egg-info','__pycache__'))
+with tarfile.open(r/'qodo-source-delta.tar.gz') as t:t.extractall(src,filter='data')
+for name in m['remove']:(src/name).unlink()
+for name,digest in m['replace'].items():assert sha(src/name)==digest,name
+actual={str(p.relative_to(src)):sha(p) for pkg in ['tldw_chatbook','tldw_profile_core'] for p in (src/pkg).rglob('*.py')};assert actual==m['python_files']
+assert sha(src/'scripts/validate_live_tts.py')==m['runner_sha256']
+os.environ.update(UV_CACHE_DIR=str(r/'cache/uv'),UV_PYTHON_INSTALL_DIR=str(r/'python'))
+uv='/home/ml-user/.local/bin/uv';venvs=[r/'venv-kokoro-py312',r/'venv-chatterbox-py312']
+run([uv,'build','--wheel','--python',str(venvs[0]/'bin/python'),'--out-dir',str(r/'wheels-qodo'),str(src)],'qodo-wheel-build.log')
+w=next((r/'wheels-qodo').glob('*.whl'))
+with zipfile.ZipFile(w) as z:
+ for name,digest in actual.items():assert hashlib.sha256(z.read(name)).hexdigest()==digest,name
+for v in venvs:
+ run([uv,'pip','install','--python',str(v/'bin/python'),'--reinstall','--no-deps',str(w)],f'qodo-install-{v.name}.log')
+ site=v/'lib/python3.12/site-packages'
+ installed={str(p.relative_to(site)):sha(p) for pkg in ['tldw_chatbook','tldw_profile_core'] for p in (site/pkg).rglob('*.py')};assert installed==actual,v
+m.update(wheel_sha256=sha(w),source_wheel_installed_match=True)
+(r/'logs/qodo-wheel-identity.json').write_text(json.dumps(m,indent=2)+'\n')
+medium=r/'cache/huggingface/hub/models--Systran--faster-whisper-medium/snapshots/08e178d48790749d25932bbc082711ddcfdfbc4f';asr_review=False
+for old,new in [('kokoro-cuda-01','kokoro-cuda-03'),('kokoro-onnx-01','kokoro-onnx-03'),('chatterbox-cuda-03','chatterbox-cuda-05')]:
+ script=r/f'run-{new}.sh';text=(r/f'run-{old}.sh').read_text().replace(old,new)
+ if new.startswith('kokoro'):text=text.replace('"$root/validate_live_tts.py"','"$root/source-qodo/scripts/validate_live_tts.py"')
+ script.write_text(text)
+ with (r/'logs'/f'{new}.log').open('w') as log,(r/'logs'/f'{new}-routing.jsonl').open('w') as routes:
+  p=subprocess.Popen(['bash',str(script)],stdout=log,stderr=subprocess.STDOUT)
+  while p.poll() is None:
+   rows=json.loads(subprocess.check_output(['pactl','--format=json','list','sink-inputs'],text=True));routes.write(json.dumps({'at':time.monotonic(),'inputs':rows})+'\n');routes.flush();time.sleep(.25)
+ (r/'logs'/f'{new}.exit').write_text(str(p.returncode)+'\n')
+ if p.returncode:raise RuntimeError(f'{new} runtime exit {p.returncode}')
+ models=[('medium',medium)]
+ if new.startswith('chatterbox'):models.append(('small',r/'models/whisper-small'))
+ for label,model in models:
+  out=r/'runs'/new/f'content-{label}.json'
+  code=run([str(venvs[0]/'bin/python'),'-I','-B',str(r/'guard-asr.py'),str(src/'scripts/verify_live_tts_content.py'),'--evidence',str(r/'runs'/new/'evidence.json'),'--model',str(model),'--language','en','--output',str(out)],f'{new}-{label}-asr.log',check=False)
+  result=json.loads(out.read_text());assert result['status'] in ['content_passed','content_review_required'];asr_review=asr_review or bool(code)
+  print(new,label,result['status'],flush=True)
+ print(new,'runtime passed',flush=True)
+print('QODO_RUNTIME_QUALIFICATION_PASSED; ASR review required='+str(asr_review),flush=True)
+sys.exit(1 if asr_review else 0)

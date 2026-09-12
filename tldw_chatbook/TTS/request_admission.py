@@ -829,6 +829,7 @@ class TTSRequestAdmissionCoordinator:
         *,
         text: str,
         voice_override: str | None = None,
+        response_format_override: str | None = None,
         progress_sink: ProgressSink | None = None,
         admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
@@ -837,6 +838,12 @@ class TTSRequestAdmissionCoordinator:
         Args:
             text: Text to synthesize.
             voice_override: Optional request-scoped voice identifier.
+            response_format_override: Optional request-scoped audio format
+                (e.g. `"wav"`), overriding the published default preference
+                for this request only. Flows through the same effective-
+                settings validation every explicit selection takes, so a
+                format the provider does not support fails loudly through
+                the normal error paths instead of being silently dropped.
             progress_sink: Optional callback for bounded synthesis progress.
 
         Returns:
@@ -853,13 +860,16 @@ class TTSRequestAdmissionCoordinator:
             TTSOperationError: If admission or synthesis fails.
             ValueError: If the published default preferences are invalid.
         """
+        overrides: dict[str, object] = {}
+        if voice_override is not None:
+            overrides["voice_mode"] = "exact"
+            overrides["voice_id"] = voice_override
+        if response_format_override is not None:
+            overrides["response_format"] = response_format_override
         explicit = (
             None
-            if voice_override is None
-            else TTSSelectionOverrides(
-                voice_mode="exact",
-                voice_id=voice_override,
-            )
+            if not overrides
+            else TTSSelectionOverrides(**overrides)
         )
         response, _selection = await self.synthesize_effective(
             text=text,

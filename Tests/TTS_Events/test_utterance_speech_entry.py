@@ -96,7 +96,7 @@ class _MultiCallService:
 
         return SimpleNamespace(provider_id=self._provider_id)
 
-    async def synthesize_default(self, *, text, voice_override=None, progress_sink=None):
+    async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
         self.synthesize_default_calls.append((text, voice_override))
         return self._response_factory()
 
@@ -111,7 +111,7 @@ class _FailingService:
 
         return SimpleNamespace(provider_id="openai")
 
-    async def synthesize_default(self, *, text, voice_override=None, progress_sink=None):
+    async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
         raise TTSProviderUnavailableError("synthesis unavailable")
 
 
@@ -129,7 +129,7 @@ class _PausableService:
 
         return SimpleNamespace(provider_id="openai")
 
-    async def synthesize_default(self, *, text, voice_override=None, progress_sink=None):
+    async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
         await self.proceed.wait()
         return self._response
 
@@ -948,7 +948,7 @@ async def test_generate_tts_extracts_speed_from_preferences_and_threads_it_throu
 
             return SimpleNamespace(provider_id="openai", speed=0.5)
 
-        async def synthesize_default(self, *, text, voice_override=None, progress_sink=None):
+        async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
             return response
 
     handler._tts_service = _SlowSpeedService()

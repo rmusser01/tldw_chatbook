@@ -101,7 +101,11 @@ with load/validate/mutate helpers; writes go through
 Save-as-default already uses. Validation rejects blank display names, invalid
 slugs, unknown families, and endpoints that fail `validate_url` after
 family-appropriate normalization (`normalize_llamacpp_base_url` for
-`llama_cpp`).
+`llama_cpp`). The loader accepts either config shape: a top-level
+`custom_endpoints` table (the raw CLI config) wins, with the projection
+nested under `COMPREHENSIVE_CONFIG_RAW` (the normalized `load_settings()`
+shape) as the fallback — the same dual-shape contract the gateway's
+config readers use.
 
 ## Provider identity and resolution
 

@@ -518,6 +518,8 @@ def test_panel_snapshot_rejects_private_non_data_leaves(hostile: object) -> None
         "semantic_vad",
         "0.5",
         "500",
+        "",
+        False,
     )
 
     with pytest.raises((TypeError, ValueError)):
@@ -554,6 +556,8 @@ def test_panel_snapshot_roundtrips_invalid_url_but_strips_credential_metadata() 
         "semantic_vad",
         "0.5",
         "500",
+        "",
+        False,
     )
     snapshot = SpeechTTSPanelDraftSnapshot(
         state=state,

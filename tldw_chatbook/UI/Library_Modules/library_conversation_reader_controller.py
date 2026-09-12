@@ -935,9 +935,10 @@ class LibraryConversationReaderController:
 # `_library_conversation*`/`_library_conversations_*` name on THIS controller
 # too, reading/writing through the injected `conversations_state_accessor`
 # instead of a direct `self._conversations_state` attribute (this class has
-# none) -- same generator shape as the shim block `LibraryScreen` carries
-# (task 6), attached programmatically so the class body gains no
-# `FunctionDef`s.
+# none) -- same generator shape as the shim block task 6 installed on
+# `LibraryScreen` (deleted at the conversations cleanup PR once the
+# controller copies made the screen's own dead), attached programmatically
+# so the class body gains no `FunctionDef`s.
 #
 # task 8: `CONVERSATIONS_PLURAL_STATE_FIELDS` now imported from
 # `library_conversations_state` (the dataclass's own module) instead of

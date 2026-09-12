@@ -1,0 +1,8 @@
+#!/bin/bash
+set -eu
+root=/home/ml-user/tts-linux-cuda-20260912
+export PULSE_SINK=alsa_output.usb-Logitech_Logi_USB_Headset_000000000000-00.analog-stereo
+export SDL_AUDIODRIVER=pulseaudio
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
+unset PYTHONPATH
+"$root/venv-chatterbox-py312/bin/python" -I -B "$root/chatterbox/qualify_chatterbox.py" --model-cache "$root/cache/huggingface/hub" --reference-dir "$root/models/synthetic-reference" --voice synthetic --format wav --expected-package-root "$root/venv-chatterbox-py312/lib/python3.12/site-packages/tldw_chatbook" --output "$root/runs/chatterbox-cuda-04" --scenarios playback,cancel,repeat --repeats 3 --play-audio --phase-timeout 180 --cleanup-timeout 60 --run-timeout 1800

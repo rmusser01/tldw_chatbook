@@ -16,7 +16,7 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions.local_watchlists_service import (
     LocalWatchlistsService,
 )
-from tldw_chatbook.Subscriptions.security import SSRFError
+from tldw_chatbook.Subscriptions.security import SecurityError
 from tldw_chatbook.Subscriptions.watchlist_failure import (
     InvalidFeedError,
     WatchlistFailureCategory,
@@ -127,7 +127,7 @@ def _http_error(
             None,
             True,
         ),
-        (SSRFError("private path and host"), "policy_blocked", None, False),
+        (SecurityError("private path and host"), "policy_blocked", None, False),
         (RuntimeError("unknown secret detail"), "connection_failure", None, True),
     ],
 )

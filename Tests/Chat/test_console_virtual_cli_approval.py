@@ -134,6 +134,54 @@ def test_controller_composition_honors_local_master_and_kill_switch(
     assert (hook is not None) is expected
 
 
+def test_compose_virtual_cli_provider_wires_arg_rule_persist_and_check(tmp_path):
+    """task-32281: `_compose_virtual_cli_provider()`'s `persist_arg_rule`/
+    `arg_rule_allows` closures route to the SAME service seams
+    `MCPToolProvider._apply_verdict()`'s own "allow_matching" handling
+    uses -- `add_tool_arg_rule`/`arg_rule_allows_call`, scoped to THIS
+    call's exact arguments and the live `HubTool` for the rug-pull hash.
+    """
+    calls: list[tuple[str, tuple, dict]] = []
+    service = SimpleNamespace(
+        get_kill_switch=lambda: False,
+        gate_tool_test=lambda _hub: ASK,
+        approve_for_session=lambda *_args, **_kwargs: None,
+        set_tool_state=lambda *_args, **_kwargs: None,
+        record_tool_decision=lambda *_args, **_kwargs: None,
+        is_session_approved=lambda *_args, **_kwargs: False,
+        add_tool_arg_rule=lambda *args, **kwargs: calls.append(("add", args, kwargs)),
+        arg_rule_allows_call=lambda *args, **kwargs: (
+            calls.append(("check", args, kwargs)) or False
+        ),
+    )
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+    # `tool_policy_profile_id="default"` sidesteps an unrelated pre-existing
+    # bug in this composition path with a bare `SimpleNamespace` turn
+    # context (baselined red before this task; not this task's to fix).
+    turn_context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        scratch_space=None,
+        tool_policy_profile_id="default",
+    )
+
+    provider, _hook = controller._compose_virtual_cli_provider(
+        session_id="session-1",
+        turn_context=turn_context,
+        project_root=tmp_path,
+    )
+
+    assert provider is not None
+    hub = provider.hub_tool_for("ls")
+    args = {"command": "ls", "argv": ["."]}
+
+    provider._persist_arg_rule_call(hub, args)
+    provider._arg_rule_allows_safe(hub, args)
+
+    assert calls[0] == ("add", (hub.server_key, hub.name), {"args": args, "tool": hub})
+    assert calls[1] == ("check", (hub, args), {})
+
+
 def test_controller_does_not_compose_virtual_cli_without_admitted_roots(tmp_path):
     service = SimpleNamespace(
         get_kill_switch=lambda: False,
