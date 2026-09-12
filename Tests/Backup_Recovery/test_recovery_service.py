@@ -5,6 +5,9 @@ from threading import Event, Thread
 
 import pytest
 
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - installed product fixture
+)
 from Tests.Backup_Recovery.test_archive_writer import captured
 from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
 from tldw_chatbook.Backup_Recovery import crypto, recovery_service, replacement
@@ -141,6 +144,9 @@ for name in ('sounddevice','pyaudio'):sys.modules[name]=None
 import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
+import tldw_chatbook
+installed=Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])
+assert Path(tldw_chatbook.__file__).resolve()==installed/'tldw_chatbook'/'__init__.py'
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery.runtime_maintenance import monitor_app
@@ -203,10 +209,19 @@ print('retired and reopened')
 """
 
 
-def test_service_actual_live_backup_resumes_native_writes_before_packaging(tmp_path):
+def test_service_actual_live_backup_resumes_native_writes_before_packaging(
+    tmp_path, native_package
+):
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
-    _run(tmp_path, "service", "backup", script=_LIVE_BACKUP, timeout=110)
+    _run(
+        tmp_path,
+        "service",
+        "backup",
+        script=_LIVE_BACKUP,
+        timeout=110,
+        installed_package=native_package,
+    )
 
 
 _SERVICE_ISOLATED = r"""

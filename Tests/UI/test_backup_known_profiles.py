@@ -4,6 +4,10 @@ import asyncio
 
 import pytest
 
+from Tests.Backup_Recovery.conftest import (
+    helper_resource_root as helper_resource_root,  # noqa: PLC0414 - component helper fixture
+)
+
 
 @pytest.fixture(autouse=True)
 def _disable_model_catalog_refresh():
@@ -12,12 +16,12 @@ def _disable_model_catalog_refresh():
 
 @pytest.mark.asyncio
 async def test_default_profile_review_keeps_known_profiles_and_added_selection(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, helper_resource_root
 ):
     from textual.app import App
     from textual.widgets import Button, Checkbox, Input, Static
 
-    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery import bootstrap, crypto
     from tldw_chatbook.Backup_Recovery.control_records import (
         admission_authority,
         bind_profile,
@@ -27,6 +31,7 @@ async def test_default_profile_review_keeps_known_profiles_and_added_selection(
 
     root = tmp_path / "bootstrap"
     monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
     authority = admission_authority(root)
 
     def profile(name, *, known=True):
@@ -77,7 +82,9 @@ async def test_default_profile_review_keeps_known_profiles_and_added_selection(
             profile("newly-known")
             await pilot.click("#backup-create")
             async with asyncio.timeout(15):
-                while service.current()["state"] == "running":
+                while (
+                    service.current() is None or service.current()["state"] == "running"
+                ):
                     await asyncio.sleep(0.03)
             assert service.current()["state"] == "failed", dict(service.current())
             assert service.current()["issues"] == ("review_required",)

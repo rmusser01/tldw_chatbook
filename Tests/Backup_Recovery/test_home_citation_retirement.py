@@ -1,9 +1,9 @@
 """Finite Home workers retire only their own native database handles."""
 
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -257,8 +257,17 @@ def test_home_worker_retirement(tmp_path, route, outcome):
     _run(tmp_path, route, outcome)
 
 
-def _run(tmp_path, route, outcome, *, script=_SCRIPT, timeout=45):
+def _run(
+    tmp_path,
+    route,
+    outcome,
+    *,
+    script=_SCRIPT,
+    timeout=45,
+    installed_package=None,
+):
     root = tmp_path.resolve()
+    test_root = Path(__file__).resolve().parents[2]
     for name in ("home", "config", "data"):
         (root / name).mkdir(mode=0o700)
     environment = os.environ.copy()
@@ -270,13 +279,23 @@ def _run(tmp_path, route, outcome, *, script=_SCRIPT, timeout=45):
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
     )
+    cwd = test_root
+    if installed_package is not None:
+        installed = Path(installed_package).resolve()
+        environment.update(
+            PYTHONNOUSERSITE="1",
+            PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+            TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+        )
+        cwd = root
     result = subprocess.run(
         [sys.executable, "-c", script, route, outcome],
-        cwd=Path(__file__).resolve().parents[2],
+        cwd=cwd,
         env=environment,
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
     assert "retired and reopened" in result.stdout

@@ -6,6 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - installed product fixture
+)
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 # The seed uses real native stores and proves public Complete capture, captured
@@ -20,6 +23,9 @@ for name in ('sounddevice','pyaudio'):sys.modules[name]=None
 import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
+import tldw_chatbook
+installed=Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])
+assert Path(tldw_chatbook.__file__).resolve()==installed/'tldw_chatbook'/'__init__.py'
 selector=Path(os.environ['TLDW_CONFIG_PATH']);selector.write_text('[general]\nusers_name="default_user"\ndefault_tab="settings"\n[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n');selector.chmod(0o600)
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
@@ -85,17 +91,21 @@ print('retired and reopened')
 # This terminal driver runs before the fixed production fresh-process entry.
 # It chooses only displayed controls; all plans and native effects are real.
 _MINIMAL_DRIVER = r"""
-from Tests.network_guard import install,blocked_attempts
-install()
 import asyncio,json,os,sys
 from pathlib import Path
+saved=json.loads((Path.home()/'probe-mapping.json').read_text())
+sys.path.append(saved['test_root'])
+from Tests.network_guard import install,blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+import tldw_chatbook
+assert Path(tldw_chatbook.__file__).resolve()==Path(saved['package'])/'tldw_chatbook'/'__init__.py'
 from textual.app import App
 from textual.widgets import Input,Button,Select,Static
 assert 'tldw_chatbook.app' not in sys.modules
 assert 'tldw_chatbook.config' not in sys.modules
-from tldw_chatbook.Backup_Recovery import crypto
-saved=json.loads((Path.home()/'probe-mapping.json').read_text())
-crypto._package_resource_root=lambda:Path(saved['helper'])
 print('FRESH_MINIMAL_ENTRY',flush=True)
 def headless(app,*args,**kwargs):
  async def mounted():
@@ -204,10 +214,12 @@ install()
 import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
-from tldw_chatbook.Backup_Recovery import archive_reader,crypto,launcher
+import tldw_chatbook
+installed=Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])
+assert Path(tldw_chatbook.__file__).resolve()==installed/'tldw_chatbook'/'__init__.py'
+from tldw_chatbook.Backup_Recovery import archive_reader,launcher
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
-crypto._package_resource_root=lambda:Path(sys.argv[1])
 home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH'])
 manual=home/'selected-manual-parent';manual.mkdir(mode=0o700)
 from tldw_chatbook.Backup_Recovery import bootstrap
@@ -255,7 +267,7 @@ from textual.widgets import Input,Button,Select
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery import recovery_restart
 from tldw_chatbook.Utils import terminal_utils
-(home/'probe-mapping.json').write_text(json.dumps({'mapping':{key:str(path) for key,path in mapping.items()},'name':name,'helper':str(sys.argv[1]),'builtin_safety':[item.logical_id for item in target.items if item.owner=='persona.visual_identity_builtin' and item.status in {'included','included_directory'}]}))
+(home/'probe-mapping.json').write_text(json.dumps({'mapping':{key:str(path) for key,path in mapping.items()},'name':name,'package':str(installed),'test_root':os.environ['TLDW_TEST_ROOT'],'builtin_safety':[item.logical_id for item in target.items if item.owner=='persona.visual_identity_builtin' and item.status in {'included','included_directory'}]}))
 original_run=TldwCli.run
 async def drive(pilot):
  app=pilot.app
@@ -292,9 +304,17 @@ _CHILD = "DRIVER=" + repr(_MINIMAL_DRIVER) + "\n" + _NORMAL
 
 
 def test_full_f9_replacement_after_explicit_safety_and_credential_review(
-    tmp_path: Path, helper_resource_root: Path
+    tmp_path: Path, native_package: Path
 ):
-    _run(tmp_path, "service", "backup", script=_SEED, timeout=110)
+    _run(
+        tmp_path,
+        "service",
+        "backup",
+        script=_SEED,
+        timeout=110,
+        installed_package=native_package,
+    )
+    test_root = Path(__file__).resolve().parents[2]
     env = dict(
         os.environ,
         HOME=str(tmp_path / "home"),
@@ -303,12 +323,16 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
         TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONNOUSERSITE="1",
+        PYTHONPATH=os.pathsep.join((str(native_package), str(test_root))),
+        TLDW_TEST_INSTALLED_PACKAGE=str(native_package),
+        TLDW_TEST_ROOT=str(test_root),
     )
     log = tmp_path / "f9-child.log"
     with log.open("w") as output:
         result = subprocess.run(
-            [sys.executable, "-c", _CHILD, str(helper_resource_root)],
-            cwd=os.getcwd(),
+            [sys.executable, "-c", _CHILD],
+            cwd=tmp_path,
             env=env,
             stdout=output,
             stderr=output,

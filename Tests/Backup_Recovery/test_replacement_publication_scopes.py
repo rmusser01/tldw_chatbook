@@ -10,6 +10,9 @@ import pytest
 from Tests.Backup_Recovery.conftest import (
     helper_resource_root as helper_resource_root,  # noqa: PLC0414 - native helper fixture
 )
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - installed product fixture
+)
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 from Tests.Backup_Recovery.test_recovery_service import _LIVE_BACKUP
 
@@ -22,10 +25,12 @@ install()
 import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
-from tldw_chatbook.Backup_Recovery import archive_reader,crypto,launcher
+import tldw_chatbook
+installed=Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])
+assert Path(tldw_chatbook.__file__).resolve()==installed/'tldw_chatbook'/'__init__.py'
+from tldw_chatbook.Backup_Recovery import archive_reader,launcher
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
-crypto._package_resource_root=lambda:Path(sys.argv[1])
 home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH'])
 manual=home/'selected-manual-parent';manual.mkdir(mode=0o700)
 from tldw_chatbook.Backup_Recovery import bootstrap
@@ -120,9 +125,16 @@ print('actual CLI replacement completed')
 
 @pytest.mark.parametrize("different_selector", [False, True])
 def test_complete_cli_replacement_admits_mapped_sources(
-    tmp_path, helper_resource_root, different_selector
+    tmp_path, native_package, different_selector
 ):
-    _run(tmp_path, "service", "backup", script=_LIVE_BACKUP, timeout=110)
+    _run(
+        tmp_path,
+        "service",
+        "backup",
+        script=_LIVE_BACKUP,
+        timeout=110,
+        installed_package=native_package,
+    )
     selector = tmp_path / "config" / "config.toml"
     if different_selector:
         current = tmp_path / "current-config" / "config.toml"
@@ -138,12 +150,17 @@ def test_complete_cli_replacement_admits_mapped_sources(
         TLDW_CONFIG_PATH=str(selector),
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONNOUSERSITE="1",
+        PYTHONPATH=os.pathsep.join(
+            (str(native_package), str(Path(__file__).resolve().parents[2]))
+        ),
+        TLDW_TEST_INSTALLED_PACKAGE=str(native_package),
     )
     output = tmp_path / "first-replacement-child.log"
     with output.open("w") as stream:
         result = subprocess.run(
-            [sys.executable, "-c", _REPLACE, str(helper_resource_root)],
-            cwd=Path.cwd(),
+            [sys.executable, "-c", _REPLACE],
+            cwd=tmp_path,
             env=env,
             stdout=stream,
             stderr=subprocess.STDOUT,

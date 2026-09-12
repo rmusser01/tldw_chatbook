@@ -304,3 +304,21 @@ commands are in `/private/tmp/task26-release-wiring-report.md`; scoped review is
 `/private/tmp/task26-release-wiring-independent-review.md`. These checks establish
 wiring and the stated compatibility case, not final packaged product verification.
 Task26 remains open for the installed-package cohorts and manual workflow definition.
+
+## Packaged fixtures after availability enforcement
+
+The existing native-wheel fixture now serves public service, mounted backup,
+first-binding, publication-scope and full replacement tests. Actual product children
+import the installed package from a private working directory; fresh recovery keeps
+that package provenance. The installed files are checked for preservation. The
+known-profile screen test remains component evidence using the real helper fixture.
+
+On production checkpoint `c3f96e152`, live service backup passed1 in14.69s and mounted
+backup passed1 in20.12s. The remaining representatives passed: known profiles1/2.43s,
+first binding1/17.09s, CLI replacement1/63.44s, and companion-file readback1/19.84s.
+Review caught and corrected a readback subprocess working directory that would
+select the checkout instead of the installed package. Behavioral assertions and
+child deadlines remain unchanged. Scoped Ruff and whitespace checks pass.
+Reports: `/private/tmp/task26-release-fixtures-report.md` and
+`/private/tmp/task26-release-fixtures-independent-review.md`. Final full F9 flows
+remain separate required checks; these representatives do not replace them.

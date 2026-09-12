@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from Tests.Backup_Recovery.conftest import (
-    helper_resource_root as helper_resource_root,  # noqa: PLC0414 - native helper fixture
+    helper_resource_root as helper_resource_root,  # noqa: PLC0414 - component helper fixture
+)
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - installed product fixture
 )
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 from Tests.Backup_Recovery.test_recovery_service import _LIVE_BACKUP
@@ -22,7 +25,10 @@ install()
 import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
-from tldw_chatbook.Backup_Recovery import archive_reader,crypto,launcher
+import tldw_chatbook
+installed=Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])
+assert Path(tldw_chatbook.__file__).resolve()==installed/'tldw_chatbook'/'__init__.py'
+from tldw_chatbook.Backup_Recovery import archive_reader,launcher
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery import recovery_service
@@ -35,7 +41,6 @@ def diagnostic(error,**kwargs):
  print('FAILURE_BOUNDARY',[(Path(row.filename).name,row.name,row.lineno) for row in traceback.extract_tb(error.__traceback__)],flush=True)
  return safe_issue(error,**kwargs)
 recovery_service.issue_code=diagnostic
-crypto._package_resource_root=lambda:Path(sys.argv[1])
 home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH'])
 from tldw_chatbook.Backup_Recovery import bootstrap
 assert not bootstrap._records(bootstrap.default_bootstrap_root())[1]
@@ -43,7 +48,7 @@ service=RecoveryService(default_control_root())
 inspection=service.start_inspection(home/'service.tldw-backup.zip',password=None)
 assert service.wait(inspection)['state']=='succeeded'
 archive=service.inspection(inspection);doc=archive_reader.verify_sealed(archive)
-mode=sys.argv[2]
+mode=sys.argv[1]
 if mode=='unknown':
  (selector.parent/'unowned.txt').write_text('not declared by a current owner')
 if mode=='link':(selector.parent/'linked.toml').symlink_to(selector)
@@ -115,7 +120,7 @@ if mode=='topology':
    (selector.parent/'unowned-late.txt').write_text('external arrival after proof')
    yield session
  Admission.maintenance=changed_topology
-if sys.argv[2]=='drift':
+if sys.argv[1]=='drift':
  native_names=capture_service._capture_names
  def changed_config(authority,inventory):
   names=native_names(authority,inventory)
@@ -147,7 +152,7 @@ try:
    replacement._ensure_first_bindings(fresh,(selector,),bootstrap.default_bootstrap_root(),Event())
    bound=bootstrap._records(bootstrap.default_bootstrap_root())[1]
    assert len(bound)==1 and str(selector.parent) in bound[0]['roots']
- elif sys.argv[2]=='drift':
+ elif sys.argv[1]=='drift':
   try:replacement._ensure_first_bindings(plan,(selector,),bootstrap.default_bootstrap_root(),Event())
   except ValueError as error:assert str(error)=='target_changed',error
   else:raise AssertionError('changed config was accepted')
@@ -214,7 +219,7 @@ print('actual current-source binding checked')
     ],
 )
 def test_first_binding_uses_independently_discovered_current_profile(
-    tmp_path, helper_resource_root, mode
+    tmp_path, native_package, mode
 ):
     script = _LIVE_BACKUP
     if mode in {"companions", "abort"}:
@@ -229,7 +234,14 @@ selected.chmod(0o600)
 """
             + script
         )
-    _run(tmp_path, "service", "backup", script=script, timeout=110)
+    _run(
+        tmp_path,
+        "service",
+        "backup",
+        script=script,
+        timeout=110,
+        installed_package=native_package,
+    )
     selector = tmp_path / "config" / "config.toml"
     if mode not in {"same", "drift", "companions", "abort"}:
         current = (
@@ -249,10 +261,15 @@ selected.chmod(0o600)
         TLDW_CONFIG_PATH=str(selector),
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONNOUSERSITE="1",
+        PYTHONPATH=os.pathsep.join(
+            (str(native_package), str(Path(__file__).resolve().parents[2]))
+        ),
+        TLDW_TEST_INSTALLED_PACKAGE=str(native_package),
     )
     result = subprocess.run(
-        [sys.executable, "-c", _BIND, str(helper_resource_root), mode],
-        cwd=Path.cwd(),
+        [sys.executable, "-c", _BIND, mode],
+        cwd=tmp_path,
         env=env,
         capture_output=True,
         text=True,
@@ -266,7 +283,7 @@ selected.chmod(0o600)
         # Fixed private CLI child; no shell or caller-supplied program.
         reopened = subprocess.run(  # nosec B603
             [sys.executable, "-c", _READ_BOUND],
-            cwd=Path.cwd(),
+            cwd=tmp_path,
             env=env,
             capture_output=True,
             text=True,
@@ -290,6 +307,9 @@ install()
 import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
+import tldw_chatbook
+installed=Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])
+assert Path(tldw_chatbook.__file__).resolve()==installed/'tldw_chatbook'/'__init__.py'
 from tldw_chatbook.Backup_Recovery import bootstrap
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
 before=bootstrap._records(bootstrap.default_bootstrap_root())[1]

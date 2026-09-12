@@ -2,6 +2,9 @@
 
 import pytest
 
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - installed product fixture
+)
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 
@@ -19,6 +22,10 @@ for name in ('sounddevice', 'pyaudio'): sys.modules[name] = None
 import keyring
 from keyring.backends.null import Keyring
 keyring.set_keyring(Keyring())
+import tldw_chatbook
+installed = os.environ.get('TLDW_TEST_INSTALLED_PACKAGE')
+if installed:
+    assert Path(tldw_chatbook.__file__).resolve() == Path(installed) / 'tldw_chatbook' / '__init__.py'
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 selector.write_text('[general]\nusers_name="default_user"\ndefault_tab="settings"\n[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n')
 selector.chmod(0o600)
@@ -98,12 +105,13 @@ async def main():
         print('checkpoint: review complete', flush=True)
         await pilot.click('#backup-create')
         service = app.recovery_service
-        assert service.current(), str(screen.query_one('#backup-message', Static).render())
-        operation = service.current()['operation_id']
-        print('checkpoint: accepted', dict(service.current()), flush=True)
-        await pilot.press('escape')
-        assert isinstance(app.screen, SettingsScreen)
         async with asyncio.timeout(75):
+            while service.current() is None:
+                await asyncio.sleep(.05)
+            operation = service.current()['operation_id']
+            print('checkpoint: accepted', dict(service.current()), flush=True)
+            await pilot.press('escape')
+            assert isinstance(app.screen, SettingsScreen)
             while service.status(operation)['state'] == 'running':
                 await asyncio.sleep(.05)
         result = service.status(operation)
@@ -141,9 +149,16 @@ def retained_child_output(tmp_path, monkeypatch):
 
 
 def test_actual_mounted_backup_publishes_verified_archive_after_navigation(
-    tmp_path, retained_child_output
+    tmp_path, retained_child_output, native_package
 ):
-    _run(tmp_path, "backup", "normal", script=_BACKUP, timeout=120)
+    _run(
+        tmp_path,
+        "backup",
+        "normal",
+        script=_BACKUP,
+        timeout=120,
+        installed_package=native_package,
+    )
 
 
 _ISOLATED = (
