@@ -1313,22 +1313,70 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
             isinstance(screen, ChatScreen)
             and screen.is_mounted
             and screen.query("#console-task-surface")
-            and screen._console_visible_draft_session_id is not None
-            and screen._console_chat_controller is not None
-            and not screen._console_sync_in_progress
-            and not screen._console_sync_requested
         ):
-            # Startup schedules a later resume-state projection. Let it run,
-            # then require the same ready Console to remain the active screen.
-            await pilot.pause(0.25)
-            if (
-                app.screen is screen
-                and not screen._console_sync_in_progress
-                and not screen._console_sync_requested
-            ):
-                return screen
+            break
         await pilot.pause(0.05)
-    raise AssertionError("Production Console did not become ready")
+    else:
+        raise AssertionError("Production Console did not mount")
+
+    # on_mount queues the production attach reconciliation before this callback.
+    # Waiting behind it observes completion even when its DB projection is slow.
+    reconciliation_drained = asyncio.Event()
+    screen.call_after_refresh(reconciliation_drained.set)
+    await asyncio.wait_for(reconciliation_drained.wait(), timeout=10.0)
+
+    projection_task = None
+    for timer in screen._timers:
+        callback = getattr(timer, "_callback", None)
+        scheduled = getattr(callback, "args", ())
+        target = scheduled[0] if scheduled else None
+        if (
+            getattr(target, "__self__", None) is screen
+            and getattr(target, "__func__", None) is ChatScreen.sync_task_resume_state
+        ):
+            projection_task = timer._task
+            break
+    assert projection_task is not None
+
+    # The one-shot timer queues its projection with call_next; queue an event
+    # behind it so completion means the production projection itself has run.
+    await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
+    projection_drained = asyncio.Event()
+    screen.call_next(projection_drained.set)
+    await asyncio.wait_for(projection_drained.wait(), timeout=10.0)
+
+    assert app.screen is screen
+    assert screen._console_attach_reconciled
+    assert screen._console_visible_draft_session_id is not None
+    assert screen._console_chat_controller is not None
+    assert not screen._console_setup_modal_blocking()
+    assert not screen._console_sync_in_progress
+    assert not screen._console_sync_requested
+    return screen
+
+
+def _build_ready_production_console_app():
+    """Build a production app with a persisted, send-ready local provider."""
+    import tldw_chatbook.config as config_module
+
+    app = _build_test_app(
+        configured_default="chat",
+        config_overrides={"splash_screen": {"enabled": False}},
+    )
+    assert config_module.save_settings_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+            "api_settings.llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "local-model",
+            },
+        }
+    )
+    app.app_config = config_module.load_settings(force_reload=True)
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    return app
 
 
 class _ControllerCardsHarness(ConsolidatedCSSApp):
@@ -1789,10 +1837,7 @@ def test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id():
 @pytest.mark.asyncio
 async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
     """Finishing is status, not a pending decision or disabled focus target."""
-    app = _build_test_app(
-        configured_default="chat",
-        config_overrides={"splash_screen": {"enabled": False}},
-    )
+    app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         screen = await _wait_for_production_console_ready(app, pilot)
 
@@ -1848,10 +1893,7 @@ async def test_alt_a_focuses_the_pending_approval_decision_select():
     """With a batch pending, Alt+A lands focus on the row's decision
     Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
     contract)."""
-    app = _build_test_app(
-        configured_default="chat",
-        config_overrides={"splash_screen": {"enabled": False}},
-    )
+    app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         screen = await _wait_for_production_console_ready(app, pilot)
 
@@ -1878,10 +1920,7 @@ async def test_alt_a_notifies_when_nothing_is_pending():
     """With nothing pending, Alt+A notifies rather than focusing anything --
     same fallback message as the inspector's Review approval button
     (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
-    app = _build_test_app(
-        configured_default="chat",
-        config_overrides={"splash_screen": {"enabled": False}},
-    )
+    app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         await _wait_for_production_console_ready(app, pilot)
 
@@ -1899,10 +1938,7 @@ async def test_alt_a_notifies_when_nothing_is_pending():
 @pytest.mark.asyncio
 async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
     """AC#3: the route works at 80 columns with the inspector closed."""
-    app = _build_test_app(
-        configured_default="chat",
-        config_overrides={"splash_screen": {"enabled": False}},
-    )
+    app = _build_ready_production_console_app()
     async with app.run_test(size=(80, 24)) as pilot:
         screen = await _wait_for_production_console_ready(app, pilot)
 
@@ -1948,10 +1984,7 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     `#approval-batch-actions` bar sits close after the rows (region.y within
     a few rows of the last row's bottom), matching the audit-mode geometry
     tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
-    app = _build_test_app(
-        configured_default="chat",
-        config_overrides={"splash_screen": {"enabled": False}},
-    )
+    app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         card = await _show_production_approval_batch(app, pilot, _sample_calls())
 
@@ -2075,10 +2108,7 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
 
     The production Console is allowed to mount and settle before the pending
     approval state is delivered, matching the real worker-to-UI round trip."""
-    app = _build_test_app(
-        configured_default="chat",
-        config_overrides={"splash_screen": {"enabled": False}},
-    )
+    app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         card = await _show_production_approval_batch(app, pilot, _single_call())
 
