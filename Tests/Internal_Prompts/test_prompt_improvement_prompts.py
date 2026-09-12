@@ -13,9 +13,10 @@ from tldw_chatbook.Internal_Prompts import (
 )
 from tldw_chatbook.Internal_Prompts.prompt_improvement_prompts import (
     REWRITE_DEFAULT,
+    REWRITE_PROMPT_ID,
 )
 
-PROMPT_ID = "prompt_improvement.rewrite"
+PROMPT_ID = REWRITE_PROMPT_ID
 
 
 def test_spec_registered_with_owner_template_default() -> None:

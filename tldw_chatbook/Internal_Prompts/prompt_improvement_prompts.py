@@ -48,9 +48,13 @@ Provide only the enhanced prompt using the four-section structure above, ending 
 
 The prompt to transform is provided as the `source_prompt` value in the user message JSON."""
 
+#: Public prompt id. Also imported lazily by Prompt_Management so the
+#: registration and the lookup can never diverge in a rename.
+REWRITE_PROMPT_ID = "prompt_improvement.rewrite"
+
 register(
     PromptSpec(
-        id="prompt_improvement.rewrite",
+        id=REWRITE_PROMPT_ID,
         subsystem="prompt_improvement",
         title="Prompt improvement rewrite (Auto/Review)",
         description=(

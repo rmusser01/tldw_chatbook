@@ -75,15 +75,35 @@ def _rewrite_persona_instructions() -> str:
 
     Lazy import mirrors ``Chat/console_chat_controller.get_internal_prompt``:
     it keeps ``Internal_Prompts`` (and its lazy config chain) off this
-    module's import-time graph.
+    module's import-time graph. The id constant is shared with the spec
+    registration site so a rename cannot strand the lookup.
     """
     from tldw_chatbook.Internal_Prompts import get_internal_prompt
+    from tldw_chatbook.Internal_Prompts.prompt_improvement_prompts import (
+        REWRITE_PROMPT_ID,
+    )
 
-    return get_internal_prompt("prompt_improvement.rewrite").strip("\n")
+    return get_internal_prompt(REWRITE_PROMPT_ID).strip("\n")
 
 
 def trusted_optimizer_instructions(mode: str) -> str:
-    """Return stable trusted instructions without any captured values."""
+    """Return stable trusted instructions without any captured values.
+
+    Args:
+        mode: Improvement mode. ``"auto"`` and ``"review"`` compose the
+            registered ``prompt_improvement.rewrite`` persona (override-aware)
+            with the code-pinned safety guards, JSON envelope instruction,
+            and recency anchor. ``"recipe"`` returns the fully code-pinned
+            Recipe fill instructions.
+
+    Returns:
+        The composed system-message instructions for the auxiliary
+        improvement request.
+
+    Raises:
+        ValueError: If ``mode`` is not one of ``"auto"``, ``"review"``, or
+            ``"recipe"``.
+    """
     if mode in {"auto", "review"}:
         return (
             f"{_rewrite_persona_instructions()}\n\n"
