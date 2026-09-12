@@ -1,5 +1,5 @@
 ---
-id: TASK-32479
+id: TASK-32480
 title: Tokenize features/_chat.tcss end-to-end as the migration reference
 status: Done
 assignee:
@@ -19,6 +19,12 @@ priority: medium
 Renumbered from TASK-32476 on 2026-09-12: the id collided with a task that
 arrived on dev while this branch was in review (owner rule TASK-19601 — the
 fast lane's backlog-id uniqueness check caught it).
+
+Renumbered again from TASK-32479 to TASK-32480 on 2026-09-12: a second
+collision — "Expose Improve-My-Prompt rewrite prompt in Settings Internal
+Prompts" (commit 005c975cc0) arrived on dev at 2026-09-11 20:22 -0700 as
+TASK-32479, before this task took the id at 20:52 -0700, so the older
+arrival keeps it (owner rule TASK-19601).
 
 ## Description (the why)
 
