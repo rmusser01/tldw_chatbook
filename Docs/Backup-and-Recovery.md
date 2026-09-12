@@ -194,6 +194,9 @@ Saved TTS reference audio is retained with its profile and recipe metadata. Loos
 voice catalogs can still contain historical audio paths; their copied WAV files
 need explicit setup before synthesis can use them.
 
+Saved generated images return to the restored profile's image storage. Their files
+can be read locally; generating new images still requires the applicable setup.
+
 Saved RAG profiles can relocate known absolute index-directory settings when the
 corresponding captured projection root is selected for restore. Missing or mismatched
 roots are refused. Retained profiles, tracking records and index files still require

@@ -69,7 +69,7 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
     from tldw_chatbook.Widgets.Tamagotchi.recovery import _ConfiguredPets
     from tldw_chatbook.Workspaces.recovery import _ChangeTracking
 
-    from .config_adapter import _Definition, _Diagnostics
+    from .config_adapter import _Definition, _Diagnostics, _Generated
     from .profile_paths import DATABASE_PATHS, database_path, user_data_dir
     from .rag_inventory import _Definitions as _RAGDefinitions
     from .rag_inventory import _Projections
@@ -147,6 +147,24 @@ def _config_targets(data, profile, config_target, doc, plan, owners):
             if selected[payload.logical_id] != expected:
                 raise ValueError("owner_relocation_unverified:diagnostics.logs")
             continue
+        elif type(owner) is _Generated:
+            expected = user_data_dir(configured) / "generated_images"
+            relative = Path(payload.relative_path)
+            root = directories.get(payload.root_id)
+            if (
+                root is None
+                or root.synthetic
+                or root.parent_id is not None
+                or root.root_id != payload.root_id
+                or root.logical_id != payload.root_id
+                or root.relative_path != ""
+                or relative.is_absolute()
+                or len(relative.parts) < 2
+                or relative.parts[0] != "saved"
+                or ".." in relative.parts
+                or selected[payload.logical_id] != expected / relative
+            ):
+                raise ValueError("owner_relocation_unverified:generation.assets")
         elif isinstance(owner, _Definition):
             expected = owner._definition_path(configured)
         elif type(owner) is _Artifacts:
