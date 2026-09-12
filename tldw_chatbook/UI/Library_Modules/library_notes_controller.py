@@ -603,6 +603,7 @@ from .library_notes_work_session import (
 from .screen_constants import (
     LIBRARY_FILE_NOTES_READER_PROFILE,
     LIBRARY_NOTES_COMPACT_BREAKPOINT,
+    LIBRARY_NOTES_FULL_CANVAS_VIEWS,
     LIBRARY_NOTES_SOURCE_DATABASE,
     LIBRARY_NOTES_SOURCE_FILES,
     LIBRARY_NOTE_BLANK_SEED_TITLE,
@@ -2392,9 +2393,22 @@ class LibraryNotesController:
             # hand. The review used to get about 120 of 235 columns -- and
             # spend the loss on the row's own outcome clause -- while the
             # Notes list it is not about kept its share.
+            #
+            # Checked BEFORE the broader rule below because it is the
+            # stronger answer for a narrower state: mid-review Import once
+            # takes the Library rail's columns too, not just the list's.
             return dataclasses.replace(
                 preferences, library_open=False, items_open=False
             )
+        if self._library_notes_view in LIBRARY_NOTES_FULL_CANVAS_VIEWS:
+            # task-32259 AC#2: Import once and Add from files are whole
+            # tasks, not a second reading pane -- the same reasoning as
+            # task-32250 above, applied to every phase of both of them
+            # rather than to the two phases that write. The list closes to
+            # its grip while the task is in hand and comes straight back
+            # with it; the persisted preference is untouched, exactly like
+            # the work-session override below.
+            return dataclasses.replace(preferences, items_open=False)
         if self._library_notes_work_session_phase is NotesWorkSessionPhase.ACTIVE:
             return dataclasses.replace(preferences, library_open=False)
         return preferences
@@ -3361,6 +3375,7 @@ class LibraryNotesController:
         self._library_note_context = False
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
+        self._library_note_delete_origin_scroll = None
         self._library_note_editor_armed = False
         self._library_notes_backlinks = ()
         self._library_notes_backlinks_status = "loading"
@@ -3491,6 +3506,7 @@ class LibraryNotesController:
         self._library_note_context = False
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
+        self._library_note_delete_origin_scroll = None
         self._library_note_editor_armed = False
         # Defense in depth: the normal exit path is ``_flush_library_note_
         # save`` (which GCs a still-pending blank note and clears both
@@ -3957,6 +3973,16 @@ class LibraryNotesController:
         self._library_note_context = False
         self._library_note_preview = True
         self._apply_library_note_presentation_state()
+        # task-32249: the footer promises "pgup/pgdn scroll" the moment
+        # Preview lands, but the region is the scroll owner and focus was
+        # still on the Preview button -- the keys did nothing until the
+        # reader clicked inside the box. Info already focuses its region on
+        # arrival; Preview now does the same.
+        try:
+            preview = self.query_one("#library-note-preview-region")
+        except (NoMatches, QueryError):
+            return
+        preview.focus()
     @on(Button.Pressed, "#library-note-context")
     def handle_library_note_context_open(self, event: Button.Pressed) -> None:
         """Show the stable Context region without replacing editor widgets.
@@ -5321,6 +5347,13 @@ class LibraryNotesController:
             return
         self._library_note_delete_origin_context = origin_context
         self._library_note_delete_origin_preview = origin_preview
+        # task-32268: the prompt renders inside Info now, so focusing its
+        # Cancel button scrolls that pane. Remember where the reader was so
+        # Cancel puts them back there, not where the prompt happened to sit.
+        context_owner = self._library_notes_scroll_owner("context")
+        self._library_note_delete_origin_scroll = getattr(
+            context_owner, "scroll_y", None
+        )
         self._library_note_confirming_delete = True
         # task-32132: Delete is only reachable from Info, and the canvas
         # keeps Info showing while confirming -- forcing these off used to
@@ -5332,21 +5365,54 @@ class LibraryNotesController:
     def _focus_library_note_control(self, selector: str) -> None:
         """Focus one stable note control when its presentation is visible."""
         self._focus_library_control(selector)
+
+    def _focus_library_note_control_in_place(self, selector: str) -> None:
+        """Focus a note control without scrolling its pane (task-32268)."""
+        try:
+            self.query_one(selector, Widget).focus(scroll_visible=False)
+        except (NoMatches, QueryError):
+            return
+
+    def _restore_library_note_context_scroll(self, offset: float | None) -> None:
+        """Put the Info pane back on a remembered scroll offset (task-32268)."""
+        if offset is None:
+            return
+        owner = self._library_notes_scroll_owner("context")
+        if owner is None:
+            return
+        # ``immediate=True`` because the pane may still be animating toward
+        # the prompt from the Cancel focus that opened it -- the default
+        # defers this scroll past the next refresh, where that animation
+        # wins. ``scroll_to`` force-stops the animation either way.
+        owner.scroll_to(y=offset, animate=False, immediate=True)
+
     def _restore_library_note_delete_origin(self) -> None:
         """Leave confirmation and restore its stable source presentation."""
         origin_context = self._library_note_delete_origin_context
         origin_preview = self._library_note_delete_origin_preview
+        origin_scroll = self._library_note_delete_origin_scroll
         self._library_note_shortcut_status = ""
         self._library_note_confirming_delete = False
         self._library_note_context = origin_context
         self._library_note_preview = origin_preview
         self._apply_library_note_presentation_state()
-        selector = (
-            "#library-note-context-delete" if origin_context else "#library-note-delete"
-        )
-        self._focus_library_note_control(selector)
+        if origin_context:
+            # task-32268: the prompt shares Info's scroll now, so both the
+            # Cancel focus on the way in and a Delete focus on the way out
+            # would drag that pane. Focus without scrolling and put the
+            # offset back where the reader had it, which is what
+            # ``test_library_note_delete_captures_context_origin_before_
+            # gated_flush`` has always meant by restoring the origin.
+            self._focus_library_note_control_in_place(
+                "#library-note-context-delete"
+            )
+            self._restore_library_note_context_scroll(origin_scroll)
+        else:
+            self._focus_library_note_control("#library-note-delete")
         self._library_note_delete_origin_context = False
         self._library_note_delete_origin_preview = False
+        self._library_note_delete_origin_scroll = None
+
     @on(Button.Pressed, "#library-note-delete-cancel")
     def handle_library_note_delete_cancel(self, event: Button.Pressed) -> None:
         """Discard the pending delete confirmation and restore the normal action row.
