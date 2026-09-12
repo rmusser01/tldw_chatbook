@@ -107,11 +107,14 @@ from .agent_models import (
     ToolProjectionAudience,
     ToolRecordProjection,
     ToolResult,
+    ToolReviewDecision,
+    ToolReviewValue,
     ToolSchema,
     default_tool_record_projection,
     failed_tool_record_projection,
     format_steering_message,
     normalize_rationale,
+    normalize_tool_review,
     with_preamble_rationale,
 )
 from .project_instruction_runtime import (
@@ -441,7 +444,9 @@ class LoopDeps:
     # batches; legacy non-continuation batches retain their fail-open
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
-    review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    review_tool_calls: Callable[[list[ToolCall]], dict[str, ToolReviewValue]] | None = (
+        None
+    )
     # Restriction-only guard runs before approval exemptions; exceptions deny.
     guard_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
     # Optional owner-authenticated exception to the review batch. A True
@@ -993,15 +998,27 @@ def _detect_cycle(recent) -> tuple[int, int] | None:
 
 def _effective_review_verdict(
     call: ToolCall,
-    verdicts: Mapping[str, str],
+    verdicts: Mapping[str, ToolReviewValue],
     *,
     call_id: str | None = None,
 ) -> str:
     """Resolve one call-id verdict before the provider-name fallback."""
+    return _effective_review_decision(call, verdicts, call_id=call_id).verdict
+
+
+def _effective_review_decision(
+    call: ToolCall,
+    verdicts: Mapping[str, ToolReviewValue],
+    *,
+    call_id: str | None = None,
+) -> ToolReviewDecision:
+    """Resolve and normalize one call-id decision before the name fallback."""
     effective_call_id = call_id or call.call_id
     if effective_call_id and effective_call_id in verdicts:
-        return verdicts[effective_call_id]
-    return verdicts.get(call.name, "proceed")
+        selected = verdicts[effective_call_id]
+    else:
+        selected = verdicts.get(call.name, "proceed")
+    return normalize_tool_review(selected)
 
 
 #: TASK-26002: consecutive empty turns before the run stops. Two, because one
@@ -2297,7 +2314,7 @@ def run_agent_loop(
             and review_call.call_id not in guard_refusals
         ]
 
-        verdicts: dict[str, str] = {}
+        verdicts: dict[str, ToolReviewValue] = {}
         review_hook_failed = False
         if deps.review_tool_calls is not None and review_required_calls:
             for call in calls:
