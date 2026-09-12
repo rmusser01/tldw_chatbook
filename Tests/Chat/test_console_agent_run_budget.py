@@ -28,6 +28,8 @@ from tldw_chatbook.Agents.agent_models import (
     TRACE_CAPTURE_INDEX_BASE,
     TRACE_STEP_INDEX_BASE,
     RunBudget,
+    clamp_child_budget,
+    contain_child_budget,
 )
 from tldw_chatbook.Chat.console_agent_bridge import (
     DEFAULT_CONSOLE_MAX_MODEL_TURNS,
@@ -37,7 +39,70 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     DEFAULT_CONSOLE_MAX_WALL_SECONDS,
     DEFAULT_CONSOLE_RUN_BUDGET,
     console_run_budget,
+    intersect_console_run_budget,
 )
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, 3),
+        (0, 0),
+        (1, 1),
+        (3, 3),
+        ("0", 0),
+        (" 4 ", 4),
+        (True, 3),
+        (False, 3),
+        (-1, 3),
+        (1.5, 3),
+        (float("inf"), 3),
+        ("bad", 3),
+    ],
+)
+def test_denial_limit_strict_config_resolution(monkeypatch, raw, expected):
+    def fake(section, key, default=None, *args, **kwargs):
+        if section == "agents" and key == "denial_circuit_breaker_limit":
+            return raw
+        return default
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", fake)
+    assert console_run_budget().denial_circuit_breaker_limit == expected
+
+
+def test_child_budget_helpers_copy_denial_limit():
+    parent = RunBudget(denial_circuit_breaker_limit=7)
+    assert clamp_child_budget(parent, 10).denial_circuit_breaker_limit == 7
+    assert contain_child_budget(parent, 10).denial_circuit_breaker_limit == 7
+    disabled = RunBudget(denial_circuit_breaker_limit=0)
+    assert clamp_child_budget(disabled, 10).denial_circuit_breaker_limit == 0
+    assert contain_child_budget(disabled, 10).denial_circuit_breaker_limit == 0
+
+
+def test_denial_setting_read_failure_preserves_other_configured_limits(monkeypatch):
+    def fake(section, key, default=None, *args, **kwargs):
+        if section == "agents":
+            raise RuntimeError("agents setting unavailable")
+        if section == "console" and key == "agent_max_model_turns":
+            return 17
+        return default
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", fake)
+    budget = console_run_budget()
+    assert budget.denial_circuit_breaker_limit == 3
+    assert budget.max_model_turns == 17
+
+
+@pytest.mark.parametrize(
+    "maximum,live,expected",
+    [(0, 3, 3), (3, 0, 3), (3, 2, 2), (0, 0, 0)],
+)
+def test_denial_limit_intersection_uses_zero_as_unlimited(maximum, live, expected):
+    resolved = intersect_console_run_budget(
+        RunBudget(denial_circuit_breaker_limit=maximum),
+        RunBudget(denial_circuit_breaker_limit=live),
+    )
+    assert resolved.denial_circuit_breaker_limit == expected
 
 
 def _pin_console(monkeypatch, values: dict):
