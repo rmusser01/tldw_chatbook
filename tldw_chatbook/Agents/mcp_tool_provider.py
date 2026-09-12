@@ -967,7 +967,8 @@ class MCPToolProvider:
         # writes, so such a call falls through to the fresh gate below --
         # the same path it took before batch review existed.
         stamped = self._stamped_decision_detail(current_run_id(), tool_id)
-        if stamped is not None:
+        # A raw None remains absent, even when its metadata wrapper exists.
+        if stamped is not None and stamped.decision is not None:
             return self._apply_verdict(
                 stamped.decision,
                 tool,
