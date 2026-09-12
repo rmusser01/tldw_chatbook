@@ -2087,3 +2087,140 @@ def test_voice_switch_tooltips_state_relationship_and_interrupts():
     assert "Hands-free" in AUTO_SPEAK_SWITCH_TOOLTIP
     assert "Ctrl+Shift+H" in HANDS_FREE_SWITCH_TOOLTIP
     assert "interrupt" in HANDS_FREE_SWITCH_TOOLTIP.lower()
+
+
+@pytest.mark.asyncio
+async def test_reply_with_no_tts_handler_escalates_once(monkeypatch):
+    """PR #2638 Qodo #1: when the TTS handler cannot initialize at all,
+    every utterance takes the no-handler branch -- that must count as a
+    failure for the whole-reply escalation, or a fully silent reply never
+    produces the visible notice."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _fast_countdown(monkeypatch, seconds=0.3)
+    gateway = _HandsFreeReplyGateway("First sentence here. Second one too. ")
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+
+    async def _no_tts_handler():
+        return None
+
+    app._ensure_tts_handler = _no_tts_handler
+    host = ConsoleHarness(app)
+
+    notifications: list[str] = []
+
+    def _record_notify(message, *args, **kwargs):
+        notifications.append(str(message))
+        return None
+
+    monkeypatch.setattr(app, "notify", _record_notify)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
+
+        await pilot.click("#console-dictation")
+        composer = console.query_one(
+            "#console-native-composer", chat_screen_module.ConsoleComposerBar
+        )
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        console.action_toggle_console_hands_free()
+        await pilot.pause()
+
+        service.emit_final("hello from hands free")
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while time.monotonic() < deadline and not gateway.sent_messages:
+            await pilot.pause(0.02)
+        assert gateway.sent_messages
+
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while (
+            time.monotonic() < deadline
+            and console._console_hands_free.controller.state != "listening"
+        ):
+            await pilot.pause(0.02)
+
+        escalations = [t for t in notifications if "could not be spoken" in t]
+        assert escalations, notifications
+        assert len(escalations) == 1
+
+
+def test_stale_utterance_worker_never_touches_a_replacement_session():
+    """PR #2638 Qodo #4: the speech worker must bind the session that
+    DISPATCHED it, not whatever session is current when the worker
+    happens to start -- otherwise an old loop's utterance, landing after
+    exit + re-entry, mutates the replacement's failure counters and can
+    flag a perfectly healthy reply as all-failed."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Chat.console_hands_free import HandsFreeController
+    from tldw_chatbook.Chat.reply_sentence_sequencer import SentenceSequencer
+    from tldw_chatbook.UI.Console_Modules.hands_free import (
+        ConsoleHandsFreeController,
+        ConsoleHandsFreeSession,
+    )
+
+    spoke: list[str] = []
+
+    def _speak(text: str) -> None:
+        spoke.append(text)
+
+    def make_session() -> ConsoleHandsFreeSession:
+        return ConsoleHandsFreeSession(
+            controller=HandsFreeController(emit=lambda intent: None),
+            sequencer=SentenceSequencer(speak=_speak, stop_speech=lambda: None),
+        )
+
+    screen = Mock()
+    app_instance = Mock()
+
+    async def _ensure_handler():  # pragma: no cover - must not be reached
+        raise AssertionError("a stale worker must bail before the handler")
+
+    app_instance._ensure_tts_handler = _ensure_handler
+
+    def noop(*args, **kwargs):
+        return None
+
+    controller = ConsoleHandsFreeController(
+        screen,
+        app_instance=app_instance,
+        composer_accessor=noop,
+        chat_store_accessor=noop,
+        dictation_state_accessor=lambda: "idle",
+        dictation_origin_session_id_accessor=lambda: None,
+        set_pending_voice_action=noop,
+        request_dictation_start=noop,
+        request_dictation_stop=noop,
+        run_pending_voice_action=noop,
+        realtime_session_accessor=lambda: None,
+        enter_realtime_loop=noop,
+        request_auto_speak_enabled=noop,
+        request_auto_speak_resume=noop,
+        request_auto_speak_retry=noop,
+        sync_auto_speak_controls=noop,
+        sync_hands_free_state=noop,
+        runtime_accessor=lambda: None,
+        project_voice_preview=noop,
+        clear_voice_preview=noop,
+    )
+
+    dispatching = make_session()
+    replacement = make_session()
+    # The loop that dispatched `dispatching` is gone; a NEW loop owns the
+    # screen now. The stale worker must touch neither session.
+    controller._console_hands_free = replacement
+
+    import asyncio
+
+    asyncio.run(
+        controller._speak_console_hands_free_utterance("stale words", 1, dispatching)
+    )
+
+    assert replacement.utterances_failed == 0
+    assert replacement.utterances_dispatched == 0
+    assert dispatching.utterances_failed == 0
+    assert spoke == []

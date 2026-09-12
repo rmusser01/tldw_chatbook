@@ -68,6 +68,14 @@ def player_supported_formats(player_name: str | None) -> frozenset[str]:
     Windows COM path plays everything the OS supports, so it maps to the
     full format set. Unknown names (including ``None``) map to no
     formats -- callers treat that as "cannot serve this format".
+
+    Args:
+        player_name: A player name from `_LINUX_PLAYER_CATALOGUE`, or one
+            of the platform defaults ("afplay", "windows").
+
+    Returns:
+        The frozen set of file-format names the player can decode; empty
+        for unknown players.
     """
     if player_name == "afplay":
         return _AFPLAY_FORMATS
@@ -91,6 +99,14 @@ def find_player_for_format(audio_format: str | None) -> str | None:
     falls back to the first available player regardless of formats,
     matching the pre-catalogue selection for artifacts with unrecognized
     extensions.
+
+    Args:
+        audio_format: A lowercase file-format name ("mp3", "wav", ...) or
+            ``None`` for "no format knowledge -- any player will do".
+
+    Returns:
+        The selected player's name, or ``None`` when no installed player
+        can decode `audio_format` on this platform.
     """
     system = platform.system()
     if system == "Darwin":

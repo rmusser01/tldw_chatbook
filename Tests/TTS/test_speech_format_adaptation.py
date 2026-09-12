@@ -289,3 +289,56 @@ class TestPlaybackFailureRemedy:
         ]
         assert len(remedy_errors) == 1, [getattr(e, "error", None) for e in events]
         assert "player" in remedy_errors[0].error
+
+
+class TestBrokenSinkRemedy:
+    @pytest.mark.asyncio
+    async def test_sink_present_but_unopenable_with_no_player_surfaces_remedy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PR #2638 Qodo #2: `sink_available()` only proves the sounddevice
+        package is discoverable -- PortAudio may still fail to open (no
+        output device). In that world the pre-check's "wav is playable"
+        verdict is a false positive: adaptation requests WAV, the sink
+        fails to open, the legacy player is absent, and `play()` fails --
+        the structural failure must STILL reach the one-time remedy."""
+        from unittest.mock import MagicMock
+
+        from tldw_chatbook.Event_Handlers.TTS_Events import tts_events
+        from tldw_chatbook.TTS import audio_player as ap_module
+
+        # Capability probes: sink "available" (find_spec), no players.
+        _machine(monkeypatch, sink=True, players={})
+        monkeypatch.setattr(tts_events, "find_player_for_format", lambda fmt: None)
+        # The sink itself cannot open: the conftest autouse audio guard
+        # forces `streaming_sink._import_sounddevice` to return None, so
+        # any real sink attempt fails -- exactly the broken-audio world.
+        # The legacy player exists but cannot start (no capable binary).
+        dead_player = MagicMock()
+        dead_player.play.return_value = False
+        monkeypatch.setattr(ap_module, "get_audio_player", lambda: dead_player)
+
+        service = _FakeTTSService(preferences_format="mp3")
+        handler = tts_events.TTSEventHandler()
+        handler._tts_service = service
+        events: list[object] = []
+
+        async def post(message):
+            events.append(message)
+            return True
+
+        handler._post_tts_message = post
+
+        outcomes: list[bool] = []
+        await handler.speak_utterance("first.", on_finished=outcomes.append)
+        await handler.speak_utterance("second.", on_finished=outcomes.append)
+        await handler.cleanup_tts_resources()
+
+        assert outcomes == [False, False]
+        remedy_errors = [
+            e
+            for e in events
+            if type(e).__name__ == "TTSCompleteEvent" and getattr(e, "error", None)
+        ]
+        assert len(remedy_errors) == 1, [getattr(e, "error", None) for e in events]
+        assert "player" in remedy_errors[0].error

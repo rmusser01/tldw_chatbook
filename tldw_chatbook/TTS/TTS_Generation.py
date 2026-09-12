@@ -2244,7 +2244,21 @@ class TTSService:
         progress_sink: ProgressSink | None = None,
         admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
-        """Resolve and synthesize one revision-coherent default request."""
+        """Resolve and synthesize one revision-coherent default request.
+
+        Args:
+            text: The text to synthesize.
+            voice_override: Optional request-scoped voice identifier.
+            response_format_override: Optional request-scoped audio format
+                (e.g. "wav"); flows through the same effective-settings
+                validation as every explicit selection.
+            progress_sink: Optional async progress reporter.
+            admission_authorizer: Optional admission-time destination
+                authorizer for automatic speech requests.
+
+        Returns:
+            The synthesized provider response; the caller owns closing it.
+        """
         return await self._request_admission.synthesize_default(
             text=text,
             voice_override=voice_override,

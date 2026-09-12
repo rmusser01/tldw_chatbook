@@ -4502,3 +4502,27 @@ async def test_handsfree_blank_send_delay_deletes_key_and_invalid_refuses_save(
         assert "handsfree_send_delay_seconds" not in section_values["dictation"]
         assert "handsfree_send_delay_seconds" in kwargs["delete_keys"]["dictation"]
         assert section_values["dictation"]["acoustic_barge_in"] is True
+
+
+def test_optional_number_validator_rejects_non_finite_values():
+    """PR #2638 Qodo #5: NaN compares False to every bound and infinity
+    passes a positive lower bound, yet neither belongs in config -- the
+    shared helper every realtime numeric knob uses must refuse them."""
+    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+        GlobalSpeechTTSValidationError,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSSettingsPanel,
+    )
+
+    for bad in ("nan", "inf", "-inf"):
+        with pytest.raises(GlobalSpeechTTSValidationError):
+            SpeechTTSSettingsPanel._validated_optional_number(
+                bad,
+                field="handsfree_send_delay_seconds",
+                message="Send delay must be a positive number of seconds.",
+                cast=float,
+                low=0.0,
+                high=None,
+                exclusive_low=True,
+            )

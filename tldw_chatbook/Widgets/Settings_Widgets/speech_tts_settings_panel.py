@@ -8,6 +8,7 @@ change rather than a dynamic schema side effect.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
@@ -4458,7 +4459,10 @@ class SpeechTTSSettingsPanel(Vertical):
         threshold reads to the user as "the setting does nothing".
         `exclusive_low` makes the bound strict (TASK-32015: a zero send
         delay is a footgun the readers would warn-and-fallback on every
-        boot, so Settings refuses to write it at all).
+        boot, so Settings refuses to write it at all). Non-finite values
+        are rejected BEFORE the bounds: `value < low` is False for NaN
+        (it compares False to everything) and infinity passes a positive
+        lower bound, yet neither belongs in config (PR #2638 Qodo #5).
         """
         text = (raw or "").strip()
         if not text:
@@ -4466,6 +4470,8 @@ class SpeechTTSSettingsPanel(Vertical):
         try:
             value = cast(text)
         except (TypeError, ValueError):
+            raise GlobalSpeechTTSValidationError("realtime", field, message)
+        if not math.isfinite(value):
             raise GlobalSpeechTTSValidationError("realtime", field, message)
         if value < low or (exclusive_low and value == low) or (
             high is not None and value > high

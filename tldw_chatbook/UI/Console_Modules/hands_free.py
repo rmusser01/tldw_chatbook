@@ -2014,31 +2014,53 @@ class ConsoleHandsFreeController:
         session.utterances_dispatched += 1
         token = session.sequencer.current_utterance_token
         self.run_worker(
-            self._speak_console_hands_free_utterance(text, token),
+            self._speak_console_hands_free_utterance(text, token, session),
             exclusive=False,
             group="console-hands-free-speech",
             exit_on_error=False,
         )
 
     async def _speak_console_hands_free_utterance(
-        self, text: str, token: int | None
+        self,
+        text: str,
+        token: int | None,
+        dispatching_session: "ConsoleHandsFreeSession",
     ) -> None:
         """Speak one utterance via the cooldown-free `speak_utterance` entry.
 
         `token` is `session.sequencer.current_utterance_token`, captured
         synchronously at dispatch time (binding carrier: production callers
         MUST thread it through into `utterance_finished(ok, token=...)` --
-        see that method's docstring). `quiet` implements the "at most one
-        failure toast per reply" policy: the first failed utterance in a
-        reply shows its toast and latches `toast_shown_for_reply`; every
-        later utterance in the SAME reply then passes `quiet=True` and only
-        logs.
+        see that method's docstring). `dispatching_session` is the session
+        that DISPATCHED this utterance (PR #2638 Qodo #4): a worker may not
+        start until after its loop exited and a replacement was entered,
+        and re-reading `self._console_hands_free` at worker start would
+        bind the utterance to that replacement -- its failure counters
+        would then flag a perfectly healthy reply as all-failed. The guard
+        below pins the dispatching session and abandons stale workers.
+
+        `quiet` implements the "at most one failure toast per reply"
+        policy: the first failed utterance in a reply shows its toast and
+        latches `toast_shown_for_reply`; every later utterance in the SAME
+        reply then passes `quiet=True` and only logs.
         """
-        session = self._console_hands_free
-        if session is None:
+        session = dispatching_session
+        if self._console_hands_free is not session:
+            # The loop that dispatched this utterance is gone (exited, or
+            # replaced by a re-entry); its sequencer was torn down with it,
+            # so there is nothing live to report into. Touch no session.
             return
         handler = await self.app_instance._ensure_tts_handler()
+        if self._console_hands_free is not session:
+            return
         if handler is None:
+            # PR #2638 Qodo #1: a missing TTS handler is a failure for THIS
+            # utterance like any other. Without recording it here, a reply
+            # whose handler never initializes drains with zero counted
+            # failures and never reaches `_maybe_escalate_all_failed_reply`
+            # -- a fully silent reply with no visible notice.
+            session.toast_shown_for_reply = True
+            session.utterances_failed += 1
             session.sequencer.utterance_finished(False, token=token)
             return
         quiet = session.toast_shown_for_reply

@@ -38,6 +38,11 @@ def locally_playable_formats() -> frozenset[str]:
 
     The union of the sink's formats (when `sounddevice` is importable)
     and the formats some available external player can definitely decode.
+
+    Returns:
+        A frozen set of lowercase format names ("pcm", "wav", "mp3", ...)
+        playable through at least one local path; empty when nothing can
+        play audio here.
     """
     formats: set[str] = set()
     if sink_available():
@@ -50,7 +55,16 @@ def locally_playable_formats() -> frozenset[str]:
 
 
 def format_playable_locally(audio_format: str | None) -> bool:
-    """Return whether `audio_format` can be played on this machine."""
+    """Return whether `audio_format` can be played on this machine.
+
+    Args:
+        audio_format: A lowercase format name; non-strings and empty
+            values are simply unplayable, never an error.
+
+    Returns:
+        True when at least one local playback path (streaming sink or an
+        available external player) can serve `audio_format`.
+    """
     if not isinstance(audio_format, str) or not audio_format:
         return False
     return audio_format in locally_playable_formats()
@@ -66,6 +80,15 @@ def adapt_console_speech_format(resolved_format: str | None) -> str:
     input unchanged: when nothing is playable there is no better format
     to request, and the playback-failure surfacing owns telling the user
     what to install or reconfigure.
+
+    Args:
+        resolved_format: The format the request would otherwise use; a
+            non-string/empty value is returned unchanged.
+
+    Returns:
+        The format the request should use: `resolved_format` when it is
+        already playable here, `"wav"` when only WAV would be, otherwise
+        `resolved_format` unchanged.
     """
     if not isinstance(resolved_format, str) or not resolved_format:
         return resolved_format  # type: ignore[return-value]
@@ -82,6 +105,13 @@ def playback_remedy(audio_format: str | None) -> str:
     One sentence, two concrete outs: install a decoding player, or move
     the TTS output format to WAV (which the in-process sink plays without
     any system binary).
+
+    Args:
+        audio_format: The format that cannot play, rendered into the copy;
+            non-string/empty values degrade to the generic "audio".
+
+    Returns:
+        The user-facing remedy string (never raises).
     """
     shown = audio_format if isinstance(audio_format, str) and audio_format else "audio"
     return (

@@ -60,6 +60,7 @@ from tldw_chatbook.TTS.default_profile_request_resolver import (
     resolve_default_profile,
 )
 from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
+from tldw_chatbook.TTS.audio_player import find_player_for_format
 from tldw_chatbook.TTS.playback_capability import (
     adapt_console_speech_format,
     format_playable_locally,
@@ -2844,14 +2845,7 @@ class TTSEventHandler:
         # mute with zero user-visible signal.
         artifact_format = audio_file.suffix.lstrip(".").lower() or None
         if not format_playable_locally(artifact_format):
-            if not self._playback_remedy_notified:
-                self._playback_remedy_notified = True
-                await self._post_tts_message(
-                    TTSCompleteEvent(
-                        message_id=message_id,
-                        error=playback_remedy(artifact_format),
-                    )
-                )
+            await self._post_playback_remedy_once(artifact_format, message_id)
             self._schedule_legacy_playback_cleanup(message_id)
             on_finished(False)
             return
@@ -2905,7 +2899,41 @@ class TTSEventHandler:
             self._legacy_handoff_stop_events.discard(stop_requested)
 
         self._schedule_legacy_playback_cleanup(message_id)
+        # PR #2638 Qodo #2: the pre-check's "playable" verdict can be a
+        # FALSE POSITIVE when the streaming sink was the deciding vote --
+        # `sink_available()` only proves the sounddevice package is
+        # discoverable, not that PortAudio can open an output stream. In
+        # that world (sink find_spec True, open fails, and no player
+        # binary exists for the format either) the attempt just made
+        # failed STRUCTURALLY, not because of a barge-in, and must reach
+        # the same one-time remedy the pre-check would have posted.
+        if (
+            not ok
+            and not stop_requested.is_set()
+            and find_player_for_format(artifact_format) is None
+        ):
+            await self._post_playback_remedy_once(artifact_format, message_id)
         on_finished(bool(ok))
+
+    async def _post_playback_remedy_once(
+        self, audio_format: str | None, message_id: str
+    ) -> None:
+        """Post the playback-capability remedy toast, once per app run.
+
+        Shared by the pre-flight refusal (format provably unplayable) and
+        the post-attempt structural failure above; `_playback_remedy_
+        notified` is the once-per-app-run latch (the handler is an
+        app-lifetime singleton).
+        """
+        if self._playback_remedy_notified:
+            return
+        self._playback_remedy_notified = True
+        await self._post_tts_message(
+            TTSCompleteEvent(
+                message_id=message_id,
+                error=playback_remedy(audio_format),
+            )
+        )
 
     def _schedule_legacy_playback_cleanup(self, message_id: str) -> None:
         """Schedule the delayed artifact cleanup `_play_utterance_legacy_
