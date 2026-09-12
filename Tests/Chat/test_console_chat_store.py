@@ -1144,6 +1144,65 @@ def test_repurpose_rejects_mismatched_roleplay_title_without_mutation():
     assert store.sessions() == [before]
 
 
+def test_repurpose_pristine_session_accepts_persona_identity():
+    defaults = _pristine_defaults()
+    persona_settings = replace(
+        defaults, system_prompt="Guide User as Archivist.", character_label=""
+    )
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+
+    updated = store.repurpose_pristine_session(
+        session.id,
+        canonical_settings=defaults,
+        trusted_system_prompt="Guide User as Archivist.",
+        title="Chat with Archivist",
+        settings=persona_settings,
+        runtime_backend="local",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_authority_id=None,
+        character_id=None,
+        character_name=None,
+        assistant_name="Archivist",
+    )
+
+    assert updated is session
+    assert updated.assistant_kind == "persona"
+    assert updated.assistant_id == "local-persona-abc"
+    assert updated.assistant_name == "Archivist"
+    assert updated.character_id is None
+    assert updated.character_name is None
+    assert updated.assistant_authority_id is None
+    assert updated.settings == persona_settings
+
+
+def test_repurpose_pristine_session_rejects_persona_authority():
+    defaults = _pristine_defaults()
+    store = ConsoleChatStore()
+    session = _pristine_session(store, defaults)
+    before = replace(session)
+
+    with pytest.raises(ValueError, match="authority-free"):
+        store.repurpose_pristine_session(
+            session.id,
+            canonical_settings=defaults,
+            trusted_system_prompt="Guide User.",
+            title="Chat with Archivist",
+            settings=replace(defaults, system_prompt="Guide User."),
+            runtime_backend="server",
+            assistant_kind="persona",
+            assistant_id="opaque-persona",
+            assistant_authority_id="server-user-v1:" + ("a" * 64),
+            character_id=None,
+            character_name=None,
+            assistant_name="Archivist",
+        )
+
+    assert store.sessions()[0] is session
+    assert session == before
+
+
 def test_session_character_ref_projects_complete_local_and_server_identities():
     local = ConsoleChatSession(
         runtime_backend="local",

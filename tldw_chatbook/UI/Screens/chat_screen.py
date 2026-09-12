@@ -17178,14 +17178,17 @@ class ChatScreen(BaseAppScreen):
         try:
             payload = claim.value
 
-            # The native Console composes no legacy tab surface. A
-            # Personas Start-Chat character handoff gets a dedicated
-            # character-bound session with its greeting seeded
-            # (task-427); anything else -- or a character session that
-            # failed to build -- stages into the Console live-work lane
-            # so the context lands in Staged Context instead of being
-            # dropped with a warning.
+            # The native Console composes no legacy tab surface. Personas
+            # Start-Chat handoffs get a dedicated identity-bound session:
+            # character cards seed a greeting (task-427); persona cards bind
+            # name + system template without one (task-32481). Anything else
+            # -- or an identity session that failed to build -- stages into
+            # the Console live-work lane so the context lands in Staged
+            # Context instead of being dropped with a warning.
             if await self._session._start_character_console_session(payload):
+                store.acknowledge(claim)
+                return
+            if await self._session._start_persona_console_session(payload):
                 store.acknowledge(claim)
                 return
             self._stage_handoff_as_console_live_work(payload)

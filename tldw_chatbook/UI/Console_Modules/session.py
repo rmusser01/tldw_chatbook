@@ -3903,6 +3903,56 @@ class ConsoleSessionController:
         )
         return True
 
+    def _capture_server_handoff_context(
+        self, payload: ChatHandoffPayload
+    ) -> tuple[object, Callable[[], bool]] | None:
+        """Capture and fence the server authority context for a handoff.
+
+        Returns ``(capture, is_current)`` when the handoff's expected server
+        is still active and its context capture is current, else ``None``.
+        ``is_current()`` re-checks both conditions, so callers re-fence after
+        every suspension point by calling it again.
+        """
+        expected_server_id = payload.active_server_profile_id
+        if (
+            type(expected_server_id) is not str
+            or not expected_server_id
+            or expected_server_id != expected_server_id.strip()
+        ):
+            return None
+        if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
+            return None
+        provider = getattr(self.app_instance, "server_context_provider", None)
+        capture_context = getattr(
+            provider, "capture_character_authority_context", None
+        )
+        context_is_current = getattr(
+            provider, "is_character_authority_context_current", None
+        )
+        if not callable(capture_context) or not callable(context_is_current):
+            return None
+        try:
+            capture = capture_context(expected_server_id=expected_server_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+
+        def is_current() -> bool:
+            if (
+                getattr(self.app_instance, "active_server_id", None)
+                != expected_server_id
+            ):
+                return False
+            try:
+                return context_is_current(capture) is True
+            except Exception:
+                return False
+
+        if not is_current():
+            return None
+        return capture, is_current
+
     async def _start_character_console_session(
         self, payload: ChatHandoffPayload
     ) -> bool:
@@ -3932,16 +3982,6 @@ class ConsoleSessionController:
 
         assistant_authority_id: str | None
         local_character_id: int | None
-        server_context_capture: object | None = None
-        server_context_is_current: Callable[[object], bool] | None = None
-
-        def exact_server_context_is_current() -> bool:
-            if server_context_capture is None or server_context_is_current is None:
-                return False
-            try:
-                return server_context_is_current(server_context_capture) is True
-            except Exception:
-                return False
 
         if runtime_backend == "local":
             db = getattr(self.app_instance, "chachanotes_db", None)
@@ -3963,44 +4003,14 @@ class ConsoleSessionController:
             assistant_authority_id = local_authority_id
             local_character_id = character_id
         else:
+            fenced = self._capture_server_handoff_context(payload)
+            if fenced is None:
+                return False
+            server_context_capture, exact_server_context_is_current = fenced
             expected_server_id = payload.active_server_profile_id
-            if (
-                type(expected_server_id) is not str
-                or not expected_server_id
-                or expected_server_id != expected_server_id.strip()
-            ):
-                return False
-            if (
-                getattr(self.app_instance, "active_server_id", None)
-                != expected_server_id
-            ):
-                return False
-
             assistant_authority_id = None
             provider = getattr(self.app_instance, "server_context_provider", None)
-            capture_context = getattr(
-                provider,
-                "capture_character_authority_context",
-                None,
-            )
-            server_context_is_current = getattr(
-                provider,
-                "is_character_authority_context_current",
-                None,
-            )
             resolver = getattr(provider, "resolve_character_authority_id", None)
-            if not callable(capture_context) or not callable(server_context_is_current):
-                return False
-            try:
-                server_context_capture = capture_context(
-                    expected_server_id=expected_server_id
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return False
-            if not exact_server_context_is_current():
-                return False
             if callable(resolver):
                 try:
                     resolved_authority_id = await resolver(
@@ -4023,11 +4033,7 @@ class ConsoleSessionController:
             # This is both the post-resolver fence and the immediately
             # pre-card-fetch fence. No card from a newly active target may be
             # used for the ID carried by the handoff.
-            if (
-                not exact_server_context_is_current()
-                or getattr(self.app_instance, "active_server_id", None)
-                != expected_server_id
-            ):
+            if not exact_server_context_is_current():
                 return False
             local_character_id = None
 
@@ -4051,12 +4057,7 @@ class ConsoleSessionController:
             return False
 
         if runtime_backend == "server":
-            expected_server_id = payload.active_server_profile_id
-            if (
-                not exact_server_context_is_current()
-                or getattr(self.app_instance, "active_server_id", None)
-                != expected_server_id
-            ):
+            if not exact_server_context_is_current():
                 return False
 
         global_name = _console_global_user_display_name(
@@ -4075,11 +4076,7 @@ class ConsoleSessionController:
             system_prompt=seed.system_prompt,
             character_label=seed.name,
         )
-        if runtime_backend == "server" and (
-            not exact_server_context_is_current()
-            or getattr(self.app_instance, "active_server_id", None)
-            != payload.active_server_profile_id
-        ):
+        if runtime_backend == "server" and not exact_server_context_is_current():
             return False
         active = next(
             (
@@ -4206,6 +4203,180 @@ class ConsoleSessionController:
             # character session.
             logger.opt(exception=True).warning(
                 "Start Chat: post-seed console sync/focus failed; character "
+                "session was already created and the handoff is still "
+                "considered consumed."
+            )
+        return True
+
+    async def _start_persona_console_session(
+        self, payload: ChatHandoffPayload
+    ) -> bool:
+        """Build a dedicated persona-bound session from a Personas handoff.
+
+        Mirrors ``_start_character_console_session`` minus greeting, local
+        numeric projection, and authority resolution: persona sessions stay
+        authority-free per ADR-037 (server personas get freshness fencing but
+        never an ``assistant_authority_id``).
+        """
+        identity = _persona_session_identity_from_handoff(payload)
+        if identity is None:
+            return False
+        runtime_backend, persona_id, name_hint, assistant_id = identity
+
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        get_persona_profile = getattr(scope_service, "get_persona_profile", None)
+        if not callable(get_persona_profile):
+            return False
+
+        context_is_current: Callable[[], bool] | None = None
+        if runtime_backend == "server":
+            fenced = self._capture_server_handoff_context(payload)
+            if fenced is None:
+                return False
+            _capture, context_is_current = fenced
+
+        try:
+            profile = await get_persona_profile(persona_id, mode=runtime_backend)
+            if hasattr(profile, "model_dump"):
+                profile = profile.model_dump(mode="json")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Start Chat: persona profile unavailable; staging context "
+                "instead (source={}, backend={}).",
+                payload.source,
+                runtime_backend,
+            )
+            return False
+        if not isinstance(profile, Mapping) or not profile:
+            return False
+        profile = dict(profile)
+        if str(profile.get("id") or "") != persona_id:
+            return False
+        if context_is_current is not None and not context_is_current():
+            return False
+
+        global_name = _console_global_user_display_name(
+            self._provider_readiness_app_config()
+        )
+        seed = _persona_session_prompt_seed(
+            profile, name_hint=str(name_hint or ""), user_name=global_name
+        )
+
+        store = self._ensure_console_chat_store()
+        canonical_defaults = self._default_console_session_settings()
+        settings = replace(
+            canonical_defaults,
+            system_prompt=seed.system_prompt or None,
+            character_label="",
+        )
+        if context_is_current is not None and not context_is_current():
+            return False
+        active = next(
+            (
+                candidate
+                for candidate in store.sessions()
+                if candidate.id == store.active_session_id
+            ),
+            None,
+        )
+        if (
+            active is not None
+            and active.settings is not None
+            and active.settings != canonical_defaults
+            and active.canonical_settings_baseline == active.settings
+        ):
+            try:
+                active = store.refresh_pristine_session_settings(
+                    active.id,
+                    prior_canonical_settings=active.settings,
+                    current_canonical_settings=canonical_defaults,
+                )
+            except ValueError:
+                pass
+        active_messages = (
+            store.messages_for_session(active.id) if active is not None else []
+        )
+        duplicate_handoff = bool(
+            active is not None
+            and active.settings == settings
+            and active.runtime_backend == runtime_backend
+            and active.assistant_kind == "persona"
+            and active.assistant_id == assistant_id
+            and active.assistant_name == seed.name
+            and active.persona_system_template == seed.system_template
+            and not active_messages
+        )
+        if duplicate_handoff:
+            session = active
+        else:
+            session = None
+            if active is not None and store.is_pristine_session(
+                active.id,
+                expected_settings=canonical_defaults,
+            ):
+                try:
+                    session = store.repurpose_pristine_session(
+                        active.id,
+                        canonical_settings=canonical_defaults,
+                        trusted_system_prompt=seed.system_prompt,
+                        title=f"Chat with {seed.name}",
+                        settings=settings,
+                        runtime_backend=runtime_backend,
+                        assistant_kind="persona",
+                        assistant_id=assistant_id,
+                        assistant_authority_id=None,
+                        character_id=None,
+                        character_name=None,
+                        assistant_name=seed.name,
+                    )
+                except ValueError:
+                    session = None
+            if session is None:
+                session = store.create_session(
+                    title=f"Chat with {seed.name}",
+                    workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                    settings=settings,
+                    runtime_backend=runtime_backend,
+                    assistant_kind="persona",
+                    assistant_id=assistant_id,
+                    assistant_authority_id=None,
+                    assistant_name=seed.name,
+                )
+            try:
+                store.seed_persona_roleplay(
+                    session.id,
+                    system_template=seed.system_template,
+                    global_default=global_name,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Start Chat: persona roleplay template seed/persist failed; "
+                    "continuing (error_type={}).",
+                    type(exc).__name__,
+                )
+        store.switch_session(session.id)
+        if not duplicate_handoff:
+            # Same defensive cleanup as the server-character path: a persona
+            # session never keys reactions by actor, so clear wholesale.
+            self._clear_session_manual_reactions(session.id)
+        try:
+            await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
+        except asyncio.CancelledError:
+            # The durable commit boundary is above. Report success so the
+            # caller acknowledges this handoff instead of replaying it.
+            return True
+        except Exception:
+            # The persona session is already durably created above -- a
+            # UI-sync/focus failure here must not propagate, or the caller
+            # would never clear ``pending_chat_handoff`` and a later
+            # re-consume would build a SECOND durable persona session.
+            logger.opt(exception=True).warning(
+                "Start Chat: post-seed console sync/focus failed; persona "
                 "session was already created and the handoff is still "
                 "considered consumed."
             )
