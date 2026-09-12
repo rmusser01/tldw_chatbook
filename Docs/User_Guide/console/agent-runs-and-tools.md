@@ -76,6 +76,15 @@ the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. A sub-agent's work never appears here;
 it belongs to the **Sub-agents** panel in the left rail.
 
+While a model call is generating or thinking, this line may also show its
+current output count. `17 provider output tok` means the provider supplied an
+explicit count. `~17 local output tok` is Chatbook's local estimate from the
+text received so far. The count belongs only to the current model call: it
+resets for the next call and disappears while a tool or approval is waiting and
+when the call finishes. Missing usage and an explicit provider count of zero
+show no segment. Live counts do not include a price estimate and are separate
+from the completed run's budget-token accounting.
+
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
 
@@ -815,10 +824,12 @@ finishes.
      restart, or one this process never ran live) shows no elapsed segment;
      see *Known gaps* below.
    - Secondary line: the child's last step, result, or error text, dimmed,
-     with the child's measured token spend appended once it finishes — see
-     *Token spend*, below. Both are **transient**: they come from the live
-     fleet, so when the whole turn ends every row falls back to the sparser
-     historical rendering (name and task only). See *Known gaps*.
+     with the current call's `N provider output tok` or `~N local output tok`
+     appended while that child is active. Missing usage and explicit provider
+     zero add nothing. Once the child finishes, the live count clears and its
+     budget-token count is appended instead — see *Budget tokens and billing*,
+     below. Historical rows restore their own saved result or last useful step
+     and their saved budget count.
 3. **Drilled in** — click a specific row: the whole Agent section switches
    to that one child's own view (`Sub-agent · <status> (Back)` plus its own
    step lines), and the Sub-agents panel itself is hidden while you're
