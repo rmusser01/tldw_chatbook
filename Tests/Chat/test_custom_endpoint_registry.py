@@ -1,9 +1,12 @@
 """Pure custom endpoint registry tests."""
 import logging
 
+import pytest
+
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,  # noqa: F401  (import-surface check)
     CustomEndpointEntry,
+    CustomEndpointSlugError,
     build_entry_mutation,
     derive_slug,
     entry_for,
@@ -45,6 +48,34 @@ def test_llama_family_normalizes_v1_suffix():
 
 def test_derive_slug_collapses_and_uniquifies():
     assert derive_slug("GPU box llama.cpp!", {"gpu-box-llama-cpp"}) == "gpu-box-llama-cpp-2"
+
+def test_derive_slug_extends_suffix_search_into_four_digits():
+    # -2 .. -99 taken: the search must reach at least 4-digit suffixes
+    # instead of falling back to the colliding bare base.
+    taken = {"gpu-box"} | {f"gpu-box-{n}" for n in range(2, 100)}
+    assert derive_slug("GPU box", taken) == "gpu-box-100"
+
+def test_derive_slug_exhaustion_raises_instead_of_returning_colliding_slug():
+    # Every candidate (bare base plus -2 .. -9999) is taken: returning the
+    # bare base would make the creation path overwrite an existing entry's
+    # config section, so exhaustion must raise user-facing copy instead.
+    taken = {"gpu-box"} | {f"gpu-box-{n}" for n in range(2, 10000)}
+    with pytest.raises(CustomEndpointSlugError, match="already in use"):
+        derive_slug("GPU box", taken)
+
+def test_derive_slug_exhaustion_raises_when_clamp_prevents_suffixed_candidates():
+    # A 64-char base cannot fit any suffix inside the 64-char clamp, so a
+    # taken base has no derivable candidate at all -- raise, never collide.
+    long_base = "g" * 64
+    with pytest.raises(CustomEndpointSlugError):
+        derive_slug(long_base, {long_base})
+
+def test_slug_collision_error_is_value_error_with_user_facing_copy():
+    # The F9 convert worker surfaces ValueError messages in its status line;
+    # the slug error rides that contract with copy safe to show as-is.
+    error = CustomEndpointSlugError()
+    assert isinstance(error, ValueError)
+    assert str(error) == "That name is already in use; choose another."
 
 def test_entry_for_resolves_provider_id():
     assert entry_for(_config_with("s"), "custom-ep:s").display_name == "GPU box"

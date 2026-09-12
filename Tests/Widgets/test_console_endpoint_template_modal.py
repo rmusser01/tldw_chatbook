@@ -109,5 +109,54 @@ async def test_template_modal_shows_validation_inline(tmp_path):
         assert "http(s)" in error.renderable
         create = app.screen.query_one("#endpoint-template-create", Button)
         assert create.disabled is True
-    assert app.created_provider_id is None
-    assert load_custom_endpoints(app.app_config) == {}
+        assert app.created_provider_id is None
+        assert load_custom_endpoints(app.app_config) == {}
+
+
+@pytest.mark.asyncio
+async def test_template_modal_surfaces_slug_exhaustion_inline(tmp_path, monkeypatch):
+    # Every derivable slug for the name is taken: Create must surface the
+    # collision inline (error-banner pattern) instead of persisting an
+    # entry that overwrites an existing slug's config section.
+    config_path = tmp_path / "endpoint-template-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        # gpu-box plus gpu-box-2 .. gpu-box-9999: exhausts bare base and
+        # every suffixed candidate through the 4-digit suffix search.
+        squatted = {"gpu-box"} | {f"gpu-box-{n}" for n in range(2, 10000)}
+        app_config = {
+            "custom_endpoints": {
+                slug: {
+                    "display_name": "Squatter",
+                    "family": "llama_cpp",
+                    "base_url": "http://127.0.0.1:8080",
+                }
+                for slug in squatted
+            }
+        }
+        app = _TemplateModalHarness(app_config=app_config)
+        async with app.run_test(size=(100, 40)) as pilot:
+            modal = ConsoleEndpointTemplateModal(
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                template_provider="llama_cpp",
+            )
+            await app.push_screen(modal)
+            await pilot.click("#endpoint-template-name")
+            await pilot.press(*"GPU box")
+            await pilot.click("#endpoint-template-create")
+            await pilot.pause()
+            error = app.screen.query_one("#endpoint-template-error", Static)
+            assert "already in use" in str(error.renderable)
+            assert error.display is True
+            # Create stays usable (retry with another name) and no entry
+            # was persisted -- the modal is still up and the file untouched.
+            create = app.screen.query_one("#endpoint-template-create", Button)
+            assert create.disabled is False
+        assert app.created_provider_id is None
+        assert "custom_endpoints" not in tomllib.loads(config_path.read_text())
+    finally:
+        config_module.load_settings(force_reload=True)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)

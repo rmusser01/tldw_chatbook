@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
     SLUG_PATTERN,
     CustomEndpointEntry,
+    CustomEndpointSlugError,
     build_entry_mutation,
     derive_slug,
     load_custom_endpoints,
@@ -441,7 +442,14 @@ class ConsoleEndpointTemplateModal(
         if errors:
             self._show_errors(errors)
             return
-        slug = derive_slug(name, load_custom_endpoints(self._app_config).keys())
+        try:
+            slug = derive_slug(name, load_custom_endpoints(self._app_config).keys())
+        except CustomEndpointSlugError as error:
+            # Every derivable slug is taken: surface the collision inline
+            # instead of persisting an entry that would overwrite an
+            # existing slug's config section.
+            self._show_errors([str(error)])
+            return
         if not SLUG_PATTERN.fullmatch(slug):
             # A name with no alphanumeric characters derives an empty slug.
             self._show_errors([INVALID_SLUG_COPY])
