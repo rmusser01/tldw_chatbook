@@ -90,6 +90,11 @@ class _EndpointTemplate:
         base_url: Prefill base URL (template's configured endpoint or the
             family default).
         models: Prefill model ids (template's configured models).
+        duplicate_name: Display-name prefill for a registry-entry template
+            (``<name> (copy)``); None for templates without a name to copy.
+        api_key_env: Credential *reference* carried over when duplicating a
+            registry entry -- the stored ``api_key`` is never copied (same
+            security posture as the F9 convert path).
     """
 
     label: str
@@ -97,6 +102,8 @@ class _EndpointTemplate:
     family: str
     base_url: str
     models: tuple[str, ...] = ()
+    duplicate_name: str | None = None
+    api_key_env: str | None = None
 
 
 def _family_for_provider_key(provider_key: str) -> str:
@@ -302,6 +309,8 @@ class ConsoleEndpointTemplateModal(
                         family=entry.family,
                         base_url=entry.base_url,
                         models=entry.models,
+                        duplicate_name=f"{entry.display_name} (copy)",
+                        api_key_env=entry.api_key_env,
                     )
                 )
                 continue
@@ -356,6 +365,9 @@ class ConsoleEndpointTemplateModal(
             with Horizontal(classes="console-settings-modal-row"):
                 yield Static("Display name", classes="console-endpoint-template-label")
                 yield ConsoleSettingsInput(
+                    # A registry-entry template pre-fills "<name> (copy)" so
+                    # the duplicate starts from the source's display name.
+                    value=template.duplicate_name or "",
                     placeholder="Endpoint name",
                     id=NAME_INPUT_ID,
                     classes="console-settings-control",
@@ -414,6 +426,10 @@ class ConsoleEndpointTemplateModal(
             return
         self._active_template_index = index
         template = self._templates[index]
+        if template.duplicate_name is not None:
+            # Duplicating carries the source display name (suffixed
+            # "(copy)"); templates without a name leave a typed name alone.
+            self.query_one(f"#{NAME_INPUT_ID}", Input).value = template.duplicate_name
         self.query_one(f"#{FAMILY_SELECT_ID}", Select).value = template.family
         self.query_one(f"#{URL_INPUT_ID}", Input).value = template.base_url
         self.query_one(f"#{MODELS_INPUT_ID}", Input).value = ", ".join(
@@ -486,6 +502,11 @@ class ConsoleEndpointTemplateModal(
                     display_name=name,
                     family=family,
                     base_url=_normalized_base_url(family, base_url),
+                    # Duplicating a registry entry carries the credential
+                    # reference only; a stored api_key is never copied.
+                    api_key_env=self._templates[
+                        self._active_template_index
+                    ].api_key_env,
                     models=self._parsed_models(),
                     created_from=self._templates[self._active_template_index].provider_id,
                 )
@@ -567,6 +588,8 @@ class ConsoleEndpointTemplateModal(
             "base_url": entry.base_url,
             "models": list(entry.models),
         }
+        if entry.api_key_env is not None:
+            values["api_key_env"] = entry.api_key_env
         if entry.created_from is not None:
             values["created_from"] = entry.created_from
         section[entry.slug] = values

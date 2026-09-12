@@ -4,7 +4,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -279,3 +279,61 @@ async def test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhau
 
     assert saved_mutations == []
     assert app.created_provider_id is None
+
+
+@pytest.mark.asyncio
+async def test_template_modal_duplicate_carries_env_ref_and_copy_name(
+    tmp_path, monkeypatch
+):
+    """Duplicating an existing entry copies the credential *reference*
+    (api_key_env, never the stored api_key) and prefills the display name
+    suffixed ' (copy)' (spec: creation-from-template decision)."""
+    config_path = tmp_path / "endpoint-template-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        app_config = {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                    "api_key_env": "PAID_KEY",
+                    "api_key": "stored-secret",
+                    "models": ["m1"],
+                }
+            }
+        }
+        app = _TemplateModalHarness(app_config=app_config)
+        async with app.run_test(size=(100, 40)) as pilot:
+            modal = ConsoleEndpointTemplateModal(
+                app_config=app.app_config,
+                providers_models={},
+                template_provider="custom-ep:paid",
+            )
+            await app.push_screen(modal)
+            # The duplicate template prefills the display name with (copy).
+            name = app.screen.query_one("#endpoint-template-name", Input)
+            assert name.value == "Paid (copy)"
+            await pilot.click("#endpoint-template-create")
+            await pilot.pause()
+
+        assert app.created_provider_id == "custom-ep:paid-copy"
+        # The stored secret never crosses over; the env reference does.
+        raw = tomllib.loads(config_path.read_text())
+        duplicated = raw["custom_endpoints"]["paid-copy"]
+        assert duplicated["api_key_env"] == "PAID_KEY"
+        assert "api_key" not in duplicated
+        assert duplicated["display_name"] == "Paid (copy)"
+        assert duplicated["base_url"] == "https://api.example.com/v1"
+        assert duplicated["created_from"] == "custom-ep:paid"
+        # The in-memory mirror keeps the credential reference too, so the
+        # opener's readiness/credential resolution sees it without a reload.
+        assert (
+            load_custom_endpoints(app.app_config)["paid-copy"].api_key_env
+            == "PAID_KEY"
+        )
+    finally:
+        config_module.load_settings(force_reload=True)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
