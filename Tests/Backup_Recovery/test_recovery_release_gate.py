@@ -38,6 +38,7 @@ def test_unavailable_complete_backup_refuses_before_worker_allocation(
     tmp_path, monkeypatch
 ):
     """Removing the pre-start release gate would allocate a backup worker."""
+    from tldw_chatbook.Backup_Recovery import crypto
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
 
     service = RecoveryService(tmp_path / "control")
@@ -45,6 +46,9 @@ def test_unavailable_complete_backup_refuses_before_worker_allocation(
     def allocated(*_args, **_kwargs):
         pytest.fail("unavailable backup allocated a worker")
 
+    monkeypatch.setattr(
+        crypto, "helper_capability", lambda: (False, "helper_unavailable")
+    )
     monkeypatch.setattr(service, "_start", allocated)
     try:
         with pytest.raises(ValueError, match="release_capability_unavailable"):

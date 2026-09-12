@@ -6,80 +6,46 @@ helper exit. Callers must supply an owner-private staging directory for decrypt.
 
 import hashlib
 import io
+import json
 import os
-import platform
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Annotated, BinaryIO, Callable, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from typing import BinaryIO
 
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 _MAX_CONTAINER = 2 * 1024**4
 _BUFFER = 64 * 1024
 _JOBS = Lock()
+_WORKER_INFO = {"protocol": 2, "implementation": "python", "format": "age-v1"}
+# Update this anchor in the same reviewed change whenever age_worker.py changes.
+_WORKER_SHA256 = "451a3dc158c3c1e8ee599f384a23046eb9d446ca94e8c5e04b8ffe9c6e068c05"
 
 
 class CryptoError(RuntimeError):
     """A fixed nonsecret error code; never wrap child or filesystem diagnostics."""
 
 
-class _Info(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    protocol: int = Field(strict=True, ge=1, le=1)
-    helper_version: Literal["1"]
-    age_version: Literal["v1.3.2"]
-    os: Literal["darwin", "linux", "windows"]
-    arch: Literal["arm64", "amd64"]
-
-
-class _InstalledHelper(_Info):
-    status: Literal["qualified"]
-    resource: Literal["_age/backup-age", "_age/backup-age.exe"]
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    python_versions: tuple[Literal["3.11", "3.12", "3.13"], ...] = Field(
-        min_length=1, max_length=3
-    )
-
-
-class _UnavailableHelper(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    status: Literal["unavailable"]
-    reason: Literal["not_qualified"]
-    os: Literal["darwin", "linux", "windows"]
-    arch: Literal["arm64", "amd64"]
-
-
-_HelperEntry = Annotated[
-    _InstalledHelper | _UnavailableHelper, Field(discriminator="status")
-]
-
-
-class _DeliveryManifest(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    schema_version: int = Field(strict=True, ge=1, le=1)
-    helpers: tuple[_HelperEntry, ...] = Field(min_length=1, max_length=5)
-
-
 def _package_resource_root() -> Path:
-    return Path(__file__).parent / "_age"
+    return Path(__file__).parent
 
 
 def _child_environment() -> dict[str, str]:
-    # Do not forward credentials, Go runtime overrides, or ambient agent settings.
+    # Do not forward credentials or ambient application/agent settings.
     return (
         {"SYSTEMROOT": os.environ["SYSTEMROOT"]} if "SYSTEMROOT" in os.environ else {}
     )
 
 
 def _pipes(
-    binary: Path,
+    worker_path: Path,
     mode: str,
     source: BinaryIO,
     output: BinaryIO,
@@ -97,7 +63,7 @@ def _pipes(
     failed = Event()
     input_digest = hashlib.sha256()
     process = subprocess.Popen(
-        [str(binary), mode],
+        [sys.executable, "-I", str(worker_path), mode],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -213,62 +179,30 @@ def _open_regular(path: Path) -> BinaryIO:
 
 def _qualified_helper() -> Path:
     root = _package_resource_root()
-    manifest_path = root.parent / "helper_manifest.json"
-    binary = root / ("backup-age.exe" if os.name == "nt" else "backup-age")
+    worker_path = root / "age_worker.py"
     try:
-        if not binary.is_file():
+        if worker_path.is_symlink():
             raise CryptoError("helper_unavailable")
-        if manifest_path.is_symlink() or binary.is_symlink():
-            raise CryptoError("helper_unavailable")
-        with _open_regular(manifest_path) as stream:
-            encoded = stream.read(16_385)
-            if len(encoded) > 16_384:
-                raise CryptoError("helper_unavailable")
-            delivery = _DeliveryManifest.model_validate_json(encoded)
-        current_os = {"Darwin": "darwin", "Linux": "linux", "Windows": "windows"}.get(
-            platform.system()
-        )
-        current_arch = {
-            "aarch64": "arm64",
-            "arm64": "arm64",
-            "x86_64": "amd64",
-            "AMD64": "amd64",
-        }.get(platform.machine())
-        matches = [
-            helper
-            for helper in delivery.helpers
-            if (helper.os, helper.arch) == (current_os, current_arch)
-        ]
-        if len(matches) != 1 or not isinstance(matches[0], _InstalledHelper):
-            raise CryptoError("helper_unavailable")
-        manifest = matches[0]
-        current_python = ".".join(platform.python_version_tuple()[:2])
-        if current_python not in manifest.python_versions:
-            raise CryptoError("helper_unavailable")
-        expected_resource = (
-            "_age/backup-age.exe" if current_os == "windows" else "_age/backup-age"
-        )
-        if manifest.resource != expected_resource:
-            raise CryptoError("helper_unavailable")
-        with _open_regular(binary) as stream:
+        with _open_regular(worker_path) as stream:
             metadata = os.fstat(stream.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 32 * 1024**2:
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or not 0 < metadata.st_size <= 1024**2
+            ):
                 raise CryptoError("helper_unavailable")
             hasher = hashlib.sha256()
             total = 0
             while block := stream.read(_BUFFER):
                 total += len(block)
-                if total > 32 * 1024**2:
+                if total > 1024**2:
                     raise CryptoError("helper_unavailable")
                 hasher.update(block)
             digest = hasher.hexdigest()
-        if digest != manifest.sha256:
+        if digest != _WORKER_SHA256:
             raise CryptoError("helper_integrity_mismatch")
-        if not os.access(binary, os.X_OK):
-            raise CryptoError("helper_unavailable")
         output = io.BytesIO()
         _pipes(
-            binary,
+            worker_path,
             "info",
             io.BytesIO(),
             output,
@@ -277,22 +211,20 @@ def _qualified_helper() -> Path:
             limit=1024,
             deadline=time.monotonic() + 5,
         )
-        info = _Info.model_validate_json(output.getvalue())
-        if info.model_dump() != manifest.model_dump(
-            exclude={"python_versions", "resource", "sha256", "status"}
-        ):
+        info = json.loads(output.getvalue())
+        if type(info) is not dict or info != _WORKER_INFO:
             raise CryptoError("helper_unavailable")
-        return binary
+        return worker_path
     except CryptoError as error:
         if str(error) == "helper_integrity_mismatch":
             raise
         raise CryptoError("helper_unavailable") from None
-    except (OSError, ValueError, ValidationError):
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
         raise CryptoError("helper_unavailable") from None
 
 
 def helper_capability() -> tuple[bool, str]:
-    """Check installed integrity/platform/protocol before soliciting a password."""
+    """Check worker integrity, dependencies, and protocol before password entry."""
     try:
         _qualified_helper()
     except CryptoError as error:
@@ -333,7 +265,7 @@ def transform(
             raise CryptoError("cancelled")
         source = validate_path_simple(source, probe_existing=False)
         target = validate_path_simple(target, probe_existing=False)
-        binary = _qualified_helper()
+        worker_path = _qualified_helper()
         if target.exists() or target.is_symlink():
             raise CryptoError("target_exists")
         # Never read device/FIFO/link input, which could outlive child cleanup.
@@ -346,7 +278,7 @@ def transform(
             temporary = Path(name)
             with os.fdopen(descriptor, "wb") as output:
                 _pipes(
-                    binary,
+                    worker_path,
                     "decrypt" if decrypt else "encrypt",
                     input_stream,
                     output,

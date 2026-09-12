@@ -10,7 +10,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md
 - backlog/decisions/126-complete-local-backup-and-recovery.md
-updated_date: 2026-09-12 15:29
+updated_date: 2026-09-12 15:45
 ---
 
 ## Description
@@ -44,6 +44,8 @@ Design/plan recorded in Docs/superpowers/specs/2026-09-12-python-backup-encrypti
 Fixed independent interoperability fixtures committed749f116b2: official age1.3.2 ciphertext (SHAfb98c008...), previous worker empty/raw4096-byte password ciphertext (SHA3f67cd98...), prior worker streaming ciphertext (SHA747e0916...). Root verified remote/local hashes; README records fully synthetic inputs and original37pass test receipt. No newGo execution. Worker/test-only implementation active; independent read-only packaging map delegated while root prepares unchanged transport/capability integration. Design/plan commitc19068652.
 Task1 worker frozen for independent review: 60 tests passed (15.95s), including three fixed pre-existing age archives and exact ciphertext reproduction with recorded entropy. Ruff/format/compile and production Bandit passed; test-only Bandit findings retained in report. Worker protocol2/python/age-v1. Parent transport and Go packaging removal remain pending. Evidence /private/tmp/task32495-python-worker-report.md; reviewer dispatched.
 Task1 review found closed stdout could emit interpreter-finalization diagnostics. Narrow fix uses unbuffered FileIO at protocol boundary. Real info/encrypt/decrypt closed-pipe regressions RED3 then GREEN3; final worker module63passed16.39s. Production Bandit0, Ruff/format/compile pass;26 LOW test-only Bandit findings disclosed. Fixed worker SHA451a3dc158c3c1e8ee599f384a23046eb9d446ca94e8c5e04b8ffe9c6e068c05. Scoped re-review pending; no Go executed. Packaging dependency map completed /private/tmp/task32495-python-packaging-map.md.
+Task2 production patch was rejected by automatic approval review: removal of existing binary manifest/SHA validation was judged to weaken encryption integrity. No production patch applied. Safer bounded integration will retain existing SHA256 verification over fixed Python worker bytes, with expected digest as parent-owned constant instead of a Go/platform manifest. This preserves tamper/corruption refusal while removing Go and target delivery machinery. Worker edits must update digest in same reviewed change. No additional feature/dependency/manifest/platform qualification.
+Task2 implementation frozen for independent review: Python isolated parent transport, fixed worker SHA256 integrity retained, shared Python fixture, no Go invocation. Final crypto42passed12.02s; directly affected missing-backend gate1passed0.61s. Ruff/compile/diffcheck pass. Production Bandit retains same two LOW fixed-subprocess baseline findings; test LOW findings disclosed. Report /private/tmp/task32495-python-transport-report.md; review package /private/tmp/task32495-transport-review.diff. Source/editable availability no longer depends on prebuilt Go binary; native qualification unchanged.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

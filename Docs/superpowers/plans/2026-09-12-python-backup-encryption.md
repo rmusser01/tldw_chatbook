@@ -49,7 +49,9 @@ Goal: existing public transform uses the Python worker without Go resources.
 Success criteria: original cancellation/backpressure/limits/publication semantics
 pass through the actual Python child; callers use unchanged API shapes.
 Tests: `test_crypto.py`, worker tests and directly affected capability tests.
-Status: In Progress.
+Status: Complete. Crypto42 tests and directly affected release gate pass; independent
+review approved. Evidence: /private/tmp/task32495-python-transport-report.md and
+/private/tmp/task32495-python-transport-review.md.
 
 Modify `crypto.py` to execute `[sys.executable, '-I', worker_path, mode]`; replace the
 Go tuple/binary manifest check with fixed Python worker/dependency/protocol checks.
@@ -65,7 +67,7 @@ Success criteria: built packages contain the Python worker; no backup Go executa
 Go build hook, helper target selection or Go-specific runtime manifest remains.
 Tests: `Tests/Packaging/test_backup_helper_distribution.py`, existing installed
 package fixture consumers and packaging checker cases.
-Status: Not Started.
+Status: In Progress.
 
 Remove exclusively Go-owned `Packaging/backup_age` build assets, setuptools cmdclass
 entries and Go-only manifest declarations. Update `Packaging/check_manifest.py`,

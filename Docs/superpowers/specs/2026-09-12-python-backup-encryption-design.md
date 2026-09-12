@@ -50,6 +50,12 @@ encryption without a prebuilt architecture-specific binary. Do not claim that ol
 Go receipts qualify the new worker. Final product evidence must exercise the new
 Python backend and source/package provenance.
 
+Preserve worker-byte integrity verification: the parent checks the fixed Python
+worker's SHA-256 against a parent-owned constant before execution. A worker change
+updates that constant in the same reviewed change. This retains the previous
+tamper/corruption refusal without introducing a replacement delivery manifest or
+platform inventory. The application package remains the trust boundary.
+
 ## Verification
 
 Use fixed existing age ciphertext and expected plaintext/password fixtures for

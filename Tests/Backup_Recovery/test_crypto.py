@@ -1,31 +1,27 @@
 """Real helper qualification and adversarial process/file boundary evidence."""
 
 import hashlib
-import json
 import os
 import shutil
 import struct
 import subprocess
-from threading import Event, Thread
+import sys
 import time
+from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
 
 def _copy_helper_package(helper_resource_root, destination):
     package_root = destination / "package"
-    root = package_root / "_age"
-    shutil.copytree(helper_resource_root, root)
-    shutil.copy2(
-        helper_resource_root.parent / "helper_manifest.json",
-        package_root / "helper_manifest.json",
-    )
-    return root
+    shutil.copytree(helper_resource_root, package_root)
+    return package_root
 
 
 def test_encrypted_stream_round_trip(tmp_path, helper_resource_root, monkeypatch):
-    from tldw_chatbook.Backup_Recovery.crypto import transform
     from tldw_chatbook.Backup_Recovery import crypto
+    from tldw_chatbook.Backup_Recovery.crypto import transform
 
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
     source, encrypted, restored = (tmp_path / n for n in ("in", "sealed", "out"))
@@ -128,87 +124,75 @@ def test_existing_destination_survives(tmp_path, crypto):
     assert target.read_bytes() == b"preserve"
 
 
-def test_helper_info_requires_no_password(helper_resource_root):
-    binary = helper_resource_root / "backup-age"
-    result = subprocess.run(
-        [str(binary), "info"], input=b"", capture_output=True, timeout=5
-    )
-    assert result.returncode == 0
-    assert len(result.stdout) < 1024 and result.stderr == b""
-    assert json.loads(result.stdout)["protocol"] == 1
+def test_helper_capability_uses_fixed_isolated_python_entry(
+    helper_resource_root, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery import crypto
+
+    commands = []
+    original = subprocess.Popen
+
+    def observe(*args, **kwargs):
+        commands.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    monkeypatch.setattr(crypto.subprocess, "Popen", observe)
+
+    assert crypto.helper_capability() == (True, "available")
+    assert commands == [
+        [
+            sys.executable,
+            "-I",
+            str(helper_resource_root / "age_worker.py"),
+            "info",
+        ]
+    ]
 
 
-def test_official_age_interoperability(tmp_path, crypto, official_age):
-    import pty
-    import select
-
-    password = b"interop-synthetic-password"
-
-    def official(mode, source, target):
-        terminal, slave = pty.openpty()
-        child = subprocess.Popen(
-            [str(official_age), mode, "-o", str(target), str(source)],
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
-            start_new_session=True,
-        )
-        os.close(slave)
-        pending = b""
-        prompts = (
-            [b"Enter passphrase:"]
-            if mode == "-d"
-            else [
-                b"Enter passphrase (leave empty to autogenerate a secure one):",
-                b"Confirm passphrase:",
-            ]
-        )
-        try:
-            deadline = time.monotonic() + 20
-            while time.monotonic() < deadline and child.poll() is None:
-                ready, _, _ = select.select([terminal], [], [], 0.05)
-                if ready:
-                    try:
-                        pending += os.read(terminal, 4096)
-                    except OSError:
-                        break
-                    if prompts and prompts[0] in pending:
-                        prompts.pop(0)
-                        pending = b""
-                        os.write(terminal, password + b"\n")
-            assert child.wait(timeout=5) == 0
-            assert not prompts
-        finally:
-            os.close(terminal)
-            if child.poll() is None:
-                child.kill()
-            child.wait()
-
-    source = tmp_path / "source"
-    source.write_bytes(bytes(range(256)) * 2048)
-    ours, official_output, official_sealed, restored = (
-        tmp_path / n for n in ("ours", "official-out", "official-sealed", "restored")
-    )
-    crypto.transform(source, ours, password=password, decrypt=False, cancel=Event())
-    official("-d", ours, official_output)
-    assert official_output.read_bytes() == source.read_bytes()
-    official("-p", source, official_sealed)
+@pytest.mark.parametrize(
+    ("fixture_name", "password", "plaintext"),
+    [
+        (
+            "official.age",
+            b"interop-synthetic-password",
+            bytes(range(256)) * 2048,
+        ),
+        ("legacy-empty.age", b"\xff\x00" * 2048, b""),
+        (
+            "legacy-stream.age",
+            b"test-only passphrase",
+            b"synthetic recovery bytes" * 10000,
+        ),
+    ],
+)
+def test_fixed_age_v1_interoperability(
+    tmp_path, crypto, fixture_name, password, plaintext
+):
+    fixtures = Path(__file__).parent / "fixtures" / "age_v1"
+    restored = tmp_path / "restored"
     crypto.transform(
-        official_sealed, restored, password=password, decrypt=True, cancel=Event()
+        fixtures / fixture_name,
+        restored,
+        password=password,
+        decrypt=True,
+        cancel=Event(),
     )
-    assert restored.read_bytes() == source.read_bytes()
+    assert restored.read_bytes() == plaintext
 
 
 @pytest.mark.parametrize(
     "defect",
     [
-        "missing_binary",
+        "missing_worker",
         "digest",
-        "platform",
         "protocol",
-        "oversized_manifest",
+        "implementation",
+        "format",
         "unknown_field",
-        "binary_symlink",
+        "worker_symlink",
+        "oversized_worker",
+        "missing_dependency",
         "boolean_protocol",
     ],
 )
@@ -218,34 +202,56 @@ def test_unqualified_resource_is_unavailable(
     from tldw_chatbook.Backup_Recovery import crypto
 
     root = _copy_helper_package(helper_resource_root, tmp_path)
-    manifest_path = root.parent / "helper_manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    qualified = next(
-        entry for entry in manifest["helpers"] if entry["status"] == "qualified"
-    )
-    if defect == "missing_binary":
-        (root / "backup-age").unlink()
+    worker = root / "age_worker.py"
+    if defect == "missing_worker":
+        worker.unlink()
     elif defect == "digest":
-        qualified["sha256"] = "0" * 64
-    elif defect == "platform":
-        qualified["arch"] = "unsupported"
-    elif defect == "protocol":
-        qualified["protocol"] = 2
-    elif defect == "boolean_protocol":
-        qualified["protocol"] = True
-    elif defect == "unknown_field":
-        qualified["path"] = "/untrusted"
-    elif defect == "binary_symlink":
-        (root / "backup-age").unlink()
-        (root / "backup-age").symlink_to(helper_resource_root / "backup-age")
-    manifest_path.write_text(
-        json.dumps(manifest) + (" " * 17000 if defect == "oversized_manifest" else "")
-    )
+        worker.write_bytes(worker.read_bytes() + b"\n# tampered\n")
+    elif defect == "worker_symlink":
+        worker.unlink()
+        worker.symlink_to(helper_resource_root / "age_worker.py")
+    elif defect == "oversized_worker":
+        worker.write_bytes(b"x" * (1024**2 + 1))
+    else:
+        info = {
+            "protocol": 2,
+            "implementation": "python",
+            "format": "age-v1",
+        }
+        if defect == "protocol":
+            info["protocol"] = 1
+        elif defect == "boolean_protocol":
+            info["protocol"] = True
+        elif defect == "implementation":
+            info["implementation"] = "other"
+        elif defect == "format":
+            info["format"] = "other"
+        elif defect == "unknown_field":
+            info["extra"] = "untrusted"
+        worker.write_text(
+            "import json, sys\n"
+            + (
+                "print('transform_failed', file=sys.stderr)\nsys.exit(1)\n"
+                if defect == "missing_dependency"
+                else f"print(json.dumps({info!r}))\n"
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            crypto, "_WORKER_SHA256", hashlib.sha256(worker.read_bytes()).hexdigest()
+        )
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: root)
     expected = (
         "helper_integrity_mismatch" if defect == "digest" else "helper_unavailable"
     )
     assert crypto.helper_capability() == (False, expected)
+
+
+def test_worker_integrity_anchor_matches_packaged_source(helper_resource_root):
+    from tldw_chatbook.Backup_Recovery import crypto
+
+    worker = helper_resource_root / "age_worker.py"
+    assert hashlib.sha256(worker.read_bytes()).hexdigest() == crypto._WORKER_SHA256
 
 
 def test_byte_budgets_count_streamed_input_and_output(tmp_path, crypto, monkeypatch):
@@ -260,7 +266,9 @@ def test_byte_budgets_count_streamed_input_and_output(tmp_path, crypto, monkeypa
         assert not target.exists()
 
 
-def test_pipe_backpressure_and_memory_are_bounded(tmp_path, crypto, monkeypatch):
+def test_pipe_backpressure_and_memory_are_bounded(
+    tmp_path, crypto, helper_resource_root, monkeypatch
+):
     import psutil
 
     source, target, restored = (tmp_path / n for n in ("source", "target", "restored"))
@@ -288,7 +296,7 @@ def test_pipe_backpressure_and_memory_are_bounded(tmp_path, crypto, monkeypatch)
                 decrypt=False,
                 cancel=cancel,
             )
-        except Exception as exc:
+        except crypto.CryptoError as exc:
             outcome.append(exc)
 
     baseline = psutil.Process().memory_info().rss
@@ -315,7 +323,10 @@ def test_pipe_backpressure_and_memory_are_bounded(tmp_path, crypto, monkeypatch)
     assert 200 * 1024**2 < peak_child < 384 * 1024**2
     for child, args, kwargs in children:
         assert child.returncode == 0
-        assert args[0][1] in ("info", "encrypt") and len(args[0]) == 2
+        assert args[0][0] == sys.executable
+        assert args[0][1] == "-I"
+        assert args[0][2] == str(helper_resource_root / "age_worker.py")
+        assert args[0][3] in ("info", "encrypt") and len(args[0]) == 4
         assert "sentinel" not in repr(args) + repr(kwargs)
     crypto.transform(
         target,
@@ -332,8 +343,9 @@ def test_pipe_backpressure_and_memory_are_bounded(tmp_path, crypto, monkeypatch)
     assert target.stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.parametrize("action", ["cancel", "crash"])
 def test_cancel_and_crash_reap_real_child_and_preserve_other_files(
-    tmp_path, crypto, monkeypatch
+    tmp_path, crypto, monkeypatch, action
 ):
     source = tmp_path / "source"
     with source.open("wb") as stream:
@@ -341,49 +353,46 @@ def test_cancel_and_crash_reap_real_child_and_preserve_other_files(
     preserve = tmp_path / "unrelated"
     preserve.write_bytes(b"keep")
     original = subprocess.Popen
-    for action in ("cancel", "crash"):
-        started = Event()
-        children = []
-        cancel = Event()
-        outcome = []
+    started = Event()
+    children = []
+    cancel = Event()
+    outcome = []
 
-        def observe(*args, **kwargs):
-            child = original(*args, **kwargs)
-            if args[0][1] == "encrypt":
-                children.append(child)
-                started.set()
-            return child
+    def observe(*args, **kwargs):
+        child = original(*args, **kwargs)
+        if args[0][-1] == "encrypt":
+            children.append(child)
+            started.set()
+        return child
 
-        monkeypatch.setattr(crypto.subprocess, "Popen", observe)
+    monkeypatch.setattr(crypto.subprocess, "Popen", observe)
 
-        def execute():
-            try:
-                crypto.transform(
-                    source,
-                    tmp_path / action,
-                    password=b"cancel-secret-sentinel",
-                    decrypt=False,
-                    cancel=cancel,
-                )
-            except crypto.CryptoError as exc:
-                outcome.append(str(exc))
+    def execute():
+        try:
+            crypto.transform(
+                source,
+                tmp_path / action,
+                password=b"cancel-secret-sentinel",
+                decrypt=False,
+                cancel=cancel,
+            )
+        except crypto.CryptoError as exc:
+            outcome.append(str(exc))
 
-        thread = Thread(target=execute)
-        thread.start()
-        assert started.wait(5)
-        if action == "cancel":
-            cancel.set()
-        else:
-            children[0].kill()
-        thread.join(5)
-        assert not thread.is_alive()
-        assert outcome == (
-            ["cancelled"] if action == "cancel" else ["transform_failed"]
-        )
-        assert all(child.returncode is not None for child in children)
-        assert not (tmp_path / action).exists()
-        assert not list(tmp_path.glob(".backup-age-*"))
-        assert preserve.read_bytes() == b"keep"
+    thread = Thread(target=execute)
+    thread.start()
+    assert started.wait(5)
+    if action == "cancel":
+        cancel.set()
+    else:
+        children[0].kill()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert outcome == (["cancelled"] if action == "cancel" else ["transform_failed"])
+    assert all(child.returncode is not None for child in children)
+    assert not (tmp_path / action).exists()
+    assert not list(tmp_path.glob(".backup-age-*"))
+    assert preserve.read_bytes() == b"keep"
     assert not any(
         t.name == "backup-age-pipe" for t in __import__("threading").enumerate()
     )
@@ -399,7 +408,7 @@ def test_queued_job_cancels_without_second_kdf(tmp_path, crypto, monkeypatch):
 
     def observe(*args, **kwargs):
         child = original(*args, **kwargs)
-        if args[0][1] == "encrypt":
+        if args[0][-1] == "encrypt":
             transforms.append(child)
             started.set()
         return child
@@ -441,10 +450,14 @@ def test_queued_job_cancels_without_second_kdf(tmp_path, crypto, monkeypatch):
 
 
 def test_helper_protocol_errors_are_fixed_and_secret_free(helper_resource_root):
-    binary = helper_resource_root / "backup-age"
+    worker = helper_resource_root / "age_worker.py"
     for data in [struct.pack(">I", n) for n in (0, 4097, 0xFFFFFFFF)] + [b"\0\0\0\4x"]:
         result = subprocess.run(
-            [str(binary), "encrypt"], input=data, capture_output=True, timeout=5
+            [sys.executable, "-I", str(worker), "encrypt"],
+            input=data,
+            capture_output=True,
+            timeout=5,
+            check=False,
         )
         assert (
             result.returncode != 0
@@ -452,10 +465,11 @@ def test_helper_protocol_errors_are_fixed_and_secret_free(helper_resource_root):
             and result.stderr == b"protocol_error\n"
         )
     result = subprocess.run(
-        [str(binary), "decrypt"],
+        [sys.executable, "-I", str(worker), "decrypt"],
         input=struct.pack(">I", 15) + b"secret-sentinel" + b"malformed-secret-sentinel",
         capture_output=True,
         timeout=5,
+        check=False,
     )
     assert (
         result.returncode != 0
@@ -493,7 +507,7 @@ def test_cleanup_error_does_not_strand_serial_job_lock(tmp_path, crypto, monkeyp
 
     def observe(*args, **kwargs):
         child = original(*args, **kwargs)
-        if args[0][1] == "encrypt":
+        if args[0][-1] == "encrypt":
             wait = child.wait
 
             def deny_cleanup(*args, **kwargs):
@@ -525,33 +539,28 @@ def test_cleanup_error_does_not_strand_serial_job_lock(tmp_path, crypto, monkeyp
 def test_misbehaving_child_output_is_bounded(
     tmp_path, helper_resource_root, monkeypatch, mode
 ):
-    import sys
     from tldw_chatbook.Backup_Recovery import crypto
 
     root = _copy_helper_package(helper_resource_root, tmp_path)
-    manifest_path = root.parent / "helper_manifest.json"
-    metadata = json.loads(manifest_path.read_text())
-    qualified = next(
-        entry for entry in metadata["helpers"] if entry["status"] == "qualified"
-    )
     info = {
-        key: value
-        for key, value in qualified.items()
-        if key not in {"python_versions", "resource", "sha256", "status"}
+        "protocol": 2,
+        "implementation": "python",
+        "format": "age-v1",
     }
-    binary = root / "backup-age"
-    binary.write_text(
-        f"#!{sys.executable}\nimport os, sys\n"
+    worker = root / "age_worker.py"
+    worker.write_text(
+        "import json, os, sys\n"
         + (
-            f"if sys.argv[1] == 'info':\n print({json.dumps(info)!r})\n sys.exit(0)\n"
+            f"if sys.argv[1] == 'info':\n print(json.dumps({info!r}))\n sys.exit(0)\n"
             if mode == "stderr_flood"
             else ""
         )
-        + f"while True: os.write({2 if mode == 'stderr_flood' else 1}, b'secret-sentinel' * 1024)\n"
+        + f"while True: os.write({2 if mode == 'stderr_flood' else 1}, b'secret-sentinel' * 1024)\n",
+        encoding="utf-8",
     )
-    binary.chmod(0o700)
-    qualified["sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-    manifest_path.write_text(json.dumps(metadata))
+    monkeypatch.setattr(
+        crypto, "_WORKER_SHA256", hashlib.sha256(worker.read_bytes()).hexdigest()
+    )
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: root)
     start = time.monotonic()
     if mode == "info_flood":
@@ -585,14 +594,9 @@ def test_empty_payload_and_maximum_binary_password(tmp_path, crypto):
     assert len(sealed.read_bytes()) > 16
 
 
-@pytest.mark.parametrize("name", ["helper_manifest.json", "backup-age"])
-def test_nonregular_resource_does_not_block_capability(
-    tmp_path, helper_resource_root, name
-):
-    import sys
-
+def test_nonregular_resource_does_not_block_capability(tmp_path, helper_resource_root):
     root = _copy_helper_package(helper_resource_root, tmp_path)
-    path = root.parent / name if name == "helper_manifest.json" else root / name
+    path = root / "age_worker.py"
     path.unlink()
     os.mkfifo(path)
     # Inherit Tests/conftest.py's isolated config/home; bound the probe itself.
@@ -605,6 +609,7 @@ def test_nonregular_resource_does_not_block_capability(
         ],
         capture_output=True,
         timeout=2,
+        check=False,
     )
     assert probe.returncode == 0
     assert probe.stdout.strip() == b"(False, 'helper_unavailable')"
@@ -635,8 +640,10 @@ def test_backpressure_harness_reaps_stalled_work():
         [
             sys.executable,
             "-c",
-            "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            "print('ready', flush=True); time.sleep(60)",
+            (
+                "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "print('ready', flush=True); time.sleep(60)"
+            ),
         ],
         stdout=subprocess.PIPE,
     )
