@@ -2450,10 +2450,17 @@ def resolve_effective_state_by_key(
     return EffectiveToolState(state=state, origin=origin)
 
 
+#: Wave B (2026-09-11 MCP Hub UX program): the ring starts at Ask, not
+#: Allow -- the most permissive state must never be the first stop from
+#: Inherit (the default posture), so a stray first Space press grants
+#: nothing. `_CYCLE_GLOBAL_STATES` below needs no change: from the global
+#: default ("ask") one press already goes to "deny", and Allow is only
+#: reachable from "deny" -- Allow is never the first press from the
+#: default posture there either.
 _CYCLE_UI_STATES: dict[str | None, str | None] = {
-    None: "allow",
-    "allow": "ask",
-    "ask": "deny",
+    None: "ask",
+    "ask": "allow",
+    "allow": "deny",
     "deny": None,
 }
 
@@ -2471,8 +2478,9 @@ def cycle_ui_state(current: str | None) -> str | None:
         current: The current stored state, or None for "Inherit".
 
     Returns:
-        The next state in the cycle: Inherit -> Allow -> Ask -> Off ->
-        Inherit (None).
+        The next state in the cycle: Inherit -> Ask -> Allow -> Off ->
+        Inherit (None). Ask leads the ring (Wave B) so the most
+        permissive state is never the first press from Inherit.
     """
     return _CYCLE_UI_STATES[current]
 

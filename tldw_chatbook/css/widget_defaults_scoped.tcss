@@ -598,6 +598,14 @@
         min-height: 0;
         color: $text-muted;
     }
+    /* Wave C (F8): the non-default-profile hint is the same quiet, dimmed
+    one-liner tier as the kill-switch hint below. */
+    MCPPermissionsMode #mcp-perm-profile-hint {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
     /* task-2242: the kill-switch scope hint is the same quiet, dimmed
     one-liner tier as the legend below the matrix. */
     MCPPermissionsMode #mcp-perm-kill-switch-hint {
