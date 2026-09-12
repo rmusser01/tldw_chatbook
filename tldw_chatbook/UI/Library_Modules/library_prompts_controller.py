@@ -4174,7 +4174,18 @@ class LibraryPromptsController:
             )
 
     def _sync_library_prompt_mutation_presentation(self) -> None:
-        """Project mutation ownership into the currently mounted Prompt canvas."""
+        """Project mutation ownership into the currently mounted Prompt canvas.
+
+        PR #2655 (Qodo finding 1): the footer's Escape chip reads the same
+        in-flight flag this projects, and the flag flips without a recompose --
+        so the registration is refreshed here, at the one seam every mutation
+        start and settle already routes through, exactly as the dirty flip
+        refreshes it from ``_update_library_prompt_meta_static``. Before the
+        early returns below: a canvas that is not mounted yet still owes the
+        footer the truth.
+        """
+        if self.is_mounted:
+            self._register_footer_shortcuts()
         try:
             canvas = (
                 self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)

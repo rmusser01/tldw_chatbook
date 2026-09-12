@@ -573,9 +573,10 @@ you're on:
   editor: while you have unsaved edits, leaving the editor (Back,
   Escape, another row, another screen) is blocked until you save or
   resolve the edit. Both say so when they refuse, and the Prompts
-  editor's Escape chip reads "esc save or discard first" while the edit
-  is unsaved rather than promising a return to the list — see
-  [Prompts](library/prompts.md).
+  editor's Escape chip names whichever blocker is in force rather than
+  promising a return to the list — "esc save or discard first" while the
+  edit is unsaved, "esc busy, try again" while one of its writes is still
+  running — see [Prompts](library/prompts.md).
 - **Editing, deleting, or re-analyzing inside the media viewer** — the
   media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
   guard, so a first Escape only discards that one form and returns to the

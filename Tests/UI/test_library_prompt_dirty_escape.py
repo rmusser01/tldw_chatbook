@@ -23,6 +23,7 @@ from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     PROMPT_DISCARD_TOOLTIP_BUSY,
 )
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
+    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
 )
@@ -176,5 +177,69 @@ async def test_escape_during_an_in_flight_write_says_so_too(tmp_path) -> None:
 
             assert screen._prompts_state.view == "editor", "the refusal must hold"
             assert notices == [PROMPT_DISCARD_TOOLTIP_BUSY], notices
+    finally:
+        prompts_db.close_connection()
+
+
+async def test_the_footer_chip_follows_an_in_flight_write_too(tmp_path) -> None:
+    """PR #2655 Qodo finding 1: the chip must name EVERY state Escape refuses.
+
+    ``_exit_library_prompt_editor_guarded`` refuses on ``mutation_in_flight``
+    before it ever reads ``dirty``, so a clean prompt deletion leaves the editor
+    open with Escape raising the busy warning -- while the footer still promised
+    "esc back to list". Asserted against the REGISTERED set, because the flag
+    flips without a recompose, exactly like the dirty flag.
+    """
+    app, prompts_db, prompt_id = _prompts_app(tmp_path)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+            screen = await _open_prompt_editor(host, pilot, prompt_id)
+            assert ("esc", "back to list") in screen._footer_shortcut_registration[1]
+
+            screen._prompts_state.mutation_in_flight = True
+            screen._sync_library_prompt_mutation_presentation()
+            await pilot.pause()
+
+            chips = screen._footer_shortcut_registration[1]
+            assert ("esc", LIBRARY_PROMPT_BUSY_ESCAPE_CHIP) in chips, chips
+            assert ("esc", "back to list") not in chips, chips
+
+            # ...and it settles back when the write finishes.
+            screen._prompts_state.mutation_in_flight = False
+            screen._sync_library_prompt_mutation_presentation()
+            await pilot.pause()
+            assert (
+                "esc",
+                "back to list",
+            ) in screen._footer_shortcut_registration[1]
+    finally:
+        prompts_db.close_connection()
+
+
+async def test_a_busy_editor_that_is_also_dirty_names_the_blocker_that_wins(
+    tmp_path,
+) -> None:
+    """Precedence, pinned: the guarded exit checks busy BEFORE dirty."""
+    app, prompts_db, prompt_id = _prompts_app(tmp_path)
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=WIDE_TEST_SIZE) as pilot:
+            screen = await _open_prompt_editor(host, pilot, prompt_id)
+            await _dirty_the_open_editor(screen, pilot)
+            assert (
+                "esc",
+                LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
+            ) in screen._footer_shortcut_registration[1]
+
+            screen._prompts_state.mutation_in_flight = True
+            screen._sync_library_prompt_mutation_presentation()
+            await pilot.pause()
+
+            chips = screen._footer_shortcut_registration[1]
+            assert ("esc", LIBRARY_PROMPT_BUSY_ESCAPE_CHIP) in chips, chips
+            assert ("esc", LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP) not in chips, chips
     finally:
         prompts_db.close_connection()

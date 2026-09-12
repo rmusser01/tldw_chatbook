@@ -61,6 +61,16 @@ already repaints the dirty marker in place. That needed
 the ledger in ``test_library_prompts_wiring.py`` records (42 -> 43 bound
 names).
 
+Two later rounds widened AC#2's "every state" to the states the same seam
+refuses in for a DIFFERENT reason: an in-flight write now raises the Discard
+button's own copy instead of refusing silently (review round 1, F10), and the
+footer chip follows that flag too -- ``esc busy, try again``, taking precedence
+over the dirty chip because the guarded exit checks busy first (PR #2655 Qodo
+finding 1: a clean prompt deletion had left the chip promising "back to list"
+for the whole write). The chip is re-registered from
+``_sync_library_prompt_mutation_presentation``, the one seam every mutation
+start and settle already routes through.
+
 Deliberately NOT widened to every ``_flush_library_prompt_save`` veto: the
 prompt-row switch, select-mode entry and the entry-reconcile path are silent
 too, but two of them are different symptoms and the third is a background

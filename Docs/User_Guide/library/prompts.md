@@ -253,8 +253,10 @@ changes" marker, and leaving the editor (Back, Escape, another row, another scre
 is blocked until you save or resolve the edit. Back and Escape say so: the block
 raises "Unsaved Prompt changes — Save or Discard changes first.", and while the
 editor is dirty the footer's Escape chip reads **esc save or discard first**
-instead of "esc back to list", so the key and the chip agree. The save-status line
-reports the outcome:
+instead of "esc back to list", so the key and the chip agree. The same holds while
+a save, delete or import is still running: Escape answers "Prompt changes are still
+in progress. Try again when they finish." and the chip reads **esc busy, try again**
+until the write settles. The save-status line reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -534,3 +536,8 @@ veto in the same words.)*
 on the same line as the next step, and the footer chip names the same
 blocker instead of advertising "esc back to list" — live at 235x52 on a
 seeded profile, with the editor showing "• Unsaved changes".)*
+
+*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-12
+(task-32393, PR #2655 review: the Escape chip follows the in-flight write as
+well as the unsaved edit — a clean deletion no longer leaves "esc back to list"
+on screen while the key can only report that the write is busy.)*

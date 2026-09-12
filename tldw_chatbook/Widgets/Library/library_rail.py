@@ -216,6 +216,13 @@ class LibraryDetailsRow(Static):
         too -- including the second one this row's own height change provokes
         -- so without it every rail resize forces a layout pass on all eight
         rows for byte-identical text (review round 1, F3).
+
+        Args:
+            event: Textual's resize event for this row. Deliberately unread:
+                its ``size`` is the OUTER size, and the wrap needs the content
+                width (outer minus this row's ``padding: 0 1``), which
+                ``content_size`` already reports for the layout this event
+                announces.
         """
         hung = library_hang_details_row(self._details_source, self.content_size.width)
         if hung == self._details_painted:

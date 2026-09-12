@@ -773,6 +773,7 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
+    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
     LIBRARY_SKILL_DIRTY_VETO_COPY,
@@ -4294,20 +4295,36 @@ class LibraryScreen(BaseAppScreen):
                     + trash_keys
                     + escape_chip
                 )
-            if self._library_prompt_editor_active() and self._prompts_state.dirty:
-                # task-32393: while the prompt editor is dirty Escape genuinely
-                # REFUSES to leave (``_exit_library_prompt_editor_guarded``'s
-                # veto, which now says so) -- so the chip names the blocker
-                # rather than promising an exit the key will not make. The
-                # skill editor's own set two branches below is the same idiom.
-                # Spliced, never re-literalled -- the Trash branch's rule above
-                # (review round 1, F2): the constant stays the one definition
-                # of the keys this set shares with it.
-                return tuple(
-                    pair
-                    for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
-                    if pair[0] != "esc"
-                ) + (("esc", LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP),)
+            if self._library_prompt_editor_active():
+                # task-32393: while the prompt editor REFUSES Escape
+                # (``_exit_library_prompt_editor_guarded``'s two vetoes, which
+                # now both say so) the chip names the blocker rather than
+                # promising an exit the key will not make. The skill editor's
+                # own set two branches below is the same idiom.
+                #
+                # Order matches that seam's own checks -- an in-flight write is
+                # tested BEFORE ``dirty``, so a busy editor that is also dirty
+                # reports the blocker the key will actually hit (PR #2655, Qodo
+                # finding 1: a clean prompt deletion left this chip promising
+                # "back to list" for the whole write).
+                blocker = (
+                    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP
+                    if self._prompts_state.mutation_in_flight
+                    else (
+                        LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP
+                        if self._prompts_state.dirty
+                        else ""
+                    )
+                )
+                if blocker:
+                    # Spliced, never re-literalled -- the Trash branch's rule
+                    # above (review round 1, F2): the constant stays the one
+                    # definition of the keys this set shares with it.
+                    return tuple(
+                        pair
+                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                        if pair[0] != "esc"
+                    ) + (("esc", blocker),)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
