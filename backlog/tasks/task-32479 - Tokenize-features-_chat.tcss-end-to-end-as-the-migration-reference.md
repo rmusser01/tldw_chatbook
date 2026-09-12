@@ -1,5 +1,5 @@
 ---
-id: TASK-32476
+id: TASK-32479
 title: Tokenize features/_chat.tcss end-to-end as the migration reference
 status: Done
 assignee:
@@ -13,6 +13,12 @@ dependencies:
   - task-32475
 priority: medium
 ---
+
+## Renumbering provenance
+
+Renumbered from TASK-32476 on 2026-09-12: the id collided with a task that
+arrived on dev while this branch was in review (owner rule TASK-19601 — the
+fast lane's backlog-id uniqueness check caught it).
 
 ## Description (the why)
 
