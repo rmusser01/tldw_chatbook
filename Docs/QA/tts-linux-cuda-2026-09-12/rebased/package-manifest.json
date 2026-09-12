@@ -1,0 +1,110 @@
+[
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-02/content-medium.json",
+    "packaged_path": "rebased/runs/kokoro-cuda-02/content-medium.json",
+    "bytes": 7798,
+    "sha256": "5d2553a7f9576159c4f099df604b58a02ccd01b4ba073c470c19c4ae266adbaf"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-cuda-02/evidence.json",
+    "packaged_path": "rebased/runs/kokoro-cuda-02/evidence.json",
+    "bytes": 542242,
+    "sha256": "3ae9ea0b6dbb01b1e8d840865f2635c77321baa50276f5ff1a6b6e9fdcd7fc29"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-kokoro-cuda-02.sh",
+    "packaged_path": "rebased/recipes/run-kokoro-cuda-02.sh.txt",
+    "bytes": 687,
+    "sha256": "6e3bb446406d101b89f7ac53fab57ac6c800823b1e122ed987d5e90d9a4282d1"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-onnx-02/content-medium.json",
+    "packaged_path": "rebased/runs/kokoro-onnx-02/content-medium.json",
+    "bytes": 7804,
+    "sha256": "c8ca38424d4c42fbb22002e093a610f1c0b78e7c3bead34bf201e838632831c5"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/kokoro-onnx-02/evidence.json",
+    "packaged_path": "rebased/runs/kokoro-onnx-02/evidence.json",
+    "bytes": 539000,
+    "sha256": "a6c8d8c6b34d1da0e93cc70b5964b8da96aea92994720573cf386461f1ba1b96"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-kokoro-onnx-02.sh",
+    "packaged_path": "rebased/recipes/run-kokoro-onnx-02.sh.txt",
+    "bytes": 686,
+    "sha256": "7d9f1a32295827ce02c856f1b836b282b9e7039e11a5bd2b9dad53162fe39380"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-04/child-00.json",
+    "packaged_path": "rebased/runs/chatterbox-cuda-04/child-00.json",
+    "bytes": 28425,
+    "sha256": "5ed1aad57c15933e4e9eecf0e16f0745e618ee6e86aee09a21f0c2ea0b277b04"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-04/content-medium.json",
+    "packaged_path": "rebased/runs/chatterbox-cuda-04/content-medium.json",
+    "bytes": 8662,
+    "sha256": "26a1bf9202c1e8e50b9554179a868120493a2729653d5ceb73d94410380658ae"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-04/evidence.json",
+    "packaged_path": "rebased/runs/chatterbox-cuda-04/evidence.json",
+    "bytes": 648737,
+    "sha256": "ba7cd80b1f7144ba2fd4a0fec3fc2fa8ec0a3651c7378edbbe7fbdb2db495d51"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-04/child-01.json",
+    "packaged_path": "rebased/runs/chatterbox-cuda-04/child-01.json",
+    "bytes": 37540,
+    "sha256": "16c8a0ad2a30d8b51253815ce60b0b4cb6e4f3cb4e049a6a92ca0f37741356fc"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-04/content-small.json",
+    "packaged_path": "rebased/runs/chatterbox-cuda-04/content-small.json",
+    "bytes": 8706,
+    "sha256": "76aa0446622b5dee34e113bd56cd0445c96b9a18e8efa815bf973fdb50fc55b9"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/run-chatterbox-cuda-04.sh",
+    "packaged_path": "rebased/recipes/run-chatterbox-cuda-04.sh.txt",
+    "bytes": 749,
+    "sha256": "121e9649054811118bf0f224110d876f4f2660157f6307b42c610c5a3bf48ee0"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/rebased-wheel-identity.json",
+    "packaged_path": "rebased/provenance/rebased-wheel-identity.json",
+    "bytes": 290993,
+    "sha256": "f449b16b73cce3327c8031e36897df7c4c999e997bb7439cbd2fc8c7f9135ab2"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/rebased-summary.json",
+    "packaged_path": "rebased/provenance/rebased-summary.json",
+    "bytes": 7652,
+    "sha256": "a07f2f37f5c8ea8a5786a6f5faace458718154c3f7fe6a357afc3ff29474be89"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/rebased-qualification.exit",
+    "packaged_path": "rebased/provenance/rebased-qualification.exit",
+    "bytes": 2,
+    "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/chatterbox-cuda-04-small-asr.exit",
+    "packaged_path": "rebased/provenance/chatterbox-cuda-04-small-asr.exit",
+    "bytes": 2,
+    "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/logs/rebased-qualification.log",
+    "packaged_path": "rebased/provenance/rebased-qualification.log.txt",
+    "bytes": 1043,
+    "sha256": "a82d305bd62e126bc08dcba15419b674c1c8299afe78418f5f971d18f6c8433d"
+  },
+  {
+    "original_path": "/home/ml-user/tts-linux-cuda-20260912/qualify-rebased.py",
+    "packaged_path": "rebased/recipes/qualify-rebased.py.txt",
+    "bytes": 3187,
+    "sha256": "1b9a7afa2b570b25c2c706d5f69e15c58df65a0cf80a4dd09a92be727168cd85"
+  }
+]

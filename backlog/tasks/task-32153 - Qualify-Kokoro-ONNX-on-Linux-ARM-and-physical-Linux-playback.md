@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 05:50'
-updated_date: '2026-09-12 15:25'
+updated_date: '2026-09-12 16:13'
 labels: []
 dependencies: []
 documentation:
@@ -54,4 +54,6 @@ AC1 and AC2 are achieved. AC3 remains open: the headless Docker VM exposed no /d
 ADR required: no. Existing ADR-023 provider/runtime ownership and ADR-039/040 Global/Studio/Lab behavior apply; this evidence-only work changes no provider contract or runtime support policy.
 
 2026-09-12 physical Linux device update: the Debian 13 RTX 3090 host completed real Kokoro ONNX CPU MP3 Speech Lab and trusted Console playback, Stop during InferenceSession.run, successor and three repeats. Six of six successful clips passed full-text independent ASR. PipeWire observed all six ffplay streams on the selected Logi USB headset; complete file playback and zero owners at settlement were verified, worker exited 0. Evidence: Docs/QA/tts-linux-cuda-2026-09-12/README.md. This advances the earlier headless-only result, but AC3 and task status remain open pending human listening confirmation. No acoustic capture or full-shell navigation claim.
+
+Linux ONNX MP3 run02 passed runtime and medium ASR6/6 on rebased dev a766133fc4. Current-source identity and final device/process cleanup are recorded in Docs/QA/tts-linux-cuda-2026-09-12/rebased/README.md. Human listening criterion remains open.
 <!-- SECTION:NOTES:END -->

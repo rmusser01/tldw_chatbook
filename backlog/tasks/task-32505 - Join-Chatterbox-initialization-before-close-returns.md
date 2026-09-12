@@ -1,11 +1,11 @@
 ---
-id: TASK-32494
+id: TASK-32505
 title: Join Chatterbox initialization before close returns
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-12 15:37'
-updated_date: '2026-09-12 16:04'
+updated_date: '2026-09-12 16:13'
 labels: []
 dependencies: []
 ---
@@ -39,4 +39,10 @@ ADR required: no. ADR path: N/A; existing ADR-023 TTS operation ownership applie
 <!-- SECTION:NOTES:BEGIN -->
 Implemented retained asynchronous initialization ownership across subprocess acquisition, readiness and native fallback. Closing seals startup immediately and shares cancellation-safe cleanup; failed initialization children are reaped before fallback. Nine new lifecycle regressions and 30 existing audio-delivery tests passed (39); implementation review found no actionable issues. Formatter/new-test lint passed; production Ruff diagnostics matched the unchanged baseline. Subsequent combined targeted verification passed 101 tests.
 The corrected installed wheel (base 8ab21ecaf3 plus this backend fix) passed real queued-startup/close with no pending tasks and exit 0, then Chatterbox CUDA run 03 passed Lab, Console, inference-overlap cancellation, successor, three repeats and synthetic-reference audition. All 2,352 source/wheel/installed Python files matched; seven clips passed independent full-text Whisper-medium verification, preserving the original small-model 6/7 discrepancy. Final child/process/GPU/audio ownership cleared. Evidence: Docs/QA/tts-linux-cuda-2026-09-12/chatterbox/README.md and runs/chatterbox-fixed-startup-close/result.json beneath it. Changed production/test files are tldw_chatbook/TTS/backends/chatterbox.py and Tests/TTS/test_chatterbox_initialization_lifecycle.py; QA and the qualification plan document the result. All ACs are evidenced for that fixed source, but status remains In Progress pending final review and validation after rebasing onto newer dev audio-player changes. ADR required: no; existing backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md governs retained ownership.
+
+Rebased qualification on dev a766133fc4 plus the unchanged lifecycle fix passed all three runtime/playback/cleanup checks. Current source, wheel and both installed environments match all 2,344 Python files. Chatterbox run04 default clips and reference audio passed small ASR 7/7; preserve medium 6/7 reference discrepancy and orchestration exit1 as a recognizer disagreement requiring human listening. Rebased targeted tests: 217 passed. Ruff/format, baseline diagnostic statement comparison, task-ID guard and profile-owned-path census passed; independent code/evidence review found no actionable issues. See Docs/QA/tts-linux-cuda-2026-09-12/rebased/README.md. The lifecycle fix ACs are complete; listening remains in older qualification tasks. ADR required: no; existing ADR-023 applies.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-32494 to TASK-32505 on 2026-09-12 after rebasing onto a766133fc4. The already-landed Cross-platform Console reply speech playback task keeps TASK-32494. A refreshed sweep of 57 origin refs and 41 worktrees found maximum task ID 32504. The Backlog CLI has no renumber command; filename/frontmatter and this task's owned references were updated together.

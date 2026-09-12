@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-09 05:51'
-updated_date: '2026-09-12 16:04'
+updated_date: '2026-09-12 16:13'
 labels: []
 dependencies: []
 ---
@@ -38,4 +38,6 @@ ADR required: no. ADR path: N/A; existing ADR-023 and speech ADR-039/040 apply. 
 <!-- SECTION:NOTES:BEGIN -->
 Qualified the registered Chatterbox subprocess on RTX 3090 with Python 3.12.8, Chatterbox 0.1.7 and Torch 2.6.0+cu124. Run 03 uses base 8ab21ecaf3 plus TASK-32494; all 2,352 source/wheel/installed Python files match and every t3/s3gen/ve parameter is float32 on cuda:0. Seven successful WAV clips cover default Lab, trusted Console warmup/successor/three repeats, and the supported synthetic-reference Lab picker. All seven streams routed to Logi sink 55. Stop overlapped real t3.inference; production terminated/reaped the child and NVIDIA PID disappearance was observed before settlement/successor, without claiming natural native return or earlier GPU-release timing. Repeated allocated/reserved memory was stable and final processes/GPU/audio owners cleared.
 Whisper medium passed all seven unchanged recordings. The original Whisper-small 6/7 report retains its “Sylph or Compass” discrepancy on repeat 03; no text or audio was rewritten. AC2 remains open for human listening confirmation. Failed setup/preflight and pre-fix run 02 remain preserved; later rebased source needs separate runtime evidence. QA and 56 verified copied records: Docs/QA/tts-linux-cuda-2026-09-12/chatterbox/README.md. User configuration/default sink were unchanged. ADR required: no; existing ADR-023 and speech ADR-039/040 apply. Task remains In Progress.
+
+Chatterbox run04 passed runtime and small ASR7/7; medium ASR6/7 reference discrepancy retained on rebased dev a766133fc4. Current-source identity and final device/process cleanup are recorded in Docs/QA/tts-linux-cuda-2026-09-12/rebased/README.md. Human listening criterion remains open.
 <!-- SECTION:NOTES:END -->

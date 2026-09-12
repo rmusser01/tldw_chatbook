@@ -54,7 +54,7 @@ Files: `scripts/validate_live_tts.py`, `Tests/TTS/test_live_validation_harness.p
 - [ ] Run targeted verification for changed tooling and review the diff. Update backlog criteria only where evidence establishes them; keep any remaining criteria open.
 - [x] Release task-owned processes and device handles, retain reproducible assets/evidence, and report remaining validation limits.
 
-## Discovered fix: TASK-32494
+## Discovered fix: TASK-32505
 
 ADR required: no. Existing ADR-023 initialization/resource ownership applies; this is a lifecycle correction, preserving asynchronous initialization and the registered subprocess/native fallback boundaries.
 
@@ -72,10 +72,18 @@ ADR required: no. Existing ADR-023 initialization/resource ownership applies; th
 - Chatterbox observation decision: qualify the registered child-process implementation, retaining the original process script and recording the task-owned observation launcher. Cancellation terminates/reaps that process in production; report process termination separately from synchronized natural inference completion.
 - CUDA ASR briefly overlapped ONNX CPU validation. Neither run is a throughput benchmark; lifecycle, full-content and device-routing observations remain the intended evidence.
 - Chatterbox setup run 01 loaded and executed the real CUDA model but failed admission expectations because a local reference stem was not a catalogued global voice. The UI correctly selected `default`; the supported Lab reference picker must be exercised instead. Retain this attempt as a setup failure.
-- Chatterbox baseline run 02 passed default-voice Lab/Console playback, actual `t3.inference` cancellation with child termination/reap and NVIDIA release, successor and three repeats. All six successful clips passed full-text ASR. Repeat after TASK-32494 rather than calling this corrected-source evidence.
-- A standalone preflight incorrectly assumed awaiting `initialize()` awaited readiness. Closing immediately afterward exposed a separately reproduced lifecycle defect: unretained startup/readiness work can publish resources after close. TASK-32494 covers the confirmed production race; the precise cause of the preflight's event-loop shutdown hang is not established by the synthetic reproductions.
+- Chatterbox baseline run 02 passed default-voice Lab/Console playback, actual `t3.inference` cancellation with child termination/reap and NVIDIA release, successor and three repeats. All six successful clips passed full-text ASR. Repeat after TASK-32505 rather than calling this corrected-source evidence.
+- A standalone preflight incorrectly assumed awaiting `initialize()` awaited readiness. Closing immediately afterward exposed a separately reproduced lifecycle defect: unretained startup/readiness work can publish resources after close. TASK-32505 covers the confirmed production race; the precise cause of the preflight's event-loop shutdown hang is not established by the synthetic reproductions.
 
 - Corrected Chatterbox run 03: seven successful complete clips (six default plus one supported synthetic-reference Lab audition), all seven streams on Logi sink 55. Actual inner CUDA inference was observed; Stop terminated/reaped its child, NVIDIA release preceded settlement/successor, and three repeats retained stable allocated/reserved GPU samples. All final process/GPU/audio owners cleared; user configuration/default sink were unchanged.
 - Whisper small passed 6/7 on run 03 and preserved “Sylph or Compass” on repeat 03. Whisper medium passed all seven unchanged recordings against the same receipt/audio hashes; this does not erase the recognizer disagreement or replace pending human listening.
-- TASK-32494: nine lifecycle regressions plus 30 existing delivery tests passed (39); real installed queued-startup/close passed with no pending tasks and exit 0. Corrected wheel/source/install identity matched all 2,352 Python files. Combined targeted verification later passed 101 tests. Final review and later-head runtime evidence remain pending.
-- Chatterbox package: 56 copied records independently match recorded hashes, including failed attempts, child observations, both content reports and reproducible recipes. See `Docs/QA/tts-linux-cuda-2026-09-12/chatterbox/README.md`.
+- TASK-32505: nine lifecycle regressions plus 30 existing delivery tests passed (39); real installed queued-startup/close passed with no pending tasks and exit 0. Corrected wheel/source/install identity matched all 2,352 Python files. Combined targeted verification later passed 101 tests. Final review and later-head runtime evidence remain pending.
+- Chatterbox package: 51 copied records independently match recorded hashes, including failed attempts, child observations, both content reports and reproducible recipes. See `Docs/QA/tts-linux-cuda-2026-09-12/chatterbox/README.md`.
+
+## Rebase verification
+
+Rebased onto `a766133fc4`, preserving both independent lesson entries. A landed task already owned ID 32494, so our lifecycle fix moved to TASK-32505 with provenance after sweeping 57 origin refs and 41 worktrees. Rebuilt the wheel and verified all 2,344 Python files against current source and both installed environments.
+
+All three repeated runtime checks passed. Twenty observed streams across nineteen successful clips reached Logi sink 55, and all cleanup/process/GPU/audio checks passed. Kokoro CUDA and ONNX each passed 6/6 full-text checks with Whisper medium. Chatterbox passed 7/7 with Whisper small; medium recovered only the opening sentence from its reference clip. Both same-audio reports and the original orchestration exit 1 are retained. No synthesis replacement was made, and human listening criteria remain open.
+
+Rebased targeted tests: 217 passed. Ruff/format/diff/backlog/profile census checks passed. See `Docs/QA/tts-linux-cuda-2026-09-12/rebased/README.md`.

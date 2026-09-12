@@ -216,12 +216,6 @@
     "bytes": 4650
   },
   {
-    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/._build_runner.py",
-    "packaged_path": "chatterbox/recipes/._build_runner.py.txt",
-    "sha256": "4ed39a68e87782867c210de1af578f7f2cfa418e42c8064ec45b9ee38fa29ebe",
-    "bytes": 163
-  },
-  {
     "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/README.md",
     "packaged_path": "chatterbox/recipes/README.md.txt",
     "sha256": "7bb2fc3b17044228c5918afcd537d113879faecfebbfb52f64f43e17dcef19b3",
@@ -240,40 +234,16 @@
     "bytes": 9074
   },
   {
-    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/._chatterbox_observation.py",
-    "packaged_path": "chatterbox/recipes/._chatterbox_observation.py.txt",
-    "sha256": "4ed39a68e87782867c210de1af578f7f2cfa418e42c8064ec45b9ee38fa29ebe",
-    "bytes": 163
-  },
-  {
-    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/._test_observation.py",
-    "packaged_path": "chatterbox/recipes/._test_observation.py.txt",
-    "sha256": "4ed39a68e87782867c210de1af578f7f2cfa418e42c8064ec45b9ee38fa29ebe",
-    "bytes": 163
-  },
-  {
     "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/qualify_chatterbox.py",
     "packaged_path": "chatterbox/recipes/qualify_chatterbox.py.txt",
     "sha256": "8fce42e8275dee8e90357fe68a8f859c81b07c1bb9ec6d13707d2e2aba5c44d8",
     "bytes": 55310
   },
   {
-    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/._observe_child.py",
-    "packaged_path": "chatterbox/recipes/._observe_child.py.txt",
-    "sha256": "4ed39a68e87782867c210de1af578f7f2cfa418e42c8064ec45b9ee38fa29ebe",
-    "bytes": 163
-  },
-  {
     "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/chatterbox_observation.py",
     "packaged_path": "chatterbox/recipes/chatterbox_observation.py.txt",
     "sha256": "8e7555f90783d27a7238bb953d3647efc079cd6a3c89d34fb0735b525d881408",
     "bytes": 11224
-  },
-  {
-    "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/._qualify_chatterbox.py",
-    "packaged_path": "chatterbox/recipes/._qualify_chatterbox.py.txt",
-    "sha256": "4ed39a68e87782867c210de1af578f7f2cfa418e42c8064ec45b9ee38fa29ebe",
-    "bytes": 163
   },
   {
     "original_path": "/home/ml-user/tts-linux-cuda-20260912/chatterbox/probe_reference_ui.py",
