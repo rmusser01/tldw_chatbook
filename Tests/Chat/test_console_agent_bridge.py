@@ -117,6 +117,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderProprietaryThinkingEvidence,
     ProviderThinkingDelta,
     ProviderToolCalls,
+    ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -10945,6 +10946,118 @@ def test_live_usage_late_old_primary_cannot_replace_new_turn_pointer():
         conversation_id="conv",
     )
     assert bridge._live_usage_snapshot("old-run") is None
+
+
+def test_live_usage_new_primary_snapshot_omits_old_turn_before_first_scalar():
+    bridge = _make_bridge()
+    event = console_agent_bridge.AgentLiveUsageEvent
+    bridge._publish_live(
+        "conv",
+        "old-turn",
+        console_agent_bridge.AgentLiveSnapshot(status="running"),
+        primary=True,
+    )
+    bridge._live_usage_owners["old-run"] = ("conv", "primary", "old-turn")
+    bridge._observe_live_usage(
+        event("started", "old-run", "primary", 1, 1.0), conversation_id="conv"
+    )
+    bridge._observe_live_usage(
+        event("text", "old-run", "primary", 1, 1.0, text="old"),
+        conversation_id="conv",
+    )
+    assert bridge.live_snapshot("conv").turn_usage is not None
+
+    bridge._publish_live(
+        "conv",
+        "new-turn",
+        console_agent_bridge.AgentLiveSnapshot(status="running"),
+        primary=True,
+    )
+    bridge._observe_live_usage(
+        event("text", "old-run", "primary", 1, 2.0, text="late old"),
+        conversation_id="conv",
+    )
+
+    assert bridge.live_snapshot("conv").turn_usage is None
+    assert bridge._live_usage_snapshot("old-run").output_tokens == 1
+
+
+def test_live_usage_shutdown_rejects_delayed_scope_entry():
+    bridge = _make_bridge()
+
+    class Adapter:
+        @contextlib.contextmanager
+        def run_scope(self, _run_id, _agent_kind):
+            yield
+
+    bridge.close_all_progress()
+    with bridge._live_usage_run_scope(Adapter(), "conv", "turn", "run", "primary"):
+        assert bridge._live_usage_owners == {}
+
+
+def test_live_usage_prune_invalidates_pre_step_owner_and_late_start():
+    bridge = _make_bridge()
+    bridge._live_usage_owners["old-child"] = ("conv", "subagent", "old-turn")
+    bridge._prune_live_run_slots("conv")
+    bridge._observe_live_usage(
+        console_agent_bridge.AgentLiveUsageEvent(
+            "started", "old-child", "subagent", 1, 1.0
+        ),
+        conversation_id="conv",
+    )
+
+    assert bridge._live_usage_owners == {}
+    assert bridge._live_usage_snapshot("old-child") is None
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        ({"input_tokens": 4, "total_tokens": 4}, []),
+        ({"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [0]),
+        ({"total_tokens": 4}, []),
+        ({"output_tokens": True}, []),
+        ({"output_tokens": 1.5}, []),
+        ({"output_tokens": "2"}, []),
+        ({"output_tokens": -1}, []),
+    ],
+)
+def test_live_usage_adapter_requires_explicit_raw_provider_output(usage, expected):
+    terminal = ProviderToolCalls((), ProviderTurnMetadata("stop", usage=usage))
+    gateway = _ChunkGateway([[terminal]])
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            adapter.chat_call(messages_payload=[{"role": "user", "content": "hi"}])
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert not loop_thread.is_alive()
+    assert [
+        event.provider_output_tokens
+        for event in events
+        if event.kind == "provider_usage"
+    ] == expected
 
 
 def test_live_usage_two_fleet_streams_publish_pre_step_through_adapter(
