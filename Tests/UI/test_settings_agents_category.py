@@ -1,6 +1,10 @@
 """Settings ▸ Agents: category registration + panel CRUD (fleet spec §4)."""
 
+import re
+import sqlite3
+from html import unescape
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App
@@ -28,11 +32,26 @@ BULK_READER_INSTRUCTIONS = (
     "decisions. These findings guide the caller's direct source verification."
 )
 BULK_READER_TOOLS = ["fs_list", "fs_read", "fs_glob", "fs_grep"]
+TASK_1_EVIDENCE = (
+    Path(__file__).parents[2]
+    / ".superpowers/sdd/2026-09-12-agent-settings-followups/task-1-evidence"
+)
+
+
+def _painted_text(svg: str) -> str:
+    """Return only compositor-painted SVG text cells as plain text."""
+
+    cells = re.findall(r"<text[^>]*>([^<]*)</text>", svg)
+    return unescape("".join(cells)).replace("\xa0", " ")
 
 
 @pytest.fixture()
 def runs_db(tmp_path):
-    return AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    database = AgentRunsDB(tmp_path / "agent_runs.db", client_id="test")
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 class PanelHarness(App):
@@ -48,6 +67,106 @@ class ProductionCssPanelHarness(PanelHarness):
     CSS_PATH = str(
         Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
     )
+
+
+@pytest.mark.asyncio
+async def test_panel_closes_only_its_owned_file_backed_database(tmp_path):
+    profile_path = tmp_path / "profile" / "chatbook.db"
+    profile_path.parent.mkdir()
+    app_instance = SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=profile_path))
+
+    for _ in range(3):
+        panel = AgentsSettingsPanel(app_instance=app_instance)
+        owned_db = panel._runs_db
+        assert owned_db is not None
+        held_connection = owned_db._held_connection()
+        try:
+            async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+            with pytest.raises(sqlite3.ProgrammingError):
+                held_connection.execute("SELECT 1")
+        finally:
+            owned_db.close()
+
+    caller_db = AgentRunsDB(tmp_path / "caller-owned.db", client_id="test")
+    caller_connection = caller_db._held_connection()
+    try:
+        panel = AgentsSettingsPanel(app_instance=None, runs_db=caller_db)
+        async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+        assert caller_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        caller_db.close()
+
+
+@pytest.mark.parametrize("size", [(120, 40), (70, 40)])
+@pytest.mark.asyncio
+async def test_save_reports_deduped_runtime_tools_after_warning_reload(runs_db, size):
+    for index in range(21):
+        runs_db.create_agent_definition(
+            AgentDefinition(
+                name=f"reader-{index}",
+                description="Seeded definition.",
+                instructions="Read.",
+            )
+        )
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with ProductionCssPanelHarness(panel).run_test(size=size) as pilot:
+        panel.query_one("#agents-name-input").value = "literal-b-name"
+        panel.query_one("#agents-description-input").value = "Searches sources."
+        panel.query_one("#agents-instructions-area").text = "Cite sources."
+        panel.query_one(
+            "#agents-tools-input"
+        ).value = "fs_read, spawn_subagent, fs_read, spawn_subagent, wait_agents"
+        await pilot.click("#agents-save-button")
+        await pilot.pause()
+
+        stored = next(
+            row
+            for row in runs_db.list_agent_definitions()
+            if row["name"] == "literal-b-name"
+        )
+        assert stored["tool_allowlist"] == ["fs_read"]
+        status = panel.query_one("#agents-status")
+        status_text = _static_text(status)
+        assert status.region.width > 0
+        assert status.region.height > 0
+        assert "Saved 'literal-b-name'." in status_text
+        assert status_text.count("spawn_subagent") == 1
+        assert status_text.count("wait_agents") == 1
+        assert "22 enabled definitions" in status_text
+        svg = pilot.app.export_screenshot(simplify=True)
+        TASK_1_EVIDENCE.mkdir(parents=True, exist_ok=True)
+        capture_path = TASK_1_EVIDENCE / f"save-status-{size[0]}x{size[1]}.svg"
+        if not capture_path.exists():
+            capture_path.write_text(svg, encoding="utf-8")
+        painted = " ".join(_painted_text(svg).split())
+        assert "Ignored runtime-only tools: spawn_subagent, wait_agents." in painted
+        assert "22 enabled definitions" in painted
+        panel._set_status("[b]literal status[/b]")
+        assert _static_text(status) == "[b]literal status[/b]"
+
+
+@pytest.mark.asyncio
+async def test_save_with_only_runtime_tools_explains_parent_inheritance(runs_db):
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with ProductionCssPanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        panel.query_one("#agents-name-input").value = "coordinator"
+        panel.query_one("#agents-description-input").value = "Coordinates work."
+        panel.query_one("#agents-instructions-area").text = "Coordinate."
+        panel.query_one(
+            "#agents-tools-input"
+        ).value = "spawn_subagent, wait_agents, spawn_subagent"
+        await pilot.click("#agents-save-button")
+        await pilot.pause()
+
+        stored = runs_db.list_agent_definitions()[0]
+        assert stored["tool_allowlist"] == []
+        status_text = _static_text(panel.query_one("#agents-status"))
+        assert status_text.count("spawn_subagent") == 1
+        assert status_text.count("wait_agents") == 1
+        assert "no tool filter remains" in status_text.lower()
+        assert "parent tools are inherited" in status_text.lower()
 
 
 @pytest.mark.asyncio

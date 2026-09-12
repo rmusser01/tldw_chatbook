@@ -27,6 +27,17 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 ENABLED_DEFINITIONS_SOFT_CAP = 20
 
 
+def _parse_requested_tools(raw: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split ordered tool names into stored and runtime-only selections."""
+
+    requested = tuple(
+        dict.fromkeys(name.strip() for name in raw.split(",") if name.strip())
+    )
+    stored = tuple(name for name in requested if name not in RUNTIME_TOOL_NAMES)
+    omitted = tuple(name for name in requested if name in RUNTIME_TOOL_NAMES)
+    return stored, omitted
+
+
 def _derive_runs_db(app_instance) -> AgentRunsDB | None:
     """Same derivation as UI/Console_Modules/agent.py:337 — the runs DB
     lives next to the ChaChaNotes file; a :memory: ChaChaNotes (tests,
@@ -53,6 +64,7 @@ class AgentsSettingsPanel(Vertical):
         self._runs_db = (
             runs_db if runs_db is not None else _derive_runs_db(app_instance)
         )
+        self._owns_runs_db = runs_db is None and self._runs_db is not None
         self._selected_id: str | None = None
         self._rows: list[dict] = []
 
@@ -114,7 +126,9 @@ class AgentsSettingsPanel(Vertical):
                 yield Button("Bulk reader", id="agents-bulk-reader-button")
                 yield Button("Save", variant="primary", id="agents-save-button")
                 yield Button("Delete", variant="error", id="agents-delete-button")
-        yield Static("", id="agents-status", classes="settings-detail-row")
+        yield Static(
+            "", id="agents-status", classes="settings-detail-row", markup=False
+        )
 
     async def on_mount(self) -> None:
         await self._reload_list()
@@ -133,13 +147,30 @@ class AgentsSettingsPanel(Vertical):
         self._rows = self._runs_db.list_agent_definitions()
         for row in self._rows:
             marker = "" if row["enabled"] else " (disabled)"
-            await lv.append(ListItem(Static(f"{row['name']}{marker}"), name=row["id"]))
-        enabled_count = sum(1 for r in self._rows if r["enabled"])
-        if enabled_count > ENABLED_DEFINITIONS_SOFT_CAP:
-            self._set_status(
-                f"{enabled_count} enabled definitions — every one rides the "
-                "spawn schema each turn; consider disabling some."
+            await lv.append(
+                ListItem(Static(f"{row['name']}{marker}", markup=False), name=row["id"])
             )
+        warning = self._enabled_count_warning()
+        if warning:
+            self._set_status(warning)
+
+    def on_unmount(self) -> None:
+        if self._owns_runs_db:
+            self._owns_runs_db = False
+            db, self._runs_db = self._runs_db, None
+            if db is not None:
+                db.close()
+
+    def _enabled_count_warning(self) -> str:
+        """Return the spawn-schema warning for the current loaded rows."""
+
+        enabled_count = sum(1 for row in self._rows if row["enabled"])
+        if enabled_count <= ENABLED_DEFINITIONS_SOFT_CAP:
+            return ""
+        return (
+            f"{enabled_count} enabled definitions — every one rides the "
+            "spawn schema each turn; consider disabling some."
+        )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         definition_id = event.item.name
@@ -195,20 +226,13 @@ class AgentsSettingsPanel(Vertical):
         ).value = BULK_READER_PRESET.enabled
         self._set_status("Choose a cheaper model from the same provider, then Save.")
 
-    def _form_definition(self) -> AgentDefinition:
-        # dict.fromkeys dedupes while preserving first-seen order -- "a, a"
-        # must not produce a tool_allowlist with a repeated entry (it feeds
-        # definition_fingerprint's sorted() list, so a dupe there would be a
-        # silent identity divergence from what was actually typed).
-        tools = tuple(
-            dict.fromkeys(
-                name.strip()
-                for name in self.query_one("#agents-tools-input", Input).value.split(
-                    ","
-                )
-                if name.strip() and name.strip() not in RUNTIME_TOOL_NAMES
+    def _form_definition(
+        self, *, stored_tools: tuple[str, ...] | None = None
+    ) -> AgentDefinition:
+        if stored_tools is None:
+            stored_tools, _ = _parse_requested_tools(
+                self.query_one("#agents-tools-input", Input).value
             )
-        )
         return AgentDefinition(
             name=self.query_one("#agents-name-input", Input).value.strip(),
             description=self.query_one(
@@ -217,14 +241,17 @@ class AgentsSettingsPanel(Vertical):
             instructions=self.query_one(
                 "#agents-instructions-area", TextArea
             ).text.strip(),
-            tool_allowlist=tools,
+            tool_allowlist=stored_tools,
             model=self.query_one("#agents-model-input", Input).value.strip(),
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
         )
 
     async def _save(self) -> None:
+        stored_tools, omitted_runtime_tools = _parse_requested_tools(
+            self.query_one("#agents-tools-input", Input).value
+        )
         try:
-            defn = self._form_definition()
+            defn = self._form_definition(stored_tools=stored_tools)
             if self._selected_id is None:
                 self._runs_db.create_agent_definition(defn)
             else:
@@ -236,8 +263,16 @@ class AgentsSettingsPanel(Vertical):
             # there kills navigation for the whole app).
             self._set_status(str(exc))
             return
-        self._set_status(f"Saved '{defn.name}'.")
+        notice = f"Saved '{defn.name}'."
+        if omitted_runtime_tools:
+            notice += (
+                " Ignored runtime-only tools: " + ", ".join(omitted_runtime_tools) + "."
+            )
+            if not stored_tools:
+                notice += " No tool filter remains; parent tools are inherited."
         await self._reload_list()
+        warning = self._enabled_count_warning()
+        self._set_status(" ".join(part for part in (notice, warning) if part))
 
     async def _delete(self) -> None:
         if self._selected_id is None:

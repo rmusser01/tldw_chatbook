@@ -463,7 +463,11 @@ already streaming.
   identity.
 - A definition's tools can only **narrow** what the sub-agent inherits from
   the parent (never grant something the parent itself couldn't use); its
-  model override stays on the same provider.
+  model override stays on the same provider. Runtime coordination tools such
+  as `spawn_subagent` and `wait_agents` are inherited separately and do not
+  belong in this filter. If you enter one, Save omits it and names every
+  omitted tool in the visible result. If that leaves the filter empty, the
+  result also explains that the agent inherits the parent's tools.
 - When a reply spawns a named agent, the transcript's `⤷ spawned sub-agent: …`
   marker and the Agent rail's per-sub-agent line both show it as
   `[<name>] <task>` while the run is live. That prefix is a display detail of
