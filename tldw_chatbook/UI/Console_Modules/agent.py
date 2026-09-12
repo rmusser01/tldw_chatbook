@@ -142,6 +142,7 @@ from typing import Any, Dict, Iterable, TYPE_CHECKING
 
 import re
 import time
+from time import monotonic as _run_log_clock
 
 from loguru import logger
 from textual.message_pump import NoActiveAppError
@@ -165,6 +166,8 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
+from textual.worker import get_current_worker
+
 from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
@@ -809,6 +812,10 @@ class ConsoleAgentController:
         #: cluster, so no screen proxy.
         self._console_agent_full_log_cache_run_id: str | None = None
         self._console_agent_full_log_cache_available: bool = False
+        self._console_agent_full_log_cache_bridge: Any = None
+        self._console_agent_full_log_probe_generation = 0
+        self._console_agent_full_log_probe_pending: int | None = None
+        self._console_agent_full_log_retry_at = 0.0
         #: The batched `[N Sub-Agents]` badge-count cache and its two
         #: invalidation keys. Also cluster-private.
         self._console_subagent_counts_cache: Dict[str, int] = {}
@@ -1283,66 +1290,91 @@ class ConsoleAgentController:
         return latest_primary_run_id(conversation_id)
 
     def _console_agent_full_log_available(self, *, allow_probe: bool = True) -> bool:
-        """Whether the "View full log" affordance should be shown right now.
-
-        TASK-870 (AC#6/#7): ``True`` only when ``_console_agent_full_log_
-        run_id`` resolves to a run AND that run actually has an on-disk log
-        -- absent (button hidden) for every other case, including a bridge
-        or filesystem lookup that raises, so a resolution failure can never
-        surface as a dangling or erroring button.
-
-        Finding D (review round 2): the underlying check costs a SQLite
-        lookup (``_console_agent_full_log_run_id``, to resolve the target
-        run id) plus a filesystem probe (``bridge.run_log_available``, to
-        confirm a log directory/segment exists -- for a drilled-in
-        sub-agent this can also mean parsing its primary's whole log, see
-        finding B) -- paying that unconditionally on every 0.2s rail tick
-        is real, avoidable I/O for a value that is overwhelmingly the same
-        tick to tick. The filesystem/DB probe result is cached keyed by
-        the resolved run id and only redone when that id changes; when
-        ``allow_probe`` is ``False`` (the periodic sync passes this while
-        the Agent section is collapsed -- see
-        ``_sync_console_agent_section``), this returns the last cached
-        answer WITHOUT even resolving the current run id, so a collapsed
-        section's steady-state tick touches neither disk nor the DB.
-
-        Args:
-            allow_probe: Whether a cache miss may fall through to the
-                SQLite/filesystem lookup. Callers that need a fresh,
-                authoritative answer (the one-shot compose-time render,
-                and the "open the viewer" press-time re-check) should
-                leave this ``True``; the periodic rail sync passes
-                ``section_open`` here.
-
-        Returns:
-            Whether the affordance should be visible for the current
-            target run -- possibly a stale cached value when
-            ``allow_probe`` is ``False`` and the target has since changed
-            unobserved (self-corrects the moment the section reopens).
-        """
+        """Return the cache; dispatch a cache miss without filesystem UI work."""
         if not allow_probe:
             return self._console_agent_full_log_cache_available
         run_id = self._console_agent_full_log_run_id()
-        if run_id == self._console_agent_full_log_cache_run_id:
+        bridge = self._ensure_console_agent_bridge()
+        if (
+            run_id == self._console_agent_full_log_cache_run_id
+            and bridge is self._console_agent_full_log_cache_bridge
+            and (
+                not run_id
+                or self._console_agent_full_log_cache_available
+                or self._console_agent_full_log_probe_pending
+                == self._console_agent_full_log_probe_generation
+                or _run_log_clock() < self._console_agent_full_log_retry_at
+            )
+        ):
             return self._console_agent_full_log_cache_available
-        if not run_id:
-            available = False
-        else:
-            bridge = self._ensure_console_agent_bridge()
-            if bridge is None:
-                available = False
-            else:
-                try:
-                    available = bool(bridge.run_log_available(run_id))
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "console agent rail: run_log_available check failed for "
-                        f"run_id={run_id}; hiding the View full log affordance"
-                    )
-                    available = False
         self._console_agent_full_log_cache_run_id = run_id
+        self._console_agent_full_log_cache_bridge = bridge
+        self._console_agent_full_log_cache_available = False
+        self._console_agent_full_log_probe_generation += 1
+        if run_id and bridge is not None:
+            self._console_agent_full_log_probe_pending = (
+                self._console_agent_full_log_probe_generation
+            )
+            self.run_worker(
+                partial(
+                    self._probe_console_agent_run_log,
+                    bridge,
+                    run_id,
+                    self._console_agent_full_log_probe_generation,
+                ),
+                thread=True,
+                exclusive=True,
+                group="run-log-availability",
+            )
+        return False
+
+    def _run_log_target_matches(self, bridge: Any, run_id: str) -> bool:
+        return (
+            self._screen.is_mounted
+            and self._ensure_console_agent_bridge() is bridge
+            and self._console_agent_full_log_run_id() == run_id
+        )
+
+    def _probe_console_agent_run_log(
+        self, bridge: Any, run_id: str, generation: int
+    ) -> None:
+        worker = get_current_worker()
+        try:
+            available = bool(
+                bridge.run_log_available(run_id, cancelled=lambda: worker.is_cancelled)
+            )
+        except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
+            logger.error("Run-log availability failed ({})", type(error).__name__)
+            available = False
+        if worker.is_cancelled:
+            return
+        try:
+            self._screen.app.call_from_thread(
+                self._publish_console_agent_log_availability,
+                bridge,
+                run_id,
+                generation,
+                available,
+            )
+        except RuntimeError:
+            return
+
+    def _publish_console_agent_log_availability(
+        self,
+        bridge: Any,
+        run_id: str,
+        generation: int,
+        available: bool,
+    ) -> None:
+        if (
+            generation != self._console_agent_full_log_probe_generation
+            or not self._run_log_target_matches(bridge, run_id)
+        ):
+            return
+        self._console_agent_full_log_probe_pending = None
+        self._console_agent_full_log_retry_at = _run_log_clock() + 1.0
         self._console_agent_full_log_cache_available = available
-        return available
+        self._screen._sync_console_agent_section()
 
     def _open_console_agent_run_log_viewer(self) -> None:
         """Kick off loading the full run log for whatever "View full log" targets.
@@ -1376,7 +1408,7 @@ class ConsoleAgentController:
         )
 
     def _load_console_agent_run_log(self, bridge: Any, run_id: str) -> None:
-        """Load, filter, and format one run's full log off the UI thread.
+        """Load the first bounded page off the UI thread.
 
         Finding C: the worker half of ``_open_console_agent_run_log_
         viewer`` -- everything here is filesystem/CPU work (no widget
@@ -1397,28 +1429,35 @@ class ConsoleAgentController:
                 time.
         """
         try:
-            if not bridge.run_log_available(run_id):
-                return
-            log_text = bridge.load_run_log_text(run_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"console agent rail: failed to load run log for run_id={run_id}"
+            page = bridge.load_run_log_page(run_id)
+        except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
+            logger.error("Run-log initial page unavailable ({})", type(error).__name__)
+            return
+        if page is None or (not page.slices and page.next_cursor is None):
+            return
+        try:
+            self._screen.app.call_from_thread(
+                self._show_console_agent_run_log_modal, bridge, run_id, page
             )
+        except RuntimeError:
             return
-        if not log_text:
+
+    def _show_console_agent_run_log_modal(
+        self, bridge: Any, run_id: str, page: Any
+    ) -> None:
+        """Publish only for the captured target, with its exact bridge loader."""
+        if not self._run_log_target_matches(bridge, run_id):
             return
-        self._screen.app.call_from_thread(
-            self._show_console_agent_run_log_modal, run_id, log_text
+        self.push_screen(
+            ConsoleRunLogModal(
+                run_id=run_id,
+                first_page=page,
+                page_loader=lambda cursor: bridge.load_run_log_page(
+                    run_id, cursor=cursor
+                ),
+                target_is_current=lambda: self._run_log_target_matches(bridge, run_id),
+            )
         )
-
-    def _show_console_agent_run_log_modal(self, run_id: str, log_text: str) -> None:
-        """Push the full-log modal. UI-thread only -- see ``_load_console_agent_run_log``.
-
-        Args:
-            run_id: The run id the loaded text belongs to.
-            log_text: The fully rendered, untruncated log text.
-        """
-        self.push_screen(ConsoleRunLogModal(run_id=run_id, log_text=log_text))
 
     def _progress_owner_id(self) -> str | None:
         """Resolve the opaque progress owner independently of persistence."""

@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-18 20:30'
-updated_date: '2026-09-12 16:39'
+updated_date: '2026-09-12 17:04'
 labels:
   - agents
   - database
@@ -43,6 +43,7 @@ which is why TASK-18600 shipped the number as specified instead of lowering it.
 - [x] #2 Reading a run's metadata (status, budget, result) does not require parsing its full step log.
 - [ ] #3 The run-log viewer can render a long run without holding every step in memory at once.
 - [x] #4 Existing runs stored in the current blob format remain readable after the change.
+- [ ] #5 When an expanded rail checks a run before its first complete log record exists, the log action becomes available after a later append through bounded off-thread retries; scans never overlap and collapsed steady-state ticks perform no log I/O.
 <!-- AC:END -->
 
 ## Implementation Plan

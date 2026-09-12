@@ -95,14 +95,15 @@ assert all(len(p.slices) <= 100 for p in pages)
 ```python
 RunLogPageLoader = Callable[[RunLogPageCursor | None], RunLogPage | None]
 # Modal constructor:
-# ConsoleRunLogModal(run_id=..., first_page=page, page_loader=loader)
+# ConsoleRunLogModal(run_id=..., first_page=page, page_loader=loader,
+#                    target_is_current=exact_ui_target_predicate)
 ```
 
 The loader closes over the exact bridge and run ID; every invocation repeats authority validation. The controller passes it through a thread worker and pushes the modal on the UI thread. The modal stores only current page, bounded cursors, and generation/loading/error state.
 
 - [ ] Add mounted tests with two distinct page canaries and a gated loader. Assert loader thread differs from the UI thread, Next replaces old content, Previous reloads the old cursor, a second click cannot launch an overlapping request, and Close while gated prevents late publication. Assert the previous body is not retained in the modal/page state.
 - [ ] Change `_load_console_agent_run_log` to load the first page directly, avoiding a second full availability scan. Keep initial empty/absent semantics and allow an empty continuable scan page to open honestly.
-- [ ] Move cache-miss availability work from `_console_agent_full_log_available` onto a worker, preserving target-keyed caching and collapsed-section no-I/O behavior. Publish only if the target still matches; update the actual affordance through its existing UI callback. Add a slow probe regression proving the UI remains responsive and stale results cannot reveal another run's action.
+- [ ] Move cache-miss availability work from `_console_agent_full_log_available` onto a worker, preserving target-keyed caching and collapsed-section no-I/O behavior. Extend `run_log_available` with optional keyword-only `cancelled: Callable[[], bool] | None = None`, checked before each metadata chunk/lease; pass the captured worker cancellation state and test that cancellation prevents later chunk reads. Publish only if the target still matches; update the actual affordance through its existing UI callback. Add a slow probe regression proving the UI remains responsive and stale results cannot reveal another run's action. Add a one-second negative-result retry deadline using existing expanded-section ticks; keep exact-generation pending state until the probe completes, positive caching and collapsed no-I/O behavior. Prove a real appended first record becomes available without target change, no overlapping scan while held, and no new timer.
 - [ ] Replace `log_text` state with `first_page/page_loader`, Previous/Next/First/Close controls and one replaceable TextArea. Bound history to 256 cursors. Keep Close usable while loading; empty continuation and lost-authority errors have honest text. Do not clear the last good page on navigation failure.
 - [ ] Reuse SafeModalDismissMixin and existing modal tokens/layout. Inspect wide and narrow mounted layouts in one batch, correct observed defects, then confirm once. Load the Impeccable craft-floor guidance before UI editing; existing product and DESIGN.md are the visual authority.
 - [ ] Survey all `load_run_log_text` callers before migration/removal; keep genuine non-viewer API compatibility if needed and document that only the product viewer is qualified as bounded. Do not silently truncate a compatibility method to fit page limits.

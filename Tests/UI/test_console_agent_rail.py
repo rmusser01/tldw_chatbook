@@ -780,7 +780,7 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
             def latest_primary_run_id(self, conversation_id):
                 return "run-1"
 
-            def run_log_available(self, run_id):
+            def run_log_available(self, run_id, *, cancelled=None):
                 probe_calls.append(run_id)
                 return True
 
@@ -826,7 +826,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
             def latest_primary_run_id(self, conversation_id):
                 return self.target_run_id
 
-            def run_log_available(self, run_id):
+            def run_log_available(self, run_id, *, cancelled=None):
                 probe_calls.append(run_id)
                 return True
 
@@ -842,6 +842,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
         console._sync_console_agent_section()
         console._sync_console_agent_section()
         console._sync_console_agent_section()
+        await host.workers.wait_for_complete()
         assert probe_calls == ["run-1"]
 
         # The target run changes (e.g. a new primary run started) -- the
@@ -849,6 +850,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
         fake_bridge.target_run_id = "run-2"
         console._sync_console_agent_section()
         console._sync_console_agent_section()
+        await host.workers.wait_for_complete()
         assert probe_calls == ["run-1", "run-2"]
 
 
@@ -879,11 +881,12 @@ async def test_view_full_log_loads_off_thread_then_opens_the_modal():
             def latest_primary_run_id(self, conversation_id):
                 return "run-1"
 
-            def run_log_available(self, run_id):
+            def run_log_available(self, run_id, *, cancelled=None):
                 return True
 
-            def load_run_log_text(self, run_id):
-                return "full untruncated log text for run-1"
+            def load_run_log_page(self, run_id, *, cursor=None):
+                from Tests.UI.test_console_run_log_paging import page
+                return page(0, "full untruncated log text for run-1")
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
@@ -903,7 +906,7 @@ async def test_view_full_log_loads_off_thread_then_opens_the_modal():
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRunLogModal)
         assert modal._run_id == "run-1"
-        assert modal._log_text == "full untruncated log text for run-1"
+        assert modal._page.slices[0].record.content == "full untruncated log text for run-1"
 
 
 @pytest.mark.asyncio
@@ -1289,3 +1292,225 @@ async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
 
         assert "persisted step" in steps_text
         assert "live step" not in steps_text
+
+
+@pytest.mark.asyncio
+async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
+    import threading
+
+    from Tests.UI.test_console_run_log_paging import settled
+
+    gate, entered = threading.Event(), threading.Event()
+    ui_thread = threading.get_ident()
+    calls = []
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        controller = console._agent
+        target = ["run-a"]
+
+        class Bridge:
+            def run_log_available(self, run_id, *, cancelled=None):
+                calls.append((run_id, threading.get_ident()))
+                entered.set()
+                gate.wait(3)
+                return True
+
+        bridge = Bridge()
+        controller._ensure_console_agent_bridge = lambda: bridge
+        controller._console_agent_full_log_run_id = lambda: target[0]
+        published = []
+        console._sync_console_agent_section = lambda: published.append(
+            controller._console_agent_full_log_cache_available
+        )
+        assert controller._console_agent_full_log_available() is False
+        await settled(pilot, entered.is_set)
+        assert calls == [("run-a", calls[0][1])]
+        assert calls[0][1] != ui_thread
+        target[0] = "run-b"
+        gate.set()
+        await host.workers.wait_for_complete()
+        assert published == []
+        assert controller._console_agent_full_log_cache_available is False
+        assert controller._console_agent_full_log_available() is False
+        await host.workers.wait_for_complete()
+        assert published == [True]
+
+
+@pytest.mark.asyncio
+async def test_negative_availability_retries_after_real_first_record_append(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Agents import run_log
+    from tldw_chatbook.UI.Console_Modules import agent as agent_module
+
+    monkeypatch.setattr(run_log, "resolve_log_root", lambda: tmp_path)
+    clock = [100.0]
+    monkeypatch.setattr(agent_module, "_run_log_clock", lambda: clock[0], raising=False)
+    db = AgentRunsDB(tmp_path / "append.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        controller = console._agent
+        controller._ensure_console_agent_bridge = lambda: bridge
+        controller._console_agent_full_log_run_id = lambda: "append-run"
+        published = []
+        console._sync_console_agent_section = lambda: published.append(
+            controller._console_agent_full_log_cache_available
+        )
+        assert controller._console_agent_full_log_available() is False
+        await host.workers.wait_for_complete()
+        assert published == [False]
+        writer = run_log.RunLogWriter()
+        writer.bind("append-run")
+        writer.append(
+            run_id="append-run",
+            kind="primary",
+            type="model",
+            content="First real record",
+        )
+        assert controller._console_agent_full_log_available() is False
+        clock[0] += 2
+        assert controller._console_agent_full_log_available(allow_probe=False) is False
+        assert published == [False]
+        assert controller._console_agent_full_log_available() is False
+        await host.workers.wait_for_complete()
+        assert published == [False, True]
+        assert controller._console_agent_full_log_available() is True
+
+
+@pytest.mark.asyncio
+async def test_pending_negative_probe_never_restarts_and_updates_real_affordance(
+    monkeypatch,
+):
+    import threading
+
+    from textual.widgets import Button
+
+    from Tests.UI.test_console_run_log_paging import settled
+    from tldw_chatbook.UI.Console_Modules import agent as agent_module
+
+    clock = [100.0]
+    monkeypatch.setattr(agent_module, "_run_log_clock", lambda: clock[0])
+    gate, entered = threading.Event(), threading.Event()
+    calls = []
+
+    class Bridge:
+        def run_log_available(self, run_id, *, cancelled=None):
+            calls.append(run_id)
+            entered.set()
+            gate.wait(3)
+            return True
+
+    bridge = Bridge()
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        controller = console._agent
+        payload = list(controller._console_agent_section_payload())
+        controller._ensure_console_agent_bridge = lambda: bridge
+        controller._console_agent_full_log_run_id = lambda: "held-run"
+        # Keep the real DOM callback; isolate unrelated fleet payload construction.
+        payload[5] = True
+        controller._console_agent_section_payload = lambda: tuple(
+            payload[:6] + [controller._console_agent_full_log_available()] + payload[7:]
+        )
+        console._sync_console_agent_section()
+        await settled(pilot, entered.is_set)
+        assert not console.query_one("#console-agent-view-full-log", Button).display
+        for _ in range(5):
+            clock[0] += 10
+            assert controller._console_agent_full_log_available() is False
+            assert (
+                controller._console_agent_full_log_available(allow_probe=False) is False
+            )
+        assert calls == ["held-run"]
+        gate.set()
+        await host.workers.wait_for_complete()
+        assert console.query_one("#console-agent-view-full-log", Button).display
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replace_bridge", [False, True])
+async def test_initial_page_rejects_target_change_without_availability_scan(
+    replace_bridge,
+):
+    import threading
+
+    from Tests.UI.test_console_run_log_paging import page, settled
+
+    gate, entered = threading.Event(), threading.Event()
+    ui_thread = threading.get_ident()
+    reads = []
+
+    class Bridge:
+        def run_log_available(self, *args, **kwargs):
+            pytest.fail("initial viewer must not scan availability")
+
+        def load_run_log_page(self, run_id, *, cursor=None):
+            reads.append(threading.get_ident())
+            entered.set()
+            gate.wait(3)
+            return page(0, "STALE INITIAL PAGE")
+
+    current = [Bridge()]
+    target = ["initial-run"]
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        controller = console._agent
+        controller._ensure_console_agent_bridge = lambda: current[0]
+        controller._console_agent_full_log_run_id = lambda: target[0]
+        controller._open_console_agent_run_log_viewer()
+        await settled(pilot, entered.is_set)
+        if replace_bridge:
+            current[0] = Bridge()
+        else:
+            target[0] = "replacement-run"
+        gate.set()
+        await host.workers.wait_for_complete()
+        assert reads and all(thread != ui_thread for thread in reads)
+        assert not any(
+            isinstance(screen, ConsoleRunLogModal) for screen in host.screen_stack
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('state', ['absent', 'empty-end', 'empty-continuation'])
+async def test_initial_empty_log_semantics(state):
+    from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
+    first = (
+        None
+        if state == "absent"
+        else RunLogPage(
+            (),
+            RunLogPageCursor(0, 0),
+            RunLogPageCursor(0, 100) if state == "empty-continuation" else None,
+            100,
+        )
+    )
+
+    class Bridge:
+        def load_run_log_page(self, run_id, *, cursor=None):
+            return first
+
+    bridge = Bridge()
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+        controller = console._agent
+        controller._ensure_console_agent_bridge = lambda: bridge
+        controller._console_agent_full_log_run_id = lambda: "empty-run"
+        controller._open_console_agent_run_log_viewer()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConsoleRunLogModal) is (
+            state == "empty-continuation"
+        )
