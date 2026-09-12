@@ -13409,3 +13409,8 @@ end) so artifacts are deleted inline while the interpreter is alive.
 When you see "name 'open' is not defined" from secure deletion, look for
 leaked temp artifacts deleted at shutdown, not a bug in the deleting
 code.
+
+
+## Completed first-run setup is not a send-ready Console (TASK-13154.4, 2026-09-12)
+
+Six approval-card tests still reached a blocking provider-setup modal after the app factory marked first-run setup complete. A fixed 250 ms grace appeared to repair focus/geometry, but review exposed its scheduling assumption. Waiting for the actual attach reconciliation and resume-state projection exposed six modal assertion failures; persisting the existing send-ready llama_cpp fixture made all six pass. Mounted decision tests need both the real provider-ready fixture and observable startup completion before injecting pending state. Do not replace those conditions with a longer pause or patch away setup guards.
