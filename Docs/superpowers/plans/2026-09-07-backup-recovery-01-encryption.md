@@ -1,5 +1,9 @@
 # Encryption helper delivery Implementation Plan
 
+2026-09-12 correction: this plan's Go implementation and delivery steps are
+historical. Follow the user-requested [Python encryption replacement](2026-09-12-python-backup-encryption.md)
+for the current backend; archive format and backup scope are unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** An independently qualified, packaged age helper with bounded secret transport.

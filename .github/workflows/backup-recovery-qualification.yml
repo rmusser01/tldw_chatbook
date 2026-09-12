@@ -29,11 +29,6 @@ jobs:
             requirements-test.txt
             pyproject.toml
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 1.26.2
-          cache-dependency-path: Packaging/backup_age/go.sum
-
       - name: Verify the finite qualification scope
         shell: bash
         run: |
@@ -77,7 +72,7 @@ jobs:
               raise SystemExit("required qualification paths are missing")
           PY
 
-      - name: Provision pinned dependencies and Go caches
+      - name: Provision pinned Python dependencies
         shell: bash
         run: |
           set -euo pipefail
@@ -88,42 +83,19 @@ jobs:
           python -m pip install -e '.[embeddings_rag,websearch,chunker]'
           python -m pip install 'chromadb==1.5.8' pydub 'audioop-lts; python_version >= "3.13"'
           python -m pip check
-          go -C Packaging/backup_age mod download all
-          go -C Packaging/backup_age mod verify
-
-          GOMODCACHE_VALUE="$(go env GOMODCACHE)"
-          GOCACHE_VALUE="$(go env GOCACHE)"
-          case "$GOMODCACHE_VALUE" in
-            /*) ;;
-            *) echo "GOMODCACHE is not absolute" >&2; exit 1 ;;
-          esac
-          case "$GOCACHE_VALUE" in
-            /*) ;;
-            *) echo "GOCACHE is not absolute" >&2; exit 1 ;;
-          esac
-          {
-            echo "GOMODCACHE=$GOMODCACHE_VALUE"
-            echo "GOCACHE=$GOCACHE_VALUE"
-            echo "GOPROXY=off"
-            echo "GOSUMDB=off"
-            echo "GOTOOLCHAIN=local"
-          } >> "$GITHUB_ENV"
 
           git rev-parse HEAD > "$EVIDENCE_ROOT/artifacts/setup/checkout-head.txt"
           git status --porcelain=v1 > "$EVIDENCE_ROOT/artifacts/setup/checkout-status.txt"
           python --version > "$EVIDENCE_ROOT/artifacts/setup/python-version.txt" 2>&1
-          go version > "$EVIDENCE_ROOT/artifacts/setup/go-version.txt"
-          printf 'GOMODCACHE=%s\nGOCACHE=%s\n' "$GOMODCACHE_VALUE" "$GOCACHE_VALUE" \
-            > "$EVIDENCE_ROOT/artifacts/setup/go-cache-paths.txt"
           python -m pip freeze > "$EVIDENCE_ROOT/artifacts/setup/pip-freeze.txt"
           shasum -a 256 \
             tldw_chatbook/Backup_Recovery/native_qualification.json \
-            tldw_chatbook/Backup_Recovery/helper_manifest.json \
+            tldw_chatbook/Backup_Recovery/age_worker.py \
             > "$EVIDENCE_ROOT/artifacts/setup/source-sha256.txt"
           cp tldw_chatbook/Backup_Recovery/native_qualification.json \
             "$EVIDENCE_ROOT/artifacts/setup/native-qualification.json"
-          cp tldw_chatbook/Backup_Recovery/helper_manifest.json \
-            "$EVIDENCE_ROOT/artifacts/setup/source-helper-manifest.json"
+          cp tldw_chatbook/Backup_Recovery/age_worker.py \
+            "$EVIDENCE_ROOT/artifacts/setup/source-age-worker.py"
 
       - name: Establish the private offline runtime
         shell: bash
@@ -166,7 +138,7 @@ jobs:
             echo "TRANSFORMERS_OFFLINE=1"
           } >> "$GITHUB_ENV"
 
-      - name: Verify native identity and build the offline helper
+      - name: Verify native identity and Python encryption backend
         shell: bash
         run: |
           set -euo pipefail
@@ -176,19 +148,19 @@ jobs:
 
           install()
 
-          import hashlib
           import json
           import os
           from pathlib import Path
           import subprocess
+          import sys
+          from threading import Event
 
           import keyring
           from keyring.backends.null import Keyring
 
           keyring.set_keyring(Keyring())
 
-          from Packaging.backup_age.build_helper import build_helper
-          from tldw_chatbook.Backup_Recovery import native_files, qualification
+          from tldw_chatbook.Backup_Recovery import crypto, native_files, qualification
 
           evidence = Path(os.environ["EVIDENCE_ROOT"]) / "artifacts"
           native_root = Path(os.environ["EVIDENCE_ROOT"]) / "native-root"
@@ -227,32 +199,55 @@ jobs:
               for result in operations.values()
           ), operations
 
-          helper = build_helper(
-              "darwin", "arm64", evidence / "helper" / "backup-age"
-          )
+          worker = Path(crypto.__file__).with_name("age_worker.py")
           completed = subprocess.run(
-              [str(helper), "info"],
+              [sys.executable, "-I", str(worker), "info"],
               check=True,
               capture_output=True,
               text=True,
               timeout=30,
           )
           info = json.loads(completed.stdout)
-          expected_info = {
-              "protocol": 1,
-              "helper_version": "1",
-              "age_version": "v1.3.2",
-              "os": "darwin",
-              "arch": "arm64",
+          assert info == {
+              "protocol": 2,
+              "implementation": "python",
+              "format": "age-v1",
           }
-          digest = hashlib.sha256(helper.read_bytes()).hexdigest()
-          (evidence / "helper-info.json").write_text(
-              json.dumps(info, indent=2) + "\n", encoding="utf-8"
+          assert crypto.helper_capability() == (True, "available")
+          backend_work = Path(os.environ["EVIDENCE_ROOT"]) / "backend-work"
+          backend_work.mkdir(mode=0o700)
+          plain = backend_work / "plain.bin"
+          sealed = backend_work / "sealed.age"
+          restored = backend_work / "restored.bin"
+          plain.write_bytes(b"native qualification Python backend" * 4096)
+          crypto.transform(
+              plain,
+              sealed,
+              password=b"qualification-worker-password",
+              decrypt=False,
+              cancel=Event(),
           )
-          (evidence / "helper-sha256.txt").write_text(
-              f"{digest}  helper/backup-age\n", encoding="utf-8"
+          crypto.transform(
+              sealed,
+              restored,
+              password=b"qualification-worker-password",
+              decrypt=True,
+              cancel=Event(),
           )
-          assert info == expected_info, info
+          assert restored.read_bytes() == plain.read_bytes()
+          (evidence / "worker-info.json").write_text(
+              json.dumps(
+                  {
+                      "worker_info": info,
+                      "capability": [True, "available"],
+                      "transform": "passed_actual_encrypt_decrypt",
+                      "native_qualification": "separately_verified",
+                  },
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
           assert not blocked_attempts(), blocked_attempts()
           PY
 
@@ -319,12 +314,6 @@ jobs:
               "COLORTERM",
               "SYSTEMROOT",
               "TZ",
-              "GOCACHE",
-              "GOMODCACHE",
-              "GOPATH",
-              "GOPROXY",
-              "GOSUMDB",
-              "GOTOOLCHAIN",
           )
           results = []
           for number, entry in enumerate(entries, 1):
@@ -466,9 +455,11 @@ jobs:
               name = path.name
               if "credential" in name.lower() or "secret" in name.lower():
                   return False
-              if name in {"native-package.json", "readback.json", "helper_manifest.json"}:
-                  return True
-              if name == "backup-age" and path.parent.name == "_age":
+              if "seed" in name.lower() and path.suffix == ".json":
+                  return False
+              if name.endswith(("capture.json", "preview.json", "restored.json")):
+                  return False
+              if name in {"native-package.json", "readback.json"}:
                   return True
               if path.suffix == ".whl":
                   return True
@@ -477,14 +468,11 @@ jobs:
               return any(
                   name.endswith(suffix)
                   for suffix in (
-                      "-capture.json",
                       "-installed.json",
                       "-manifest.json",
                       "-mapping.json",
-                      "-preview.json",
                       "-readback.json",
                       "-refusal.json",
-                      "-restored.json",
                   )
               )
 

@@ -1,5 +1,10 @@
 # Complete local backup and restore
 
+2026-09-12 correction: the user withdrew the Go implementation choice. The
+[Python encryption correction](2026-09-12-python-backup-encryption-design.md)
+supersedes this document's Go implementation, build and delivery requirements.
+The archive format and remaining backup/recovery scope are unchanged.
+
 Date: 2026-09-07
 
 Revision: 4 — fourth design-review corrections incorporated.

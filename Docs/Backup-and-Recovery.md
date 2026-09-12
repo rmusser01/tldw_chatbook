@@ -6,7 +6,7 @@ Chatbook-owned data; it does not back up a remote tldw server, the operating
 system, or the application installer.
 
 Complete backup and replacement have separate availability checks. They require
-a matching qualified platform, the installed native helper, and supported storage
+a matching qualified platform, the Python encryption backend, and supported storage
 locations. F9 shows availability alongside coverage and required space. Follow the
 operation's actual review and refusal messages; platform support alone does not
 establish that a particular selection can be captured or restored.
@@ -233,7 +233,7 @@ The app must retain that refusal until the projection prerequisites are met thro
 an explicit qualified reconciliation or rebuild. Restarting does not automatically
 rebuild or approve the index; local source-content inspection remains available.
 
-Archive format, owner schema, helper, and native filesystem capabilities are checked
+Archive format, owner schema, encryption, and native filesystem capabilities are checked
 independently. A newer archive is not automatically compatible with an older app.
 Unsupported formats may permit selected inert extraction without permitting an
 installation restore. Keep a compatible application release with important archives;
@@ -248,10 +248,13 @@ its recovery authority remains on qualified host storage. The image is not quali
 for Complete capture or cooperative storage admission.
 
 Linux, Windows, other platform/filesystem combinations, and upgrade pairs remain
-unqualified. Source distributions without the bundled helper cannot create backups,
-including plaintext backups, or start replacement. Missing capabilities produce a
-refusal. The evidence does not establish physical power-loss or device-detachment
+unqualified. Source, editable, wheel and source-distribution installs include the
+Python encryption worker, which uses the existing PyCryptodome dependency. No Go
+installation or separate encryption executable is required. Filesystem qualification
+is still required for backup and replacement; missing capabilities produce a refusal.
+The evidence does not establish physical power-loss or device-detachment
 recovery; retain recovery copies and operation records when resolving an interruption.
 
-The controlling contracts are the [approved design](superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
+The controlling contracts are the [approved design](superpowers/specs/2026-09-07-complete-local-backup-restore-design.md),
+the [Python encryption correction](superpowers/specs/2026-09-12-python-backup-encryption-design.md),
 and [release qualification plan](superpowers/plans/2026-09-07-backup-recovery-06-release-evidence.md).

@@ -67,7 +67,10 @@ Success criteria: built packages contain the Python worker; no backup Go executa
 Go build hook, helper target selection or Go-specific runtime manifest remains.
 Tests: `Tests/Packaging/test_backup_helper_distribution.py`, existing installed
 package fixture consumers and packaging checker cases.
-Status: In Progress.
+Status: Complete. Packaging11 tests pass; scoped review approved after correcting
+fresh-cache provisioning and Windows uv discovery. Evidence:
+/private/tmp/task32495-python-packaging-report.md and
+/private/tmp/task32495-python-packaging-review.md.
 
 Remove exclusively Go-owned `Packaging/backup_age` build assets, setuptools cmdclass
 entries and Go-only manifest declarations. Update `Packaging/check_manifest.py`,
@@ -83,7 +86,8 @@ Success criteria: compatibility and package tests pass without Go; actual final
 macOS encrypted F9/rollback paths use Python; Linux crypto outcomes are recorded.
 Tests: final changed crypto/package modules, affected release gates/archive paths,
 three F9 modes, combined replacement/later rollback; Linux targeted crypto/package.
-Status: Not Started.
+Status: In Progress. Worker/transport/package/release gates and3installedF9 modes
+verified; combined rollback and Linux final results pending.
 
 Run serial native tests in private locations with NullKeyring/network guard.
 Record exact source/package identities; distinguish test fixture faults from native

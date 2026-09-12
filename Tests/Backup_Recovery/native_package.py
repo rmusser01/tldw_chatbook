@@ -1,4 +1,4 @@
-"""Build and preserve an installed package containing the real native helper."""
+"""Build and preserve an installed package containing the Python worker."""
 
 import hashlib
 import json
@@ -10,21 +10,20 @@ import pytest
 
 @pytest.fixture(scope="module")
 def native_package(tmp_path_factory):
-    """Install the real native wheel without changing source helper capability."""
+    """Install the application wheel and preserve every installed file."""
     from Tests.Packaging.test_backup_helper_distribution import (
         _build_wheel,
         _copy_build_source,
-        _native_tuple,
     )
 
     root = tmp_path_factory.mktemp("f9-native-package")
     source = root / "source"
     source.mkdir()
     _copy_build_source(source)
-    goos, goarch = _native_tuple()
-    wheel = _build_wheel(source, root / "wheels", target=f"{goos}/{goarch}")
+    wheel = _build_wheel(source, root / "wheels")
     installed = root / "installed"
-    result = subprocess.run(  # nosec B603: fixed interpreter, local built wheel.
+    # The current interpreter installs the locally built wheel with fixed arguments.
+    result = subprocess.run(  # nosec B603
         [
             sys.executable,
             "-m",
@@ -44,6 +43,8 @@ def native_package(tmp_path_factory):
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    worker = installed / "tldw_chatbook/Backup_Recovery/age_worker.py"
+    assert worker.is_file() and not worker.is_symlink()
     files = {
         path: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in installed.rglob("*")

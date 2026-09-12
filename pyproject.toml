@@ -469,10 +469,6 @@ tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 [tool.setuptools]
 include-package-data = false
 
-[tool.setuptools.cmdclass]
-build_py = "Packaging.backup_age.wheel_commands.BackupHelperBuildPy"
-bdist_wheel = "Packaging.backup_age.wheel_commands.BackupHelperBdistWheel"
-
 [tool.setuptools.packages.find]
 where = ["."]  # Look for packages in the current directory (where pyproject.toml is)
 # Include the 'tldw_chatbook' package and its submodules
@@ -503,7 +499,7 @@ exclude = [
 "tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]
 "tldw_chatbook.TTS" = ["audio_cpp_artifact_manifest.json"]
-"tldw_chatbook.Backup_Recovery" = ["helper_manifest.json", "native_qualification.json"]
+"tldw_chatbook.Backup_Recovery" = ["native_qualification.json"]
 "tldw_chatbook.DB" = [
     "migrations/chachanotes_v26_to_v27_citation_provenance.sql",
     "migrations/chachanotes_v27_to_v28_character_authority.sql",

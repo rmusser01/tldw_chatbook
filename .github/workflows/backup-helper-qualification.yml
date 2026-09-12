@@ -1,4 +1,4 @@
-name: Backup helper native qualification
+name: Backup Python encryption qualification
 
 on:
   workflow_dispatch:
@@ -7,51 +7,64 @@ permissions:
   contents: read
 
 jobs:
-  native-candidate:
-    name: ${{ matrix.goos }}/${{ matrix.goarch }} Python ${{ matrix.python }}
+  python-candidate:
+    name: ${{ matrix.runner_os }}/${{ matrix.runner_arch }} Python ${{ matrix.python }}
     runs-on:
       - self-hosted
       - backup-helper
-      - ${{ matrix.goos }}
-      - ${{ matrix.goarch }}
+      - ${{ matrix.runner_os }}
+      - ${{ matrix.runner_arch }}
     strategy:
       fail-fast: false
       matrix:
-        goos: [darwin, linux]
-        goarch: [amd64, arm64]
+        runner_os: [darwin, linux]
+        runner_arch: [amd64, arm64]
         python: ["3.11", "3.12", "3.13"]
         include:
-          - goos: windows
-            goarch: amd64
+          - runner_os: windows
+            runner_arch: amd64
             python: "3.11"
-          - goos: windows
-            goarch: amd64
+          - runner_os: windows
+            runner_arch: amd64
             python: "3.12"
-          - goos: windows
-            goarch: amd64
+          - runner_os: windows
+            runner_arch: amd64
             python: "3.13"
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 1.26.2
-          cache-dependency-path: Packaging/backup_age/go.sum
-      - name: Provision pinned dependencies
+      - name: Provision Python packaging dependencies and offline cache
         shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --disable-pip-version-check \
-            pytest "pydantic>=2.4,<3" loguru psutil build wheel setuptools
-          go -C Packaging/backup_age mod download all
-      - name: Build and probe the native candidate
+            "uv>=0.8.0,<1"
+          export UV_CACHE_DIR="${RUNNER_TEMP}/backup-python-uv-cache"
+          echo "UV_CACHE_DIR=$UV_CACHE_DIR" >> "$GITHUB_ENV"
+          PYTHON_BIN="$(python -c 'import sys; print(sys.executable)')"
+          UV_BIN="$(python -c 'import os, sysconfig; print(os.path.join(sysconfig.get_path("scripts"), "uv.exe" if os.name == "nt" else "uv"))')"
+          "$UV_BIN" pip install --python "$PYTHON_BIN" --reinstall \
+            pytest pytest-asyncio pytest-timeout "pydantic>=2.4,<3" loguru psutil \
+            pycryptodomex build wheel "setuptools>=77.0"
+      - name: Verify source, editable, sdist, and wheel delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest Tests/Packaging/test_backup_helper_distribution.py -q
+      - name: Build and probe the Python encryption candidate
         shell: bash
         env:
-          QUALIFICATION_TARGET: ${{ matrix.goos }}/${{ matrix.goarch }}
-          QUALIFICATION_OUTPUT: ${{ runner.temp }}/backup-helper-evidence.json
-          QUALIFICATION_ROOT: ${{ runner.temp }}/backup-helper
+          QUALIFICATION_OUTPUT: ${{ runner.temp }}/backup-python-evidence.json
+          QUALIFICATION_ROOT: ${{ runner.temp }}/backup-python-candidate
         run: |
+          set -euo pipefail
+          python -m build --outdir "$QUALIFICATION_ROOT/dist"
+          python Packaging/check_manifest.py "$QUALIFICATION_ROOT/dist"
+          python -m pip install --disable-pip-version-check --no-index --no-deps \
+            --target "$QUALIFICATION_ROOT/installed" "$QUALIFICATION_ROOT"/dist/*.whl
           python - <<'PY'
           import hashlib
           import json
@@ -59,107 +72,95 @@ jobs:
           import platform
           from pathlib import Path
           import subprocess
-          import struct
           import sys
+          from threading import Event
 
-          from Packaging.backup_age.build_helper import build_helper
-
-          goos, goarch = os.environ["QUALIFICATION_TARGET"].split("/")
           root = Path(os.environ["QUALIFICATION_ROOT"])
-          root.mkdir(parents=True, exist_ok=True)
-          helper = build_helper(
-              goos,
-              goarch,
-              root / ("backup-age.exe" if goos == "windows" else "backup-age"),
+          installed = root / "installed"
+          sys.path.insert(0, str(installed))
+          from tldw_chatbook.Backup_Recovery import crypto
+
+          package = installed / "tldw_chatbook"
+          worker = package / "Backup_Recovery/age_worker.py"
+          assert Path(crypto.__file__).resolve().is_relative_to(package.resolve())
+          assert worker.is_file() and not worker.is_symlink()
+          info_result = subprocess.run(
+              [sys.executable, "-I", str(worker), "info"],
+              check=True,
+              capture_output=True,
+              text=True,
+              timeout=30,
           )
-          info = json.loads(subprocess.check_output([str(helper), "info"]))
-          password = b"qualification-pipe-fixture"
-          plaintext = b"native pipe behavior" * 4096
-          sealed = subprocess.check_output(
-              [str(helper), "encrypt"],
-              input=struct.pack(">I", len(password)) + password + plaintext,
+          info = json.loads(info_result.stdout)
+          assert info == {
+              "protocol": 2,
+              "implementation": "python",
+              "format": "age-v1",
+          }
+
+          plain = root / "plain.bin"
+          sealed = root / "sealed.age"
+          restored = root / "restored.bin"
+          plain.write_bytes(b"Python package qualification" * 4096)
+          crypto.transform(
+              plain,
+              sealed,
+              password=b"qualification-pipe-fixture",
+              decrypt=False,
+              cancel=Event(),
           )
-          restored = subprocess.check_output(
-              [str(helper), "decrypt"],
-              input=struct.pack(">I", len(password)) + password + sealed,
+          crypto.transform(
+              sealed,
+              restored,
+              password=b"qualification-pipe-fixture",
+              decrypt=True,
+              cancel=Event(),
           )
-          assert restored == plaintext
-          filesystem = "unavailable"
-          minimum_os_evidence = "requires platform release review"
-          signature_package_trust = "requires platform release review"
-          if sys.platform == "darwin":
-              filesystem = subprocess.check_output(["mount"], text=True).splitlines()[0]
-              minimum_os_evidence = subprocess.check_output(
-                  ["otool", "-l", str(helper)], text=True
-              )
-              signature = subprocess.run(
-                  ["codesign", "--verify", "--verbose=4", str(helper)],
-                  capture_output=True,
-                  text=True,
-              )
-              signature_package_trust = {
-                  "returncode": signature.returncode,
-                  "stdout": signature.stdout,
-                  "stderr": signature.stderr,
-              }
-          elif sys.platform.startswith("linux"):
-              filesystem = subprocess.check_output(
-                  ["findmnt", "-n", "-o", "FSTYPE", str(root)], text=True
-              ).strip()
-              minimum_os_evidence = subprocess.check_output(
-                  ["readelf", "-n", str(helper)], text=True
-              )
-              signature_package_trust = "unsigned_binary_with_sha256_inventory"
-          elif os.name == "nt":
-              filesystem = subprocess.check_output(
-                  [
-                      "powershell",
-                      "-NoProfile",
-                      "-Command",
-                      f"(Get-Volume -DriveLetter '{root.drive[0]}').FileSystem",
-                  ],
-                  text=True,
-              ).strip()
-              signature_package_trust = subprocess.check_output(
-                  [
-                      "powershell",
-                      "-NoProfile",
-                      "-Command",
-                      f"Get-AuthenticodeSignature '{helper}' | ConvertTo-Json -Compress",
-                  ],
-                  text=True,
-              ).strip()
+          assert restored.read_bytes() == plain.read_bytes()
+
+          fixture = Path("Tests/Backup_Recovery/fixtures/age_v1/official.age")
+          fixed = root / "fixed-restored.bin"
+          crypto.transform(
+              fixture,
+              fixed,
+              password=b"interop-synthetic-password",
+              decrypt=True,
+              cancel=Event(),
+          )
+          assert fixed.read_bytes() == bytes(range(256)) * 2048
+
+          wheel = next((root / "dist").glob("*.whl"))
+          sdist = next((root / "dist").glob("*.tar.gz"))
           evidence = {
-              "target": os.environ["QUALIFICATION_TARGET"],
-              "python": platform.python_version(),
-              "runner_os": platform.platform(),
-              "filesystem": filesystem,
-              "minimum_os_evidence": minimum_os_evidence,
-              "helper_info": info,
-              "sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
-              "size": helper.stat().st_size,
-              "pipe_behavior": "passed_real_encrypt_decrypt",
-              "helper_integrity": "passed_sha256_and_info",
-              "signature_package_trust": signature_package_trust,
-              "runtime_network_containment": "requires_cell_specific_release_review",
+              "runner": {
+                  "target": "${{ matrix.runner_os }}/${{ matrix.runner_arch }}",
+                  "platform": platform.platform(),
+                  "python": platform.python_version(),
+              },
+              "artifacts": {
+                  "wheel": wheel.name,
+                  "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                  "sdist": sdist.name,
+                  "sdist_sha256": hashlib.sha256(sdist.read_bytes()).hexdigest(),
+                  "worker_sha256": hashlib.sha256(worker.read_bytes()).hexdigest(),
+              },
+              "worker_info": info,
+              "round_trip": "passed_actual_encrypt_decrypt",
+              "fixed_fixture": "passed_official_age_v1_decrypt",
+              "package_provenance": {
+                  "crypto": str(Path(crypto.__file__).resolve()),
+                  "worker": str(worker.resolve()),
+              },
+              "parent_process_socket_blocking": "packaging_runtime_probe",
+              "dependency_installation": "uv_offline_in_isolated_environments",
               "status": "candidate_only_not_advertised",
           }
           Path(os.environ["QUALIFICATION_OUTPUT"]).write_text(
               json.dumps(evidence, indent=2) + "\n", encoding="utf-8"
           )
           PY
-      - name: Verify source protocol and pinned graph
-        shell: bash
-        run: |
-          go -C Packaging/backup_age mod verify
-          go -C Packaging/backup_age test ./...
-          go -C Packaging/backup_age vet ./...
-          python -m pytest \
-            Tests/Packaging/test_backup_helper_distribution.py::test_build_helper_produces_the_pinned_native_protocol \
-            Tests/Packaging/test_backup_helper_distribution.py::test_source_checkout_declares_every_target_unavailable \
-            -q
       - uses: actions/upload-artifact@v4
         with:
-          name: backup-helper-${{ matrix.goos }}-${{ matrix.goarch }}-py${{ matrix.python }}
-          path: ${{ runner.temp }}/backup-helper-evidence.json
+          name: backup-python-${{ matrix.runner_os }}-${{ matrix.runner_arch }}-py${{ matrix.python }}
+          path: ${{ runner.temp }}/backup-python-evidence.json
           if-no-files-found: error

@@ -1,33 +1,36 @@
-"""Distribution and offline runtime contracts for the backup age helper."""
+"""Distribution and offline runtime contracts for the Python age worker."""
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-import platform
-from pathlib import Path
 import shutil
 import subprocess
-import struct
 import sys
+import sysconfig
 import tarfile
 import venv
 import zipfile
+from email.parser import BytesParser
+from pathlib import Path
+from threading import Event
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TARGETS = {
-    ("darwin", "arm64"),
-    ("darwin", "amd64"),
-    ("linux", "amd64"),
-    ("linux", "arm64"),
-    ("windows", "amd64"),
-}
+WORKER_PATH = "tldw_chatbook/Backup_Recovery/age_worker.py"
+FIXED_CIPHERTEXT = REPO_ROOT / "Tests/Backup_Recovery/fixtures/age_v1/official.age"
+FIXED_PASSWORD = b"interop-synthetic-password"
+FIXED_PLAINTEXT = bytes(range(256)) * 2048
+RETIRED_MEMBERS = (
+    "Packaging/backup_age/main.go",
+    "tldw_chatbook/Backup_Recovery/helper_manifest.json",
+    "tldw_chatbook/Backup_Recovery/_age/backup-age",
+)
 
 
 def _copy_build_source(destination: Path) -> None:
+    """Copy only the inputs used for an isolated package build."""
+
     ignored = shutil.ignore_patterns(
         "__pycache__", "*.pyc", "*.pyo", ".DS_Store", "build", "dist", "*.egg-info"
     )
@@ -45,13 +48,13 @@ def _copy_build_source(destination: Path) -> None:
         shutil.copy2(REPO_ROOT / name, destination / name)
 
 
-def _build_wheel(source: Path, output: Path, *, target: str | None) -> Path:
-    environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    if target is None:
-        environment.pop("TLDW_BACKUP_HELPER_TARGET", None)
-    else:
-        environment["TLDW_BACKUP_HELPER_TARGET"] = target
-    completed = subprocess.run(
+def _build_environment() -> dict[str, str]:
+    return {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+
+
+def _build_wheel(source: Path, output: Path) -> Path:
+    # The current interpreter and complete argument list are fixed by the test.
+    completed = subprocess.run(  # nosec B603
         [
             sys.executable,
             "-m",
@@ -62,10 +65,11 @@ def _build_wheel(source: Path, output: Path, *, target: str | None) -> Path:
             str(output),
         ],
         cwd=source,
-        env=environment,
+        env=_build_environment(),
         capture_output=True,
         text=True,
         timeout=300,
+        check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     wheels = tuple(output.glob("*.whl"))
@@ -74,7 +78,8 @@ def _build_wheel(source: Path, output: Path, *, target: str | None) -> Path:
 
 
 def _build_sdist(source: Path, output: Path) -> Path:
-    completed = subprocess.run(
+    # The current interpreter and complete argument list are fixed by the test.
+    completed = subprocess.run(  # nosec B603
         [
             sys.executable,
             "-m",
@@ -85,10 +90,11 @@ def _build_sdist(source: Path, output: Path) -> Path:
             str(output),
         ],
         cwd=source,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        env=_build_environment(),
         capture_output=True,
         text=True,
         timeout=300,
+        check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     sdists = tuple(output.glob("*.tar.gz"))
@@ -96,34 +102,102 @@ def _build_sdist(source: Path, output: Path) -> Path:
     return sdists[0]
 
 
+@pytest.fixture(scope="module")
+def built_artifacts(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, Path]:
+    root = tmp_path_factory.mktemp("python-backup-worker-artifacts")
+    source = root / "source"
+    source.mkdir()
+    _copy_build_source(source)
+    wheel = _build_wheel(source, root / "wheel")
+    sdist = _build_sdist(source, root / "sdist")
+    return wheel, sdist
+
+
+def _uv() -> Path:
+    name = "uv.exe" if os.name == "nt" else "uv"
+    candidates = (
+        Path(sysconfig.get_path("scripts")) / name,
+        Path(sys.executable).with_name(name),
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise AssertionError(
+        "uv must be installed in the current interpreter scripts directory; "
+        f"checked: {[str(candidate) for candidate in candidates]}"
+    )
+
+
+def test_uv_resolves_current_interpreter_scripts_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows setup-python installs uv under Scripts beside the interpreter root."""
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    uv = scripts / ("uv.exe" if os.name == "nt" else "uv")
+    uv.touch()
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(sysconfig, "get_path", lambda name: str(scripts))
+
+    assert _uv() == uv
+
+
+def _uv_environment(state: Path) -> dict[str, str]:
+    for name in ("home", "config", "data", "cache", "state", "tmp"):
+        (state / name).mkdir(parents=True, exist_ok=True)
+    environment = {
+        **os.environ,
+        "HOME": str(state / "home"),
+        "USERPROFILE": str(state / "home"),
+        "XDG_CACHE_HOME": str(state / "cache"),
+        "XDG_CONFIG_HOME": str(state / "config"),
+        "XDG_DATA_HOME": str(state / "data"),
+        "XDG_STATE_HOME": str(state / "state"),
+        "TMPDIR": str(state / "tmp"),
+        "TEMP": str(state / "tmp"),
+        "TMP": str(state / "tmp"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+    }
+    if "UV_CACHE_DIR" in os.environ:
+        environment["UV_CACHE_DIR"] = os.environ["UV_CACHE_DIR"]
+    return environment
+
+
 def _isolated_python(root: Path) -> tuple[Path, Path]:
     venv.EnvBuilder(symlinks=True, with_pip=False).create(root)
     scripts = root / ("Scripts" if os.name == "nt" else "bin")
     python = scripts / ("python.exe" if os.name == "nt" else "python")
-    uv = Path(sys.executable).with_name("uv.exe" if os.name == "nt" else "uv")
-    subprocess.run(
+    # uv is resolved beside the selected test interpreter, never through PATH.
+    completed = subprocess.run(  # nosec B603
         [
-            str(uv),
+            str(_uv()),
             "pip",
             "install",
             "--python",
             str(python),
             "--offline",
-            "setuptools",
+            "setuptools>=77.0",
             "wheel",
             "pydantic>=2.4,<3",
             "loguru",
             "psutil",
+            "pycryptodomex",
         ],
-        check=True,
+        env=_uv_environment(root.parent / "installer-state"),
         capture_output=True,
+        text=True,
         timeout=120,
+        check=False,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     return python, scripts
 
 
 def _isolated_runtime_environment(scripts: Path, state: Path) -> dict[str, str]:
-    for name in ("home", "config", "data", "tmp"):
+    for name in ("home", "config", "data", "cache", "state", "tmp"):
         (state / name).mkdir(parents=True, exist_ok=True)
     environment = {
         "HOME": str(state / "home"),
@@ -131,442 +205,60 @@ def _isolated_runtime_environment(scripts: Path, state: Path) -> dict[str, str]:
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONNOUSERSITE": "1",
         "TMPDIR": str(state / "tmp"),
+        "XDG_CACHE_HOME": str(state / "cache"),
         "XDG_CONFIG_HOME": str(state / "config"),
         "XDG_DATA_HOME": str(state / "data"),
+        "XDG_STATE_HOME": str(state / "state"),
     }
     if "SYSTEMROOT" in os.environ:
         environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
     return environment
 
 
-@pytest.fixture(scope="module")
-def built_artifacts(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[Path, Path, Path]:
-    root = tmp_path_factory.mktemp("backup-helper-wheels")
-    source = root / "source"
-    source.mkdir()
-    _copy_build_source(source)
-    pure = _build_wheel(source, root / "pure", target=None)
-    goos, goarch = _native_tuple()
-    native = _build_wheel(source, root / "native", target=f"{goos}/{goarch}")
-    sdist = _build_sdist(source, root / "sdist")
-    return pure, native, sdist
-
-
-def _native_tuple() -> tuple[str, str]:
-    return (
-        {"Darwin": "darwin", "Linux": "linux", "Windows": "windows"}[platform.system()],
-        {
-            "aarch64": "arm64",
-            "arm64": "arm64",
-            "x86_64": "amd64",
-            "AMD64": "amd64",
-        }[platform.machine()],
-    )
-
-
-@pytest.fixture(scope="module")
-def native_helper(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    from Packaging.backup_age.build_helper import build_helper
-
-    goos, goarch = _native_tuple()
-    root = tmp_path_factory.mktemp("native-backup-helper")
-    return build_helper(
-        goos,
-        goarch,
-        root / ("backup-age.exe" if goos == "windows" else "backup-age"),
-    )
-
-
-def _write_delivery_manifest(root: Path, binary: Path, *, digest: str) -> None:
-    goos, goarch = _native_tuple()
-    (root / "helper_manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "helpers": [
-                    {
-                        "age_version": "v1.3.2",
-                        "arch": goarch,
-                        "helper_version": "1",
-                        "os": goos,
-                        "protocol": 1,
-                        "resource": (
-                            "_age/backup-age.exe"
-                            if goos == "windows"
-                            else "_age/backup-age"
-                        ),
-                        "sha256": digest,
-                        "python_versions": ["3.12"],
-                        "status": "qualified",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
-def test_checkout_without_helper_is_unavailable(monkeypatch, tmp_path):
-    from tldw_chatbook.Backup_Recovery import crypto
-
-    monkeypatch.setattr(crypto, "_package_resource_root", lambda: tmp_path)
-    available, reason = crypto.helper_capability()
-    assert available is False
-    assert reason == "helper_unavailable"
-
-
-def test_source_checkout_declares_every_target_unavailable() -> None:
-    """An editable checkout cannot advertise unbuilt or merely cross-built helpers."""
-    manifest = json.loads(
-        (
-            REPO_ROOT / "tldw_chatbook" / "Backup_Recovery" / "helper_manifest.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert manifest["schema_version"] == 1
-    assert {(entry["os"], entry["arch"]) for entry in manifest["helpers"]} == TARGETS
-    assert {entry["status"] for entry in manifest["helpers"]} == {"unavailable"}
-    assert {entry["reason"] for entry in manifest["helpers"]} == {"not_qualified"}
-
-
-def test_native_wheel_is_platform_tagged_and_owns_one_helper(
-    built_artifacts: tuple[Path, Path, Path],
+def _install_artifact(
+    python: Path, artifact: Path, state: Path, *, editable: bool = False
 ) -> None:
-    pure, native, _ = built_artifacts
-    goos, _ = _native_tuple()
-    assert pure.name.endswith("-py3-none-any.whl")
-    assert not native.name.endswith("-py3-none-any.whl")
-
-    binary_name = "backup-age.exe" if goos == "windows" else "backup-age"
-    resource = f"tldw_chatbook/Backup_Recovery/_age/{binary_name}"
-    with zipfile.ZipFile(pure) as archive:
-        assert resource not in archive.namelist()
-    with zipfile.ZipFile(native) as archive:
-        names = archive.namelist()
-        assert names.count(resource) == 1
-        manifest = json.loads(
-            archive.read("tldw_chatbook/Backup_Recovery/helper_manifest.json")
-        )
-        qualified = [
-            entry for entry in manifest["helpers"] if entry["status"] == "qualified"
-        ]
-        assert len(qualified) == 1
-        assert qualified[0]["python_versions"] == ["3.12"]
-        assert (
-            qualified[0]["sha256"] == hashlib.sha256(archive.read(resource)).hexdigest()
-        )
-        resource_root = "tldw_chatbook/Backup_Recovery/_age"
-        for notice in (
-            "LICENSE.age.txt",
-            "LICENSE.go.txt",
-            "LICENSE.hpke.txt",
-            "LICENSE.x-crypto.txt",
-            "PATENTS.go.txt",
-            "THIRD_PARTY_NOTICES.txt",
-        ):
-            resource = f"{resource_root}/{notice}"
-            assert resource in names
-            assert (
-                archive.read(resource)
-                == (REPO_ROOT / "Packaging/backup_age" / notice).read_bytes()
-            )
-
-
-def test_pure_wheel_excludes_a_stale_editable_helper(
-    native_helper: Path, tmp_path: Path
-) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    _copy_build_source(source)
-    resource_root = source / "tldw_chatbook/Backup_Recovery/_age"
-    resource_root.mkdir()
-    stale = resource_root / native_helper.name
-    stale.write_bytes(native_helper.read_bytes())
-    stale.chmod(0o755)
-
-    wheel = _build_wheel(source, tmp_path / "dist", target=None)
-
-    with zipfile.ZipFile(wheel) as archive:
-        assert not any(
-            name.startswith("tldw_chatbook/Backup_Recovery/_age/backup-age")
-            for name in archive.namelist()
-        )
-
-
-def test_sdist_contains_the_complete_pinned_helper_build_inputs(
-    built_artifacts: tuple[Path, Path, Path],
-) -> None:
-    _, _, sdist = built_artifacts
-    with tarfile.open(sdist, "r:gz") as archive:
-        names = {
-            member.name.split("/", 1)[1]
-            for member in archive.getmembers()
-            if member.isfile() and "/" in member.name
-        }
-    assert {
-        "Packaging/backup_age/LICENSE.age.txt",
-        "Packaging/backup_age/LICENSE.go.txt",
-        "Packaging/backup_age/LICENSE.hpke.txt",
-        "Packaging/backup_age/LICENSE.x-crypto.txt",
-        "Packaging/backup_age/PATENTS.go.txt",
-        "Packaging/backup_age/README.md",
-        "Packaging/backup_age/THIRD_PARTY_NOTICES.txt",
-        "Packaging/backup_age/build_helper.py",
-        "Packaging/backup_age/go.mod",
-        "Packaging/backup_age/go.sum",
-        "Packaging/backup_age/main.go",
-        "Packaging/backup_age/main_test.go",
-        "Packaging/backup_age/qualification.json",
-        "Packaging/backup_age/wheel_commands.py",
-        "tldw_chatbook/Backup_Recovery/helper_manifest.json",
-    } <= names
-    assert not any(name.endswith(("/backup-age", "/backup-age.exe")) for name in names)
-
-
-def test_sdist_installs_offline_and_keeps_helper_unavailable(
-    built_artifacts: tuple[Path, Path, Path], tmp_path: Path
-) -> None:
-    _, _, sdist = built_artifacts
-    python, scripts = _isolated_python(tmp_path / "environment")
-    uv = Path(sys.executable).with_name("uv.exe" if os.name == "nt" else "uv")
-    subprocess.run(
-        [
-            str(uv),
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "--offline",
-            "--no-build-isolation",
-            "--no-deps",
-            str(sdist),
-        ],
-        check=True,
-        capture_output=True,
-        timeout=300,
-    )
-    state = tmp_path / "state"
-    environment = _isolated_runtime_environment(scripts, state)
-    completed = subprocess.run(
-        [
-            str(python),
-            "-c",
-            "from pathlib import Path; import sys; "
-            "from tldw_chatbook.Backup_Recovery import crypto; "
-            "assert Path(crypto.__file__).resolve().is_relative_to(Path(sys.prefix)); "
-            "assert crypto.helper_capability() == (False, 'helper_unavailable'); "
-            "assert not crypto._package_resource_root().exists()",
-        ],
-        cwd=state,
-        env=environment,
+    command = [
+        str(_uv()),
+        "pip",
+        "install",
+        "--python",
+        str(python),
+        "--offline",
+        "--no-build-isolation",
+        "--no-deps",
+    ]
+    if editable:
+        command.append("--editable")
+    command.append(str(artifact))
+    # uv is resolved beside the selected test interpreter, never through PATH.
+    completed = subprocess.run(  # nosec B603
+        command,
+        env=_uv_environment(state),
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=300,
+        check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_editable_install_runs_documented_explicit_contributor_build(
-    tmp_path: Path,
+def _runtime_probe(
+    python: Path,
+    scripts: Path,
+    state: Path,
+    *,
+    expected_origin: Path,
 ) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    _copy_build_source(source)
-    python, scripts = _isolated_python(tmp_path / "environment")
-    uv = Path(sys.executable).with_name("uv.exe" if os.name == "nt" else "uv")
-    subprocess.run(
-        [
-            str(uv),
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "--offline",
-            "--no-build-isolation",
-            "--no-deps",
-            "--editable",
-            str(source),
-        ],
-        check=True,
-        capture_output=True,
-        timeout=300,
-    )
-    runtime_state = tmp_path / "runtime-state"
-    runtime_environment = _isolated_runtime_environment(scripts, runtime_state)
-    unavailable = subprocess.run(
-        [
-            str(python),
-            "-c",
-            "from pathlib import Path; "
-            "from tldw_chatbook.Backup_Recovery import crypto; "
-            f"assert Path(crypto.__file__).resolve().is_relative_to(Path({str(source)!r})); "
-            "assert crypto.helper_capability() == (False, 'helper_unavailable')",
-        ],
-        cwd=runtime_state,
-        env=runtime_environment,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert unavailable.returncode == 0, unavailable.stdout + unavailable.stderr
-
-    goos, goarch = _native_tuple()
-    contributor_helper = tmp_path / (
-        "contributor-backup-age.exe" if goos == "windows" else "contributor-backup-age"
-    )
-    build_environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key
-        in {
-            "GOCACHE",
-            "GOMODCACHE",
-            "GOPATH",
-            "SYSTEMROOT",
-            "TMPDIR",
-        }
-    }
-    build_environment.update(
-        {
-            "GOTOOLCHAIN": "local",
-            "PATH": os.pathsep.join(("/opt/homebrew/bin", "/usr/bin", "/bin")),
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONNOUSERSITE": "1",
-        }
-    )
-    build = subprocess.run(
-        [
-            str(python),
-            "-c",
-            "from pathlib import Path; "
-            "from Packaging.backup_age.build_helper import build_helper; "
-            f"build_helper({goos!r}, {goarch!r}, Path({str(contributor_helper)!r}))",
-        ],
-        cwd=source,
-        env=build_environment,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    assert build.returncode == 0, build.stdout + build.stderr
-    info = subprocess.run(
-        [str(contributor_helper), "info"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert json.loads(info.stdout)["protocol"] == 1
-    assert not (source / "tldw_chatbook/Backup_Recovery/_age").exists()
-
-
-def test_distribution_checker_accepts_pure_and_native_helper_contracts(
-    built_artifacts: tuple[Path, Path, Path], tmp_path: Path
-) -> None:
-    from Packaging.check_manifest import check_distribution
-
-    pure, native, sdist = built_artifacts
-    for wheel in (pure, native):
-        dist = tmp_path / wheel.stem
-        dist.mkdir()
-        shutil.copy2(sdist, dist / sdist.name)
-        shutil.copy2(wheel, dist / wheel.name)
-        assert check_distribution(dist)
-
-
-def _helper_transform(binary: Path, mode: str, payload: bytes) -> bytes:
-    password = b"packaged-upgrade-fixture"
-    completed = subprocess.run(
-        [str(binary), mode],
-        input=struct.pack(">I", len(password)) + password + payload,
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-    assert completed.stderr == b""
-    return completed.stdout
-
-
-def test_installed_native_wheel_runs_offline_without_go_and_interoperates(
-    built_artifacts: tuple[Path, Path, Path],
-    native_helper: Path,
-    tmp_path: Path,
-) -> None:
-    _, native_wheel, _ = built_artifacts
-    environment_root = tmp_path / "environment"
-    venv.EnvBuilder(symlinks=True, with_pip=False).create(environment_root)
-    scripts = environment_root / ("Scripts" if os.name == "nt" else "bin")
-    python = scripts / ("python.exe" if os.name == "nt" else "python")
-    uv = Path(sys.executable).with_name("uv.exe" if os.name == "nt" else "uv")
-    subprocess.run(
-        [
-            str(uv),
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "--offline",
-            "pydantic>=2.4,<3",
-            "loguru",
-            "psutil",
-        ],
-        check=True,
-        capture_output=True,
-        timeout=120,
-    )
-    subprocess.run(
-        [
-            str(uv),
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "--offline",
-            "--no-index",
-            "--no-deps",
-            str(native_wheel),
-        ],
-        check=True,
-        capture_output=True,
-        timeout=120,
-    )
-    state = tmp_path / "state"
-    for name in ("home", "config", "data", "tmp"):
-        (state / name).mkdir(parents=True)
-    environment = {
-        "HOME": str(state / "home"),
-        "PATH": str(scripts),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONNOUSERSITE": "1",
-        "TMPDIR": str(state / "tmp"),
-        "XDG_CONFIG_HOME": str(state / "config"),
-        "XDG_DATA_HOME": str(state / "data"),
-    }
-    if "SYSTEMROOT" in os.environ:
-        environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
-    assert platform.system() == "Darwin"
-    sandbox = Path("/usr/bin/sandbox-exec")
-    assert sandbox.is_file()
-    probe = subprocess.run(
-        [
-            str(sandbox),
-            "-p",
-            "(version 1)(allow default)(deny network*)",
-            str(python),
-            "-c",
-            """
-import errno
+    state.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(FIXED_CIPHERTEXT, state / "fixed.age")
+    script = r"""
 import json
 from pathlib import Path
 import shutil
 import socket
+import sys
 from threading import Event
-
-network_probe = socket.socket()
-network_probe.settimeout(1)
-assert network_probe.connect_ex(("1.1.1.1", 53)) in {errno.EACCES, errno.EPERM}
-network_probe.close()
 
 class OfflineSocket(socket.socket):
     def connect(self, *args, **kwargs):
@@ -579,189 +271,174 @@ socket.create_connection = lambda *args, **kwargs: (_ for _ in ()).throw(
 
 from tldw_chatbook.Backup_Recovery import crypto
 
-assert Path(crypto.__file__).resolve().is_relative_to(Path(__import__('sys').prefix))
+origin = Path(sys.argv[1]).resolve()
+assert Path(crypto.__file__).resolve().is_relative_to(origin)
+worker = Path(crypto.__file__).with_name("age_worker.py")
+assert worker.is_file()
+assert Path(crypto._package_resource_root()).resolve() == worker.parent.resolve()
 assert shutil.which("go") is None
 assert crypto.helper_capability() == (True, "available")
-source = Path("plain.bin")
-encrypted = Path("encrypted.age")
-decrypted = Path("decrypted.bin")
-source.write_bytes(b"installed wheel offline round trip" * 4096)
-crypto.transform(source, encrypted, password=b"wheel-passphrase", decrypt=False, cancel=Event())
-crypto.transform(encrypted, decrypted, password=b"wheel-passphrase", decrypt=True, cancel=Event())
-assert decrypted.read_bytes() == source.read_bytes()
 
-root = crypto._package_resource_root()
-binary = root / ("backup-age.exe" if __import__('os').name == "nt" else "backup-age")
-manifest_path = root.parent / "helper_manifest.json"
-manifest_bytes = manifest_path.read_bytes()
-binary_bytes = binary.read_bytes()
-binary.write_bytes(binary_bytes + b"tampered")
-assert crypto.helper_capability() == (False, "helper_integrity_mismatch")
-binary.write_bytes(binary_bytes)
-binary.chmod(0o755)
-manifest = json.loads(manifest_bytes)
-manifest["schema_version"] = 2
-manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-assert crypto.helper_capability() == (False, "helper_unavailable")
-manifest_path.write_bytes(manifest_bytes)
-binary.unlink()
-assert crypto.helper_capability() == (False, "helper_unavailable")
-print(json.dumps({"encrypted": str(encrypted), "manifest": str(manifest_path)}))
-""",
-        ],
+plain = Path("plain.bin")
+encrypted = Path("encrypted.age")
+restored = Path("restored.bin")
+plain.write_bytes(b"packaged Python worker round trip" * 4096)
+crypto.transform(plain, encrypted, password=b"packaging-round-trip", decrypt=False, cancel=Event())
+crypto.transform(encrypted, restored, password=b"packaging-round-trip", decrypt=True, cancel=Event())
+assert restored.read_bytes() == plain.read_bytes()
+
+fixed = Path("fixed-restored.bin")
+crypto.transform(Path("fixed.age"), fixed, password=b"interop-synthetic-password", decrypt=True, cancel=Event())
+assert fixed.read_bytes() == bytes(range(256)) * 2048
+print(json.dumps({"crypto": str(Path(crypto.__file__).resolve()), "worker": str(worker.resolve())}))
+"""
+    # The isolated interpreter is an absolute path owned by this test environment.
+    completed = subprocess.run(  # nosec B603
+        [str(python), "-c", script, str(expected_origin)],
         cwd=state,
-        env=environment,
+        env=_isolated_runtime_environment(scripts, state),
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=180,
+        check=False,
     )
-    assert probe.returncode == 0, probe.stdout + probe.stderr
-    assert probe.stderr == ""
-
-    goos, _ = _native_tuple()
-    binary_name = "backup-age.exe" if goos == "windows" else "backup-age"
-    installed_manifest = Path(json.loads(probe.stdout)["manifest"])
-    installed_helper = installed_manifest.parent / "_age" / binary_name
-    # Restore after the destructive missing-resource probe before interoperability.
-    installed_helper.write_bytes(native_helper.read_bytes())
-    installed_helper.chmod(0o755)
-    packaged_ciphertext = _helper_transform(installed_helper, "encrypt", b"packaged")
-    assert (
-        _helper_transform(native_helper, "decrypt", packaged_ciphertext) == b"packaged"
-    )
-    source_ciphertext = _helper_transform(native_helper, "encrypt", b"source-qualified")
-    assert (
-        _helper_transform(installed_helper, "decrypt", source_ciphertext)
-        == b"source-qualified"
-    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert completed.stderr == ""
 
 
-def test_build_helper_rejects_an_unowned_target(tmp_path: Path) -> None:
-    """A typo or new tuple cannot silently widen the release matrix."""
-    from Packaging.backup_age.build_helper import build_helper
+def _sdist_members(sdist: Path) -> dict[str, bytes]:
+    with tarfile.open(sdist, "r:gz") as archive:
+        return {
+            member.name.split("/", 1)[1]: archive.extractfile(member).read()
+            for member in archive.getmembers()
+            if member.isfile() and "/" in member.name
+        }
 
-    destination = tmp_path / "helper"
-    with pytest.raises(ValueError, match="unsupported backup helper target"):
-        build_helper("freebsd", "amd64", destination)
-    assert not destination.exists()
 
+def test_worker_is_in_wheel_and_sdist(built_artifacts: tuple[Path, Path]) -> None:
+    """Removing or transforming the worker bytes breaks package integrity."""
 
-def test_build_helper_produces_the_pinned_native_protocol(tmp_path: Path) -> None:
-    """Dropping the real build, target flags, or pinned protocol breaks this test."""
-    from Packaging.backup_age.build_helper import build_helper
-
-    goos, goarch = _native_tuple()
-    executable = build_helper(
-        goos,
-        goarch,
-        tmp_path / ("backup-age.exe" if goos == "windows" else "backup-age"),
+    wheel, sdist = built_artifacts
+    source_worker = (REPO_ROOT / WORKER_PATH).read_bytes()
+    assert wheel.name.endswith("-py3-none-any.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        names = set(archive.namelist())
+        assert archive.read(WORKER_PATH) == source_worker
+        wheel_metadata_name = next(
+            name for name in names if name.endswith(".dist-info/WHEEL")
+        )
+        metadata_name = next(
+            name for name in names if name.endswith(".dist-info/METADATA")
+        )
+        wheel_metadata = BytesParser().parsebytes(archive.read(wheel_metadata_name))
+        metadata = BytesParser().parsebytes(archive.read(metadata_name))
+    assert wheel_metadata["Root-Is-Purelib"] == "true"
+    assert any(
+        requirement.lower().startswith("pycryptodomex")
+        for requirement in metadata.get_all("Requires-Dist", [])
     )
 
-    completed = subprocess.run(
-        [str(executable), "info"],
-        check=True,
-        capture_output=True,
-        timeout=10,
-    )
-    assert json.loads(completed.stdout) == {
-        "age_version": "v1.3.2",
-        "arch": goarch,
-        "helper_version": "1",
-        "os": goos,
-        "protocol": 1,
-    }
-    assert completed.stderr == b""
+    sdist_members = _sdist_members(sdist)
+    assert sdist_members[WORKER_PATH] == source_worker
+    for retired in RETIRED_MEMBERS:
+        assert retired not in names
+        assert retired not in sdist_members
+    assert not any(name.startswith("Packaging/backup_age/") for name in names)
+    assert not any(name.startswith("Packaging/backup_age/") for name in sdist_members)
 
 
-def test_helper_capability_reports_a_packaged_digest_mismatch(
-    monkeypatch: pytest.MonkeyPatch,
+def test_source_checkout_runs_python_worker_and_decrypts_fixed_fixture(
     tmp_path: Path,
-    native_helper: Path,
-) -> None:
-    """Replacing the installed resource cannot collapse into generic absence."""
-    from tldw_chatbook.Backup_Recovery import crypto
-
-    resource_root = tmp_path / "_age"
-    resource_root.mkdir()
-    installed = resource_root / native_helper.name
-    installed.write_bytes(native_helper.read_bytes())
-    installed.chmod(0o755)
-    _write_delivery_manifest(tmp_path, installed, digest="0" * 64)
-    monkeypatch.setattr(crypto, "_package_resource_root", lambda: resource_root)
-
-    assert crypto.helper_capability() == (False, "helper_integrity_mismatch")
-
-
-def test_helper_capability_accepts_the_installed_resource_contract(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    native_helper: Path,
 ) -> None:
     from tldw_chatbook.Backup_Recovery import crypto
-
-    resource_root = tmp_path / "_age"
-    resource_root.mkdir()
-    installed = resource_root / native_helper.name
-    installed.write_bytes(native_helper.read_bytes())
-    installed.chmod(0o755)
-    _write_delivery_manifest(
-        tmp_path,
-        installed,
-        digest=hashlib.sha256(installed.read_bytes()).hexdigest(),
-    )
-    monkeypatch.setattr(crypto, "_package_resource_root", lambda: resource_root)
 
     assert crypto.helper_capability() == (True, "available")
+    source = tmp_path / "plain.bin"
+    encrypted = tmp_path / "encrypted.age"
+    restored = tmp_path / "restored.bin"
+    source.write_bytes(b"source Python worker round trip" * 4096)
+    crypto.transform(
+        source, encrypted, password=b"source-round-trip", decrypt=False, cancel=Event()
+    )
+    crypto.transform(
+        encrypted, restored, password=b"source-round-trip", decrypt=True, cancel=Event()
+    )
+    assert restored.read_bytes() == source.read_bytes()
+    fixed = tmp_path / "fixed.bin"
+    crypto.transform(
+        FIXED_CIPHERTEXT, fixed, password=FIXED_PASSWORD, decrypt=True, cancel=Event()
+    )
+    assert fixed.read_bytes() == FIXED_PLAINTEXT
 
 
-def test_helper_capability_rejects_an_unqualified_python_cell(
-    monkeypatch: pytest.MonkeyPatch,
+def test_editable_install_runs_offline_without_go_and_decrypts_fixed_fixture(
     tmp_path: Path,
-    native_helper: Path,
 ) -> None:
-    from tldw_chatbook.Backup_Recovery import crypto
-
-    resource_root = tmp_path / "_age"
-    resource_root.mkdir()
-    installed = resource_root / native_helper.name
-    installed.write_bytes(native_helper.read_bytes())
-    installed.chmod(0o755)
-    _write_delivery_manifest(
-        tmp_path,
-        installed,
-        digest=hashlib.sha256(installed.read_bytes()).hexdigest(),
-    )
-    monkeypatch.setattr(
-        crypto.platform, "python_version_tuple", lambda: ("3", "11", "9")
-    )
-    monkeypatch.setattr(crypto, "_package_resource_root", lambda: resource_root)
-
-    assert crypto.helper_capability() == (False, "helper_unavailable")
+    source = tmp_path / "source"
+    source.mkdir()
+    _copy_build_source(source)
+    python, scripts = _isolated_python(tmp_path / "environment")
+    _install_artifact(python, source, tmp_path / "installer-state", editable=True)
+    _runtime_probe(python, scripts, tmp_path / "runtime", expected_origin=source)
 
 
-@pytest.mark.parametrize("schema_version", [2, True], ids=["unsupported", "boolean"])
-def test_helper_capability_rejects_a_malformed_delivery_version(
-    monkeypatch: pytest.MonkeyPatch,
+def test_sdist_install_runs_offline_without_go_and_decrypts_fixed_fixture(
+    built_artifacts: tuple[Path, Path],
     tmp_path: Path,
-    native_helper: Path,
-    schema_version: object,
 ) -> None:
-    from tldw_chatbook.Backup_Recovery import crypto
-
-    resource_root = tmp_path / "_age"
-    resource_root.mkdir()
-    installed = resource_root / native_helper.name
-    installed.write_bytes(native_helper.read_bytes())
-    installed.chmod(0o755)
-    _write_delivery_manifest(
-        tmp_path,
-        installed,
-        digest=hashlib.sha256(installed.read_bytes()).hexdigest(),
+    _, sdist = built_artifacts
+    python, scripts = _isolated_python(tmp_path / "environment")
+    _install_artifact(python, sdist, tmp_path / "installer-state")
+    _runtime_probe(
+        python, scripts, tmp_path / "runtime", expected_origin=python.parent.parent
     )
-    manifest_path = tmp_path / "helper_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["schema_version"] = schema_version
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setattr(crypto, "_package_resource_root", lambda: resource_root)
 
-    assert crypto.helper_capability() == (False, "helper_unavailable")
+
+def test_installed_wheel_runs_offline_without_go_and_decrypts_fixed_fixture(
+    built_artifacts: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    wheel, _ = built_artifacts
+    python, scripts = _isolated_python(tmp_path / "environment")
+    _install_artifact(python, wheel, tmp_path / "installer-state")
+    _runtime_probe(
+        python, scripts, tmp_path / "runtime", expected_origin=python.parent.parent
+    )
+
+
+def test_distribution_checker_accepts_python_worker_contract(
+    built_artifacts: tuple[Path, Path], tmp_path: Path
+) -> None:
+    from Packaging.check_manifest import check_distribution
+
+    wheel, sdist = built_artifacts
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    shutil.copy2(wheel, dist / wheel.name)
+    shutil.copy2(sdist, dist / sdist.name)
+    assert check_distribution(dist)
+
+
+@pytest.mark.parametrize("retired_member", RETIRED_MEMBERS)
+def test_distribution_checker_rejects_retired_go_members(
+    built_artifacts: tuple[Path, Path], tmp_path: Path, retired_member: str
+) -> None:
+    from Packaging.check_manifest import check_distribution
+
+    wheel, sdist = built_artifacts
+    dist = tmp_path / retired_member.replace("/", "-")
+    dist.mkdir()
+    mutated_wheel = dist / wheel.name
+    shutil.copy2(wheel, mutated_wheel)
+    shutil.copy2(sdist, dist / sdist.name)
+    with zipfile.ZipFile(mutated_wheel, "a") as archive:
+        archive.writestr(retired_member, b"retired")
+    assert check_distribution(dist) is False
+
+
+def test_distribution_contract_requires_python_worker() -> None:
+    """Dropping the worker from either application artifact breaks delivery."""
+    from Packaging import check_manifest
+
+    assert WORKER_PATH in check_manifest.REQUIRED_SDIST_PATHS
+    assert WORKER_PATH in check_manifest.REQUIRED_WHEEL_PATHS
