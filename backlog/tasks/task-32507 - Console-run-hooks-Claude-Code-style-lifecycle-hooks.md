@@ -4,7 +4,7 @@ title: Console run hooks (Claude Code-style lifecycle hooks)
 status: Done
 assignee: []
 created_date: '2026-09-12 15:39'
-updated_date: '2026-09-12 16:35'
+updated_date: '2026-09-12 16:41'
 labels: []
 dependencies: []
 ---
@@ -42,6 +42,10 @@ Reason: repair the existing hook contract on current dev; amend ADR-148 for the 
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented all six run-hook events with restriction-only per-call guards, bounded subprocess capture and notification/approval allocation, synchronized shutdown ownership, durable prompt context/recovery, and exactly-once approval/terminal lifecycle coverage. Rebased onto dev 71313cccd8; retained dev appearance implementation/tests. ADR required: no new ADR; amended backlog/decisions/148-console-run-hooks.md. Full dispositions: Docs/superpowers/reviews/2026-09-12-pr-2645-run-hooks.md. Verification: 1061 targeted tests passed with 21 exact-dev baseline failures explicitly excluded; final summary repair passed 131 focused tests. New modules/tests Ruff and formatter, changed-production undefined-name checks and whitespace checks passed. All derived artifacts reproduce including pinned Mermaid assets. Reviewed 28 engine plus six integration diagnostic statements: bounded nonblocking output is intentional under ADR148; metadata excludes raw argv/config/exception content and no sink topology changed. Renumbered colliding PR task IDs to32506/32507 with provenance. Added the fail-closed scheduler-control testing lesson. Independent engine and integration reviews found no remaining blockers. GitHub checks remain the merge gate.
+
+GitHub Perf Guard found one eager hook module beyond ADR097 startup budget (974/973). Reopen to defer hook helpers until event use, verify real UI-ready census and hook regressions, then publish and wait for all CI checks.
+
+CI startup regression fixed under existing ADR097 by deferring controller hook imports to lifecycle use; added run_hooks to the real UI-ready absence assertion without changing the budget. Real startup census plus engine/controller/config regressions:111 passed. Independent diff review found no behavior change. Latest dev ea406f4d41 adds only branch-protection documentation.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

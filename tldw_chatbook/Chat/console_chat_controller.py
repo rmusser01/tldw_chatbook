@@ -412,7 +412,6 @@ from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 # (annotation-only `PersonaToolPolicy` under TYPE_CHECKING; the parsing and
 # floor helpers are imported inside their per-run use sites) so the module
 # stays out of the UI-ready module census.
-from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments, truncate_hook_text
 from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
     TodoChangeCallback,
@@ -9579,6 +9578,8 @@ class ConsoleChatController:
         hook_context = ""
         if origin is ConsoleSubmissionOrigin.MANUAL:
             try:
+                from tldw_chatbook.Agents.run_hooks import truncate_hook_text
+
                 hooks_engine = self._run_hooks_engine()
                 outcome = (
                     await hooks_engine.fire_async(
@@ -21353,6 +21354,8 @@ class ConsoleChatController:
         engine = self._run_hooks_engine()
         if engine is None:
             return
+        from tldw_chatbook.Agents.run_hooks import summarize_hook_arguments
+
         session_id = payload.get("session_id") or state.get("session_id")
         if kind == "approval":
             calls = [
