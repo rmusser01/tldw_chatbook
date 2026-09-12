@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -2155,3 +2156,43 @@ def test_mcp_stamp_keeps_answer_fact_with_run_scope_and_clear(
     service.kill_switch = False
     provider.apply_batch_decisions(RUN, {})
     assert provider.invoke("mcp__srv__run", {}).approval_decision is None
+
+
+@pytest.mark.parametrize("state", ["allow", "deny", "ask"])
+@pytest.mark.parametrize("none_stamp", [False, True])
+def test_none_stamp_preserves_fresh_gate_selection(running_loop, state, none_stamp):
+    """A stored raw None has the same absence semantics as no stamp."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    asked = []
+
+    def approve(pending):
+        asked.append(pending)
+        return {row.llm_name: "approve_once" for row in pending}
+
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop, approval_callback=approve
+    )
+    _compose(provider)
+    tool_id = "mcp__srv__run"
+    service.default_state = EffectiveToolState(state=state, origin="tool_override")
+    if none_stamp:
+        provider.apply_batch_decisions(RUN, {tool_id: None})
+    assert provider.stamped_decision(RUN, tool_id) is None
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is (state != "deny")
+    assert (
+        result.approval_decision
+        == {"allow": None, "deny": "denied", "ask": "approved"}[state]
+    )
+    assert len(asked) == (1 if state == "ask" else 0)
+    assert len(service.execute_calls) == (0 if state == "deny" else 1)
+    if state == "deny":
+        assert result.error == DENY_REFUSAL
+        assert result.outcome == "blocked"
+    else:
+        assert json.loads(result.content) == service.execute_result
+        assert result.outcome is None
