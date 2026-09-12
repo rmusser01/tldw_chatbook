@@ -6535,10 +6535,12 @@ class ToolsStep(SetupStep):
                 classes="setup-subtitle",
             )
             for entry in self._entries:
-                title, desc = self._TOOL_COPY.get(
-                    entry.tool_name,
-                    (entry.tool_name.replace("_", " ").capitalize(), ""),
-                )
+                # TASK-1501/task-32284: plain-language name and one-line
+                # description, read off the gate table itself -- the MCP
+                # hub's Tool gates pane renders the same two fields, so a
+                # new gateable built-in cannot ship copy to one surface
+                # and a blank row to the other.
+                title, desc = entry.title, entry.blurb
                 with Horizontal(classes="setup-tool-row"):
                     yield Switch(
                         value=gate_values.get(entry.gate_key, False),
@@ -6552,37 +6554,6 @@ class ToolsStep(SetupStep):
                             classes="setup-tool-desc",
                             markup=False,
                         )
-
-    # TASK-1501: plain-language names and one-line descriptions per built-in
-    # tool. The ⚠ marks tools that create or change data on disk — a static
-    # judgment mirroring each tool's risk_tags without importing the tool
-    # modules at compose time. An unknown (future) tool degrades to its
-    # capitalized name with no description rather than breaking the step.
-    _TOOL_COPY = {
-        "read_file": (
-            "Read file",
-            "Read a file you point the assistant at. Asks before running unless you approve a longer scope.",
-        ),
-        "list_directory": (
-            "List directory",
-            "Browse the contents of a folder. Asks before running unless you approve a longer scope.",
-        ),
-        "write_file": ("Write file", "⚠ Creates or overwrites files on disk."),
-        "create_note": ("Create note", "⚠ Adds new notes to your notebook."),
-        "update_note": ("Update note", "⚠ Edits your existing notes."),
-        "glob_files": (
-            "Find files",
-            "Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.",
-        ),
-        "grep_files": (
-            "Search in files",
-            "Search inside files for text. Asks before running unless you approve a longer scope.",
-        ),
-        "expand_document": (
-            "Expand document",
-            "Read the whole document behind a search result. Asks before running unless you approve a longer scope.",
-        ),
-    }
 
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")

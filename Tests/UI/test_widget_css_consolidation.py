@@ -1127,7 +1127,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
     ("Widgets/Chat_Widgets/chat_message_enhanced.py", "ChatMessageEnhanced", "DEFAULT_CSS"),
     ("Widgets/Chat_Widgets/chat_message.py", "ChatMessage", "DEFAULT_CSS"),
     ("Widgets/Chat_Widgets/chat_shell_bar.py", "ChatShellBar", "DEFAULT_CSS"),
-    ("Widgets/chunk_preview_modal.py", "ChunkPreviewModal", "DEFAULT_CSS"),
     ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeNode", "DEFAULT_CSS"),
     ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeView", "DEFAULT_CSS"),
     ("Widgets/confirmation_dialog.py", "ConfirmationDialog", "DEFAULT_CSS"),

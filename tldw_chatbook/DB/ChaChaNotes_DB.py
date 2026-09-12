@@ -12522,8 +12522,37 @@ UPDATE db_schema_version
         Returns:
             ``True`` when one non-deleted conversation row was updated; ``False``
             when the conversation is missing or deleted.
+
+        Raises:
+            InputError: The cursor would leave an unresolved dispatch owner off path.
         """
-        with self.transaction() as conn:
+        with self.transaction(immediate=True) as conn:
+            if conn.execute(
+                "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone() is None:
+                return False
+            # A view cursor is not dispatch authority. Never let a stale view
+            # strand the exact durable send which still owns this conversation.
+            stranded = conn.execute(
+                """WITH RECURSIVE target_path(id, parent_message_id) AS (
+                       SELECT id, parent_message_id FROM messages
+                        WHERE id = ? AND conversation_id = ? AND deleted = 0
+                       UNION
+                       SELECT m.id, m.parent_message_id FROM messages m
+                         JOIN target_path p ON m.id = p.parent_message_id
+                        WHERE m.conversation_id = ? AND m.deleted = 0
+                   )
+                   SELECT 1 FROM console_dispatch_checkpoints c
+                    WHERE c.conversation_id = ? AND NOT EXISTS (
+                        SELECT 1 FROM target_path p WHERE p.id = c.assistant_message_id
+                    ) LIMIT 1""",
+                (active_leaf_message_id, conversation_id, conversation_id, conversation_id),
+            ).fetchone()
+            if stranded is not None:
+                raise InputError(
+                    "Resolve pending dispatch before changing the conversation cursor."
+                )
             updated = conn.execute(
                 "UPDATE conversations "
                 "SET active_leaf_message_id = ?, "

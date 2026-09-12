@@ -1,0 +1,14 @@
+import pathlib,runpy,sys
+protected=[pathlib.Path('/home/ml-user/.config/tldw_cli'),pathlib.Path('/home/ml-user/.local/share/tldw_cli')]
+def audit(event,args):
+ if event in {'open','os.listdir','os.scandir'} and args and isinstance(args[0],(str,bytes)):
+  value=args[0].decode() if isinstance(args[0],bytes) else args[0]
+  if any(pathlib.Path(value).absolute().is_relative_to(p) for p in protected):raise PermissionError('Real profile access denied by ASR audit')
+sys.addaudithook(audit)
+for p in protected:
+ try:open(p/'tts-positive-control','rb')
+ except PermissionError:pass
+ else:raise AssertionError('Profile guard missing')
+print('PROFILE_GUARD_POSITIVE_CONTROL_PASSED',flush=True)
+script=sys.argv.pop(1);sys.argv[0]=script
+runpy.run_path(script,run_name='__main__')

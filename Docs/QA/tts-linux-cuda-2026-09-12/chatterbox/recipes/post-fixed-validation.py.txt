@@ -1,0 +1,11 @@
+from pathlib import Path
+import subprocess,json,time
+r=Path('/home/ml-user/tts-linux-cuda-20260912');results=[]
+commands=[('fixed-startup-close',[str(r/'venv-chatterbox-py312/bin/python'),'-I','-B',str(r/'verify-fixed-startup-close.py')]),('chatterbox-cuda-03-asr',[str(r/'venv-kokoro-py312/bin/python'),'-I','-B',str(r/'guard-asr.py'),str(r/'source/scripts/verify_live_tts_content.py'),'--evidence',str(r/'runs/chatterbox-cuda-03/evidence.json'),'--model',str(r/'models/whisper-small'),'--language','en','--output',str(r/'runs/chatterbox-cuda-03/content.json')])]
+for name,command in commands:
+ with (r/'logs'/(name+'.log')).open('w') as log:
+  proc=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT)
+  try:code=proc.wait(timeout=300)
+  except subprocess.TimeoutExpired:proc.terminate();proc.wait(timeout=10);code=124
+ (r/'logs'/(name+'.exit')).write_text(str(code)+'\n');results.append({'name':name,'command':command,'pid':proc.pid,'exit':code,'finished_at':time.monotonic()})
+ (r/'logs/post-fixed-validation.json').write_text(json.dumps(results,indent=2)+'\n')

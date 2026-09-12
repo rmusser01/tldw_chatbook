@@ -569,10 +569,15 @@ def normalize_export_destination(path: Path) -> Path:
         path: The raw path returned by the ``FileSave`` dialog.
 
     Returns:
-        ``path`` unchanged if it already ends in ``.zip`` (case-
-        insensitive), else ``path`` with its suffix replaced by
-        ``.zip``.
+        ``path`` with its suffix canonically ``.zip`` (lowercase): an
+        existing case-insensitive ``.ZIP``/``.Zip`` suffix is REWRITTEN to
+        ``.zip``, any other suffix is replaced, a missing one appended.
+
+        The archive writer compares suffixes case-sensitively and writes
+        the lowercase file; preserving an uppercase suffix here made the
+        form show -- and overwrite-check -- a different file from the one
+        the writer replaces (PR #2634 review).
     """
-    if path.suffix.lower() == ".zip":
+    if path.suffix == ".zip":
         return path
     return path.with_suffix(".zip")

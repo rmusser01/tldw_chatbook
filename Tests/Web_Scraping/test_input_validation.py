@@ -209,13 +209,39 @@ class TestSecurityPatterns:
             "../../../etc/passwd",
             "..\\..\\..\\windows\\system32",
             "....//....//....//etc/passwd",
-            "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+            "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc/passwd",
         ]
 
         # As text input, these are technically valid
         # Path validation should be done separately
         for pattern in path_patterns:
             assert validate_text_input(pattern) is True
+
+
+class TestEnvVarReferenceValidation:
+    """Test environment-variable reference validation (credential lookups)."""
+
+    def test_valid_env_var_references(self):
+        """Portable variable names pass: letter/underscore start, word chars."""
+        from tldw_chatbook.Utils.input_validation import validate_env_var_reference
+
+        for name in ("OPENAI_API_KEY", "_secret", "a", "GPU_KEY_2", "x" * 128):
+            assert validate_env_var_reference(name) is True
+
+    def test_invalid_env_var_references(self):
+        """Blank, overlong, digit-start, and punctuated names are rejected."""
+        from tldw_chatbook.Utils.input_validation import validate_env_var_reference
+
+        for name in (
+            "",
+            "1API_KEY",
+            "GPU KEY",
+            "GPU-KEY",
+            "GPU_KEY!",
+            "$(whoami)",
+            "x" * 129,
+        ):
+            assert validate_env_var_reference(name) is False
 
 
 if __name__ == "__main__":

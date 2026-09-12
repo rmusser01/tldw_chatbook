@@ -1,0 +1,7 @@
+{
+  "status": "invalid_preflight_assumption",
+  "detail": "initialize schedules background loading; preflight incorrectly asserted immediate initialized state and closed immediately. Close returned before background isolated-process startup was logged. Parent remained in asyncio shutdown with no visible child; bounded qualification cannot count this as successful initialization. Separate lifecycle investigation opened.",
+  "pid": 968058,
+  "stopped_at": 124708.323266451,
+  "signal": "SIGTERM"
+}

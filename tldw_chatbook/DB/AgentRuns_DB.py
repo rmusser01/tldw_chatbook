@@ -15,9 +15,10 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cached_property
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence, Union, overload
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union, overload
 
 from loguru import logger
 
@@ -29,6 +30,86 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from .base_db import BaseDB
+if TYPE_CHECKING:
+    from .automatic_work import AutomaticWorkLedger
+
+
+AUTOMATIC_WORK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS automatic_work_runtime_owner (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 256)
+);
+CREATE TABLE IF NOT EXISTS automatic_work_chains (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    root_submission_id TEXT NOT NULL UNIQUE,
+    limits_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'paused', 'review_required')),
+    pause_reason TEXT,
+    created_at REAL NOT NULL,
+    started_at REAL,
+    deadline_at REAL,
+    clock_owner_id TEXT,
+    started_monotonic REAL,
+    last_observed_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS automatic_work_reservations (
+    id TEXT PRIMARY KEY,
+    chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),
+    owner_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('generation', 'child_launch', 'model_call', 'tokens')),
+    amount INTEGER NOT NULL CHECK (typeof(amount) = 'integer' AND amount > 0),
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'committed', 'released', 'settled', 'uncertain')),
+    actual_amount INTEGER CHECK (actual_amount IS NULL OR (typeof(actual_amount) = 'integer' AND actual_amount >= 0)),
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_automatic_reservations_chain
+    ON automatic_work_reservations(chain_id);
+CREATE TABLE IF NOT EXISTS automatic_wake_attempts (
+    id TEXT PRIMARY KEY,
+    chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),
+    conversation_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),
+    run_ids_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),
+    created_at REAL NOT NULL,
+    accepted_at REAL,
+    completed_at REAL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automatic_wake_conversation_active
+    ON automatic_wake_attempts(conversation_id) WHERE state IN ('prepared', 'accepted');
+CREATE TABLE IF NOT EXISTS automatic_wake_claims (
+    run_id TEXT PRIMARY KEY REFERENCES agent_runs(id),
+    attempt_id TEXT NOT NULL REFERENCES automatic_wake_attempts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_automatic_claims_attempt
+    ON automatic_wake_claims(attempt_id);
+CREATE TRIGGER IF NOT EXISTS automatic_chain_identity_immutable
+BEFORE UPDATE OF conversation_id, root_submission_id, limits_json ON automatic_work_chains
+WHEN OLD.conversation_id IS NOT NEW.conversation_id
+  OR OLD.root_submission_id IS NOT NEW.root_submission_id
+  OR OLD.limits_json IS NOT NEW.limits_json
+BEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS automatic_run_chain_immutable
+BEFORE UPDATE OF work_chain_id ON agent_runs
+WHEN OLD.work_chain_id IS NOT NULL AND OLD.work_chain_id IS NOT NEW.work_chain_id
+BEGIN SELECT RAISE(ABORT, 'run chain is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS automatic_run_chain_scope_insert
+BEFORE INSERT ON agent_runs WHEN NEW.work_chain_id IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM automatic_work_chains WHERE id=NEW.work_chain_id
+                AND conversation_id=NEW.conversation_id)
+BEGIN SELECT RAISE(ABORT, 'run chain scope mismatch'); END;
+CREATE TRIGGER IF NOT EXISTS automatic_run_chain_scope_update
+BEFORE UPDATE OF work_chain_id, conversation_id ON agent_runs
+WHEN NEW.work_chain_id IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM automatic_work_chains WHERE id=NEW.work_chain_id
+                AND conversation_id=NEW.conversation_id)
+BEGIN SELECT RAISE(ABORT, 'run chain scope mismatch'); END;
+"""
 
 
 def _now_iso() -> str:
@@ -133,7 +214,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 15
+    _CURRENT_SCHEMA_VERSION = 18
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -156,6 +237,13 @@ class AgentRunsDB(BaseDB):
             self.reconcile_orphaned_runs()
         except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
             logger.warning(f"AgentRunsDB reconcile skipped: {exc}")
+
+    @cached_property
+    def automatic_work(self) -> AutomaticWorkLedger:
+        """Load execution accounting only when automatic-work policy is needed."""
+        from .automatic_work import AutomaticWorkLedger
+
+        return AutomaticWorkLedger(self)
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = super()._get_connection()
@@ -309,7 +397,11 @@ class AgentRunsDB(BaseDB):
                     -- v14 (ADR-080): the stable parent Trace event that
                     -- caused this run to exist. NULL for primary and
                     -- legacy runs whose precise cause was not captured.
-                    spawn_event_id TEXT
+                    spawn_event_id TEXT,
+                    budget_tokens INTEGER CHECK (
+                        budget_tokens IS NULL OR
+                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)
+                    )
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -529,6 +621,19 @@ class AgentRunsDB(BaseDB):
             # honest migration value for every historical run.
             if "spawn_event_id" not in existing_columns:
                 conn.execute("ALTER TABLE agent_runs ADD COLUMN spawn_event_id TEXT")
+            # ADR-131: unknown historical counters stay NULL, never zero.
+            if "budget_tokens" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN budget_tokens INTEGER "
+                    "CHECK (budget_tokens IS NULL OR "
+                    "(typeof(budget_tokens) = 'integer' AND budget_tokens >= 0))"
+                )
+            if "work_chain_id" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN work_chain_id TEXT "
+                    "REFERENCES automatic_work_chains(id)"
+                )
+            conn.executescript(AUTOMATIC_WORK_SCHEMA)
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -641,6 +746,10 @@ class AgentRunsDB(BaseDB):
             else:
                 conn.execute("RELEASE SAVEPOINT console_activity_receipts_v15")
                 self.receipt_capability_available = True
+            # ADR-131/135: upstream v13-v15 retain their original meanings.
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (16)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (17)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (18)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -1430,7 +1539,7 @@ class AgentRunsDB(BaseDB):
         "id, conversation_id, parent_run_id, agent_kind, task, status, "
         "result, budget, created_at, updated_at, assistant_message_id, "
         "agent_definition, definition_fingerprint, wake_delivered_at, "
-        "resumed_from_run_id, spawn_event_id"
+        "resumed_from_run_id, spawn_event_id, budget_tokens, work_chain_id"
     )
 
     def _batch_hydrate_steps(
@@ -1565,6 +1674,7 @@ class AgentRunsDB(BaseDB):
         resumed_from_run_id: str | None = None,
         spawn_event_id: str | None = None,
         run_id: str | None = None,
+        work_chain_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1594,6 +1704,8 @@ class AgentRunsDB(BaseDB):
             spawn_event_id: Stable parent Trace event that caused this run.
                 ``None`` for primary and legacy runs.
             run_id: Preallocated stable identity; generated when omitted.
+            work_chain_id: Immutable accepted-work lineage. Children inherit
+                their parent's chain when omitted; legacy roots remain NULL.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -1601,13 +1713,32 @@ class AgentRunsDB(BaseDB):
         run_id = run_id or uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as conn:
+            if parent_run_id:
+                parent = conn.execute(
+                    "SELECT conversation_id, work_chain_id FROM agent_runs WHERE id=?",
+                    (parent_run_id,),
+                ).fetchone()
+                if parent is not None:
+                    if parent["conversation_id"] != conversation_id:
+                        raise ValueError("parent chain scope mismatch")
+                    if parent["work_chain_id"] is not None:
+                        if (
+                            work_chain_id is not None
+                            and work_chain_id != parent["work_chain_id"]
+                        ):
+                            raise ValueError("child chain conflicts with parent")
+                        work_chain_id = parent["work_chain_id"]
+            if work_chain_id is not None:
+                chain = self.automatic_work._chain(conn, work_chain_id)
+                if chain["conversation_id"] != conversation_id:
+                    raise ValueError("run chain scope mismatch")
             conn.execute(
                 """INSERT INTO agent_runs
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
                     assistant_message_id, agent_definition, definition_fingerprint,
-                    resumed_from_run_id, spawn_event_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    resumed_from_run_id, spawn_event_id, work_chain_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1622,6 +1753,7 @@ class AgentRunsDB(BaseDB):
                     definition_fingerprint,
                     resumed_from_run_id,
                     spawn_event_id,
+                    work_chain_id,
                 ),
             )
         return run_id
@@ -1868,7 +2000,14 @@ class AgentRunsDB(BaseDB):
                 f"step payload conflicts with durable indices: {indices}"
             )
 
-    def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
+    def set_status(
+        self,
+        run_id: str,
+        status: str,
+        result: str | None = None,
+        *,
+        budget_tokens: int | None = None,
+    ) -> bool:
         """Update a run's terminal (or in-progress) status.
 
         A run already in a terminal status is never rewritten (first-writer-wins),
@@ -1883,13 +2022,28 @@ class AgentRunsDB(BaseDB):
                 text; when ``None`` the existing ``result`` column is left
                 unchanged (``COALESCE``), so a status-only update never
                 clobbers a previously recorded result.
+            budget_tokens: Completed run-budget counter, which may include
+                cache weighting or estimates. The first known value is kept;
+                a late outcome may fill NULL after cancellation without
+                replacing the terminal status or result. None keeps it unknown.
 
         Returns:
             True if the run was updated (a row changed), False if the run is
-            already terminal or does not exist.
+            already terminal or does not exist. Filling an unknown budget
+            counter alone does not change this status-update return value.
         """
+        if budget_tokens is not None and (
+            type(budget_tokens) is not int or not 0 <= budget_tokens < 2**63
+        ):
+            raise ValueError("budget_tokens must be a nonnegative SQLite integer")
         placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
         with self.transaction() as conn:
+            if budget_tokens is not None:
+                conn.execute(
+                    "UPDATE agent_runs SET budget_tokens = ? "
+                    "WHERE id = ? AND budget_tokens IS NULL",
+                    (budget_tokens, run_id),
+                )
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = ?, "
                 "result = COALESCE(?, result), updated_at = ? "
@@ -1904,10 +2058,16 @@ class AgentRunsDB(BaseDB):
         status: str,
         result: str | None,
         terminal_step: dict,
+        *,
+        budget_tokens: int | None = None,
     ) -> bool:
         """Atomically persist a first-writer terminal state and observation."""
         if status not in TERMINAL_RUN_STATUSES:
             raise ValueError("status must be terminal")
+        if budget_tokens is not None and (
+            type(budget_tokens) is not int or not 0 <= budget_tokens < 2**63
+        ):
+            raise ValueError("budget_tokens must be a nonnegative SQLite integer")
         index = terminal_step.get("index")
         canonical = _canonical_step_payload(index, terminal_step)
         placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
@@ -1932,6 +2092,12 @@ class AgentRunsDB(BaseDB):
                     raise AgentStepConflictError(
                         f"step payload conflicts with durable index: {index}"
                     )
+            if budget_tokens is not None:
+                conn.execute(
+                    "UPDATE agent_runs SET budget_tokens = ? "
+                    "WHERE id = ? AND budget_tokens IS NULL",
+                    (budget_tokens, run_id),
+                )
             if row["status"] in TERMINAL_RUN_STATUSES:
                 return False
             if existing is None:
@@ -1949,6 +2115,51 @@ class AgentRunsDB(BaseDB):
             if cursor.rowcount != 1:
                 raise RuntimeError("terminal status changed during transaction")
         return True
+    def continuation_budget(self, conversation_id: str, run_id: str) -> dict | None:
+        """Read this sub-agent's recorded budget and continuation ancestors.
+
+        Each run is counted once; siblings, primary runs, and foreign
+        conversations are excluded. Missing history/counters or cycles leave
+        the result partial. This is budget accounting, not billed provider usage.
+
+        Args:
+            conversation_id: Conversation whose ancestry may be read.
+            run_id: Selected sub-agent run, including that run in the sum.
+
+        Returns:
+            Budget tokens, run and recorded-run counts, and completeness;
+            None if the selected sub-agent is not in this conversation.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """WITH RECURSIVE chain AS (
+                    SELECT id, resumed_from_run_id, budget_tokens, status
+                    FROM agent_runs
+                    WHERE id = ? AND conversation_id = ? AND agent_kind = 'subagent'
+                    UNION
+                    SELECT parent.id, parent.resumed_from_run_id,
+                           parent.budget_tokens, parent.status
+                    FROM agent_runs AS parent JOIN chain
+                      ON parent.id = chain.resumed_from_run_id
+                    WHERE parent.conversation_id = ? AND parent.agent_kind = 'subagent'
+                ) SELECT resumed_from_run_id, budget_tokens, status FROM chain""",
+                (run_id, conversation_id, conversation_id),
+            ).fetchall()
+        if not rows:
+            return None
+        recorded = [
+            row["budget_tokens"] for row in rows if row["budget_tokens"] is not None
+        ]
+        return {
+            "budget_tokens": sum(recorded),
+            "run_count": len(rows),
+            "recorded_run_count": len(recorded),
+            "complete": (
+                len(recorded) == len(rows)
+                and any(row["resumed_from_run_id"] is None for row in rows)
+                and all(row["status"] in TERMINAL_RUN_STATUSES for row in rows)
+            ),
+        }
 
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
@@ -2388,6 +2599,45 @@ class AgentRunsDB(BaseDB):
             rows = conn.execute(query, params).fetchall()
             return self._rows_to_dicts(conn, rows)
 
+    def list_subagent_run_headers(
+        self,
+        conversation_id: str,
+        *,
+        before: tuple[str, str] | None = None,
+        limit: int = 51,
+    ) -> list[dict]:
+        """Read a bounded newest-first page without loading run payloads.
+
+        Includes superseded children for history inspection. The cursor is
+        the preceding page's last (created_at, id) pair; concurrent inserts
+        cannot shift later pages. See ADR-132.
+
+        Raises:
+            ValueError: Limit is outside 1..101 or the cursor is malformed.
+        """
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("history page limit must be an integer in 1..101")
+        if before is not None and (
+            not isinstance(before, tuple)
+            or len(before) != 2
+            or not all(isinstance(value, str) and value for value in before)
+        ):
+            raise ValueError("history cursor must contain a timestamp and run ID")
+        query = (
+            "SELECT id, CASE WHEN length(task) > 200 THEN substr(task, 1, 199) || '…' "
+            "ELSE task END AS task, status, created_at, updated_at, budget_tokens, "
+            "resumed_from_run_id FROM agent_runs "
+            "WHERE conversation_id = ? AND agent_kind = 'subagent'"
+        )
+        params: list = [conversation_id]
+        if before is not None:
+            query += " AND (created_at, id) < (?, ?)"
+            params.extend(before)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        with self.connection() as conn:
+            return [dict(row) for row in conn.execute(query, params).fetchall()]
+
     def count_runs(
         self,
         conversation_id: str,
@@ -2665,6 +2915,9 @@ class AgentRunsDB(BaseDB):
           superseded row is retracted work, delivering it would announce a
           result a retry already replaced);
         - whose ``wake_delivered_at`` ledger column is still NULL;
+        - with no durable automatic-attempt claim (including an uncertain
+          attempt retained for review); releasing a proven pre-start claim
+          makes the result eligible again;
         - whose parent run is itself terminal AND terminal-stamped no later
           than the child (``child.updated_at >= parent.updated_at``): a
           child that settled BEFORE its parent's turn ended was collected
@@ -2693,6 +2946,7 @@ class AgentRunsDB(BaseDB):
                 "WHERE child.conversation_id = ? "
                 "AND child.agent_kind = 'subagent' "
                 "AND child.wake_delivered_at IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM automatic_wake_claims AS claim WHERE claim.run_id=child.id) "
                 "AND child.status IN ('done', 'error', 'cancelled') "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at >= parent.updated_at "
@@ -2700,6 +2954,38 @@ class AgentRunsDB(BaseDB):
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
             return self._rows_to_dicts(conn, rows)
+
+    def pending_wake_conversation_ids(self) -> tuple[str, ...]:
+        """Discover saved survivor results, including claims awaiting review.
+
+        Attention badges are a view projection and never the discovery index.
+        This projection reads identity only; result bodies are loaded per session.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT child.conversation_id FROM agent_runs AS child "
+                "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
+                "WHERE child.wake_delivered_at IS NULL AND child.agent_kind!='primary' "
+                "AND child.status IN ('done','error','cancelled') "
+                f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
+                "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
+                tuple(sorted(TERMINAL_RUN_STATUSES)),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def pending_wake_results(self, conversation_id: str) -> list[dict]:
+        """Read pending survivor identity and status without loading run bodies."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT child.id, child.status, child.work_chain_id FROM agent_runs AS child "
+                "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
+                "WHERE child.conversation_id=? AND child.wake_delivered_at IS NULL "
+                "AND child.agent_kind!='primary' AND child.status IN ('done','error','cancelled') "
+                f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
+                "AND child.updated_at>=parent.updated_at ORDER BY child.updated_at, child.id",
+                (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
         """Stamp runs as wake-delivered; already-stamped rows are left alone.

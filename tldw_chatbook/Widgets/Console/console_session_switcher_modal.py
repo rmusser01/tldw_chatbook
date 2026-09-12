@@ -387,7 +387,7 @@ class ConsoleSessionSwitcherModal(
                     if self._mode is SwitcherMode.CHARACTER_CHATS
                     else self._operational_query
                 ),
-                placeholder="Find titles, workspaces or status…",
+                placeholder="Search sessions, workspaces, waiting, running, or finished…",
                 id="console-switcher-query",
                 max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
             )
@@ -1926,7 +1926,7 @@ class ConsoleSessionSwitcherModal(
             query.placeholder = (
                 "Search local Character chats by Keyword…"
                 if self._mode is SwitcherMode.CHARACTER_CHATS
-                else ("Find titles, workspaces or status…")
+                else ("Search sessions, workspaces, waiting, running, or finished…")
             )
         except NoMatches:
             pass

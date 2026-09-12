@@ -55,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
         A parser for explicit assets, runtime selection and playback admission."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", choices=("pytorch", "onnx"), required=True)
-    parser.add_argument("--device", choices=("cpu", "mps"), default="cpu")
+    parser.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--voice", required=True)
     parser.add_argument("--voice-dir", type=Path)
@@ -94,6 +94,9 @@ def validate_args(args: argparse.Namespace) -> None:
     Raises:
         ValueError: Admission, assets, paths or worker ownership are invalid.
         OSError: A required local path cannot be inspected."""
+    from tldw_chatbook.Utils.input_validation import validate_tts_inference_device
+
+    args.device = validate_tts_inference_device(args.device)
     if not args.play_audio:
         raise ValueError("Real device playback requires --play-audio")
     if not 1 <= args.repeats <= 12:
@@ -231,6 +234,7 @@ def observe_native(
     details: dict[str, Any],
     *,
     lock: AbstractContextManager[Any] | None = None,
+    synchronize: Callable[[], None] | None = None,
 ) -> Callable[..., Any]:
     """Observe an unchanged synchronous call, including its exceptional exit.
 
@@ -239,11 +243,14 @@ def observe_native(
         calls: Mutable observation ledger receiving monotonic entry/exit rows.
         details: Fixed runtime and request identity attached to each row.
         lock: Optional shared context manager protecting ledger updates.
+        synchronize: Optional device barrier before entry and after host return.
 
     Returns:
         A wrapper that preserves the callable's result and exceptions."""
 
     def observed(*args, **kwargs):
+        if synchronize is not None:
+            synchronize()
         row = {
             **details,
             "enter_at": time.monotonic(),
@@ -251,17 +258,119 @@ def observe_native(
         }
         with lock or nullcontext():
             calls.append(row)
+        native_error = None
         try:
             return function(*args, **kwargs)
         except BaseException as error:
+            native_error = error
             with lock or nullcontext():
                 row["exception"] = type(error).__name__
             raise
         finally:
-            with lock or nullcontext():
-                row["exit_at"] = time.monotonic()
+            synchronized = synchronize is None
+            if synchronize is not None:
+                with lock or nullcontext():
+                    row["host_returned_at"] = time.monotonic()
+                try:
+                    # Never hold the ledger lock while waiting for device work:
+                    # the event loop needs it to record Stop during inference.
+                    synchronize()
+                    synchronized = True
+                except BaseException as error:
+                    with lock or nullcontext():
+                        row["synchronization_exception"] = type(error).__name__
+                    if native_error is None:
+                        raise
+            if synchronized:
+                with lock or nullcontext():
+                    if synchronize is not None:
+                        row["cuda_synchronized"] = True
+                    row["exit_at"] = time.monotonic()
 
     return observed
+
+
+def load_pytorch_runtime() -> Any:
+    """Load PyTorch after worker profile setup, with optional-extra guidance.
+
+    Returns:
+        The centrally loaded PyTorch module.
+
+    Raises:
+        ImportError: PyTorch is unavailable; includes the supported extra name.
+    """
+    from tldw_chatbook.Utils.optional_deps import require_dependency
+
+    return require_dependency("torch", "local_tts")
+
+
+def pytorch_device_provenance(torch: Any, requested: str) -> dict:
+    """Reject unavailable accelerators and identify the selected CUDA device.
+
+    Args:
+        torch: Already imported runtime; never loaded by inert CLI admission.
+        requested: Admitted cpu, mps or cuda device family.
+
+    Returns:
+        Runtime version and selected device, with CUDA hardware/build metadata.
+
+    Raises:
+        ValueError: The requested accelerator is unavailable.
+    """
+    result = {"device": requested, "torch_version": str(torch.__version__)}
+    if requested == "mps" and not torch.backends.mps.is_available():
+        raise ValueError("Requested MPS inference is unavailable")
+    if requested == "cuda":
+        if not torch.cuda.is_available():
+            raise ValueError("Requested CUDA inference is unavailable")
+        device = f"cuda:{torch.cuda.current_device()}"
+        properties = torch.cuda.get_device_properties(device)
+        result.update(
+            device=device,
+            cuda_version=torch.version.cuda,
+            name=properties.name,
+            total_memory_bytes=properties.total_memory,
+            compute_capability=[properties.major, properties.minor],
+        )
+    return result
+
+
+def observe_pytorch_native(
+    function: Callable[..., Any],
+    calls: list[dict[str, Any]],
+    details: dict[str, Any],
+    *,
+    expected_device: str,
+    torch: Any,
+    lock: AbstractContextManager[Any] | None = None,
+) -> Callable[..., Any]:
+    """Require actual model placement and include CUDA completion in its interval.
+
+    Args:
+        function: Original PyTorch forward callable.
+        calls: Mutable native observation ledger.
+        details: Request metadata including the actual model.device string.
+        expected_device: Selected concrete CUDA device or CPU/MPS family.
+        torch: Already imported PyTorch runtime.
+        lock: Optional shared ledger lock.
+
+    Returns:
+        Wrapper preserving native arguments, results and native exceptions.
+
+    Raises:
+        ValueError: Model placement differs from the selected device.
+    """
+    actual = details["device"]
+    cuda = expected_device.startswith("cuda:")
+    if (actual if cuda else actual.split(":")[0]) != expected_device:
+        raise ValueError("Actual PyTorch device differs from requested device")
+    return observe_native(
+        function,
+        calls,
+        details,
+        lock=lock,
+        synchronize=(lambda: torch.cuda.synchronize(expected_device)) if cuda else None,
+    )
 
 
 def validate_cancellation(row: dict) -> None:
@@ -472,14 +581,22 @@ def _deny_network(event, arguments):
             raise RuntimeError("Live TTS validation forbids runtime installation")
 
 
-def memory_snapshot() -> dict:
-    """Observe bounded process and already-loaded MPS memory statistics.
+def memory_snapshot(*, cuda_device: str | None = None) -> dict:
+    """Observe process, already-loaded MPS and explicitly selected CUDA memory.
+
+    Args:
+        cuda_device: Concrete selected CUDA device, or None to leave CUDA untouched.
 
     Returns:
-        Monotonic timestamp, active threads and supported RSS/MPS measurements.
+        Timestamp, threads, RSS/MPS and synchronized CUDA allocator measurements.
 
     Raises:
         subprocess.SubprocessError: The process memory probe fails."""
+    torch = sys.modules.get("torch")
+    if cuda_device is not None:
+        if torch is None or not torch.cuda.is_available():
+            raise ValueError("Requested CUDA memory observation is unavailable")
+        torch.cuda.synchronize(cuda_device)
     result = {"at": time.monotonic(), "threads": threading.active_count()}
     if sys.platform in {"darwin", "linux"}:
         import resource
@@ -490,10 +607,18 @@ def memory_snapshot() -> dict:
         result["rss_bytes"] = int(current.strip()) * 1024
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         result["peak_rss_bytes"] = int(peak * (1 if sys.platform == "darwin" else 1024))
-    torch = sys.modules.get("torch")
     if torch is not None and torch.backends.mps.is_available():
         result["mps_allocated_bytes"] = torch.mps.current_allocated_memory()
         result["mps_driver_bytes"] = torch.mps.driver_allocated_memory()
+    if cuda_device is not None:
+        result.update(
+            cuda_device=cuda_device,
+            cuda_synchronized=True,
+            cuda_allocated_bytes=torch.cuda.memory_allocated(cuda_device),
+            cuda_reserved_bytes=torch.cuda.memory_reserved(cuda_device),
+            cuda_peak_allocated_bytes=torch.cuda.max_memory_allocated(cuda_device),
+            cuda_peak_reserved_bytes=torch.cuda.max_memory_reserved(cuda_device),
+        )
     return result
 
 
@@ -612,6 +737,13 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             "en-core-web-sm",
         )
     )
+    cuda_device = None
+    if args.engine == "pytorch":
+        torch = load_pytorch_runtime()
+
+        evidence["pytorch_device"] = pytorch_device_provenance(torch, args.device)
+        if args.device == "cuda":
+            cuda_device = evidence["pytorch_device"]["device"]
 
     import numpy as np
     import sounddevice as sd
@@ -664,7 +796,7 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
     backends = []
     file_processes = []
     evidence["output_device"] = dict(sd.query_devices(kind="output"))
-    evidence["memory_before_model"] = memory_snapshot()
+    evidence["memory_before_model"] = memory_snapshot(cuda_device=cuda_device)
 
     def checkpoint():
         with lock:
@@ -848,10 +980,11 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
             if time.monotonic() >= deadline:
                 assert_quiescent(state)
             await asyncio.sleep(0.01)
+        memory = memory_snapshot(cuda_device=cuda_device)
         row.update(
             settled_at=time.monotonic(),
             resources_at_settlement=state,
-            memory=memory_snapshot(),
+            memory=memory,
         )
 
     original_initialize = KokoroTTSBackend.initialize
@@ -1073,7 +1206,6 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
         observers.enter_context(patch.object(sd, "OutputStream", output_stream))
         if args.engine == "pytorch":
             import spacy
-            import torch
 
             if args.language.startswith("en-") and not spacy.util.is_package(
                 "en_core_web_sm"
@@ -1088,8 +1220,6 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
                 )
             )
             torch.set_num_threads(6)
-            if args.device == "mps" and not torch.backends.mps.is_available():
-                raise ValueError("Requested MPS inference is unavailable")
             from kokoro import KModel
 
             original_forward = KModel.forward
@@ -1105,12 +1235,13 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
                     else keywords.get("speed", 1),
                     "fourier_module": type(model.decoder.generator.stft).__name__,
                 }
-                if details["device"].split(":")[0] != args.device:
-                    raise ValueError(
-                        "Actual PyTorch device differs from requested device"
-                    )
-                return observe_native(
-                    original_forward, row["native_calls"], details, lock=lock
+                return observe_pytorch_native(
+                    original_forward,
+                    row["native_calls"],
+                    details,
+                    lock=lock,
+                    expected_device=evidence["pytorch_device"]["device"],
+                    torch=torch,
                 )(model, *positional, **keywords)
 
             observers.enter_context(patch.object(KModel, "forward", forward))
@@ -1305,7 +1436,7 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
                 final_resources=resources(),
                 notices=host.notices,
                 completions=host.completions,
-                memory_after_cleanup=memory_snapshot(),
+                memory_after_cleanup=memory_snapshot(cuda_device=cuda_device),
                 source_hashes_after=_source_hashes(package),
             )
             evidence["source_unchanged"] = (

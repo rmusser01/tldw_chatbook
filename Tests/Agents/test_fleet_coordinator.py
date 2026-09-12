@@ -2,6 +2,8 @@
 
 import threading
 
+import pytest
+
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RUN_ERROR
 from tldw_chatbook.Agents.fleet_coordinator import (
     FLEET_FINISHED,
@@ -244,3 +246,214 @@ def test_lowering_max_live_below_the_live_count_refuses_rather_than_kills():
     assert c.reserve(task="c", agent=None) is None  # still 1 live, cap 1
     c.finish(b.handle_id, RUN_DONE)
     assert c.reserve(task="c", agent=None) is not None
+
+
+def test_progress_binding_requires_attached_live_handle_and_captures_once():
+    from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
+
+    inbox = MessageStore().open_inbox("conversation")
+    coord = FleetCoordinator(2, lambda: 0.0, message_inbox=inbox)
+    handle = coord.reserve("work", "researcher")
+    bind = lambda: coord.bind_progress_sender(
+        handle.handle_id, parent_run_id="parent", chain_id="chain"
+    )
+    assert bind() is None
+    assert (
+        coord.bind_progress_sender("missing", parent_run_id="parent", chain_id="chain")
+        is None
+    )
+    coord.attach_run(handle.handle_id, "child")
+    sender = bind()
+    assert sender is not None
+    assert bind() is sender
+    assert (
+        coord.bind_progress_sender(
+            handle.handle_id, parent_run_id="other", chain_id="chain"
+        )
+        is None
+    )
+    coord.attach_run(handle.handle_id, "replacement")
+    sender.send("progress")
+    identity = inbox.snapshot()[0].identity
+    assert (
+        identity.handle_id,
+        identity.run_id,
+        identity.parent_run_id,
+        identity.chain_id,
+        identity.agent,
+    ) == (handle.handle_id, "child", "parent", "chain", "researcher")
+    assert coord.get(handle.handle_id).run_id == "child"
+    coord.finish(handle.handle_id, RUN_DONE)
+    assert bind() is None
+    with pytest.raises(MessageError, match="unavailable"):
+        sender.send("late")
+    assert coord.prune_terminal() == 1
+    assert inbox.snapshot()[0].body == "progress"
+    reader = inbox.reader("later", chain_id="chain", automatic=True)
+    assert reader.collect().collected_count == 1
+
+
+def test_progress_finish_and_post_race_has_one_admission_boundary():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
+
+    for _ in range(20):
+        inbox = MessageStore().open_inbox("conversation")
+        coord = FleetCoordinator(1, lambda: 0.0, message_inbox=inbox)
+        handle = coord.reserve("work", None)
+        coord.attach_run(handle.handle_id, "child")
+        sender = coord.bind_progress_sender(
+            handle.handle_id, parent_run_id="p", chain_id=None
+        )
+        sender.send("before terminalization")
+        barrier = threading.Barrier(2)
+
+        def post(barrier=barrier, sender=sender):
+            barrier.wait(timeout=5)
+            try:
+                return sender.send("racing report")
+            except MessageError as exc:
+                assert exc.code == "unavailable"
+                return None
+
+        def finish(barrier=barrier, coord=coord, handle=handle):
+            barrier.wait(timeout=5)
+            coord.finish(handle.handle_id, RUN_DONE)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            posting = pool.submit(post)
+            finishing = pool.submit(finish)
+            accepted = posting.result(timeout=5)
+            finishing.result(timeout=5)
+        with pytest.raises(MessageError, match="unavailable"):
+            sender.send("late")
+        assert coord.prune_terminal() == 1
+        assert len(inbox.snapshot()) == (2 if accepted else 1)
+        assert inbox.snapshot()[0].body == "before terminalization"
+        assert coord.live_count() == 0
+
+
+def test_progress_finish_after_inbox_disposal_still_releases_handle():
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
+
+    store = MessageStore()
+    coord = FleetCoordinator(
+        1, lambda: 0.0, message_inbox=store.open_inbox("conversation")
+    )
+    handle = coord.reserve("work", None)
+    coord.attach_run(handle.handle_id, "child")
+    assert (
+        coord.bind_progress_sender(handle.handle_id, parent_run_id="p", chain_id=None)
+        is not None
+    )
+    store.close()
+    coord.finish(handle.handle_id, RUN_DONE)
+    assert coord.live_count() == 0
+    assert coord.prune_terminal() == 1
+
+
+def test_progress_disabled_coordinator_returns_no_sender():
+    coord = _coord()
+    handle = coord.reserve("work", None)
+    coord.attach_run(handle.handle_id, "child")
+    assert (
+        coord.bind_progress_sender(handle.handle_id, parent_run_id="p", chain_id=None)
+        is None
+    )
+
+
+@pytest.mark.parametrize("first_operation", ["post", "finish"])
+def test_progress_finish_and_send_serialize_under_the_actual_owner_lock(
+    first_operation,
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
+
+    store = MessageStore()
+    inbox = store.open_inbox("conversation")
+    coord = FleetCoordinator(1, lambda: 0.0, message_inbox=inbox)
+    handle = coord.reserve("work", None)
+    coord.attach_run(handle.handle_id, "child")
+    sender = coord.bind_progress_sender(
+        handle.handle_id, parent_run_id="p", chain_id=None
+    )
+    acquired = threading.Event()
+    release = threading.Event()
+    second_attempted = threading.Event()
+
+    class GateLock:
+        """Hold the first entrant at its real locked admission boundary."""
+
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.first = True
+
+        def __enter__(self):
+            if acquired.is_set():
+                second_attempted.set()
+            self.lock.acquire()
+            if self.first:
+                self.first = False
+                acquired.set()
+                assert release.wait(timeout=5)
+            return self
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+    store._lock = GateLock()
+
+    def post():
+        try:
+            return sender.send("boundary report")
+        except MessageError as exc:
+            assert exc.code == "unavailable"
+            return None
+
+    def finish():
+        coord.finish(handle.handle_id, RUN_DONE)
+
+    operations = {"post": post, "finish": finish}
+    second_operation = "finish" if first_operation == "post" else "post"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(operations[first_operation])
+        try:
+            assert acquired.wait(timeout=5)
+            second = pool.submit(operations[second_operation])
+            assert second_attempted.wait(timeout=5)
+        finally:
+            release.set()
+        outcomes = {
+            first_operation: first.result(timeout=5),
+            second_operation: second.result(timeout=5),
+        }
+    assert (outcomes["post"] is not None) == (first_operation == "post")
+    assert len(inbox.snapshot()) == (1 if first_operation == "post" else 0)
+    assert coord.live_count() == 0
+    coord.prune_terminal()
+    assert len(inbox.snapshot()) == (1 if first_operation == "post" else 0)
+
+
+@pytest.mark.parametrize("close_owner", [False, True])
+def test_progress_rebinding_does_not_return_a_closed_capability(close_owner):
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
+
+    store = MessageStore()
+    coord = FleetCoordinator(
+        1, lambda: 0.0, message_inbox=store.open_inbox("conversation")
+    )
+    handle = coord.reserve("work", None)
+    coord.attach_run(handle.handle_id, "child")
+    sender = coord.bind_progress_sender(
+        handle.handle_id, parent_run_id="p", chain_id=None
+    )
+    if close_owner:
+        store.close()
+    else:
+        sender.close()
+    assert (
+        coord.bind_progress_sender(handle.handle_id, parent_run_id="p", chain_id=None)
+        is None
+    )

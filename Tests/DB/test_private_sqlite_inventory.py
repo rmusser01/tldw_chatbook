@@ -635,10 +635,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C54 is the dedicated profile-local Chunking Lab recovery owner.
         # C55 is the existing private-file trace maintenance connection.
         # C56 is schema-independent, read-only legacy Collections recovery.
+        # C57 discovers native fleet results at launch without migration (ADR-135).
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 57)
+        for number in range(1, 58)
         if number not in {10, 48}
     ]
     assert [row["id"] for row in backup_rows] == [
