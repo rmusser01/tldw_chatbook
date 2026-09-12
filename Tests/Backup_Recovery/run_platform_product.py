@@ -69,6 +69,13 @@ _RESTORE_DIAGNOSTIC_TESTS = (
 _PRODUCT_SELECTIONS = {
     "full": _PRODUCT_TESTS,
     "restore-diagnostic": _RESTORE_DIAGNOSTIC_TESTS,
+    "plain": _RESTORE_DIAGNOSTIC_TESTS,
+    "encrypted": (_PRODUCT_TESTS[1] + "[encrypted]",),
+    "encrypted-credentials": (_PRODUCT_TESTS[1] + "[encrypted_credentials]",),
+    "roundtrip": _PRODUCT_TESTS[2:3],
+    "replacement": _PRODUCT_TESTS[3:4],
+    "rollback": _PRODUCT_TESTS[4:5],
+    "support": (_PRODUCT_TESTS[0], *_PRODUCT_TESTS[5:]),
 }
 _SYNTHETIC_CREDENTIALS = (
     "test-only-new-safety-password",
@@ -522,7 +529,7 @@ def _run_pytest_phase(
             *tests,
             "-vv",
             "--tb=long",
-            "--timeout=1200",
+            "--timeout=2400",
             f"--basetemp={private_root / f'{phase}-pytest'}",
             f"--junitxml={raw_junit}",
         )

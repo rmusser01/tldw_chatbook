@@ -55,7 +55,7 @@ async def main():
         screen = app.screen
         screen.query_one("#backup-open-copies", Button).focus()
         await pilot.press("enter")
-        async with asyncio.timeout(15):
+        async with asyncio.timeout(90 if sys.platform == "win32" else 15):
             while not list(screen.query(".backup-review-rollback")):
                 await asyncio.sleep(.03)
         choices = [b for b in screen.query(".backup-review-rollback") if b.name == operation]
@@ -75,13 +75,13 @@ async def main():
         def held_preview(*args,**kwargs):
             result=original_preview(*args,**kwargs)
             entered.set()
-            assert release.wait(10)
+            assert release.wait(60 if sys.platform == "win32" else 10)
             return result
         later_rollback.preview_rollback=held_preview
         try:
             screen.query_one("#backup-later-review", Button).focus()
             await pilot.press("enter")
-            async with asyncio.timeout(15):
+            async with asyncio.timeout(180 if sys.platform == "win32" else 15):
                 while not entered.is_set():await asyncio.sleep(.03)
             screen.query_one('#backup-later-target',Input).value=os.environ['TLDW_CONFIG_PATH']+'.changed'
             await pilot.pause()
@@ -97,7 +97,7 @@ async def main():
         await pilot.pause()
         screen.query_one("#backup-later-review", Button).focus()
         await pilot.press("enter")
-        async with asyncio.timeout(45):
+        async with asyncio.timeout(180 if sys.platform == "win32" else 45):
             while screen.query_one("#backup-later-start", Button).disabled:
                 text = str(screen.query_one("#backup-later-preview", Static).render())
                 if "refused" in text:
@@ -115,24 +115,24 @@ async def main():
         await pilot.pause()
         screen.query_one("#backup-later-start", Button).focus()
         await pilot.press("enter")
-        state = await asyncio.to_thread(app.recovery_service.wait, app.recovery_service.current()["operation_id"], timeout=65)
+        state = await asyncio.to_thread(app.recovery_service.wait, app.recovery_service.current()["operation_id"], timeout=300 if sys.platform == "win32" else 65)
         retain("later_rollback_terminal",
                state={key: state[key] for key in ("state", "phase", "issues", "review_issues")}, result=dict(state["result"]))
         assert state['state']=='recovery_required',dict(state)
         expected=tuple(state['review_issues'])
         assert expected and all(code.startswith('credential_') for code in expected)
-        async with asyncio.timeout(10):
+        async with asyncio.timeout(60 if sys.platform == "win32" else 10):
             while len(list(screen.query('.backup-acknowledge-later-credential')))!=len(expected):
                 await asyncio.sleep(.03)
         boxes=list(screen.query('.backup-acknowledge-later-credential'))
         assert {box.name for box in boxes}==set(expected) and not any(box.value for box in boxes)
         retain('later_omissions_visible_unchecked',count=len(boxes))
-        async with asyncio.timeout(15):
+        async with asyncio.timeout(90 if sys.platform == "win32" else 15):
             while not list(screen.query('.backup-recover-abort')):
                 await asyncio.sleep(.03)
         screen.query_one('.backup-recover-abort',Button).focus()
         await pilot.press('enter')
-        aborted=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=20)
+        aborted=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=90 if sys.platform == "win32" else 20)
         assert aborted['result']['aborted'],dict(aborted)
         retain('later_aborted_untouched')
         for box in boxes:box.value=True
@@ -141,7 +141,7 @@ async def main():
         assert screen._rollback_plan is None
         screen.query_one('#backup-later-review',Button).focus()
         await pilot.press('enter')
-        async with asyncio.timeout(45):
+        async with asyncio.timeout(180 if sys.platform == "win32" else 45):
             while screen.query_one('#backup-later-start',Button).disabled:
                 text=str(screen.query_one('#backup-later-preview',Static).render())
                 assert 'refused' not in text,text
@@ -158,7 +158,7 @@ async def main():
         await pilot.pause()
         screen.query_one('#backup-later-review',Button).focus()
         await pilot.press('enter')
-        async with asyncio.timeout(45):
+        async with asyncio.timeout(180 if sys.platform == "win32" else 45):
             while screen.query_one('#backup-later-start',Button).disabled:await asyncio.sleep(.03)
         assert set(screen._rollback_plan.acknowledged_credential_issues)==set(expected)
         retain('changed_acknowledgement_reviewed_again')
@@ -172,31 +172,31 @@ async def main():
         screen.query_one('#backup-later-confirm',Checkbox).value=True
         await pilot.pause()
         # Textual ignores a repeated Enter while the prior refusal is still active.
-        async with asyncio.timeout(1):
+        async with asyncio.timeout(30 if sys.platform == "win32" else 1):
             while screen.query_one('#backup-later-start',Button).has_class('-active'):
                 await asyncio.sleep(.01)
         screen.query_one('#backup-later-start',Button).focus()
         await pilot.press('enter')
-        async with asyncio.timeout(15):
+        async with asyncio.timeout(90 if sys.platform == "win32" else 15):
             while app.recovery_service.current()['operation_id']==before_confirm:
                 await asyncio.sleep(.03)
         accepted=app.recovery_service.current()
         assert accepted['kind']=='later_rollback',dict(accepted)
-        state=await asyncio.to_thread(app.recovery_service.wait,accepted['operation_id'],timeout=65)
+        state=await asyncio.to_thread(app.recovery_service.wait,accepted['operation_id'],timeout=360 if sys.platform == "win32" else 65)
         retain('later_rollback_complete',state=state['state'],result=dict(state['result']))
         assert state['state']=='succeeded' and state['result']['restoration_validated'],dict(state)
         copies=await asyncio.to_thread(app.recovery_service.recovery_copies)
         assert any(row.operation_id==state['result']['journal_operation_id'] and row.status=='verified' for row in copies)
         assert any(row.operation_id==operation and row.status=='verified' for row in copies)
         new_copy=state['result']['journal_operation_id']
-        async with asyncio.timeout(15):
+        async with asyncio.timeout(90 if sys.platform == "win32" else 15):
             while not [b for b in screen.query('.backup-review-rollback') if b.name==new_copy]:await asyncio.sleep(.03)
         next_copy=next(b for b in screen.query('.backup-review-rollback') if b.name==new_copy)
         next_copy.focus();await pilot.press('enter')
         assert screen._rollback_copy_id==new_copy and screen._rollback_plan is None
         assert not screen._later_review_codes_seen and not any(box.value for box in boxes)
         inspected=app.recovery_service.start_copy_inspection(new_copy,password=b'test-only-later-safety-password')
-        checked=await asyncio.to_thread(app.recovery_service.wait,inspected,timeout=20)
+        checked=await asyncio.to_thread(app.recovery_service.wait,inspected,timeout=180 if sys.platform == "win32" else 20)
         assert checked['state']=='succeeded' and checked['result']['archive_verified'],dict(checked)
         from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
         assert verify_sealed(app.recovery_service.inspection(inspected)).credential_policy=='rollback'
@@ -236,7 +236,7 @@ def test_f9_later_rollback_requires_explicit_credential_review(
             text=True,
             # Four native reviews, two execution attempts, Abort, and readback.
             # Their individual operation/UI deadlines remain independently bounded.
-            timeout=180,
+            timeout=900 if sys.platform == "win32" else 180,
             check=False,
         )
     assert result.returncode == 0, log.read_text()[-10000:]

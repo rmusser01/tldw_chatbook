@@ -35,6 +35,28 @@ cases in 35.27 seconds. Windows-only multi-profile fixture deadlines now cover
 observed native capture duration and sequential opens; production limits are
 unchanged. Full Windows product success remains required.
 
+Full Windows run
+[34716196686](https://github.com/rmusser01/tldw_chatbook/actions/runs/34716196686)
+at `4d667bd7adcb51bada00e796bdd07a0c66f06e02` passed 42 native and 16 of 22
+product cases; six failed, none skipped. All 39 artifact hashes matched. All
+three actual F9 modes created and restored archives, including encrypted
+credential review; mounted backup also passed. Plain and encrypted UI cases
+held a button instance replaced by a profile-list refresh. The credential case
+entered the real Windows terminal suspension and launched its child, which then
+failed because the filtered launch environment lacked Windows home selectors.
+The launcher now retains `USERPROFILE`, `HOMEDRIVE`, and `HOMEPATH` while still
+excluding provider and app overrides. Both native-home selection regressions
+failed before this change and pass afterward; actual macOS plaintext roundtrip
+also passed (three selected cases, 36.83 seconds).
+
+The two-profile test failed on a backslash receipt key after successful capture;
+fixture manifest/marker keys now match their POSIX file-member keys. Replacement
+and rollback fixtures timed out while capture was still progressing. Windows
+test observers are calibrated to the measured native runtime, with production
+deadlines unchanged. Next verification splits the existing full selection into
+seven independent Windows jobs, preserving all 22 collected pytest node IDs,
+native tests, and failure receipts. Each flow must still pass.
+
 ## Source and boundaries
 
 Integrated source: `7d101919099780c6f4236c05845e8d86513a87d9`.

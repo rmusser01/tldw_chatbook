@@ -453,12 +453,16 @@ jobs:
           });
 
   backup-platform-windows:
-    name: Backup product qualification - Windows 2022 - Python 3.12
+    name: Backup product qualification - Windows 2022 - Python 3.12 - ${{ matrix.selection }}
     runs-on: windows-2022
     if: github.event_name == 'workflow_dispatch' && inputs.backup_platform_only == true
     timeout-minutes: 90
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        selection: ${{ fromJSON(inputs.backup_platform_selection == 'full' && '["plain","encrypted","encrypted-credentials","roundtrip","replacement","rollback","support"]' || '["restore-diagnostic"]') }}
 
     steps:
     - uses: actions/checkout@v4
@@ -486,12 +490,12 @@ jobs:
       run: |
         python Tests/Backup_Recovery/run_platform_product.py \
           --evidence-root "$TLDW_PLATFORM_EVIDENCE_ROOT" \
-          --product-selection "${{ inputs.backup_platform_selection }}"
+          --product-selection "${{ matrix.selection }}"
 
     - name: Upload failure-preserving Windows receipts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: backup-platform-windows-2022-py3.12-${{ github.sha }}
+        name: backup-platform-windows-2022-py3.12-${{ matrix.selection }}-${{ github.sha }}
         path: ${{ runner.temp }}/backup-platform-product/artifacts
         if-no-files-found: error

@@ -51,11 +51,11 @@ async def main():
  from Tests.Backup_Recovery.test_restore_plan import sealed
  warm=sealed(home)
  inspected=service.start_inspection(warm.path,password=None)
- assert (await asyncio.to_thread(service.wait,inspected,timeout=15))['state']=='succeeded'
+ assert (await asyncio.to_thread(service.wait,inspected,timeout=90 if sys.platform=='win32' else 15))['state']=='succeeded'
  entered,release=threading.Event(),threading.Event()
  writer=archive_writer.write_archive
  def held_writer(*args,**kwargs):
-  entered.set();assert release.wait(15);return writer(*args,**kwargs)
+  entered.set();assert release.wait(180 if sys.platform=='win32' else 15);return writer(*args,**kwargs)
  archive_writer.write_archive=held_writer
  monitoring=asyncio.create_task(monitor_app(app))
  try:
@@ -67,18 +67,18 @@ async def main():
   assert details['capacity'] and all(row['sufficient'] for row in details['capacity'])
   assert preview.complete,inventory_diagnostic(preview)
   operation=service.start_backup((selector,),preview.scope_digest,destination,options=options,password=None)
-  async with asyncio.timeout(150 if sys.platform=='win32' else 65):
+  async with asyncio.timeout(300 if sys.platform=='win32' else 65):
    while not entered.is_set():
     assert service.status(operation)['state']=='running',dict(service.status(operation))
     await asyncio.sleep(.01)
   assert service.status(operation)['phase']=='packaging' and not destination.exists()
-  for _ in range(500):
+  for _ in range(6000 if sys.platform=='win32' else 500):
    if storage_admission._pause is None and app._backup_runtime_maintenance is None:break
    await asyncio.sleep(.01)
   assert storage_admission._pause is None
   after=app.chachanotes_db.add_note('After capture','Ordinary writer resumed.')
   release.set()
-  result=await asyncio.to_thread(service.wait,operation,timeout=30)
+  result=await asyncio.to_thread(service.wait,operation,timeout=180 if sys.platform=='win32' else 30)
   assert result['state']=='succeeded' and result['phase']=='archive_verified',dict(result)
   assert result['result']['complete'] and result['result']['path']==str(destination)
   assert not result['result'].get('restoration_validated',False)
@@ -129,7 +129,7 @@ def headless(app,*args,**kwargs):
    assert screen.query_one('#backup-restore-mode',Select).value=='replace'
    print('FRESH_MINIMAL_NO_INSPECTION',flush=True)
    screen.query_one('#backup-inspect',Button).focus();await pilot.press('enter')
-   async with asyncio.timeout(20):
+   async with asyncio.timeout(120 if sys.platform=='win32' else 20):
     while not screen.query_one('#backup-restore-form').display:await asyncio.sleep(.03)
    print('FRESH_ARCHIVE_INSPECTED',flush=True)
    for index,slot in enumerate(screen._inspection_summary['destination_slots']):
@@ -139,7 +139,7 @@ def headless(app,*args,**kwargs):
    screen.query_one('#backup-rollback-confirm',Input).value='test-only-new-safety-password'
    await pilot.pause()
    screen.query_one('#backup-review-restore',Button).focus();await pilot.press('enter')
-   async with asyncio.timeout(25):
+   async with asyncio.timeout(180 if sys.platform=='win32' else 25):
     while screen.query_one('#backup-start-restore',Button).disabled:
      text=str(screen.query_one('#backup-restore-preview',Static).render())
      if 'refused' in text:
@@ -158,7 +158,7 @@ def headless(app,*args,**kwargs):
    assert screen.query_one('#backup-start-restore',Button).disabled
    print('EXPLICIT_BUILTIN_SAFETY_SELECTION',len(safety_keys),flush=True)
    screen.query_one('#backup-review-restore',Button).focus();await pilot.press('enter')
-   async with asyncio.timeout(25):
+   async with asyncio.timeout(180 if sys.platform=='win32' else 25):
     while screen.query_one('#backup-start-restore',Button).disabled:
      text=str(screen.query_one('#backup-restore-preview',Static).render())
      if 'refused' in text:
@@ -175,21 +175,21 @@ def headless(app,*args,**kwargs):
     print('CONCRETE_UI_START_BLOCKER',text,flush=True)
     (Path.home()/'probe-result.json').write_text(json.dumps({'checkpoint':'start','refusal':text}))
     return
-   state=await asyncio.to_thread(app.recovery_service.wait,current['operation_id'],timeout=55)
+   state=await asyncio.to_thread(app.recovery_service.wait,current['operation_id'],timeout=300 if sys.platform=='win32' else 55)
    print('FRESH_REPLACEMENT_TERMINAL',dict(state),flush=True)
    assert state['state']=='recovery_required',dict(state)
    expected=tuple(state['review_issues'])
    assert expected and all(code.startswith('credential_') for code in expected)
-   async with asyncio.timeout(10):
+   async with asyncio.timeout(60 if sys.platform=='win32' else 10):
     while len(list(screen.query('.backup-acknowledge-restore-credential')))!=len(expected):await asyncio.sleep(.03)
    boxes=list(screen.query('.backup-acknowledge-restore-credential'))
    assert {box.name for box in boxes}==set(expected) and not any(box.value for box in boxes)
    print('OMISSIONS_VISIBLE_UNCHECKED',len(boxes),flush=True)
    screen.query_one('#backup-open-copies',Button).focus();await pilot.press('enter')
-   async with asyncio.timeout(15):
+   async with asyncio.timeout(90 if sys.platform=='win32' else 15):
     while not list(screen.query('.backup-recover-abort')):await asyncio.sleep(.03)
    screen.query_one('.backup-recover-abort',Button).focus();await pilot.press('enter')
-   aborted=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=20)
+   aborted=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=90 if sys.platform=='win32' else 20)
    assert aborted['result']['aborted'],dict(aborted)
    print('ACTUAL_ABORTED_UNTOUCHED',flush=True)
    screen.query_one('#backup-open-inspect',Button).focus();await pilot.press('enter')
@@ -198,7 +198,7 @@ def headless(app,*args,**kwargs):
    screen.query_one('#backup-rollback-confirm',Input).value='test-only-new-safety-password'
    await pilot.pause()
    screen.query_one('#backup-review-restore',Button).focus();await pilot.press('enter')
-   async with asyncio.timeout(25):
+   async with asyncio.timeout(180 if sys.platform=='win32' else 25):
     while screen.query_one('#backup-start-restore',Button).disabled:
      text=str(screen.query_one('#backup-restore-preview',Static).render())
      if 'refused' in text:
@@ -210,7 +210,7 @@ def headless(app,*args,**kwargs):
    assert set(screen._restore_plan.safety_scope)==safety_keys
    print('ACTUAL_SECOND_REVIEW_ACKNOWLEDGED',flush=True)
    screen.query_one('#backup-start-restore',Button).focus();await pilot.press('enter')
-   state=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=90)
+   state=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=360 if sys.platform=='win32' else 90)
    print('SECOND_REPLACEMENT_TERMINAL',dict(state),flush=True)
    result={'state':state['state'],'phase':state['phase'],'issues':list(state['issues']),'review_issues':list(state['review_issues']),'result':dict(state['result'])}
    (Path.home()/'probe-result.json').write_text(json.dumps(result,default=str))
@@ -285,7 +285,7 @@ from tldw_chatbook.Utils import terminal_utils
 original_run=TldwCli.run
 async def drive(pilot):
  app=pilot.app
- async with asyncio.timeout(20):
+ async with asyncio.timeout(90 if sys.platform=='win32' else 20):
   while not app._ui_ready:await asyncio.sleep(.03)
  await pilot.press('f9');await pilot.pause()
  app.screen.query_one('#settings-backup-restore',Button).focus();await pilot.press('enter');await pilot.pause()
@@ -293,7 +293,7 @@ async def drive(pilot):
  screen=app.screen
  screen.query_one('#backup-source',Input).value=str(home/'service.tldw-backup.zip')
  await pilot.click('#backup-inspect')
- async with asyncio.timeout(20):
+ async with asyncio.timeout(180 if sys.platform=='win32' else 20):
   while screen._inspection_id is None:await asyncio.sleep(.03)
  screen.query_one('#backup-restore-mode',Select).value='replace'
  screen.query_one('#backup-target-config',Input).value=str(selector)
@@ -301,7 +301,7 @@ async def drive(pilot):
  assert screen.query_one('#backup-review-restore',Button).disabled
  print('NORMAL_F9_RESTART_REQUESTED',flush=True)
  screen.query_one('#backup-restart',Button).focus();await pilot.press('enter')
- async with asyncio.timeout(20):
+ async with asyncio.timeout(90 if sys.platform=='win32' else 20):
   while app.is_running:await asyncio.sleep(.03)
 def headless(app,*args,**kwargs):
  return original_run(app,headless=True,size=(120,42),auto_pilot=drive)
@@ -325,7 +325,7 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
         "service",
         "backup",
         script=_SEED,
-        timeout=300 if sys.platform == "win32" else 110,
+        timeout=480 if sys.platform == "win32" else 110,
         installed_package=native_package,
     )
     test_root = Path(__file__).resolve().parents[2]
@@ -354,7 +354,7 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
             text=True,
             # Includes normal-app restart, omission review, and native replacement.
             # The accepted second replacement alone exceeded the old 55s observer.
-            timeout=150,
+            timeout=600 if sys.platform == "win32" else 150,
             check=False,
         )
     assert result.returncode == 0, log.read_text()[-8000:]

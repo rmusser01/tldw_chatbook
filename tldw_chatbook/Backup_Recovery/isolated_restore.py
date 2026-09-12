@@ -327,6 +327,9 @@ def _launch_environment() -> dict[str, str]:
     """Preserve only platform/terminal selectors; provider and app overrides drop."""
     allowed = (
         "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
         "USER",
         "LOGNAME",
         "PATH",

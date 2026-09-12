@@ -154,12 +154,18 @@ async def main():
    ui_event('open_handler');return actual_open(profile_id)
   app.open_recovery_profile=observed_open
   async def press(query):
-   button=app.screen.query_one(query,Button)
-   async with asyncio.timeout(2):
-    while button.has_class('-active'):await asyncio.sleep(.02)
-   assert not button.disabled,query
-   button.scroll_visible(immediate=True);button.focus()
-   await ready(lambda:app.focused is button and button.is_mounted)
+   async with asyncio.timeout(90 if sys.platform=='win32' else 30):
+    while True:
+     buttons=list(app.screen.query(query))
+     if len(buttons)!=1:
+      await asyncio.sleep(.03);continue
+     button=buttons[0]
+     assert isinstance(button,Button) and not button.disabled,query
+     if button.has_class('-active'):
+      await asyncio.sleep(.02);continue
+     button.scroll_visible(immediate=True);button.focus()
+     await pilot.pause()
+     if button.is_mounted and app.focused is button and list(app.screen.query(query))==[button]:break
    if query=='.backup-open-profile':ui_event('open_button_focused')
    await pilot.press('enter')
    if query=='.backup-open-profile':ui_event('open_enter_delivered')

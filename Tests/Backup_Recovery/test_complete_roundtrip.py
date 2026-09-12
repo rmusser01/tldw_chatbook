@@ -4,7 +4,12 @@ import json
 import os
 import subprocess  # nosec B404
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
+
+
+def _relative_archive_key(root: PurePath, path: PurePath) -> str:
+    """Return the portable member key used by the captured file receipt."""
+    return path.relative_to(root).as_posix()
 
 
 def test_complete_capability_requires_every_release_gate():
@@ -24,9 +29,22 @@ def test_complete_capability_requires_every_release_gate():
         assert release_capability(**{**gates, name: False}) is False, name
 
 
+def test_relative_archive_key_normalizes_windows_separators():
+    root = PureWindowsPath(r"C:\private\skills")
+
+    assert tuple(
+        _relative_archive_key(root, root / "trust" / name)
+        for name in ("skill_trust_manifest.json", "generation_marker.json")
+    ) == (  # nosec B101
+        "trust/skill_trust_manifest.json",
+        "trust/generation_marker.json",
+    )
+
+
 _PRIVATE = r"""
 import asyncio,json,os,sys,threading
 from pathlib import Path
+from Tests.Backup_Recovery.test_complete_roundtrip import _relative_archive_key
 from Tests.network_guard import install,blocked_attempts
 install()
 for name in ('sounddevice','pyaudio'):sys.modules[name]=None
@@ -219,7 +237,7 @@ async def main():
   book=await books.create_chatbook(name=name+' retained book',file_path=archive,metadata={'profile_label':name})
   book_preview=await books.preview_chatbook(archive)
   assert book_preview['success'],book_preview
-  local_content={'skill':{'name':skill['name'],'root':str(skills.store_dir),'files':skill_files,'generation':trusted['generation'],'snapshot':snapshot,'manifest':str(trust.trust_store.manifest_path.relative_to(skills.store_dir)),'marker':str(trust.trust_store.marker_store.marker_path.relative_to(skills.store_dir))},'book':{'record':book,'path':str(archive),'digest':hashlib.sha256(archive.read_bytes()).hexdigest(),'manifest':book_preview['manifest']},'registry':str(books.registry_path)}
+  local_content={'skill':{'name':skill['name'],'root':str(skills.store_dir),'files':skill_files,'generation':trusted['generation'],'snapshot':snapshot,'manifest':_relative_archive_key(skills.store_dir,trust.trust_store.manifest_path),'marker':_relative_archive_key(skills.store_dir,trust.trust_store.marker_store.marker_path)},'book':{'record':book,'path':str(archive),'digest':hashlib.sha256(archive.read_bytes()).hexdigest(),'manifest':book_preview['manifest']},'registry':str(books.registry_path)}
   empty=secure_chatbook_directory(get_private_chatbooks_dir()/'retained-empty')
   assert not list(empty.iterdir())
   from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
