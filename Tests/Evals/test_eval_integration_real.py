@@ -31,15 +31,9 @@ class TestRealDatabaseIntegration:
     """Test real database operations."""
 
     @pytest.fixture
-    def temp_db(self):
+    def temp_db(self, tmp_path: Path):
         """Create a temporary database for testing."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = str(Path(f.name).resolve())
-
-        yield db_path
-
-        # Cleanup
-        Path(db_path).unlink(missing_ok=True)
+        yield str(tmp_path / "evals.sqlite")
 
     def test_database_initialization(self, temp_db):
         """Test database initialization and schema creation."""

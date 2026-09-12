@@ -6,14 +6,48 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Workspaces.change_bounds import (
-    DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MAX_FILES,
-    DEFAULT_MAX_TOTAL_BYTES,
     DEFAULT_RETENTION_DAYS,
-    RootScan,
     change_review_setting,
     scan_root,
 )
+
+
+def test_missing_global_setting_keeps_capability_available(monkeypatch):
+    """A missing master switch preserves capability, not workspace consent."""
+    import tldw_chatbook.Workspaces.change_bounds as change_bounds
+
+    monkeypatch.delenv("TLDW_CHANGE_REVIEW_ENABLED", raising=False)
+    monkeypatch.setattr(
+        change_bounds,
+        "_change_review_enabled_setting",
+        lambda: True,
+        raising=False,
+    )
+
+    result = change_bounds.read_change_review_capability()
+
+    assert result.state.value == "enabled"
+    assert change_bounds.change_review_enabled_globally() is True
+
+
+@pytest.mark.parametrize("raw", ["maybe", "", object()])
+def test_invalid_global_setting_is_unavailable(monkeypatch, raw):
+    """Unreadable/coercion-failed capability state must fail tracking off."""
+    import tldw_chatbook.Workspaces.change_bounds as change_bounds
+
+    monkeypatch.delenv("TLDW_CHANGE_REVIEW_ENABLED", raising=False)
+    monkeypatch.setattr(
+        change_bounds,
+        "_change_review_enabled_setting",
+        lambda: raw,
+        raising=False,
+    )
+
+    result = change_bounds.read_change_review_capability()
+
+    assert result.state.value == "unavailable"
+    assert change_bounds.change_review_enabled_globally() is False
 
 
 class TestKnobs:
@@ -847,6 +881,7 @@ class TestChangeReviewGating:
 
         registry = self._registry(tmp_path)
         root = self._bound_workspace(registry, tmp_path)
+        registry.set_change_review_enabled("ws-1", True)
         monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
 
         assert wfr.folder_binding_roots("ws-1") == (root.resolve(),)
@@ -861,7 +896,7 @@ class TestChangeReviewGating:
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
         registry = self._registry(tmp_path)
-        root = self._bound_workspace(registry, tmp_path)
+        self._bound_workspace(registry, tmp_path)
         other_root = tmp_path / "other"
         other_root.mkdir()
         registry.create_workspace(workspace_id="ws-2", name="Other")
@@ -869,11 +904,10 @@ class TestChangeReviewGating:
         monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
 
         registry.set_change_review_enabled("ws-1", False)
+        registry.set_change_review_enabled("ws-2", True)
 
         assert registry.change_review_enabled("ws-1") is False
-        assert registry.change_review_enabled("ws-2") is True, (
-            "absent row must read as enabled"
-        )
+        assert registry.change_review_enabled("ws-2") is True
         assert wfr.folder_binding_roots("ws-1") == ()
         assert wfr.folder_binding_roots("ws-2") == (other_root.resolve(),)
 
@@ -898,8 +932,6 @@ class TestGatingCoversRegistrationHook:
     def test_disabled_workspace_add_binding_takes_no_snapshot(
         self, tmp_path, monkeypatch
     ):
-        import time
-
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
         from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
@@ -910,13 +942,9 @@ class TestGatingCoversRegistrationHook:
         registry.set_change_review_enabled("ws-off", False)
         root = tmp_path / "offroot"
         root.mkdir()
-        appdata = tmp_path / "appdata-gate"
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
 
         registry.add_folder_binding("ws-off", root)
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            time.sleep(0.1)
 
         from tldw_chatbook.Utils.paths import get_user_data_dir
 
@@ -934,8 +962,6 @@ class TestGatingCoversRegistrationHook:
     def test_global_kill_gates_the_registration_hook(
         self, tmp_path, monkeypatch
     ):
-        import time
-
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
         from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
@@ -949,9 +975,6 @@ class TestGatingCoversRegistrationHook:
         root.mkdir()
 
         registry.add_folder_binding("ws-g", root)
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            time.sleep(0.1)
 
         from tldw_chatbook.Utils.paths import get_user_data_dir
 

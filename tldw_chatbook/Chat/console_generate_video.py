@@ -280,7 +280,9 @@ def run_video_generation(
         duration_seconds=result.duration_seconds
         if result.duration_seconds is not None
         else (float(duration_seconds) if duration_seconds is not None else None),
-        fps=result.fps if result.fps is not None else (float(fps) if fps is not None else None),
+        fps=result.fps
+        if result.fps is not None
+        else (float(fps) if fps is not None else None),
         width=result.width or width,
         height=result.height or height,
         ratio=ratio,

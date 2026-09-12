@@ -160,7 +160,7 @@ def normalize_local_media_row(
         )
     )
 
-    return {
+    normalized = {
         "id": build_canonical_media_id("local", "media", source_id),
         "backend": "local",
         "entity_kind": "media",
@@ -192,6 +192,20 @@ def normalize_local_media_row(
             backing_media_id=backing_media_id,
         ),
     }
+    # Canonical Media processing fields are retained only when the owner
+    # returned them. Research readiness consumes this read projection; no
+    # parallel status store is introduced.
+    for key in (
+        "content",
+        "chunking_status",
+        "vector_processing",
+        "version",
+        "content_hash",
+        "stale",
+    ):
+        if key in row:
+            normalized[key] = row.get(key)
+    return normalized
 
 
 def normalize_server_reading_item(

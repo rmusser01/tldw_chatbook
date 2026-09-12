@@ -11,25 +11,31 @@ delegate to (the pilot has no drag primitive).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 from tldw_chatbook.Chat.trajectory import (
     KIND_ASSISTANT,
     KIND_TOOL_CALL,
+    KIND_TOOL_RESULT,
     KIND_USER,
+    KIND_USER_FEEDBACK,
     TrajectoryRecord,
+    TrajectorySnapshot,
+    TrajectoryTurn,
     derive_trajectory,
 )
 from tldw_chatbook.UI.Widgets.trajectory_timeline import (
     LANE_COUNT,
+    LANE_LABEL_WIDTH,
     ZOOM_FACTOR,
     TimelineModel,
     TrajectoryTimeline,
 )
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 # ---------------------------------------------------------------------------
 # Pure-model fixtures
@@ -60,6 +66,7 @@ def rec(
         payload=None,
         variants=(),
         depth=0,
+        event_id=f"event:{seq}",
     )
 
 
@@ -69,6 +76,118 @@ def rec(
 
 
 class TestTimelineModel:
+    def test_semantic_lanes_replace_anonymous_greedy_packing(self) -> None:
+        records = [
+            rec(1, KIND_USER, start=0.0, end=10.0),
+            rec(2, KIND_ASSISTANT, start=1.0, end=9.0),
+            rec(3, KIND_TOOL_CALL, start=2.0, end=8.0),
+            replace(
+                rec(4, "agent_step", start=3.0, end=7.0),
+                actor_kind="agent",
+                run_id="child-1",
+                parent_event_id="agent-run:parent",
+            ),
+        ]
+        model = TimelineModel(records)
+
+        assert model.lane_names == ("Input", "Model", "Tools", "Agents")
+        assert model.lanes == (0, 1, 2, 3)
+
+    def test_semantic_lane_assignment_never_depends_on_overlap(self) -> None:
+        records = [
+            rec(1, KIND_USER, start=0.0, end=100.0),
+            rec(2, KIND_USER, start=1.0, end=99.0),
+            rec(3, KIND_ASSISTANT, start=2.0, end=98.0),
+            rec(4, KIND_TOOL_CALL, start=3.0, end=97.0),
+        ]
+        assert TimelineModel(records).lanes == (0, 0, 1, 2)
+
+    def test_record_identity_is_stable_event_id_not_display_seq(self) -> None:
+        original = replace(rec(1, start=0.0, end=1.0), event_id="message:stable")
+        renumbered = replace(original, seq=999)
+
+        assert TimelineModel([original]).record_key(original) == "message:stable"
+        assert TimelineModel([renumbered]).record_key(renumbered) == "message:stable"
+
+    def test_legacy_record_identity_accepts_screen_row_key_contract(self) -> None:
+        legacy = replace(rec(1, start=0.0, end=1.0), event_id="")
+        model = TimelineModel([legacy], record_keys={id(legacy): "legacy:screen-key"})
+
+        assert model.record_key(legacy) == "legacy:screen-key"
+
+    def test_non_color_glyphs_distinguish_each_semantic_lane(self) -> None:
+        records = [
+            rec(1, KIND_USER, start=0.0, end=1.0),
+            rec(2, KIND_ASSISTANT, start=2.0, end=3.0),
+            rec(3, KIND_TOOL_CALL, start=4.0, end=5.0),
+            replace(rec(4, "agent_step", start=6.0, end=7.0), actor_kind="agent"),
+        ]
+        model = TimelineModel(records)
+
+        assert len({model.glyph_for(record) for record in records}) == 4
+
+    def test_non_color_glyphs_distinguish_event_families_within_each_lane(
+        self,
+    ) -> None:
+        user = rec(1, KIND_USER, start=0.0, end=1.0)
+        feedback = rec(2, KIND_USER_FEEDBACK, start=2.0, end=3.0)
+        model = rec(3, KIND_ASSISTANT, start=4.0, end=5.0)
+        model_error = replace(
+            rec(4, "provider_error", start=6.0, end=7.0), status="failed"
+        )
+        tool_call = rec(5, KIND_TOOL_CALL, start=8.0, end=9.0)
+        tool_result = rec(6, KIND_TOOL_RESULT, start=10.0, end=11.0)
+        agent_run = replace(
+            rec(7, "agent_run", start=12.0, end=13.0),
+            actor_kind="primary",
+            run_id="primary",
+        )
+        agent_step = replace(
+            rec(8, "agent_step", start=14.0, end=15.0),
+            actor_kind="agent",
+            run_id="primary",
+        )
+        records = (
+            user,
+            feedback,
+            model,
+            model_error,
+            tool_call,
+            tool_result,
+            agent_run,
+            agent_step,
+        )
+        timeline = TimelineModel(records)
+
+        for left, right in (
+            (user, feedback),
+            (model, model_error),
+            (tool_call, tool_result),
+            (agent_run, agent_step),
+        ):
+            assert timeline.glyph_for(left) != timeline.glyph_for(right)
+
+    def test_turn_and_child_agent_boundaries_are_explicit_not_order_edges(self) -> None:
+        child = replace(
+            rec(3, "agent_step", start=4.0, end=5.0),
+            turn_id="t2",
+            actor_kind="agent",
+            run_id="child",
+            parent_event_id="agent-run:parent",
+        )
+        records = [
+            replace(rec(1, start=0.0, end=1.0), turn_id="t1"),
+            replace(rec(2, KIND_ASSISTANT, start=2.0, end=3.0), turn_id="t2"),
+            child,
+        ]
+
+        boundaries = TimelineModel(records).boundaries
+        assert [(item.kind, item.record_key) for item in boundaries] == [
+            ("turn", "event:1"),
+            ("turn", "event:2"),
+            ("agent", "event:3"),
+        ]
+
     def test_domain_padding(self) -> None:
         model = TimelineModel(
             [rec(1, start=10.0, end=20.0), rec(2, start=15.0, end=30.0)]
@@ -108,11 +227,10 @@ class TestTimelineModel:
         )
         assert model.lanes == (0, 1, 2, 0)
 
-    def test_lane_overflow_caps_at_last_lane(self) -> None:
+    def test_same_semantic_family_stays_in_one_lane_under_heavy_overlap(self) -> None:
         records = [rec(i + 1, start=float(i), end=100.0) for i in range(LANE_COUNT + 2)]
         model = TimelineModel(records)
-        assert model.lanes == (0, 1, 2, 3, 3, 3)
-        assert max(model.lanes) == LANE_COUNT - 1  # strip never grows
+        assert model.lanes == (0, 0, 0, 0, 0, 0)
 
     def test_records_in_range(self) -> None:
         model = TimelineModel(
@@ -271,7 +389,7 @@ def untimed_snapshot():
     return derive_trajectory(messages, {}, rows, [], [])
 
 
-class TimelineApp(App[None]):
+class TimelineApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.captured: list[object] = []
@@ -319,6 +437,242 @@ def _viewport_events(app: TimelineApp):
 
 
 class TestTrajectoryTimelineWidget:
+    async def test_render_paints_semantic_labels_glyphs_and_boundaries(self) -> None:
+        records = (
+            replace(rec(1, KIND_USER, start=0.0, end=1.0), turn_id="t1"),
+            replace(rec(2, KIND_ASSISTANT, start=2.0, end=3.0), turn_id="t2"),
+            replace(rec(3, KIND_TOOL_CALL, start=4.0, end=5.0), turn_id="t2"),
+            replace(
+                rec(4, "agent_run", start=6.0, end=7.0),
+                turn_id="t2",
+                actor_kind="subagent",
+                run_id="child",
+                parent_event_id="agent-run:parent",
+            ),
+        )
+        snapshot = TrajectorySnapshot((TrajectoryTurn("all", records),))
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(snapshot)
+            await pilot.pause()
+
+            painted = str(tl.render())
+            for label in ("Input", "Model", "Tools", "Agents"):
+                assert label in painted
+            for glyph in ("◆", "━", "▶", "●"):
+                assert glyph in painted
+            assert "│" in painted  # turn boundary, not a serial-causality arrow
+            assert "┆" in painted  # parent/child agent boundary
+
+    @pytest.mark.parametrize(
+        ("kind", "event_glyph", "combined_glyph"),
+        (("agent_run", "●", "◉"), ("agent_step", "○", "⊙")),
+    )
+    async def test_instantaneous_agent_boundary_preserves_event_family_marker(
+        self,
+        kind: str,
+        event_glyph: str,
+        combined_glyph: str,
+    ) -> None:
+        record = replace(
+            rec(1, kind, start=4.0, end=4.0),
+            actor_kind="subagent",
+            run_id="child",
+            parent_event_id="agent-step:primary:1",
+        )
+        snapshot = TrajectorySnapshot((TrajectoryTurn("turn-1", (record,)),))
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(snapshot)
+            await pilot.pause()
+
+            assert timeline.model.glyph_for(record) == event_glyph
+            assert combined_glyph in str(timeline.render())
+            cols = timeline._record_columns(
+                record, timeline._plot_width(), timeline.viewport
+            )
+            assert cols is not None
+            assert timeline.record_at(LANE_LABEL_WIDTH + cols[0], 3) is record
+
+    async def test_same_position_agent_run_and_step_paint_and_hit_top_step(
+        self,
+    ) -> None:
+        run = replace(
+            rec(1, "agent_run", start=4.0, end=4.0),
+            actor_kind="subagent",
+            run_id="child",
+            parent_event_id="agent-step:primary:1",
+        )
+        painted_top = replace(
+            rec(2, "agent_step", start=4.0, end=4.0),
+            actor_kind="subagent",
+            run_id="child",
+            parent_event_id="agent-run:child",
+        )
+        snapshot = TrajectorySnapshot((TrajectoryTurn("turn-1", (run, painted_top)),))
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(snapshot)
+            await pilot.pause()
+            plot_width = timeline._plot_width()
+            cols = timeline._record_columns(painted_top, plot_width, timeline.viewport)
+            assert cols is not None
+
+            assert timeline.model.glyph_for(run) == "●"
+            assert timeline.model.glyph_for(painted_top) == "○"
+            assert "⊙" in str(timeline.render())
+            assert timeline.record_at(LANE_LABEL_WIDTH + cols[0], 3) is painted_top
+
+    async def test_same_lane_overlap_hit_testing_selects_last_painted_event(
+        self,
+    ) -> None:
+        first = rec(1, KIND_ASSISTANT, start=0.0, end=10.0)
+        painted_top = rec(2, KIND_ASSISTANT, start=0.0, end=10.0)
+        snapshot = TrajectorySnapshot((TrajectoryTurn("turn-1", (first, painted_top)),))
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(snapshot)
+            await pilot.pause()
+            column = LANE_LABEL_WIDTH + timeline._plot_width() // 2
+
+            selected = timeline.record_at(column, 1)
+
+            assert selected is painted_top
+
+    async def test_timeline_caption_explains_non_color_family_markers(self) -> None:
+        records = (
+            rec(1, KIND_USER_FEEDBACK, start=0.0, end=1.0),
+            replace(rec(2, "provider_error", start=2.0, end=3.0), status="failed"),
+            rec(3, KIND_TOOL_CALL, start=4.0, end=5.0),
+            rec(4, KIND_TOOL_RESULT, start=6.0, end=7.0),
+            replace(
+                rec(5, "agent_step", start=8.0, end=9.0),
+                actor_kind="agent",
+                run_id="primary",
+            ),
+        )
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(
+                TrajectorySnapshot((TrajectoryTurn("turn-1", records),))
+            )
+            await pilot.pause()
+
+            caption = str(timeline.render()).splitlines()[-1].lower()
+            for label in ("feedback", "error", "call", "result", "run", "step"):
+                assert label in caption
+
+    async def test_brush_uses_theme_component_style_not_fixed_color(self) -> None:
+        assert "timeline--brush" in TrajectoryTimeline.COMPONENT_CLASSES
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(timed_snapshot())
+            timeline.apply_brush(timeline.model.domain)
+            await pilot.pause()
+
+            component = timeline.get_component_rich_style(
+                "timeline--brush", partial=True
+            )
+            assert component.bgcolor is not None
+            assert any(
+                span.style.bgcolor == component.bgcolor
+                for span in timeline.render().spans
+                if hasattr(span.style, "bgcolor")
+            )
+
+    async def test_timeline_bindings_cover_keyboard_selection_range_zoom_and_pan(
+        self,
+    ) -> None:
+        actions = {binding.action for binding in TrajectoryTimeline.BINDINGS}
+        assert {
+            "previous_event",
+            "next_event",
+            "select_event",
+            "toggle_range",
+            "zoom_out",
+            "zoom_in",
+            "pan_left",
+            "pan_right",
+        } <= actions
+
+    async def test_no_timing_snapshot_collapses_the_actual_widget_to_one_row(
+        self,
+    ) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(untimed_snapshot())
+            await pilot.pause()
+
+            assert tl.size.height == 1
+            assert (
+                str(tl.render()).strip()
+                == "No timing data — events remain in the ledger"
+            )
+
+    async def test_keyboard_selection_and_range_use_stable_record_keys(self) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(timed_snapshot())
+            await pilot.pause()
+            tl.focus()
+
+            await pilot.press("j")
+            assert tl.selected == "message:u1"
+            await pilot.press("b")
+            assert tl.range_anchor == "message:u1"
+            await pilot.press("j")
+            await pilot.press("b")
+            assert tl.brush is not None
+            assert tl.range_anchor is None
+
+            app.captured.clear()
+            await pilot.press("enter")
+            bars = _bar_events(app)
+            assert bars[-1].record_key == tl.selected
+
+    async def test_keyboard_range_includes_both_intervals_when_selected_backward(
+        self,
+    ) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(timed_snapshot())
+            await pilot.pause()
+            tl.focus()
+            tl.set_selected("message:a1")
+
+            await pilot.press("b")
+            await pilot.press("k")
+            await pilot.press("b")
+
+            assert tl.brush == (_T0, _T0 + 18.0)
+
+    async def test_clicking_semantic_label_column_is_inert(self) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(timed_snapshot())
+            await pilot.pause()
+            tl.brush_columns(LANE_LABEL_WIDTH + 1, LANE_LABEL_WIDTH + 4)
+            await pilot.pause()
+            brush = tl.brush
+            app.captured.clear()
+
+            clicked = await pilot.click(tl, offset=(1, 0))
+            assert clicked
+            await pilot.pause()
+            assert _bar_events(app) == []
+            assert _brush_events(app) == []
+            assert tl.brush == brush
+
     async def test_set_snapshot_initializes_viewport_to_domain(self) -> None:
         app = TimelineApp()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -336,7 +690,7 @@ class TestTrajectoryTimelineWidget:
             tl.set_snapshot(untimed_snapshot())
             await pilot.pause()
             assert not tl.model.has_data
-            assert "no timing data" in str(tl.render())
+            assert "no timing data" in str(tl.render()).lower()
 
     async def test_render_draws_bars_and_caption(self) -> None:
         app = TimelineApp()
@@ -346,16 +700,18 @@ class TestTrajectoryTimelineWidget:
             await pilot.pause()
             lines = str(tl.render()).splitlines()
             assert len(lines) == 6  # 4 lanes + axis + caption
-            assert "█" in lines[0]  # u1 lives on lane 0
+            assert "Input" in lines[0] and "◆" in lines[0]
             assert "no brush" in lines[-1]
 
-    async def test_click_on_bar_selects_and_clears_brush(self) -> None:
+    async def test_click_on_bar_posts_intent_without_mutating_host_owned_state(
+        self,
+    ) -> None:
         app = TimelineApp()
         async with app.run_test(size=(80, 24)) as pilot:
             tl = app.query_one(TrajectoryTimeline)
             tl.set_snapshot(timed_snapshot())
             await pilot.pause()
-            # Pre-existing brush must be cleared by a bar click.
+            # A pre-existing brush remains until a host accepts the click.
             tl.brush_columns(4, 8)
             await pilot.pause()
             app.captured.clear()
@@ -366,10 +722,81 @@ class TestTrajectoryTimelineWidget:
             await pilot.pause()
             bars = _bar_events(app)
             assert len(bars) == 1
-            assert bars[0].record_key == 1  # u1's ledger seq
-            cleared = _brush_events(app)
-            assert cleared[-1].brush_range is None
-            assert tl.brush is None
+            assert bars[0].record_key == "message:u1"
+            assert _brush_events(app) == []
+            assert tl.brush is not None
+
+    async def test_off_viewport_records_and_boundaries_are_absent_and_not_hittable(
+        self,
+    ) -> None:
+        left = replace(rec(1, KIND_USER, start=0.0, end=2.0), turn_id="left")
+        middle = replace(rec(2, KIND_USER, start=50.0, end=52.0), turn_id="middle")
+        right = replace(rec(3, KIND_USER, start=100.0, end=102.0), turn_id="right")
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(
+                TrajectorySnapshot((TrajectoryTurn("all", (left, middle, right)),))
+            )
+            await pilot.pause()
+
+            timeline.zoom_at(5.0, 0.0)
+            await pilot.pause()
+            assert timeline.viewport is not None and timeline.viewport[1] < 50.0
+            model_line = str(timeline.render()).splitlines()[1]
+            assert model_line.count("│") == 1
+            assert timeline.record_at(timeline.size.width - 1, 0) is None
+
+            timeline.pan_by(4.0)
+            await pilot.pause()
+            assert timeline.viewport is not None and timeline.viewport[0] > 50.0
+            model_line = str(timeline.render()).splitlines()[1]
+            assert model_line.count("│") == 1
+            assert timeline.record_at(LANE_LABEL_WIDTH, 0) is None
+
+    async def test_intersecting_record_is_clipped_to_the_viewport_edge(self) -> None:
+        crossing = rec(1, KIND_ASSISTANT, start=0.0, end=20.0)
+        off_left = rec(2, KIND_ASSISTANT, start=-20.0, end=-10.0)
+        off_right = rec(3, KIND_ASSISTANT, start=30.0, end=40.0)
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(
+                TrajectorySnapshot(
+                    (TrajectoryTurn("all", (crossing, off_left, off_right)),)
+                )
+            )
+            await pilot.pause()
+            timeline._window = (10.0, 15.0)
+            width = timeline._plot_width()
+
+            assert timeline._record_columns(crossing, width, timeline.viewport) == (
+                0,
+                width - 1,
+            )
+            assert timeline._record_columns(off_left, width, timeline.viewport) is None
+            assert timeline._record_columns(off_right, width, timeline.viewport) is None
+
+    async def test_instant_event_at_right_endpoint_renders_and_is_hittable(
+        self,
+    ) -> None:
+        endpoint = rec(1, KIND_ASSISTANT, start=10.0, end=10.0)
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(
+                TrajectorySnapshot((TrajectoryTurn("all", (endpoint,)),))
+            )
+            await pilot.pause()
+            timeline._window = (0.0, 10.0)
+            width = timeline._plot_width()
+
+            assert timeline._record_columns(endpoint, width, timeline.viewport) == (
+                width - 1,
+                width - 1,
+            )
+            assert str(timeline.render()).splitlines()[1].endswith("━")
+            assert timeline.record_at(LANE_LABEL_WIDTH + width - 1, 1) is endpoint
 
     async def test_click_empty_space_clears_brush(self) -> None:
         app = TimelineApp()
@@ -589,7 +1016,7 @@ class TestTimelineMouseGlue:
             tl.post_message(_mouse(tl, events.MouseUp, 10, 0, button=1))
             await pilot.pause()
             bars = _bar_events(app)
-            assert len(bars) == 1 and bars[0].record_key == 1
+            assert len(bars) == 1 and bars[0].record_key == "message:u1"
             assert tl.brush is None
 
             # Down + move + up: a drag, never a bar selection.

@@ -1,0 +1,6580 @@
+"""Persist bounded model surfaces and complete changed-only request headers."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sqlite3
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload
+from weakref import ReferenceType, ref
+
+from tldw_chatbook.Chat.console_prepared_request import freeze_json
+from tldw_chatbook.Chat.console_semantic_revision import (
+    project_semantic_revision_provider_continuations,
+    project_semantic_revision_provider_message,
+    project_semantic_revision_provider_messages,
+)
+from tldw_chatbook.Chat.console_trace_final_values import (
+    _SURFACE_VERIFICATION_ISSUER,
+    _checkpoint_semantic_value,
+    CompletedToolTurnWitness,
+    FinalValueBinding,
+    ProviderCredentialSource,
+    ProviderOverlayProvenance,
+    ProviderRequestShadowBundle,
+    SurfaceDeltaAdmission,
+    VerifiedSurfaceDelta,
+    VerifiedSurfaceDeltaItem,
+    VerifiedSurfaceReplacement,
+    VerifiedSurfaceReplacementRange,
+    build_verified_surface_delta,
+)
+from tldw_chatbook.Chat.console_trace_models import (
+    MAX_SURFACE_REPLACEMENT_SPAN,
+    FrozenTracePolicy,
+    SemanticRevisionRef,
+    SurfaceReplacement,
+    TraceCallState,
+    TraceContentRef,
+    TraceOmission,
+)
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    CUSTOM_PII_RULESET_UNAVAILABLE,
+    redact_pii_value_for_ruleset_revision,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    DerivedTraceProvenance,
+    OmittedTraceProvenance,
+    ProviderArtifactTraceProvenance,
+    ProviderRequestProvenance,
+    RequestRouteTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceOmissionReason,
+    TraceProvenance,
+    TraceProvenanceSource,
+    TraceTransformKind,
+    _project_verified_provider_request_provenance,
+)
+from tldw_chatbook.Chat.console_trace_redaction import (
+    CredentialSanitizer,
+    PIIRedactionSpan,
+)
+from tldw_chatbook.Chat.console_trace_repository import (
+    ConsoleTraceRepository,
+    HeaderComponentRef,
+    RequestHeaderRecord,
+    SurfaceNodeRecord,
+    SurfaceReplacementRecord,
+    TraceCallRecord,
+    TraceEventType,
+)
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
+from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.transaction_observer import (
+    current_managed_transaction,
+    register_transaction_completion,
+)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_trace_gateway import (
+        ProvisionalTraceEnvelope,
+        ProvisionalTraceManifest,
+        ProvisionalTraceRegistry,
+        VoiceTraceImportContext,
+    )
+    from tldw_chatbook.Chat.console_voice_trace_promotion import (
+        PostDispatchTraceImportResult,
+    )
+TRACE_VALUE_NORMALIZATION_VERSION = "canonical-json-v1"
+TRACE_VALUE_MEDIA_TYPE = "application/json"
+TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES = 0
+
+
+@contextmanager
+def trace_critical_write_checkpoint_policy(database: object) -> Iterator[None]:
+    """Keep checkpoint I/O out of a latency-critical trace write boundary.
+
+    ChaChaNotes connections are thread-local, so the policy cannot retune
+    ordinary writes on another thread.  The caller's connection setting is
+    restored after the trace commit, reconciliation, or failure.
+    """
+
+    get_connection = getattr(database, "get_connection", None)
+    if not callable(get_connection):
+        yield
+        return
+    with operation_owned_connection(database):
+        connection = get_connection()
+        row = connection.execute("PRAGMA wal_autocheckpoint").fetchone()
+        if row is None or type(row[0]) is not int or row[0] < 0:
+            raise RuntimeError("wal_autocheckpoint is unavailable")
+        previous_pages = row[0]
+        connection.execute(
+            f"PRAGMA wal_autocheckpoint={TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES}"
+        )
+        try:
+            yield
+        finally:
+            connection.execute(f"PRAGMA wal_autocheckpoint={previous_pages}")
+
+
+_REASONING_KEYS = frozenset(
+    {
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
+    }
+)
+_GENERATION_KEYS = frozenset(
+    {
+        "api_mode",
+        "frequency_penalty",
+        "max_tokens",
+        "maxp",
+        "minp",
+        "presence_penalty",
+        "prompt_caching",
+        "request_retries",
+        "request_retry_delay",
+        "request_timeout",
+        "seed",
+        "streaming",
+        "temp",
+        "topk",
+        "topp",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedTraceRequest:
+    """Durable boundary material produced before call reservation/binding."""
+
+    surface_head_id: str
+    header: RequestHeaderRecord
+    appended_nodes: tuple[SurfaceNodeRecord, ...]
+    replacement: SurfaceReplacementRecord | None = None
+    checkpoint: object | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TraceCallIdentity:
+    """Immutable durable identity for one provider-call reservation."""
+
+    owner_id: str
+    segment_id: str
+    turn_id: str
+    run_id: str
+    call_sequence: int
+    idempotency_key: str
+    policy_id: str
+
+
+# ADR-097 boot ratchet: the exception contract lives in the dependency-free
+# leaf `console_trace_errors` so boot-resident callers that need ONLY the
+# exception do not pull this module's whole trace stack onto the boot path.
+# Re-exported here so existing importers keep the SAME class object.
+from tldw_chatbook.Chat.console_trace_errors import (  # noqa: E402, F401
+    TraceCallPersistenceError,
+    TraceCallReservationStatus,
+)
+
+
+class _TraceDispatchWriteError(TraceCallPersistenceError):
+    """Keep bind outcome separate from reservation establishment."""
+
+    def __init__(self, outcome: Literal["rolled_back", "unknown"]) -> None:
+        super().__init__()
+        self.outcome = outcome
+
+
+class _TraceDispatchCancelled(asyncio.CancelledError):
+    """Carry reconciled write state without authorizing adapter entry."""
+
+    def __init__(
+        self, outcome: TraceCallRecord | Literal["rolled_back", "unknown"]
+    ) -> None:
+        super().__init__()
+        self.outcome = outcome
+
+
+@dataclass(slots=True)
+class ConsoleTraceCallBoundary:
+    """Own one reservation through its committed pre-adapter transition."""
+
+    service: ConsoleTraceService
+    database: object = field(repr=False)
+    identity: TraceCallIdentity
+    admission: SurfaceDeltaAdmission
+    occurred_at_factory: Callable[[], str] = field(repr=False)
+    surface_boundary: object | None = field(default=None, repr=False)
+    _reserved: TraceCallRecord | None = field(default=None, repr=False)
+    _factory: object | None = field(default=None, repr=False)
+    _request: object | None = field(default=None, repr=False)
+    _resolution: object | None = field(default=None, repr=False)
+    _current_revision_id: str | None = field(default=None, repr=False)
+    _accepted_preparation: object | None = field(default=None, repr=False)
+    _retired: bool = field(default=False, init=False, repr=False)
+    _recovery_transferred: bool = field(default=False, init=False, repr=False)
+    _dispatch_outcome: Literal[
+        "not_attempted", "rolled_back", "committed", "unknown"
+    ] = field(
+        default="not_attempted",
+        init=False,
+        repr=False,
+    )
+    _started: TraceCallRecord | None = field(default=None, init=False, repr=False)
+    _unknown: TraceCallRecord | None = field(default=None, init=False, repr=False)
+    _response_started_at: str | None = field(default=None, init=False, repr=False)
+    _settled: TraceCallState | None = field(default=None, init=False, repr=False)
+    _settlement_fingerprint: str | None = field(default=None, init=False, repr=False)
+    _pending_settlement_fingerprint: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _reservation_status: TraceCallReservationStatus = field(
+        default="unknown", init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        if self._reserved is not None:
+            self._reservation_status = "established"
+
+    @property
+    def reservation_status(self) -> TraceCallReservationStatus:
+        """Return the content-free durable outcome of reservation reconciliation."""
+
+        return self._reservation_status
+
+    @property
+    def dispatch_started(self) -> bool:
+        """Return whether this call crossed its normalized dispatch boundary."""
+
+        return self._started is not None
+
+    @property
+    def dispatch_outcome(self) -> str:
+        """Return the content-free result of the exact bind write/read-back."""
+        return self._dispatch_outcome
+
+    @property
+    def preparation_identity(self) -> str:
+        """Return the verifier identity admitted for this call."""
+
+        return self.admission.preparation_identity
+
+    def reserve(self) -> TraceCallRecord:
+        """Commit or reconcile the immutable call identity once."""
+
+        if self._reserved is None:
+            try:
+                self._reserved = self.service.reserve_call(self.database, self.identity)
+            except TraceCallPersistenceError as exc:
+                self._reservation_status = exc.reservation_status or "unknown"
+                raise TraceCallPersistenceError(
+                    boundary=self,
+                    reservation_status=self._reservation_status,
+                ) from None
+            self._reservation_status = "established"
+        return self._reserved
+
+    def mark_dispatch_started(
+        self,
+        bundle: ProviderRequestShadowBundle,
+        provenance: ProviderRequestProvenance,
+    ) -> TraceCallRecord:
+        """Persist the verified boundary and commit dispatch-start atomically."""
+
+        if self._reserved is None or self._started is not None or self._retired:
+            raise TraceCallPersistenceError(boundary=self)
+        try:
+            projected = getattr(self.surface_boundary, "provenance", None)
+            if projected is not None:
+                if not isinstance(projected, ProviderRequestProvenance):
+                    raise TypeError("surface provenance")
+                provenance = projected
+            surface_delta = build_verified_surface_delta(
+                provenance,
+                bundle,
+                admission=self.admission,
+            )
+            self._started = self.service.bind_and_mark_dispatch(
+                self.database,
+                call_id=self._reserved.call_id,
+                owner_id=self.identity.owner_id,
+                segment_id=self.identity.segment_id,
+                provenance=provenance,
+                bundle=bundle,
+                surface_delta=surface_delta,
+                occurred_at=self.occurred_at_factory(),
+                response_projection=_response_projection_profile(self._resolution),
+            )
+            self._dispatch_outcome = "committed"
+        except _TraceDispatchCancelled as exc:
+            if isinstance(exc.outcome, TraceCallRecord):
+                self._started = exc.outcome
+                self._dispatch_outcome = "committed"
+            else:
+                self._dispatch_outcome = exc.outcome
+                if exc.outcome == "unknown":
+                    self._retired = True
+            raise asyncio.CancelledError() from None
+        except _TraceDispatchWriteError as exc:
+            self._dispatch_outcome = exc.outcome
+            if exc.outcome == "unknown":
+                self._retired = True
+            raise TraceCallPersistenceError(boundary=self) from None
+        except TraceCallPersistenceError:
+            raise TraceCallPersistenceError(boundary=self) from None
+        except Exception:
+            raise TraceCallPersistenceError(boundary=self) from None
+        return self._started
+
+    def mark_dispatch_unknown(self) -> TraceCallRecord:
+        """Record uncertainty when the final caller-owned checkpoint fails."""
+
+        if self._unknown is not None:
+            return self._unknown
+        if self._started is None:
+            raise TraceCallPersistenceError()
+        try:
+            with (
+                operation_owned_connection(self.database),
+                self.database.transaction(immediate=True) as cursor,
+            ):  # type: ignore[attr-defined]
+                self._unknown = self.service.repository.advance_call_state(
+                    cursor,
+                    call_id=self._started.call_id,
+                    target=TraceCallState.DISPATCH_UNKNOWN,
+                    occurred_at=self.occurred_at_factory(),
+                    integrity_state=self._started.integrity_state,
+                    omission_reason_code=self._started.omission_reason_code,
+                )
+        except Exception:
+            raise TraceCallPersistenceError() from None
+        return self._unknown
+
+    def mark_not_dispatched(self) -> TraceCallRecord:
+        """Terminally record an explicit cancel before adapter entry."""
+
+        if self._reserved is None or self._started is not None or self._retired:
+            raise TraceCallPersistenceError(boundary=self)
+        if self._reserved.state is TraceCallState.NOT_DISPATCHED:
+            return self._reserved
+        try:
+            with (
+                operation_owned_connection(self.database),
+                self.database.transaction(immediate=True) as cursor,
+            ):  # type: ignore[attr-defined]
+                durable = self.service.repository.get_call(
+                    cursor, self._reserved.call_id
+                )
+                if (
+                    durable != self._reserved
+                    or durable.state is not TraceCallState.RESERVED
+                ):
+                    raise TraceCallPersistenceError(boundary=self)
+                self._reserved = self.service.repository.advance_call_state(
+                    cursor,
+                    call_id=self._reserved.call_id,
+                    target=TraceCallState.NOT_DISPATCHED,
+                    occurred_at=self.occurred_at_factory(),
+                    integrity_state=self._reserved.integrity_state,
+                    omission_reason_code=self._reserved.omission_reason_code,
+                )
+        except Exception:
+            raise TraceCallPersistenceError(boundary=self) from None
+        return self._reserved
+
+    def mark_response_started(self) -> bool:
+        """Best-effort first-response checkpoint that cannot break a send."""
+
+        if self._started is None or self._unknown is not None or self._settled:
+            return False
+        occurred_at = self._response_started_at or self.occurred_at_factory()
+        try:
+            self.service.mark_response_started(
+                self.database,
+                call_id=self._started.call_id,
+                occurred_at=occurred_at,
+            )
+        except Exception:
+            return False
+        self._response_started_at = occurred_at
+        return True
+
+    def settle_response(
+        self,
+        response_envelope: object | None,
+        outcome: TraceCallState,
+        usage: Mapping[str, object] | None = None,
+        *,
+        canonical_message_id: str | None = None,
+    ) -> bool:
+        """Best-effort terminal seal; failures enter the bounded retry queue."""
+
+        if self._started is None or self._unknown is not None:
+            return False
+        response_started_at = self._response_started_at or self.occurred_at_factory()
+        settled_at = self.occurred_at_factory()
+        try:
+            fingerprint = self.service.settlement_fingerprint(
+                call_id=self._started.call_id,
+                outcome=outcome,
+                response_envelope=response_envelope,
+                usage=usage,
+                response_started_at=response_started_at,
+                settled_at=settled_at,
+                canonical_message_id=canonical_message_id,
+                prior_integrity_state=self._started.integrity_state,
+                prior_omission_reason_code=self._started.omission_reason_code,
+            )
+            if self._settled is not None:
+                return fingerprint == self._settlement_fingerprint
+            if (
+                self._pending_settlement_fingerprint is not None
+                and fingerprint != self._pending_settlement_fingerprint
+            ):
+                return False
+            submitted = self.service.submit_settlement(
+                self.database,
+                call_id=self._started.call_id,
+                outcome=outcome,
+                response_envelope=response_envelope,
+                usage=usage,
+                response_started_at=response_started_at,
+                settled_at=settled_at,
+                canonical_message_id=canonical_message_id,
+                prior_integrity_state=self._started.integrity_state,
+                prior_omission_reason_code=self._started.omission_reason_code,
+            )
+        except Exception:
+            return False
+        self._response_started_at = response_started_at
+        if not submitted:
+            self._pending_settlement_fingerprint = fingerprint
+            return False
+        self._settled = outcome
+        self._settlement_fingerprint = fingerprint
+        self._pending_settlement_fingerprint = None
+        return True
+
+    def prepare_response_settlement(
+        self,
+        response_envelope: object | None,
+        outcome: TraceCallState,
+        usage: Mapping[str, object] | None = None,
+    ) -> object | None:
+        """Return one sanitized handoff for canonical assistant persistence."""
+
+        if self._started is None or self._unknown is not None:
+            return None
+        response_started_at = self._response_started_at or self.occurred_at_factory()
+        try:
+            handoff = self.service.prepare_settlement_handoff(
+                self.database,
+                call_id=self._started.call_id,
+                outcome=outcome,
+                response_envelope=response_envelope,
+                usage=usage,
+                response_started_at=response_started_at,
+                settled_at=self.occurred_at_factory(),
+                prior_integrity_state=self._started.integrity_state,
+                prior_omission_reason_code=self._started.omission_reason_code,
+            )
+        except Exception:
+            return None
+        self._response_started_at = response_started_at
+        return handoff
+
+
+@dataclass(frozen=True, slots=True)
+class ReconstructedHeaderComponent:
+    """One resolved header artifact value."""
+
+    component_kind: str
+    ordinal: int
+    value: object
+
+
+@dataclass(frozen=True, slots=True)
+class ReconstructedRequestHeader:
+    """Complete logical non-history request envelope."""
+
+    header_id: str
+    provider_name: str
+    model_name: str
+    route_identity: str
+    endpoint_identity: str
+    generation_parameters: Mapping[str, object]
+    adapter_defaults: Mapping[str, object]
+    response_format: Mapping[str, object]
+    reasoning_controls: Mapping[str, object]
+    components: tuple[ReconstructedHeaderComponent, ...]
+    system_revision_ids: tuple[str, ...]
+    system_composition: tuple[Mapping[str, object], ...]
+
+
+SurfaceReferenceKey = tuple[str, str, str]
+
+
+class _SequenceNode:
+    """One mutable node in an ephemeral implicit sequence tree."""
+
+    __slots__ = (
+        "sequence",
+        "key",
+        "priority",
+        "left",
+        "right",
+        "parent",
+        "size",
+        "max_sequence",
+    )
+
+    def __init__(self, sequence: int, key: SurfaceReferenceKey) -> None:
+        self.sequence = sequence
+        self.key = key
+        self.priority = _sequence_priority(sequence)
+        self.left: _SequenceNode | None = None
+        self.right: _SequenceNode | None = None
+        self.parent: _SequenceNode | None = None
+        self.size = 1
+        self.max_sequence = sequence
+
+
+def _sequence_priority(sequence: int) -> int:
+    """Return a deterministic well-distributed treap priority."""
+
+    mask = (1 << 64) - 1
+    value = (sequence + 0x9E3779B97F4A7C15) & mask
+    value = ((value ^ (value >> 30)) * 0xBF58476D1CE4E5B9) & mask
+    value = ((value ^ (value >> 27)) * 0x94D049BB133111EB) & mask
+    return value ^ (value >> 31)
+
+
+def _sequence_size(node: _SequenceNode | None) -> int:
+    return 0 if node is None else node.size
+
+
+def _sequence_pull(node: _SequenceNode) -> None:
+    node.size = 1 + _sequence_size(node.left) + _sequence_size(node.right)
+    node.max_sequence = max(
+        node.sequence,
+        -1 if node.left is None else node.left.max_sequence,
+        -1 if node.right is None else node.right.max_sequence,
+    )
+    if node.left is not None:
+        node.left.parent = node
+    if node.right is not None:
+        node.right.parent = node
+
+
+def _sequence_merge(
+    left: _SequenceNode | None,
+    right: _SequenceNode | None,
+) -> _SequenceNode | None:
+    if left is None:
+        if right is not None:
+            right.parent = None
+        return right
+    if right is None:
+        left.parent = None
+        return left
+    if left.priority < right.priority:
+        left.right = _sequence_merge(left.right, right)
+        _sequence_pull(left)
+        left.parent = None
+        return left
+    right.left = _sequence_merge(left, right.left)
+    _sequence_pull(right)
+    right.parent = None
+    return right
+
+
+def _sequence_split(
+    root: _SequenceNode | None,
+    count: int,
+) -> tuple[_SequenceNode | None, _SequenceNode | None]:
+    if root is None:
+        return None, None
+    if _sequence_size(root.left) >= count:
+        left, root.left = _sequence_split(root.left, count)
+        _sequence_pull(root)
+        root.parent = None
+        if left is not None:
+            left.parent = None
+        return left, root
+    root.right, right = _sequence_split(
+        root.right,
+        count - _sequence_size(root.left) - 1,
+    )
+    _sequence_pull(root)
+    root.parent = None
+    if right is not None:
+        right.parent = None
+    return root, right
+
+
+def _sequence_rank(node: _SequenceNode) -> int:
+    rank = _sequence_size(node.left)
+    current = node
+    while current.parent is not None:
+        parent = current.parent
+        if current is parent.right:
+            rank += _sequence_size(parent.left) + 1
+        current = parent
+    return rank
+
+
+def _sequence_delete(
+    root: _SequenceNode | None,
+    node: _SequenceNode,
+) -> _SequenceNode | None:
+    position = _sequence_rank(node)
+    left, remainder = _sequence_split(root, position)
+    removed, right = _sequence_split(remainder, 1)
+    if removed is not node:
+        raise ValueError("surface_replacement_order")
+    node.left = node.right = node.parent = None
+    return _sequence_merge(left, right)
+
+
+def _sequence_insert(
+    root: _SequenceNode | None,
+    position: int,
+    node: _SequenceNode,
+) -> _SequenceNode | None:
+    left, right = _sequence_split(root, position)
+    return _sequence_merge(_sequence_merge(left, node), right)
+
+
+def _sequence_entries(
+    root: _SequenceNode | None,
+) -> tuple[tuple[int, SurfaceReferenceKey], ...]:
+    result: list[tuple[int, SurfaceReferenceKey]] = []
+    stack: list[_SequenceNode] = []
+    current = root
+    while current is not None or stack:
+        while current is not None:
+            stack.append(current)
+            current = current.left
+        current = stack.pop()
+        result.append((current.sequence, current.key))
+        current = current.right
+    return tuple(result)
+
+
+_SequenceValue = TypeVar("_SequenceValue")
+
+
+@dataclass(frozen=True, slots=True)
+class _PersistentSequenceNode(Generic[_SequenceValue]):
+    """One path-copying implicit-treap node for live surface projections."""
+
+    sequence: int
+    value: _SequenceValue
+    domain: str | None = None
+    left: _PersistentSequenceNode[_SequenceValue] | None = None
+    right: _PersistentSequenceNode[_SequenceValue] | None = None
+    priority: int = field(init=False)
+    size: int = field(init=False)
+    min_sequence: int = field(init=False)
+    max_sequence: int = field(init=False)
+    message_count: int = field(init=False)
+    continuation_count: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        left = self.left
+        right = self.right
+        object.__setattr__(self, "priority", _sequence_priority(self.sequence))
+        object.__setattr__(
+            self,
+            "size",
+            1
+            + (0 if left is None else left.size)
+            + (0 if right is None else right.size),
+        )
+        object.__setattr__(
+            self,
+            "min_sequence",
+            min(
+                self.sequence,
+                self.sequence if left is None else left.min_sequence,
+                self.sequence if right is None else right.min_sequence,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "max_sequence",
+            max(
+                self.sequence,
+                self.sequence if left is None else left.max_sequence,
+                self.sequence if right is None else right.max_sequence,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "message_count",
+            int(self.domain == "messages_payload")
+            + (0 if left is None else left.message_count)
+            + (0 if right is None else right.message_count),
+        )
+        object.__setattr__(
+            self,
+            "continuation_count",
+            int(self.domain == "provider_continuations")
+            + (0 if left is None else left.continuation_count)
+            + (0 if right is None else right.continuation_count),
+        )
+
+
+def _persistent_size(
+    root: _PersistentSequenceNode[_SequenceValue] | None,
+) -> int:
+    return 0 if root is None else root.size
+
+
+def _persistent_merge(
+    left: _PersistentSequenceNode[_SequenceValue] | None,
+    right: _PersistentSequenceNode[_SequenceValue] | None,
+) -> _PersistentSequenceNode[_SequenceValue] | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    if left.priority < right.priority:
+        return _PersistentSequenceNode(
+            left.sequence,
+            left.value,
+            left.domain,
+            left.left,
+            _persistent_merge(left.right, right),
+        )
+    return _PersistentSequenceNode(
+        right.sequence,
+        right.value,
+        right.domain,
+        _persistent_merge(left, right.left),
+        right.right,
+    )
+
+
+def _persistent_split(
+    root: _PersistentSequenceNode[_SequenceValue] | None,
+    count: int,
+) -> tuple[
+    _PersistentSequenceNode[_SequenceValue] | None,
+    _PersistentSequenceNode[_SequenceValue] | None,
+]:
+    if root is None:
+        return None, None
+    left_size = 0 if root.left is None else root.left.size
+    if left_size >= count:
+        left, remainder = _persistent_split(root.left, count)
+        return left, _PersistentSequenceNode(
+            root.sequence,
+            root.value,
+            root.domain,
+            remainder,
+            root.right,
+        )
+    remainder, right = _persistent_split(root.right, count - left_size - 1)
+    return (
+        _PersistentSequenceNode(
+            root.sequence,
+            root.value,
+            root.domain,
+            root.left,
+            remainder,
+        ),
+        right,
+    )
+
+
+def _persistent_first_position_in_range(
+    root: _PersistentSequenceNode[_SequenceValue] | None,
+    start: int,
+    end: int,
+) -> int | None:
+    if root is None or root.max_sequence < start or root.min_sequence > end:
+        return None
+    left = root.left
+    left_position = _persistent_first_position_in_range(left, start, end)
+    if left_position is not None:
+        return left_position
+    left_size = _persistent_size(left)
+    if start <= root.sequence <= end:
+        return left_size
+    right_position = _persistent_first_position_in_range(root.right, start, end)
+    if right_position is None:
+        return None
+    return left_size + 1 + right_position
+
+
+def _persistent_without_sequence_range(
+    root: _PersistentSequenceNode[_SequenceValue] | None,
+    start: int,
+    end: int,
+) -> _PersistentSequenceNode[_SequenceValue] | None:
+    if root is None or root.max_sequence < start or root.min_sequence > end:
+        return root
+    if start <= root.min_sequence and root.max_sequence <= end:
+        return None
+    left = _persistent_without_sequence_range(root.left, start, end)
+    right = _persistent_without_sequence_range(root.right, start, end)
+    if start <= root.sequence <= end:
+        return _persistent_merge(left, right)
+    if left is root.left and right is root.right:
+        return root
+    return _PersistentSequenceNode(
+        root.sequence,
+        root.value,
+        root.domain,
+        left,
+        right,
+    )
+
+
+def _persistent_insert_entries(
+    root: _PersistentSequenceNode[_SequenceValue] | None,
+    position: int,
+    entries: Iterable[tuple[int, _SequenceValue, str | None]],
+) -> _PersistentSequenceNode[_SequenceValue] | None:
+    inserted: _PersistentSequenceNode[_SequenceValue] | None = None
+    for sequence, value, domain in entries:
+        inserted = _persistent_merge(
+            inserted,
+            _PersistentSequenceNode(sequence, value, domain),
+        )
+    left, right = _persistent_split(root, position)
+    return _persistent_merge(_persistent_merge(left, inserted), right)
+
+
+def _persistent_iter(
+    root: _PersistentSequenceNode[_SequenceValue] | None,
+) -> Iterator[tuple[int, _SequenceValue, str | None]]:
+    stack: list[_PersistentSequenceNode[_SequenceValue]] = []
+    current = root
+    while current is not None or stack:
+        while current is not None:
+            stack.append(current)
+            current = current.left
+        current = stack.pop()
+        yield current.sequence, current.value, current.domain
+        current = current.right
+
+
+def _persistent_domain_count_before(
+    root: _PersistentSequenceNode[_SequenceValue] | None,
+    position: int,
+    domain: str,
+) -> int:
+    count = 0
+    current = root
+    remaining = position
+    while current is not None and remaining > 0:
+        left_size = _persistent_size(current.left)
+        if remaining <= left_size:
+            current = current.left
+            continue
+        if current.left is not None:
+            count += (
+                current.left.message_count
+                if domain == "messages_payload"
+                else current.left.continuation_count
+            )
+        count += int(current.domain == domain)
+        remaining -= left_size + 1
+        current = current.right
+    return count
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectionRoot:
+    parent: _ProjectionRoot | None
+    base: tuple[tuple[int, SurfaceReferenceKey], ...] = ()
+    appended: tuple[tuple[int, SurfaceReferenceKey], ...] = ()
+    replacement: tuple[int, int] | None = None
+    size: int = field(init=False)
+    _tree: _PersistentSequenceNode[SurfaceReferenceKey] | None = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        tree = self.parent._tree if self.parent is not None else None
+        if self.parent is None:
+            tree = _persistent_insert_entries(
+                None,
+                0,
+                ((sequence, key, None) for sequence, key in self.base),
+            )
+        elif self.replacement is None:
+            tree = _persistent_insert_entries(
+                tree,
+                _persistent_size(tree),
+                ((sequence, key, None) for sequence, key in self.appended),
+            )
+        else:
+            start, end = self.replacement
+            position = _persistent_first_position_in_range(tree, start, end)
+            if position is None:
+                raise ValueError("surface_replacement_target_inactive")
+            tree = _persistent_without_sequence_range(tree, start, end)
+            tree = _persistent_insert_entries(
+                tree,
+                position,
+                ((sequence, key, None) for sequence, key in self.appended[:1]),
+            )
+            tree = _persistent_insert_entries(
+                tree,
+                _persistent_size(tree),
+                ((sequence, key, None) for sequence, key in self.appended[1:]),
+            )
+        object.__setattr__(self, "_tree", tree)
+        object.__setattr__(self, "size", _persistent_size(tree))
+        object.__setattr__(self, "parent", None)
+
+    def materialize(self) -> tuple[tuple[int, SurfaceReferenceKey], ...]:
+        return tuple(self.iter_entries())
+
+    def iter_entries(self) -> Iterator[tuple[int, SurfaceReferenceKey]]:
+        for sequence, key, _ in _persistent_iter(self._tree):
+            yield sequence, key
+
+    def first_position_in_range(self, start: int, end: int) -> int | None:
+        return _persistent_first_position_in_range(self._tree, start, end)
+
+
+@dataclass(frozen=True, slots=True)
+class _DescriptorRoot:
+    """Private persistent structural projection; it never carries provider values."""
+
+    parent: _DescriptorRoot | None
+    base: tuple[tuple[int, TraceProvenance], ...] = ()
+    appended: tuple[tuple[int, TraceProvenance], ...] = ()
+    replacement: tuple[int, int] | None = None
+    base_domains: tuple[tuple[int, str], ...] = ()
+    appended_domains: tuple[tuple[int, str], ...] = ()
+    removed_domain_counts: tuple[tuple[str, int], ...] = ()
+    size: int = field(init=False)
+    message_count: int = field(init=False)
+    continuation_count: int = field(init=False)
+    _tree: _PersistentSequenceNode[TraceProvenance] | None = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        tree = self.parent._tree if self.parent is not None else None
+        if self.parent is None:
+            base_domains = dict(self.base_domains)
+            tree = _persistent_insert_entries(
+                None,
+                0,
+                (
+                    (sequence, descriptor, base_domains.get(sequence))
+                    for sequence, descriptor in self.base
+                ),
+            )
+        elif self.replacement is None:
+            appended_domains = dict(self.appended_domains)
+            tree = _persistent_insert_entries(
+                tree,
+                _persistent_size(tree),
+                (
+                    (sequence, descriptor, appended_domains.get(sequence))
+                    for sequence, descriptor in self.appended
+                ),
+            )
+        else:
+            start, end = self.replacement
+            position = _persistent_first_position_in_range(tree, start, end)
+            if position is None:
+                raise ValueError("surface_replacement_target_inactive")
+            tree = _persistent_without_sequence_range(tree, start, end)
+            appended_domains = dict(self.appended_domains)
+            tree = _persistent_insert_entries(
+                tree,
+                position,
+                (
+                    (sequence, descriptor, appended_domains.get(sequence))
+                    for sequence, descriptor in self.appended[:1]
+                ),
+            )
+            tree = _persistent_insert_entries(
+                tree,
+                _persistent_size(tree),
+                (
+                    (sequence, descriptor, appended_domains.get(sequence))
+                    for sequence, descriptor in self.appended[1:]
+                ),
+            )
+        object.__setattr__(self, "_tree", tree)
+        object.__setattr__(self, "size", _persistent_size(tree))
+        object.__setattr__(
+            self,
+            "message_count",
+            0 if tree is None else tree.message_count,
+        )
+        object.__setattr__(
+            self,
+            "continuation_count",
+            0 if tree is None else tree.continuation_count,
+        )
+        object.__setattr__(self, "parent", None)
+
+    def domain_count(self, domain: str) -> int:
+        if domain == "messages_payload":
+            return self.message_count
+        if domain == "provider_continuations":
+            return self.continuation_count
+        return 0
+
+    def materialize(self) -> tuple[tuple[int, TraceProvenance], ...]:
+        return tuple(self.iter_entries())
+
+    def iter_entries(self) -> Iterator[tuple[int, TraceProvenance]]:
+        for sequence, descriptor, _ in _persistent_iter(self._tree):
+            yield sequence, descriptor
+
+    def materialize_domains(self) -> tuple[tuple[int, str], ...]:
+        return tuple(self.iter_domains())
+
+    def iter_domains(self) -> Iterator[tuple[int, str]]:
+        for sequence, _, domain in _persistent_iter(self._tree):
+            if domain is not None:
+                yield sequence, domain
+
+    def iter_domain(self, domain: str) -> Iterator[tuple[int, TraceProvenance]]:
+        for sequence, descriptor, entry_domain in _persistent_iter(self._tree):
+            if entry_domain == domain:
+                yield sequence, descriptor
+
+    def domain_count_before(self, domain: str, position: int) -> int:
+        return _persistent_domain_count_before(self._tree, position, domain)
+
+
+class _ProjectedDescriptors(Sequence[TraceProvenance]):
+    """Lazy view of a private persistent descriptor projection."""
+
+    __slots__ = (
+        "_root",
+        "_domain",
+        "_console_trace_delta",
+        "_console_trace_delta_ordinal",
+    )
+    _console_trace_projection = True
+
+    def __init__(
+        self,
+        root: _DescriptorRoot,
+        domain: str,
+        delta: tuple[TraceProvenance, ...],
+        delta_ordinal: int,
+    ) -> None:
+        self._root = root
+        self._domain = domain
+        self._console_trace_delta = delta
+        self._console_trace_delta_ordinal = delta_ordinal
+
+    def __iter__(self) -> Iterator[TraceProvenance]:
+        return (descriptor for _, descriptor in self._root.iter_domain(self._domain))
+
+    def __len__(self) -> int:
+        return self._root.domain_count(self._domain)
+
+    @overload
+    def __getitem__(self, index: int) -> TraceProvenance: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[TraceProvenance]: ...
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> TraceProvenance | Sequence[TraceProvenance]:
+        values = tuple(self)
+        return values[index]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Sequence):
+            return False
+        return tuple(self) == tuple(other)
+
+
+class _ProjectedProviderValues(Sequence[object]):
+    """Ephemeral values assembled from durable refs plus one admitted mutation."""
+
+    __slots__ = (
+        "_service",
+        "_cursor",
+        "_parent",
+        "_appended",
+        "_replacement",
+        "_descriptor_root",
+        "_owner_id",
+        "_domain",
+        "_cache",
+        "_retained_artifact_values",
+    )
+
+    def __init__(
+        self,
+        service: ConsoleTraceService,
+        cursor: sqlite3.Cursor,
+        parent: _ProjectionRoot,
+        appended: tuple[tuple[int, TraceProvenance, object], ...],
+        replacement: tuple[int, int] | None,
+        descriptor_root: _DescriptorRoot,
+        owner_id: str,
+        domain: str,
+        retained_artifact_values: Mapping[int, object],
+    ) -> None:
+        self._service = service
+        self._cursor = cursor
+        self._parent = parent
+        self._appended = appended
+        self._replacement = replacement
+        self._descriptor_root = descriptor_root
+        self._owner_id = owner_id
+        self._domain = domain
+        self._cache: tuple[object, ...] | None = None
+        self._retained_artifact_values = retained_artifact_values
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__}>"
+
+    def __iter__(self) -> Iterator[object]:
+        if self._cache is not None:
+            return iter(self._cache)
+        parent = list(self._parent.iter_entries())
+        inserted = tuple(
+            (
+                sequence,
+                self._service._expected_descriptor_value(
+                    self._cursor, self._owner_id, descriptor, value
+                ),
+            )
+            for sequence, descriptor, value in self._appended
+        )
+        if self._replacement is None:
+            combined: list[tuple[int, SurfaceReferenceKey | None, object | None]] = [
+                (sequence, key, None) for sequence, key in parent
+            ] + [(sequence, None, value) for sequence, value in inserted]
+        else:
+            start, end = self._replacement
+            insert_at = self._parent.first_position_in_range(start, end)
+            if insert_at is None:
+                raise ValueError("surface_replacement_target_inactive")
+            parent = [entry for entry in parent if not start <= entry[0] <= end]
+            combined = [(sequence, key, None) for sequence, key in parent]
+            combined[insert_at:insert_at] = [
+                (sequence, None, value) for sequence, value in inserted[:1]
+            ]
+            combined.extend((sequence, None, value) for sequence, value in inserted[1:])
+        domains = dict(self._descriptor_root.iter_domains())
+        selected = tuple(
+            (sequence, key, value)
+            for sequence, key, value in combined
+            if domains.get(sequence) == self._domain
+        )
+        resolved = self._service._resolve_reference_values(
+            self._cursor,
+            tuple(
+                key
+                for sequence, key, _ in selected
+                if key is not None and sequence not in self._retained_artifact_values
+            ),
+            owner_id=self._owner_id,
+        )
+        values: list[object] = []
+        descriptors = dict(self._descriptor_root.iter_entries())
+        for sequence, key, value in selected:
+            if key is None:
+                values.append(value)
+            elif (
+                key[0] == "continuation"
+                and (reference := _saved_reference_key(descriptors[sequence]))
+                is not None
+                and reference[:2] == ("continuation", "revision")
+            ):
+                values.append(
+                    self._service._expected_descriptor_value(
+                        self._cursor,
+                        self._owner_id,
+                        descriptors[sequence],
+                        self._retained_artifact_values.get(sequence, resolved.get(key)),
+                    )
+                )
+            elif sequence in self._retained_artifact_values:
+                values.append(self._retained_artifact_values[sequence])
+            else:
+                values.append(resolved[key])
+        self._cache = tuple(values)
+        return iter(self._cache)
+
+    def __len__(self) -> int:
+        return self._descriptor_root.domain_count(self._domain)
+
+    @overload
+    def __getitem__(self, index: int) -> object: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[object]: ...
+
+    def __getitem__(self, index: int | slice) -> object | Sequence[object]:
+        return tuple(self)[index]
+
+
+class _PreparedSurfaceBoundary:
+    """One-shot content-bearing preparation outside capability registries."""
+
+    __slots__ = (
+        "_service",
+        "provenance",
+        "messages_payload",
+        "provider_continuations",
+        "_delta_values",
+        "_issued_values",
+    )
+
+    def __init__(
+        self,
+        service: ConsoleTraceService,
+        provenance: ProviderRequestProvenance,
+        messages_payload: _ProjectedProviderValues,
+        provider_continuations: _ProjectedProviderValues,
+        delta_values: Mapping[str, tuple[object, ...]],
+    ) -> None:
+        self._service = service
+        self.provenance = provenance
+        self.messages_payload = messages_payload
+        self.provider_continuations = provider_continuations
+        self._delta_values = delta_values
+        self._issued_values = MappingProxyType(
+            {
+                "messages_payload": tuple(
+                    freeze_json(value) for value in messages_payload
+                ),
+                "provider_continuations": tuple(
+                    parse_provider_continuation_json(_thaw(value))
+                    for value in provider_continuations
+                ),
+            }
+        )
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__}>"
+
+    def _verify_surface_values(
+        self,
+        provenance: ProviderRequestProvenance,
+        actual_values: object,
+        expected_values: object,
+        issuer: object,
+    ) -> bool:
+        return self._service._verify_prepared_boundary(
+            self,
+            provenance,
+            actual_values,
+            expected_values,
+            issuer,
+        )
+
+    def _provider_surface_values(self) -> Mapping[str, object]:
+        return self._delta_values
+
+    def _provider_request_surface_values(self) -> Mapping[str, object]:
+        """Return the exact immutable surface values issued for provider dispatch."""
+
+        return self._issued_values
+
+    def _verify_raw_surface_values(
+        self,
+        provenance: ProviderRequestProvenance,
+        actual_values: object,
+        issuer: object,
+    ) -> bool:
+        if issuer is not _SURFACE_VERIFICATION_ISSUER:
+            return False
+        prepared = self._service._prepared_capabilities.get(id(provenance))
+        if (
+            prepared is None
+            or prepared.provenance is not provenance
+            or prepared.boundary_identity != id(self)
+            or not isinstance(actual_values, Mapping)
+        ):
+            return False
+        if not all(
+            actual_values.get(name) is value
+            for name, value in self._issued_values.items()
+        ):
+            return False
+        continuation_offset = 0
+        for item in prepared.items:
+            if item.component_name != "provider_continuations":
+                continue
+            supplied = self._delta_values["provider_continuations"][continuation_offset]
+            continuation_offset += 1
+            reference = _saved_reference_key(item.provenance)
+            if reference is None or reference[:2] != ("continuation", "revision"):
+                continue
+            canonical = _checkpoint_semantic_value(
+                self._issued_values["provider_continuations"][item.ordinal]
+            )
+            if _artifact_bytes(canonical) != _artifact_bytes(supplied):
+                return False
+        return True
+
+    def _bind_verified_bundle(
+        self,
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+        issuer: object,
+    ) -> None:
+        self._service._bind_verified_bundle(self, provenance, bundle, issuer)
+
+    def _extend_surface_projection(
+        self,
+        *,
+        admission: object,
+        replacement: VerifiedSurfaceReplacement | None,
+        preparation_identity: str,
+        items: tuple[VerifiedSurfaceDeltaItem, ...],
+        bundle: ProviderRequestShadowBundle,
+        surface_boundary_identity: int,
+        provenance: ProviderRequestProvenance,
+    ) -> object:
+        return self._service._extend_prepared_surface_boundary(
+            self,
+            admission=admission,
+            replacement=replacement,
+            preparation_identity=preparation_identity,
+            items=items,
+            bundle=bundle,
+            surface_boundary_identity=surface_boundary_identity,
+            provenance=provenance,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _SurfaceProjection:
+    head_id: str | None
+    root: _ProjectionRoot
+    checkpoint: object | None = None
+    lineage_domains: tuple[tuple[int, str], ...] = ()
+
+    @property
+    def entries(self) -> tuple[tuple[int, SurfaceReferenceKey], ...]:
+        return self.root.materialize()
+
+
+@dataclass(frozen=True, slots=True)
+class _ParentState:
+    capability: object
+    owner_id: str
+    segment_id: str
+    head_id: str | None
+    route: str
+    root: _ProjectionRoot
+    descriptors: _DescriptorRoot
+    next_sequence: int
+    tool_loop: tuple[int, ...]
+    active_domains: dict[int, str] = field(repr=False)
+    lineage_domains: dict[int, str] = field(repr=False)
+    live: bool = True
+    surface_structure: Mapping[str, object] = field(default_factory=dict, repr=False)
+    surface_policies: tuple[FrozenTracePolicy, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class _RenderedSystemSlot:
+    """Content-free binding for one per-call rendered-system header value."""
+
+    sequence: int
+    artifact_id: str
+    descriptor: ProviderArtifactTraceProvenance
+
+
+def _is_rendered_system_row(descriptor: object, value: object) -> bool:
+    return (
+        type(descriptor) is ProviderArtifactTraceProvenance
+        and descriptor.source is TraceProvenanceSource.RENDERED_SYSTEM
+        and isinstance(value, Mapping)
+        and value.get("role") == "system"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedState:
+    provenance: ProviderRequestProvenance
+    parent: object
+    admission: object
+    descriptors: _DescriptorRoot
+    boundary_identity: int
+    items: tuple[VerifiedSurfaceDeltaItem, ...]
+    verified: bool = False
+    surface_structure: Mapping[str, object] | None = None
+    surface_policies: tuple[FrozenTracePolicy, ...] = ()
+    verified_bundle: ReferenceType[ProviderRequestShadowBundle] | None = None
+    rendered_system_slot: _RenderedSystemSlot | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ChildState:
+    binding: object
+    parent: object
+    owner_id: str
+    segment_id: str
+    head_id: str | None
+    route: str
+    preparation_identity: str
+    bundle: ReferenceType[ProviderRequestShadowBundle]
+    provenance: ProviderRequestProvenance
+    item_signature: tuple[tuple[str, int, TraceProvenance], ...]
+    replacement: VerifiedSurfaceReplacement | None
+    descriptors: _DescriptorRoot
+    surface_structure: Mapping[str, object]
+    surface_policies: tuple[FrozenTracePolicy, ...]
+    completed_tool_turn: CompletedToolTurnWitness | None = None
+    rendered_system_slot: _RenderedSystemSlot | None = None
+
+
+class _ParentSurfaceCapability:
+    __slots__ = ("__service",)
+
+    def __init__(self, service: ConsoleTraceService) -> None:
+        self.__service = service
+
+    def _extend_surface_projection(
+        self,
+        *,
+        admission: object,
+        replacement: VerifiedSurfaceReplacement | None,
+        preparation_identity: str,
+        items: tuple[VerifiedSurfaceDeltaItem, ...],
+        bundle: ProviderRequestShadowBundle,
+        surface_boundary_identity: int,
+        provenance: ProviderRequestProvenance,
+    ) -> object:
+        return self.__service._extend_surface_capability(
+            self,
+            admission=admission,
+            replacement=replacement,
+            preparation_identity=preparation_identity,
+            items=items,
+            bundle=bundle,
+            surface_boundary_identity=surface_boundary_identity,
+            provenance=provenance,
+        )
+
+
+class _ChildSurfaceCapability:
+    __slots__ = ()
+
+
+class ProvisionalTraceImportRetryableError(RuntimeError):
+    """The same bounded manifest remains available for an explicit retry."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import may be retried.")
+
+
+class ProvisionalTraceImportExpiredError(RuntimeError):
+    """A confirmed rollback crossed the bounded manifest redemption window."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import expired and cannot be retried.")
+
+
+class ProvisionalTraceImportUncertainError(RuntimeError):
+    """An uncertain import could not reconcile and was abandoned safely."""
+
+    def __init__(self) -> None:
+        super().__init__("Promoted trace import could not be reconciled.")
+
+
+class ConsoleTraceService:
+    """Translate verified provider values into reference-backed trace records."""
+
+    __slots__ = (
+        "repository",
+        "_surface_ref_cache",
+        "_parent_capabilities",
+        "_prepared_capabilities",
+        "_child_capabilities",
+        "_pending_child_uses",
+        "_settlement",
+    )
+
+    def __init__(self, repository: ConsoleTraceRepository | None = None) -> None:
+        self.repository = repository or ConsoleTraceRepository()
+        # ponytail: one current immutable projection per segment; add LRU only if
+        # long-lived services are shown to retain an excessive segment count.
+        self._surface_ref_cache: dict[str, _SurfaceProjection] = {}
+        self._parent_capabilities: dict[int, _ParentState] = {}
+        self._prepared_capabilities: dict[int, _PreparedState] = {}
+        self._child_capabilities: dict[int, _ChildState] = {}
+        self._pending_child_uses: dict[int, object] = {}
+        from tldw_chatbook.Chat.console_trace_settlement import (
+            ConsoleTraceSettlementCoordinator,
+        )
+
+        self._settlement = ConsoleTraceSettlementCoordinator(self.repository)
+
+    def mark_response_started(
+        self,
+        database: object,
+        *,
+        call_id: str,
+        occurred_at: str,
+    ) -> TraceCallRecord:
+        """Record provider-response evidence through the shared coordinator."""
+
+        return self._settlement.mark_response_started(
+            database,
+            call_id=call_id,
+            occurred_at=occurred_at,
+        )
+
+    def submit_settlement(
+        self,
+        database: object,
+        *,
+        call_id: str,
+        outcome: TraceCallState,
+        response_envelope: object | None,
+        usage: Mapping[str, object] | None,
+        response_started_at: str,
+        settled_at: str,
+        canonical_message_id: str | None = None,
+        prior_integrity_state: str = "pending",
+        prior_omission_reason_code: str | None = None,
+    ) -> bool:
+        """Submit a sanitized post-dispatch seal without masking the result."""
+
+        from tldw_chatbook.Chat.console_trace_settlement import TraceSettlementRequest
+
+        return self._settlement.submit(
+            database,
+            TraceSettlementRequest(
+                call_id=call_id,
+                outcome=outcome,
+                response_envelope=response_envelope,
+                usage=usage,
+                response_started_at=response_started_at,
+                settled_at=settled_at,
+                canonical_message_id=canonical_message_id,
+                prior_integrity_state=prior_integrity_state,
+                prior_omission_reason_code=prior_omission_reason_code,
+            ),
+        )
+
+    def settlement_fingerprint(
+        self,
+        *,
+        call_id: str,
+        outcome: TraceCallState,
+        response_envelope: object | None,
+        usage: Mapping[str, object] | None,
+        response_started_at: str,
+        settled_at: str,
+        canonical_message_id: str | None = None,
+        prior_integrity_state: str = "pending",
+        prior_omission_reason_code: str | None = None,
+    ) -> str:
+        """Return a content-free identity for one sanitized settlement signal."""
+
+        from tldw_chatbook.Chat.console_trace_settlement import TraceSettlementRequest
+
+        return self._settlement.fingerprint(
+            TraceSettlementRequest(
+                call_id=call_id,
+                outcome=outcome,
+                response_envelope=response_envelope,
+                usage=usage,
+                response_started_at=response_started_at,
+                settled_at=settled_at,
+                canonical_message_id=canonical_message_id,
+                prior_integrity_state=prior_integrity_state,
+                prior_omission_reason_code=prior_omission_reason_code,
+            )
+        )
+
+    def prepare_settlement_handoff(
+        self,
+        database: object,
+        *,
+        call_id: str,
+        outcome: TraceCallState,
+        response_envelope: object | None,
+        usage: Mapping[str, object] | None,
+        response_started_at: str,
+        settled_at: str,
+        prior_integrity_state: str = "pending",
+        prior_omission_reason_code: str | None = None,
+    ) -> object:
+        """Sanitize a terminal result before canonical persistence handoff."""
+
+        from tldw_chatbook.Chat.console_trace_settlement import TraceSettlementRequest
+
+        return self._settlement.prepare_handoff(
+            database,
+            TraceSettlementRequest(
+                call_id=call_id,
+                outcome=outcome,
+                response_envelope=response_envelope,
+                usage=usage,
+                response_started_at=response_started_at,
+                settled_at=settled_at,
+                prior_integrity_state=prior_integrity_state,
+                prior_omission_reason_code=prior_omission_reason_code,
+            ),
+        )
+
+    def retry_pending_settlements(self) -> int:
+        """Retry one bounded snapshot of failed post-dispatch seals."""
+
+        return self._settlement.retry_pending()
+
+    def recover_open_calls(
+        self,
+        database: object,
+        *,
+        occurred_at: str,
+    ) -> tuple[TraceCallRecord, ...]:
+        """Monotonically recover normalized calls left open by process death."""
+
+        return self._settlement.recover_open_calls(
+            database,
+            occurred_at=occurred_at,
+        )
+
+    def import_provisional_voice_trace(
+        self,
+        database: object,
+        registry: ProvisionalTraceRegistry,
+        manifest: ProvisionalTraceManifest,
+        envelopes: tuple[ProvisionalTraceEnvelope, ...],
+        context: VoiceTraceImportContext,
+    ) -> PostDispatchTraceImportResult:
+        """Redeem one complete gateway manifest after its conversation pair commits.
+
+        A typed confirmed pre-commit failure releases the same manifest.  Every
+        other exception is uncertain, so the repository's deterministic importer
+        is invoked once more to reconcile before the capability is consumed or
+        abandoned.
+        """
+        from tldw_chatbook.Chat.console_voice_trace_gateway import (
+            _ClaimReleaseDisposition,
+            ProvisionalTraceRegistry,
+            ProvisionalTraceUnavailable,
+            VoiceTraceImportContext,
+        )
+        from tldw_chatbook.Chat.console_voice_trace_promotion import (
+            ConfirmedPreCommitTraceImportError,
+        )
+
+        if type(registry) is not ProvisionalTraceRegistry:
+            raise TypeError("registry")
+        if type(context) is not VoiceTraceImportContext:
+            raise TypeError("context")
+        claim = registry.claim(manifest, envelopes)
+
+        def import_once() -> PostDispatchTraceImportResult:
+            return registry._import_claim(
+                claim,
+                context,
+                lambda request: self.repository.import_post_dispatch_trace(
+                    database,
+                    request,
+                ),
+            )
+
+        try:
+            result = import_once()
+        except ConfirmedPreCommitTraceImportError as exc:
+            disposition = registry._release_claim(claim)
+            if disposition is _ClaimReleaseDisposition.RELEASED_RETRYABLE:
+                raise ProvisionalTraceImportRetryableError() from None
+            raise ProvisionalTraceImportExpiredError() from exc
+        except Exception:
+            try:
+                result = import_once()
+            except Exception:
+                try:
+                    registry._abandon_claim(claim)
+                except ProvisionalTraceUnavailable:
+                    pass
+                raise ProvisionalTraceImportUncertainError() from None
+        registry._consume_claim(claim)
+        return result
+
+    def reserve_call(
+        self,
+        database: object,
+        identity: TraceCallIdentity,
+    ) -> TraceCallRecord:
+        """Commit one content-free call reservation before request persistence."""
+
+        if type(identity) is not TraceCallIdentity:
+            raise TypeError("identity")
+        with trace_critical_write_checkpoint_policy(database):
+            try:
+                with database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+                    return self.repository.reserve_call(
+                        cursor,
+                        owner_id=identity.owner_id,
+                        segment_id=identity.segment_id,
+                        turn_id=identity.turn_id,
+                        run_id=identity.run_id,
+                        call_sequence=identity.call_sequence,
+                        idempotency_key=identity.idempotency_key,
+                        policy_id=identity.policy_id,
+                    )
+            except Exception:
+                # A transaction exit may report failure after SQLite committed. Query
+                # both immutable identities before any later allocation.
+                try:
+                    with database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+                        by_idempotency_key = (
+                            self.repository.get_call_by_idempotency_key(
+                                cursor,
+                                identity.idempotency_key,
+                            )
+                        )
+                        by_logical_identity = (
+                            self.repository.get_call_by_logical_identity(
+                                cursor,
+                                owner_id=identity.owner_id,
+                                segment_id=identity.segment_id,
+                                turn_id=identity.turn_id,
+                                run_id=identity.run_id,
+                                call_sequence=identity.call_sequence,
+                            )
+                        )
+                        if by_idempotency_key is None and by_logical_identity is None:
+                            raise TraceCallPersistenceError(
+                                reservation_status="not_established"
+                            )
+                        return self.repository.reserve_call(
+                            cursor,
+                            owner_id=identity.owner_id,
+                            segment_id=identity.segment_id,
+                            turn_id=identity.turn_id,
+                            run_id=identity.run_id,
+                            call_sequence=identity.call_sequence,
+                            idempotency_key=identity.idempotency_key,
+                            policy_id=identity.policy_id,
+                        )
+                except TraceCallPersistenceError:
+                    raise
+                except Exception:
+                    raise TraceCallPersistenceError(
+                        reservation_status="unknown"
+                    ) from None
+
+    def bind_and_mark_dispatch(
+        self,
+        database: object,
+        *,
+        call_id: str,
+        owner_id: str,
+        segment_id: str,
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+        surface_delta: VerifiedSurfaceDelta,
+        occurred_at: str,
+        response_projection: Mapping[str, object] | None = None,
+    ) -> TraceCallRecord:
+        """Persist, bind, and start one reserved call in one transaction."""
+
+        reserved_call = None
+        persisted = None
+        started = None
+        try:
+            with (
+                trace_critical_write_checkpoint_policy(database),
+                database.transaction(immediate=True) as cursor,
+            ):  # type: ignore[attr-defined]
+                reserved_call = self.repository.get_call(cursor, call_id)
+                persisted = self.persist_request(
+                    cursor,
+                    owner_id=owner_id,
+                    segment_id=segment_id,
+                    provenance=provenance,
+                    bundle=bundle,
+                    surface_delta=surface_delta,
+                    reserved_call=reserved_call,
+                    response_projection=response_projection,
+                )
+                self.repository.bind_call(
+                    cursor,
+                    call_id=call_id,
+                    surface_node_id=persisted.surface_head_id,
+                    request_header_id=persisted.header.header_id,
+                    provider_name=persisted.header.provider_name,
+                    model_name=persisted.header.model_name,
+                    route_identity=persisted.header.route_identity,
+                )
+                started = self.repository.advance_call_state(
+                    cursor,
+                    call_id=call_id,
+                    target=TraceCallState.DISPATCH_STARTED,
+                    occurred_at=occurred_at,
+                    integrity_state=("complete" if bundle.available else "incomplete"),
+                    omission_reason_code=(
+                        None
+                        if bundle.available or bundle.omission_reason is None
+                        else bundle.omission_reason.value
+                    ),
+                )
+            return started
+        except asyncio.CancelledError:
+            outcome = self._reconcile_dispatch_write(
+                database,
+                reserved_call=reserved_call,
+                persisted=persisted,
+                started=started,
+                surface_delta=surface_delta,
+            )
+            if not isinstance(outcome, TraceCallRecord):
+                self._discard_failed_surface_delta(surface_delta)
+            raise _TraceDispatchCancelled(outcome) from None
+        except Exception:  # noqa: BLE001 - write/cleanup errors may contain provider values
+            outcome = self._reconcile_dispatch_write(
+                database,
+                reserved_call=reserved_call,
+                persisted=persisted,
+                started=started,
+                surface_delta=surface_delta,
+            )
+            if isinstance(outcome, TraceCallRecord):
+                return outcome
+            self._discard_failed_surface_delta(surface_delta)
+            raise _TraceDispatchWriteError(outcome) from None
+
+    def _discard_failed_surface_delta(
+        self, surface_delta: VerifiedSurfaceDelta
+    ) -> None:
+        """Discard tentative verifier state without changing durable evidence."""
+        self._surface_ref_cache.pop(surface_delta.segment_id, None)
+        self._child_capabilities.pop(id(surface_delta.child_binding), None)
+        self._pending_child_uses.pop(id(surface_delta.child_binding), None)
+        self._prune_unreferenced_parents()
+
+    def _reconcile_dispatch_write(
+        self,
+        database: object,
+        *,
+        reserved_call: TraceCallRecord | None,
+        persisted: PersistedTraceRequest | None,
+        started: TraceCallRecord | None,
+        surface_delta: VerifiedSurfaceDelta,
+    ) -> TraceCallRecord | Literal["rolled_back", "unknown"]:
+        """Read only the exact attempted call and changed boundary material."""
+        if reserved_call is None:
+            return "unknown"
+        try:
+            with operation_owned_connection(database), database.transaction() as cursor:  # type: ignore[attr-defined]
+                durable = self.repository.get_call(cursor, reserved_call.call_id)
+                tail = self._effective_surface_tail(cursor, surface_delta.segment_id)
+                head = None if tail is None else tail.node_id
+                if (
+                    durable == reserved_call
+                    and reserved_call.state is TraceCallState.RESERVED
+                    and reserved_call.surface_node_id is None
+                    and reserved_call.request_header_id is None
+                    and reserved_call.dispatch_started_at is None
+                    and reserved_call.response_started_at is None
+                    and head == surface_delta.predecessor_surface_head_id
+                ):
+                    return "rolled_back"
+                if (
+                    persisted is None
+                    or started is None
+                    or durable != started
+                    or started.state is not TraceCallState.DISPATCH_STARTED
+                    or head != persisted.surface_head_id
+                    or durable.surface_node_id != persisted.surface_head_id
+                    or durable.request_header_id != persisted.header.header_id
+                    or self.repository.get_request_header(
+                        cursor, persisted.header.header_id
+                    )
+                    != persisted.header
+                    or any(
+                        self.repository.get_surface_node(cursor, node.node_id) != node
+                        for node in persisted.appended_nodes
+                    )
+                ):
+                    return "unknown"
+                if persisted.replacement is not None:
+                    expected = persisted.replacement
+                    replacement = expected.replacement
+                    row = cursor.execute(
+                        """SELECT replacement_id, segment_id, predecessor_head_id,
+                                  start_node_id, start_sequence, end_node_id,
+                                  end_sequence, replacement_node_id
+                             FROM console_trace_surface_replacements
+                            WHERE replacement_id = ?""",
+                        (expected.replacement_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or tuple(row)
+                        != (
+                            expected.replacement_id,
+                            expected.segment_id,
+                            replacement.predecessor_head_id,
+                            replacement.start_node_id,
+                            replacement.start_sequence,
+                            replacement.end_node_id,
+                            replacement.end_sequence,
+                            replacement.replacement_node_id,
+                        )
+                        or replacement.predecessor_head_id
+                        != surface_delta.predecessor_surface_head_id
+                    ):
+                        return "unknown"
+                return durable
+        except Exception:  # noqa: BLE001 - unavailable read-back is not evidence of rollback
+            return "unknown"
+
+    def persist_request(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+        surface_delta: VerifiedSurfaceDelta,
+        reserved_call: TraceCallRecord | None = None,
+        response_projection: Mapping[str, object] | None = None,
+    ) -> PersistedTraceRequest:
+        """Persist one verified request boundary in the caller-owned transaction."""
+
+        if type(provenance) is not ProviderRequestProvenance:
+            raise TypeError("provenance")
+        if type(bundle) is not ProviderRequestShadowBundle:
+            raise TypeError("bundle")
+        if not cursor.connection.in_transaction:
+            raise RuntimeError("caller_transaction_required")
+        if type(surface_delta) is not VerifiedSurfaceDelta:
+            raise TypeError("surface_delta")
+        _validate_bundle(bundle)
+        transaction_token = current_managed_transaction(cursor.connection)
+        if bundle.available and transaction_token is None:
+            raise RuntimeError("managed_transaction_required")
+        if (
+            surface_delta.owner_id != owner_id
+            or surface_delta.segment_id != segment_id
+            or bundle.preparation_identity != surface_delta.preparation_identity
+            or _route(provenance) != surface_delta.route_identity
+        ):
+            raise ValueError("surface_delta_identity")
+        self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
+        tail = self._effective_surface_tail(cursor, segment_id)
+        expected_predecessor = None if tail is None else tail.node_id
+        for key, child in tuple(self._child_capabilities.items()):
+            if (
+                child.segment_id == segment_id
+                and child.head_id != expected_predecessor
+                and key not in self._pending_child_uses
+            ):
+                self._child_capabilities.pop(key, None)
+                self._pending_child_uses.pop(key, None)
+                self._parent_capabilities.pop(id(child.parent), None)
+        pending_parent_ids = {
+            id(child.parent)
+            for key, child in self._child_capabilities.items()
+            if key in self._pending_child_uses
+        }
+        for key, parent in tuple(self._parent_capabilities.items()):
+            if (
+                parent.segment_id == segment_id
+                and parent.head_id != expected_predecessor
+                and key not in pending_parent_ids
+            ):
+                self._parent_capabilities.pop(key, None)
+        for key, prepared in tuple(self._prepared_capabilities.items()):
+            if id(prepared.parent) not in self._parent_capabilities:
+                self._prepared_capabilities.pop(key, None)
+        if surface_delta.predecessor_surface_head_id != expected_predecessor:
+            raise ValueError("surface_predecessor_mismatch")
+        projection = self._surface_projection(cursor, segment_id, tail)
+        replacement = surface_delta.replacement
+        child_state = self._validated_child_binding(
+            cursor,
+            surface_delta,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            head_id=expected_predecessor,
+            bundle=bundle,
+            provenance=provenance,
+        )
+        if bundle.available and child_state is None:
+            raise ValueError("surface_child_binding")
+        rendered_system_slot = (
+            None if child_state is None else child_state.rendered_system_slot
+        )
+        if rendered_system_slot is not None:
+            message_binding = _binding(bundle, "messages_payload")
+            if message_binding is None or not message_binding.value:
+                raise ValueError("rendered_system_slot_unavailable")
+            self._validate_rendered_system_slot(
+                cursor,
+                projection.root,
+                rendered_system_slot,
+                message_binding.value[0],
+                current_policy_id=None
+                if reserved_call is None
+                else reserved_call.policy_id,
+            )
+        delta_items = (
+            ((replacement.item,) + surface_delta.items)
+            if replacement is not None
+            else surface_delta.items
+        )
+        descriptors, values = (
+            self._resolve_child_items(bundle, delta_items)
+            if child_state is not None
+            else self._resolve_delta_items(provenance, bundle, delta_items)
+        )
+        if surface_delta.completed_tool_turn is not None:
+            if reserved_call is None or replacement is None:
+                raise ValueError("completed_tool_turn_unavailable")
+            issued_boundary = bundle.surface_boundary
+            if (
+                type(issued_boundary) is not _PreparedSurfaceBoundary
+                or issued_boundary._service is not self
+                or issued_boundary.provenance is not provenance
+            ):
+                raise ValueError("surface_child_binding")
+            issued_messages = issued_boundary._provider_request_surface_values()[
+                "messages_payload"
+            ]
+            canonical_values = tuple(
+                issued_messages[item.ordinal] for item in delta_items
+            )
+            self._validate_completed_tool_turn(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                witness=surface_delta.completed_tool_turn,
+                plan=replacement,
+                descriptors=descriptors,
+                values=canonical_values,
+                current_turn_id=reserved_call.turn_id,
+                current_policy_id=reserved_call.policy_id,
+                reserved_call=reserved_call,
+            )
+        saved_delta_pairs = tuple(
+            (reference_key, value)
+            for descriptor, value in zip(descriptors, values, strict=True)
+            if (reference_key := _saved_reference_key(descriptor)) is not None
+        )
+        if saved_delta_pairs and child_state is None:
+            expected_saved_values = self._resolve_reference_values(
+                cursor,
+                tuple(key for key, _ in saved_delta_pairs),
+                owner_id=owner_id,
+            )
+            if any(
+                _artifact_bytes(expected_saved_values[key]) != _artifact_bytes(value)
+                for key, value in saved_delta_pairs
+            ):
+                raise ValueError("semantic_revision_value_mismatch")
+        checkpoint_verified = child_state is not None
+        if replacement is None and bundle.available and not checkpoint_verified:
+            bindings = {item.name: item for item in bundle.components}
+            message_values = bindings["messages_payload"].value
+            continuation = bindings.get("provider_continuations")
+            continuation_values = () if continuation is None else continuation.value
+            if not isinstance(message_values, tuple) or not isinstance(
+                continuation_values, tuple
+            ):
+                raise ValueError("surface_values_unavailable")
+            domain_values = {
+                "messages_payload": (
+                    tuple(provenance.messages_payload),
+                    message_values,
+                ),
+                "provider_continuations": (
+                    tuple(provenance.continuations),
+                    continuation_values,
+                ),
+            }
+            consumed = {"messages_payload": 0, "provider_continuations": 0}
+            current_prefix: list[SurfaceReferenceKey | None] = []
+            durable_revision_values = self._resolve_reference_values(
+                cursor,
+                tuple(
+                    durable_key
+                    for _, durable_key in projection.entries
+                    if durable_key[1] == "revision"
+                ),
+                owner_id=owner_id,
+            )
+            for _, durable_key in projection.entries:
+                domain = _surface_reference_domain(durable_key)
+                descriptors_for_domain, values_for_domain = domain_values[domain]
+                ordinal = consumed[domain]
+                if ordinal >= len(descriptors_for_domain) or ordinal >= len(
+                    values_for_domain
+                ):
+                    raise ValueError("surface_prefix_mismatch")
+                current_prefix.append(
+                    self._reference_key(
+                        cursor,
+                        descriptors_for_domain[ordinal],
+                        values_for_domain[ordinal],
+                    )
+                )
+                if durable_key[1] == "revision" and _artifact_bytes(
+                    values_for_domain[ordinal]
+                ) != _artifact_bytes(durable_revision_values[durable_key]):
+                    raise ValueError("surface_prefix_mismatch")
+                consumed[domain] += 1
+            if tuple(current_prefix) != tuple(key for _, key in projection.entries):
+                raise ValueError("surface_prefix_mismatch")
+            delta_ordinals = {
+                domain: tuple(
+                    item.ordinal
+                    for item in delta_items
+                    if item.component_name == domain
+                )
+                for domain in domain_values
+            }
+            for domain, (
+                domain_descriptors,
+                domain_provider_values,
+            ) in domain_values.items():
+                expected_ordinals = tuple(
+                    range(consumed[domain], len(domain_descriptors))
+                )
+                if (
+                    len(domain_provider_values) != len(domain_descriptors)
+                    or delta_ordinals[domain] != expected_ordinals
+                ):
+                    raise ValueError("surface_delta_alignment")
+        if replacement is not None and bundle.available and not checkpoint_verified:
+            self._validate_replacement_projection(
+                cursor,
+                projection.entries,
+                replacement,
+                provenance,
+                bundle,
+                descriptors[0],
+                values[0],
+            )
+        if replacement is not None:
+            self._validate_replacement_range(
+                cursor,
+                segment_id=segment_id,
+                tail=tail,
+                plan=replacement,
+                descriptor_count=1,
+            )
+        saved_system = (
+            _saved_descriptors(provenance.system_message)
+            if bundle.available and provenance.system_message is not None
+            else ()
+        )
+        if len(saved_system) > MAX_SURFACE_REPLACEMENT_SPAN:
+            raise ValueError("system_revision_span")
+        for saved in saved_system:
+            self._validate_revision_owner(cursor, owner_id, saved.revision_id)
+        if bundle.available and provenance.system_message is not None:
+            system_binding = _binding(bundle, "system_message")
+            provider_value_count = len(bundle.system_components)
+            if (
+                provider_value_count == 0
+                and not saved_system
+                and system_binding is not None
+            ):
+                provider_value_count = 1
+            self._validate_system_composition_shape(
+                provenance.system_message,
+                provider_value_count,
+            )
+            self._validate_saved_system_values(
+                cursor,
+                owner_id=owner_id,
+                descriptor=provenance.system_message,
+                bundle=bundle,
+            )
+        full_surface_descriptors = (
+            ()
+            if child_state is not None
+            else (
+                self._full_surface_values(provenance, bundle)[0]
+                if bundle.available
+                else descriptors
+            )
+        )
+        header_policies = _policies(provenance, full_surface_descriptors)
+        policy_candidates = (
+            *(child_state.surface_policies if child_state is not None else ()),
+            *header_policies,
+        )
+        policies = {policy.policy_id: policy for policy in policy_candidates}
+        if any(
+            candidate != policies[candidate.policy_id]
+            for candidate in policy_candidates
+        ):
+            raise ValueError("trace_policy_mismatch")
+        ordered_policies = tuple(policies[key] for key in sorted(policies))
+        if len(ordered_policies) > 1:
+            raise ValueError("trace_policy_mismatch")
+        for policy in ordered_policies:
+            self.repository.ensure_policy(cursor, policy)
+
+        appended: list[SurfaceNodeRecord] = []
+        stored_replacement: SurfaceReplacementRecord | None = None
+        if replacement is not None:
+            span = replacement.end_sequence - replacement.start_sequence + 1
+            if span > MAX_SURFACE_REPLACEMENT_SPAN:
+                node = self._append_omission(
+                    cursor,
+                    segment_id=segment_id,
+                    tail=tail,
+                    component_kind="surface_replacement",
+                    reason=TraceOmissionReason.UNSUPPORTED_REPLACEMENT_SPAN,
+                )
+                appended.append(node)
+                tail = node
+            else:
+                tail, stored_replacement = self._replace_surface(
+                    cursor,
+                    owner_id=owner_id,
+                    segment_id=segment_id,
+                    tail=tail,
+                    descriptors=descriptors[:1],
+                    values=values[:1],
+                    plan=replacement,
+                )
+                appended.append(tail)
+        if replacement is None or surface_delta.completed_tool_turn is not None:
+            offset = 1 if replacement is not None else 0
+            for descriptor, value in zip(
+                descriptors[offset:], values[offset:], strict=True
+            ):
+                tail = self._append_descriptor(
+                    cursor,
+                    owner_id=owner_id,
+                    segment_id=segment_id,
+                    tail=tail,
+                    descriptor=descriptor,
+                    value=value,
+                )
+                appended.append(tail)
+                self._append_event(
+                    cursor,
+                    segment_id=segment_id,
+                    event_type="surface_append",
+                    surface_node_id=tail.node_id,
+                )
+                if tail.reference_kind == "omission":
+                    assert tail.omission_reason_code is not None
+                    self._append_event(
+                        cursor,
+                        segment_id=segment_id,
+                        event_type="gap",
+                        omission_reason_code=tail.omission_reason_code,
+                    )
+
+        if tail is None:
+            reason = bundle.omission_reason or TraceOmissionReason.SOURCE_UNAVAILABLE
+            tail = self._append_omission(
+                cursor,
+                segment_id=segment_id,
+                tail=None,
+                component_kind="provider_request",
+                reason=reason,
+            )
+            appended.append(tail)
+
+        header = self._persist_header(
+            cursor,
+            provenance=provenance,
+            bundle=bundle,
+            response_projection=response_projection,
+            surface_structure=(
+                child_state.surface_structure
+                if child_state is not None
+                else _structural_provenance(full_surface_descriptors, {})
+            ),
+            artifact_policy_id=(
+                ordered_policies[0].policy_id if ordered_policies else None
+            ),
+            rendered_system_slot=rendered_system_slot,
+        )
+        if child_state is not None:
+            root = _ProjectionRoot(
+                projection.root,
+                appended=tuple(
+                    (node.sequence, self._node_reference_key(node)) for node in appended
+                ),
+                replacement=(
+                    (replacement.start_sequence, replacement.end_sequence)
+                    if stored_replacement is not None and replacement is not None
+                    else None
+                ),
+            )
+        else:
+            updated_entries = self._updated_projection_entries(
+                projection.entries,
+                appended,
+                replacement if stored_replacement is not None else None,
+            )
+            root = _ProjectionRoot(None, base=updated_entries)
+        descriptor_root = (
+            child_state.descriptors
+            if child_state is not None
+            and (replacement is None or stored_replacement is not None)
+            else (
+                _DescriptorRoot(
+                    None,
+                    base=self._ordered_descriptor_entries(
+                        root.materialize(), provenance
+                    ),
+                    base_domains=tuple(
+                        (sequence, _surface_reference_domain(key))
+                        for sequence, key in root.materialize()
+                    ),
+                )
+                if root.size == len(full_surface_descriptors)
+                else None
+            )
+        )
+        active_domains: dict[int, str] | None = None
+        lineage_domains: dict[int, str] | None = None
+        if child_state is not None:
+            parent_state = self._parent_capabilities[id(child_state.parent)]
+            active_domains = dict(parent_state.active_domains)
+            lineage_domains = dict(parent_state.lineage_domains)
+            if stored_replacement is not None and replacement is not None:
+                for sequence in range(
+                    replacement.start_sequence, replacement.end_sequence + 1
+                ):
+                    active_domains.pop(sequence, None)
+            for node in appended:
+                domain = _surface_reference_domain(self._node_reference_key(node))
+                active_domains[node.sequence] = domain
+                lineage_domains[node.sequence] = domain
+        else:
+            lineage_domains = dict(projection.lineage_domains)
+            for node in appended:
+                lineage_domains[node.sequence] = _surface_reference_domain(
+                    self._node_reference_key(node)
+                )
+        checkpoint = self._promote_surface_capability(
+            owner_id=owner_id,
+            segment_id=segment_id,
+            head_id=tail.node_id,
+            route=_route(provenance),
+            root=root,
+            descriptors=descriptor_root,
+            next_sequence=tail.sequence + 1,
+            tool_loop=tuple(provenance.tool_loop),
+            active_domains=active_domains,
+            lineage_domains=lineage_domains,
+            surface_structure=(
+                child_state.surface_structure
+                if child_state is not None
+                else _structural_provenance(full_surface_descriptors, {})
+            ),
+            surface_policies=(
+                child_state.surface_policies
+                if child_state is not None
+                else _surface_projection_metadata(full_surface_descriptors)[1]
+            ),
+        )
+        self._surface_ref_cache[segment_id] = _SurfaceProjection(
+            tail.node_id,
+            root,
+            checkpoint,
+            tuple((lineage_domains or {}).items()),
+        )
+        if child_state is not None:
+            assert transaction_token is not None
+            self._mark_child_used(
+                cursor.connection,
+                transaction_token,
+                child_state,
+            )
+        return PersistedTraceRequest(
+            surface_head_id=tail.node_id,
+            header=header,
+            appended_nodes=tuple(appended),
+            replacement=stored_replacement,
+            checkpoint=checkpoint,
+        )
+
+    @staticmethod
+    def _ordered_descriptor_entries(
+        entries: tuple[tuple[int, SurfaceReferenceKey], ...],
+        provenance: ProviderRequestProvenance,
+    ) -> tuple[tuple[int, TraceProvenance], ...]:
+        descriptors = {
+            "messages_payload": tuple(provenance.messages_payload),
+            "provider_continuations": tuple(provenance.continuations),
+        }
+        consumed = {"messages_payload": 0, "provider_continuations": 0}
+        ordered: list[tuple[int, TraceProvenance]] = []
+        for sequence, key in entries:
+            domain = _surface_reference_domain(key)
+            ordinal = consumed[domain]
+            if ordinal >= len(descriptors[domain]):
+                raise ValueError("surface_provenance_mismatch")
+            ordered.append((sequence, descriptors[domain][ordinal]))
+            consumed[domain] += 1
+        if any(
+            consumed[domain] != len(values) for domain, values in descriptors.items()
+        ):
+            raise ValueError("surface_provenance_mismatch")
+        return tuple(ordered)
+
+    def current_surface_checkpoint(
+        self,
+        segment_id: str,
+        *,
+        expected_head_id: str | None = None,
+        expected_route: str | None = None,
+    ) -> object | None:
+        """Return the transient checkpoint for the current head and route.
+
+        Args:
+            segment_id: Segment whose in-process checkpoint is requested.
+            expected_head_id: Optional durable head the checkpoint must match.
+            expected_route: Optional provider route the checkpoint must match.
+
+        Returns:
+            The matching opaque checkpoint, or ``None`` when reconstruction is
+            required for the requested head or route.
+        """
+
+        projection = self._surface_ref_cache.get(segment_id)
+        if projection is None or (
+            expected_head_id is not None and projection.head_id != expected_head_id
+        ):
+            return None
+        checkpoint = projection.checkpoint
+        parent = self._parent_capabilities.get(id(checkpoint))
+        if expected_route is not None and (
+            parent is None or parent.route != expected_route
+        ):
+            return None
+        return checkpoint
+
+    def prepare_current_surface_delta(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        route_identity: str,
+        preparation_identity: str,
+        provenance: ProviderRequestProvenance,
+        values: tuple[object, ...],
+        completed_tool_turn: CompletedToolTurnWitness | None = None,
+        current_turn_id: str | None = None,
+        current_policy_id: str | None = None,
+        reserved_call: TraceCallRecord | None = None,
+        known_credentials: tuple[str, ...] = (),
+    ) -> tuple[SurfaceDeltaAdmission, object]:
+        """Plan an append, no-op, or one-item bounded surface replacement.
+
+        A verified completed tool turn may instead replace its bounded suffix
+        with the saved assistant revision and append the next saved user.
+
+        The comparison resolves prior references inside the caller transaction;
+        no transcript-sized value is copied into the admission or call row.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            owner_id: Trace owner whose durable references may be resolved.
+            segment_id: Segment containing the current surface.
+            route_identity: Frozen route identity for the provider call.
+            preparation_identity: Identity of the prepared provider request.
+            provenance: Descriptors aligned with the complete provider surface.
+            values: Provider values aligned with message and continuation
+                descriptors.
+            completed_tool_turn: Optional witness for a bounded completed
+                project/tool turn replacement; all evidence is revalidated.
+            current_turn_id: Saved user message that owns the incoming call.
+            current_policy_id: Frozen disclosure policy for the incoming call.
+            reserved_call: Existing live reservation when rebuilding an owned
+                retry, or None for an initial preparation.
+            known_credentials: Transient runtime secrets used only to compare
+                original provider artifacts with their filtered durable values.
+                They are never stored in the admission or trace ledger.
+
+        Returns:
+            The admitted surface delta and its verification boundary.
+
+        Raises:
+            ValueError: If provenance is misaligned or the surface change is
+                outside the supported append or bounded-replacement shapes.
+        """
+
+        descriptors = tuple(provenance.messages_payload) + tuple(
+            provenance.continuations
+        )
+        if len(descriptors) != len(values):
+            raise ValueError("surface_provenance_mismatch")
+        domains = ("messages_payload",) * len(provenance.messages_payload) + (
+            "provider_continuations",
+        ) * len(provenance.continuations)
+        tail = self._effective_surface_tail(cursor, segment_id)
+        projection = self._surface_projection(cursor, segment_id, tail)
+        physical_active = projection.entries
+        # Surface nodes stay physically append-only, so later messages can
+        # follow older continuation nodes. Compare in provider domain order
+        # while retaining physical ordinals for replacement validation.
+        active = tuple(
+            (physical_ordinal, sequence, key)
+            for domain in ("messages_payload", "provider_continuations")
+            for physical_ordinal, (sequence, key) in enumerate(physical_active)
+            if _surface_reference_domain(key) == domain
+        )
+        durable_keys = tuple(
+            key for _, _, key in active if key[1] in {"artifact", "revision"}
+        )
+        durable_values = self._resolve_reference_values(
+            cursor,
+            durable_keys,
+            owner_id=owner_id,
+        )
+
+        retained_artifact_values: dict[int, object] = {}
+        rendered_system: tuple[_RenderedSystemSlot, object] | None = None
+
+        def matches(active_index: int, incoming_index: int) -> bool:
+            nonlocal rendered_system
+            key = active[active_index][2]
+            if (
+                active_index == incoming_index == 0
+                and key[:2] == ("rendered_system", "artifact")
+                and _is_rendered_system_row(descriptors[0], values[0])
+                and isinstance(durable_values.get(key), Mapping)
+                and durable_values[key].get("role") == "system"
+            ):
+                # The positional surface source stays immutable. The exact
+                # current row is verified and stored in this call's header.
+                rendered_system = (
+                    _RenderedSystemSlot(active[0][1], key[2], descriptors[0]),
+                    values[0],
+                )
+                return True
+            matched = _surface_reference_domain(key) == domains[
+                incoming_index
+            ] and self._durable_reference_matches(
+                cursor,
+                descriptors[incoming_index],
+                values[incoming_index],
+                key,
+                durable_values,
+                owner_id=owner_id,
+                known_credentials=known_credentials,
+            )
+            if matched and key[1] == "artifact":
+                retained_artifact_values[active[active_index][1]] = values[
+                    incoming_index
+                ]
+            return matched
+
+        prefix = 0
+        while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
+            prefix += 1
+
+        replacement_range: VerifiedSurfaceReplacementRange | None = None
+        compound = False
+        admitted_from = prefix
+        admitted_to = len(descriptors)
+        if prefix < len(active):
+            suffix = 0
+            project_transition = (
+                completed_tool_turn is not None
+                and completed_tool_turn.project_context_count is not None
+            )
+            while (
+                suffix < len(active) - prefix
+                and suffix < len(descriptors) - prefix
+                # Project context is delivered anew for this turn, even when
+                # its bytes equal the previous turn's trailing context.
+                and (
+                    not project_transition
+                    or domains[len(descriptors) - 1 - suffix]
+                    == "provider_continuations"
+                )
+                and matches(len(active) - 1 - suffix, len(descriptors) - 1 - suffix)
+            ):
+                suffix += 1
+            incoming_changed = len(descriptors) - prefix - suffix
+            active_changed = len(active) - prefix - suffix
+            compound = (
+                completed_tool_turn is not None
+                and active_changed > 0
+                and incoming_changed == completed_tool_turn.descriptor_count
+                and route_identity in {"agent_first", "fresh"}
+                and domains[prefix : prefix + incoming_changed]
+                == ("messages_payload",) * incoming_changed
+            )
+            if (
+                incoming_changed >= 1
+                and active_changed == 0
+                and domains[prefix : prefix + incoming_changed]
+                == ("messages_payload",) * incoming_changed
+            ):
+                # A later turn adds messages before an unchanged provider
+                # continuation. Append only those messages: descriptor domains
+                # reconstruct provider order without rewriting the suffix.
+                admitted_to = prefix + incoming_changed
+            elif (
+                incoming_changed != 1 and not compound
+            ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+                raise ValueError("unsupported_surface_change")
+            else:
+                changed_entries = active[prefix : len(active) - suffix]
+                changed_sequences = {
+                    sequence for _ordinal, sequence, _key in changed_entries
+                }
+                start_sequence = min(changed_sequences)
+                end_sequence = max(changed_sequences)
+                if any(
+                    start_sequence <= sequence <= end_sequence
+                    and sequence not in changed_sequences
+                    for sequence, _key in physical_active
+                ):
+                    raise ValueError("unsupported_surface_change")
+                anchors = self.repository.read_lineage_surface_nodes(
+                    cursor,
+                    segment_id=segment_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                )
+                nodes_by_sequence = {node.sequence: node for node in anchors}
+                start = nodes_by_sequence.get(start_sequence)
+                end = nodes_by_sequence.get(end_sequence)
+                if start is None or end is None or tail is None:
+                    raise ValueError("surface_replacement_target_unavailable")
+                replacement_range = VerifiedSurfaceReplacementRange(
+                    predecessor_head_id=tail.node_id,
+                    start_node_id=start.node_id,
+                    end_node_id=end.node_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                    current_ordinal=min(
+                        ordinal for ordinal, _sequence, _key in changed_entries
+                    ),
+                    component_name=domains[prefix],
+                    component_ordinal=sum(
+                        domain == domains[prefix] for domain in domains[:prefix]
+                    ),
+                )
+                admitted_to = prefix + (incoming_changed if compound else 1)
+
+        if compound:
+            assert replacement_range is not None and completed_tool_turn is not None
+            self._validate_completed_tool_turn(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                witness=completed_tool_turn,
+                plan=replacement_range,
+                descriptors=descriptors[admitted_from:admitted_to],
+                values=values[admitted_from:admitted_to],
+                current_turn_id=current_turn_id,
+                current_policy_id=current_policy_id,
+                reserved_call=reserved_call,
+            )
+
+        predecessor = None if tail is None else tail.node_id
+        checkpoint = self.current_surface_checkpoint(
+            segment_id,
+            expected_head_id=predecessor,
+            expected_route=route_identity,
+        )
+        if checkpoint is not None and current_policy_id is not None:
+            parent = self._parent_capabilities[id(checkpoint)]
+            current_policy = self.repository.get_policy(cursor, current_policy_id)
+            if any(
+                policy.policy_id != current_policy_id
+                for policy in parent.surface_policies
+            ):
+                if current_policy is None or any(
+                    replace(policy, policy_id=current_policy_id) != current_policy
+                    for policy in parent.surface_policies
+                ):
+                    raise ValueError("trace_policy_mismatch")
+                checkpoint = None
+        bootstrap = checkpoint is None and predecessor is not None
+        if compound and (
+            bootstrap or completed_tool_turn.project_context_count is not None
+        ):
+            assert tail is not None and current_policy_id is not None
+            assert completed_tool_turn is not None
+            terminal = self.repository.get_call(
+                cursor, completed_tool_turn.terminal_call_id
+            )
+            assert terminal is not None
+            checkpoint = self._completed_tool_turn_parent(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                tail=tail,
+                projection=projection,
+                route=route_identity,
+                policy_id=current_policy_id,
+                retained_descriptors={
+                    sequence: descriptors[index]
+                    for index, (_ordinal, sequence, _key) in enumerate(
+                        active[:admitted_from]
+                    )
+                }
+                | {
+                    sequence: descriptor
+                    for (_ordinal, sequence, _key), descriptor in zip(
+                        active[len(active) - (len(descriptors) - admitted_to) :],
+                        descriptors[admitted_to:],
+                        strict=True,
+                    )
+                },
+            )
+            bootstrap = False
+        admitted = descriptors[admitted_from:admitted_to]
+        admission = SurfaceDeltaAdmission(
+            owner_id=owner_id,
+            segment_id=segment_id,
+            predecessor_surface_head_id=predecessor,
+            route_identity=route_identity,
+            preparation_identity=preparation_identity,
+            descriptors=admitted,
+            projection_checkpoint=checkpoint,
+            replacement_range=replacement_range,
+            completed_tool_turn=completed_tool_turn if compound else None,
+        )
+        if replacement_range is not None and bootstrap:
+            raise ValueError("surface_replacement_checkpoint_unavailable")
+        if bootstrap:
+            delta_provenance = provenance
+            delta_values = values
+        else:
+            message_delta = tuple(
+                descriptor
+                for index, descriptor in enumerate(
+                    descriptors[admitted_from:admitted_to], admitted_from
+                )
+                if domains[index] == "messages_payload"
+            )
+            continuation_delta = tuple(
+                descriptor
+                for index, descriptor in enumerate(
+                    descriptors[admitted_from:admitted_to], admitted_from
+                )
+                if domains[index] == "provider_continuations"
+            )
+            delta_provenance = replace(
+                provenance,
+                messages=(
+                    message_delta
+                    if provenance.messages == provenance.messages_payload
+                    else provenance.messages
+                ),
+                messages_payload=message_delta,
+                continuations=continuation_delta,
+                tool_loop=tuple(
+                    index - admitted_from
+                    for index in provenance.tool_loop
+                    if admitted_from <= index < admitted_to
+                ),
+            )
+            delta_values = values[admitted_from:admitted_to]
+        boundary = self.prepare_surface_provenance(
+            cursor,
+            checkpoint,
+            provenance=delta_provenance,
+            admission=admission,
+            values=delta_values,
+            reserved_call=reserved_call,
+            known_credentials=known_credentials,
+            retained_artifact_values=retained_artifact_values,
+            rendered_system=rendered_system,
+        )
+        return admission, boundary
+
+    def _retire_preparation(self, admission: SurfaceDeltaAdmission) -> None:
+        """Invalidate an old verifier before issuing an owned replacement."""
+        for key, prepared in tuple(self._prepared_capabilities.items()):
+            if prepared.admission is admission:
+                self._prepared_capabilities.pop(key, None)
+        for key, child in tuple(self._child_capabilities.items()):
+            if child.preparation_identity == admission.preparation_identity:
+                self._child_capabilities.pop(key, None)
+                self._pending_child_uses.pop(key, None)
+        self._surface_ref_cache.pop(admission.segment_id, None)
+        self._prune_unreferenced_parents()
+
+    def _call_message_tail(
+        self, cursor: sqlite3.Cursor, call: TraceCallRecord
+    ) -> SurfaceNodeRecord | None:
+        """Find the owning message before automatic context at the exact call head."""
+        head = (
+            None
+            if call.surface_node_id is None
+            else self.repository.get_surface_node(cursor, call.surface_node_id)
+        )
+        if (
+            head is None
+            or _surface_reference_domain(self._node_reference_key(head))
+            == "messages_payload"
+            and head.component_kind != "project_instruction"
+        ):
+            return head
+        projection = self._surface_projection(cursor, call.segment_id, head)
+        for sequence, key in reversed(projection.entries):
+            if (
+                _surface_reference_domain(key) != "messages_payload"
+                or key[0] == "project_instruction"
+            ):
+                continue
+            nodes = self.repository.read_lineage_surface_nodes(
+                cursor,
+                segment_id=call.segment_id,
+                start_sequence=sequence,
+                end_sequence=sequence,
+            )
+            if len(nodes) == 1 and self._node_reference_key(nodes[0]) == key:
+                return nodes[0]
+            return None
+        return None
+
+    def has_completed_project_context(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        terminal_surface_id: str | None,
+    ) -> bool:
+        """Find a candidate project suffix without granting transition authority.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for ledger reads.
+            segment_id: Trace segment whose active surface should be inspected.
+            terminal_surface_id: Surface head of the prior terminal call, or
+                None when that call has no recorded surface.
+
+        Returns:
+            True if the bounded active project/tool suffix contains a project
+            artifact; False if no such suffix or surface exists. A true result
+            is only a candidate hint and does not authorize a transition.
+        """
+        if terminal_surface_id is None:
+            return False
+        tail = self.repository.get_surface_node(cursor, terminal_surface_id)
+        if tail is None:
+            return False
+        entries = self._surface_projection(cursor, segment_id, tail).entries
+        messages = tuple(
+            entry
+            for entry in entries
+            if _surface_reference_domain(entry[1]) == "messages_payload"
+        )
+        for _sequence, key in reversed(messages[-MAX_SURFACE_REPLACEMENT_SPAN:]):
+            if key[1] != "artifact" or key[0] not in {
+                "project_instruction",
+                "tool_call",
+                "tool_result",
+            }:
+                break
+            if key[0] == "project_instruction":
+                return True
+        return False
+
+    def discarded_turn_chain(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+        preceding_descriptors: tuple[TraceProvenance, ...],
+    ) -> tuple[str | None, tuple[tuple[str, str], ...]]:
+        """Find bounded, exact discarded owners through unsent follow-up users.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for ledger and
+                message ownership reads.
+            conversation_id: Conversation that must own every linked message.
+            previous_turn_id: Original traced user message to reach.
+            current_turn_id: Current saved user message ending the chain.
+            preceding_descriptors: Provider-order descriptors before the current
+                user. Only the last MAX_SURFACE_REPLACEMENT_SPAN are inspected;
+                that window must include the original traced user.
+
+        Returns:
+            The original user's discarded assistant message ID and an
+            oldest-to-newest tuple of intervening (saved user revision ID,
+            discarded assistant message ID) pairs. The tuple is empty for a
+            direct link. Returns (None, ()) if exact ownership cannot be proven
+            within the window, including missing revisions or broken links;
+            no partial chain is returned.
+
+        Raises:
+            sqlite3.Error: If a revision or message ownership query fails.
+        """
+        followups = []
+        next_turn_id = current_turn_id
+        for descriptor in reversed(
+            preceding_descriptors[-MAX_SURFACE_REPLACEMENT_SPAN:]
+        ):
+            if type(descriptor) is not SavedRevisionTraceProvenance:
+                break
+            revision = self.repository.get_semantic_revision(
+                cursor, descriptor.revision_id
+            )
+            if (
+                revision is None
+                or revision.normalized_role != "user"
+                or revision.source_conversation_id != conversation_id
+            ):
+                break
+            assistant_id = self.discarded_turn_assistant(
+                cursor,
+                conversation_id=conversation_id,
+                previous_turn_id=revision.source_message_id,
+                current_turn_id=next_turn_id,
+            )
+            if assistant_id is None:
+                break
+            if revision.source_message_id == previous_turn_id:
+                return assistant_id, tuple(reversed(followups))
+            followups.append((revision.revision_id, assistant_id))
+            next_turn_id = revision.source_message_id
+        return None, ()
+
+    @staticmethod
+    def discarded_turn_assistant(
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+    ) -> str | None:
+        """Find the exact durable discarded owner between two saved user turns.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used for message
+                ownership and dispatch checkpoint reads.
+            conversation_id: Conversation that must own all three messages.
+            previous_turn_id: Saved user message parenting the discarded owner.
+            current_turn_id: Saved user message parented by the discarded owner.
+
+        Returns:
+            The intervening discarded assistant message ID when all three
+            messages are undeleted, the prior user has no other assistant child
+            (including deleted siblings), and no dispatch checkpoint remains
+            for that user. None means this exact ownership proof is unavailable.
+
+        Raises:
+            sqlite3.Error: If the ownership or checkpoint query fails.
+        """
+        return ConsoleTraceService._closed_turn_assistant(
+            cursor,
+            conversation_id=conversation_id,
+            previous_turn_id=previous_turn_id,
+            current_turn_id=current_turn_id,
+        )
+
+    @staticmethod
+    def _closed_turn_assistant(
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+        allow_failed: bool = False,
+        complete_assistant_id: str | None = None,
+        untraced: bool = False,
+    ) -> str | None:
+        """Prove one exact closed parent pair without inferring delivery."""
+        row = cursor.execute(
+            """SELECT closed.id, closed.assistant_generation_state,
+                      coalesce(closed.content, '') = '',
+                      closed.image_data IS NULL AND closed.image_mime_type IS NULL
+                      AND closed.provider_continuation_json IS NULL
+                      AND closed.thinking_blocks_json IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM message_attachments attachment
+                                      WHERE attachment.message_id = closed.id),
+                      closed.metadata_json
+                 FROM messages current
+                 JOIN messages closed ON closed.id = current.parent_message_id
+                 JOIN messages prior ON prior.id = closed.parent_message_id
+                WHERE current.id = ? AND current.conversation_id = ?
+                  AND current.role = 'user' AND current.deleted = 0
+                  AND closed.conversation_id = current.conversation_id
+                  AND closed.role = 'assistant' AND closed.deleted = 0
+                  AND prior.id = ? AND prior.conversation_id = current.conversation_id
+                  AND prior.role = 'user' AND prior.deleted = 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM messages sibling
+                       WHERE sibling.conversation_id = prior.conversation_id
+                         AND sibling.parent_message_id = prior.id
+                         AND sibling.role = 'assistant' AND sibling.id != closed.id)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM console_dispatch_checkpoints checkpoint
+                       WHERE checkpoint.conversation_id = current.conversation_id
+                         AND checkpoint.user_message_id = prior.id)
+                  AND (? = 0 OR NOT EXISTS (
+                      SELECT 1 FROM console_trace_calls call WHERE call.turn_id = prior.id))
+            """,
+            (current_turn_id, conversation_id, previous_turn_id, int(untraced)),
+        ).fetchone()
+        if row is None:
+            return None
+        assistant_id, state, empty, no_sidecars, raw_metadata = row
+        if allow_failed or complete_assistant_id is not None:
+            try:
+                metadata = json.loads(raw_metadata or "{}")
+            except (TypeError, ValueError, RecursionError):
+                return None
+            # This narrow recovery carries plain saved messages only. Canvas,
+            # video and unknown metadata cannot silently become an empty owner.
+            if metadata not in ({}, {"canvas_cards": []}):
+                try:
+                    receipt_id = (
+                        ConversationLocalMarksService.validate_terminal_receipt_id(
+                            metadata.get("terminal_receipt_id")
+                        )
+                    )
+                    receipt_only = MessageMetadata(terminal_receipt_id=receipt_id)
+                    # Compare JSON types exactly: False and 0 are not aliases.
+                    if json.dumps(metadata, sort_keys=True) != receipt_only.to_json():
+                        return None
+                except (AttributeError, TypeError, ValueError, RecursionError):
+                    return None
+        if complete_assistant_id is not None:
+            return (
+                assistant_id
+                if (
+                    assistant_id == complete_assistant_id
+                    and state == "complete"
+                    and no_sidecars
+                )
+                else None
+            )
+        if state == "discarded" and (not allow_failed or no_sidecars):
+            return assistant_id
+        if allow_failed and state == "failed" and empty and no_sidecars:
+            return assistant_id
+        return None
+
+    def closed_turn_chain(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        previous_turn_id: str,
+        current_turn_id: str,
+        preceding_descriptors: tuple[TraceProvenance, ...],
+    ) -> tuple[str | None, tuple[tuple[str, str, str | None], ...]]:
+        """Find a bounded unanswered owner through exact untraced saved turns.
+
+        Only live saved revisions participate. Each skipped response must be
+        discarded or failed-empty; a complete response needs its own exact
+        assistant descriptor. No intermediate turn may own a captured call.
+
+        Args:
+            cursor: Cursor in the caller's ownership-validation transaction.
+            conversation_id: Conversation owning the saved chain.
+            previous_turn_id: User owning the earlier captured run.
+            current_turn_id: Incoming saved user turn.
+            preceding_descriptors: Provider-visible history before this turn.
+
+        Returns:
+            Original assistant owner and ordered follow-up triples, or
+            (None, ()) when any source, closure or parent is unproven.
+
+        Raises:
+            sqlite3.Error: If a saved-revision or ownership query fails.
+        """
+        remaining = list(preceding_descriptors[-MAX_SURFACE_REPLACEMENT_SPAN:])
+        next_turn_id = current_turn_id
+        followups = []
+        seen = {current_turn_id}
+        while remaining:
+            descriptor = remaining.pop()
+            if type(descriptor) is not SavedRevisionTraceProvenance:
+                break
+            revision = self.repository.get_semantic_revision(
+                cursor, descriptor.revision_id
+            )
+            response = None
+            if revision is not None and revision.normalized_role == "assistant":
+                response = revision
+                if (
+                    not remaining
+                    or type(remaining[-1]) is not SavedRevisionTraceProvenance
+                ):
+                    break
+                revision = self.repository.get_semantic_revision(
+                    cursor, remaining.pop().revision_id
+                )
+            if (
+                revision is None
+                or revision.normalized_role != "user"
+                or revision.source_conversation_id != conversation_id
+                or revision.live_message_id != revision.source_message_id
+                or revision.source_message_id in seen
+                or response is not None
+                and (
+                    response.source_conversation_id != conversation_id
+                    or response.live_message_id != response.source_message_id
+                )
+            ):
+                break
+            original = revision.source_message_id == previous_turn_id
+            if original and response is not None:
+                break
+            assistant_id = self._closed_turn_assistant(
+                cursor,
+                conversation_id=conversation_id,
+                previous_turn_id=revision.source_message_id,
+                current_turn_id=next_turn_id,
+                allow_failed=True,
+                complete_assistant_id=None
+                if response is None
+                else response.source_message_id,
+                untraced=not original,
+            )
+            if assistant_id is None:
+                break
+            if original:
+                return assistant_id, tuple(reversed(followups))
+            followups.append(
+                (
+                    revision.revision_id,
+                    assistant_id,
+                    None if response is None else response.revision_id,
+                )
+            )
+            seen.add(revision.source_message_id)
+            next_turn_id = revision.source_message_id
+        return None, ()
+
+    def _validate_completed_tool_turn(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        witness: CompletedToolTurnWitness,
+        plan: VerifiedSurfaceReplacementRange | VerifiedSurfaceReplacement,
+        descriptors: tuple[TraceProvenance, ...],
+        values: tuple[object, ...],
+        current_turn_id: str | None,
+        current_policy_id: str | None,
+        reserved_call: TraceCallRecord | None = None,
+    ) -> None:
+        """Recheck bounded run evidence; a response link alone grants nothing."""
+        restoring_source = witness.source_revision_id is not None
+        source_after_failure = (
+            restoring_source and witness.assistant_revision_id is None
+        )
+        discarded = witness.discarded_assistant_message_id is not None
+        closed = witness.closed_assistant_message_id is not None
+        unanswered = discarded or closed
+        terminal_states = {TraceCallState.COMPLETE}
+        if restoring_source or unanswered:
+            terminal_states.update(
+                {
+                    TraceCallState.ERROR,
+                    TraceCallState.STOPPED,
+                    TraceCallState.INTERRUPTED,
+                }
+            )
+        if source_after_failure and not unanswered:
+            terminal_states.remove(TraceCallState.COMPLETE)
+        # Read durable Discard again at final binding. A closed witness may
+        # span completed uncaptured followups and still have a discarded owner.
+        # The full ownership/closure proof below remains mandatory.
+        explicit_discard = discarded or (
+            closed
+            and cursor.execute(
+                "SELECT 1 FROM messages WHERE id = ? "
+                "AND assistant_generation_state = 'discarded'",
+                (witness.closed_assistant_message_id,),
+            ).fetchone()
+            is not None
+        )
+        if explicit_discard:
+            # Explicit discard settles the assistant owner separately. A run
+            # interrupted during trace construction can leave earlier calls
+            # response-bearing but unsettled; do not invent their outcomes.
+            terminal_states.add(TraceCallState.RESPONSE_STARTED)
+        project_transition = witness.project_context_count is not None
+        self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
+        owner = self.repository.get_owner(cursor, owner_id)
+        origin = self.repository.get_call(cursor, witness.origin_call_id)
+        terminal = self.repository.get_call(cursor, witness.terminal_call_id)
+        tail = self._effective_surface_tail(cursor, segment_id)
+        latest = self.repository.get_latest_call_boundary(cursor, segment_id)
+        if reserved_call is not None:
+            durable = self.repository.get_call(cursor, reserved_call.call_id)
+            if (
+                durable != reserved_call
+                or latest is None
+                or latest.call_id != reserved_call.call_id
+                or (reserved_call.owner_id, reserved_call.segment_id)
+                != (owner_id, segment_id)
+                or reserved_call.state is not TraceCallState.RESERVED
+                or any(
+                    value is not None
+                    for value in (
+                        reserved_call.surface_node_id,
+                        reserved_call.request_header_id,
+                        reserved_call.dispatch_started_at,
+                        reserved_call.response_started_at,
+                        reserved_call.settled_at,
+                    )
+                )
+            ):
+                raise ValueError("completed_tool_turn_reservation")
+            previous = cursor.execute(
+                """SELECT call_id FROM console_trace_events
+                   WHERE segment_id = ? AND event_type = 'call_boundary'
+                     AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
+                (segment_id, latest.sequence),
+            ).fetchone()
+            latest_id = None if previous is None else previous[0]
+        else:
+            latest_id = None if latest is None else latest.call_id
+        chain_terminal = terminal
+        fallback = (
+            project_transition
+            and terminal is not None
+            and terminal.route_identity == "llama_fallback"
+        )
+        if fallback:
+            # The non-streaming retry owns a distinct run ID. Its exact
+            # immediately preceding failed stream owns the unchanged surface;
+            # neither an arbitrary older call nor the response link proves it.
+            fallback_events = cursor.execute(
+                """SELECT sequence FROM console_trace_events
+                   WHERE segment_id = ? AND event_type = 'call_boundary'
+                     AND call_id = ? ORDER BY sequence LIMIT 2""",
+                (segment_id, terminal.call_id),
+            ).fetchall()
+            previous_event = (
+                cursor.execute(
+                    """SELECT call_id FROM console_trace_events
+                       WHERE segment_id = ? AND event_type = 'call_boundary'
+                         AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
+                    (segment_id, fallback_events[0][0]),
+                ).fetchone()
+                if len(fallback_events) == 1
+                else None
+            )
+            chain_terminal = (
+                self.repository.get_call(cursor, previous_event[0])
+                if previous_event is not None
+                else None
+            )
+            if (
+                origin != terminal
+                or terminal.call_sequence != 0
+                or chain_terminal is None
+                or chain_terminal.state is not TraceCallState.ERROR
+                or chain_terminal.route_identity
+                not in {"agent_first", "fresh", "tool_loop"}
+                or (
+                    chain_terminal.owner_id,
+                    chain_terminal.segment_id,
+                    chain_terminal.turn_id,
+                    chain_terminal.policy_id,
+                    chain_terminal.surface_node_id,
+                    chain_terminal.provider_name,
+                    chain_terminal.model_name,
+                )
+                != (
+                    terminal.owner_id,
+                    terminal.segment_id,
+                    terminal.turn_id,
+                    terminal.policy_id,
+                    terminal.surface_node_id,
+                    terminal.provider_name,
+                    terminal.model_name,
+                )
+            ):
+                raise ValueError("completed_project_fallback_lineage")
+            origin = self.repository.get_run_origin(cursor, chain_terminal.run_id)
+        if (
+            owner is None
+            or origin is None
+            or terminal is None
+            or chain_terminal is None
+            or tail is None
+            or latest_id != terminal.call_id
+            or terminal.state not in terminal_states
+            or closed
+            and not explicit_discard
+            and terminal.response_started_at is None
+            or (
+                (restoring_source or unanswered)
+                and terminal.state is not TraceCallState.RESPONSE_STARTED
+                and terminal.settled_at is None
+            )
+            or (
+                chain_terminal.route_identity != "tool_loop"
+                and not (
+                    (project_transition or restoring_source)
+                    and chain_terminal == origin
+                    and chain_terminal.route_identity in {"agent_first", "fresh"}
+                )
+            )
+            or origin.route_identity
+            not in (
+                {"fresh", "agent_first"}
+                if restoring_source or project_transition
+                else {"agent_first"}
+            )
+            or origin.call_sequence != 0
+            or self.repository.get_run_origin(cursor, chain_terminal.run_id) != origin
+            or (
+                origin.owner_id,
+                origin.segment_id,
+                origin.turn_id,
+                origin.run_id,
+                origin.policy_id,
+            )
+            != (
+                chain_terminal.owner_id,
+                chain_terminal.segment_id,
+                chain_terminal.turn_id,
+                chain_terminal.run_id,
+                chain_terminal.policy_id,
+            )
+            or (terminal.owner_id, terminal.segment_id) != (owner_id, segment_id)
+            or terminal.turn_id == current_turn_id
+            or terminal.surface_node_id != tail.node_id
+            or plan.predecessor_head_id != tail.node_id
+        ):
+            raise ValueError("completed_tool_turn_unavailable")
+        if unanswered:
+            next_turn_id = current_turn_id
+            seen_turns = {current_turn_id, origin.turn_id}
+            followups = (
+                witness.closed_followups
+                if closed
+                else tuple(
+                    (revision_id, assistant_id, None)
+                    for revision_id, assistant_id in witness.discarded_followups
+                )
+            )
+            for revision_id, assistant_id, response_id in reversed(followups):
+                revision = self.repository.get_semantic_revision(cursor, revision_id)
+                response = (
+                    self.repository.get_semantic_revision(cursor, response_id)
+                    if response_id is not None
+                    else None
+                )
+                if (
+                    revision is None
+                    or revision.normalized_role != "user"
+                    or revision.source_conversation_id != owner.conversation_id
+                    or revision.source_message_id in seen_turns
+                    or closed
+                    and revision.live_message_id != revision.source_message_id
+                    or response_id is not None
+                    and (
+                        response is None
+                        or response.normalized_role != "assistant"
+                        or response.source_conversation_id != owner.conversation_id
+                        or response.source_message_id != assistant_id
+                        or response.live_message_id != assistant_id
+                    )
+                    or self._closed_turn_assistant(
+                        cursor,
+                        conversation_id=owner.conversation_id,
+                        previous_turn_id=revision.source_message_id,
+                        current_turn_id=next_turn_id,
+                        allow_failed=closed,
+                        complete_assistant_id=assistant_id
+                        if response_id is not None
+                        else None,
+                        untraced=True,
+                    )
+                    != assistant_id
+                ):
+                    raise ValueError("completed_turn_discard_owner")
+                seen_turns.add(revision.source_message_id)
+                next_turn_id = revision.source_message_id
+            if self._closed_turn_assistant(
+                cursor,
+                conversation_id=owner.conversation_id,
+                previous_turn_id=origin.turn_id,
+                current_turn_id=next_turn_id,
+                allow_failed=closed,
+            ) != (
+                witness.closed_assistant_message_id
+                if closed
+                else witness.discarded_assistant_message_id
+            ):
+                raise ValueError("completed_turn_discard_owner")
+        boundary_events = cursor.execute(
+            """SELECT call_id, sequence FROM console_trace_events
+                WHERE segment_id = ? AND event_type = 'call_boundary'
+                  AND call_id IN (?, ?) ORDER BY sequence LIMIT 3""",
+            (segment_id, origin.call_id, chain_terminal.call_id),
+        ).fetchall()
+        if tuple(row[0] for row in boundary_events) != tuple(
+            dict.fromkeys((origin.call_id, chain_terminal.call_id))
+        ):
+            raise ValueError("completed_tool_turn_lineage")
+        origin_event_sequence = boundary_events[0][1]
+        terminal_event_sequence = boundary_events[-1][1]
+        previous_policy = self.repository.get_policy(cursor, terminal.policy_id)
+        current_policy = (
+            None
+            if current_policy_id is None
+            else self.repository.get_policy(cursor, current_policy_id)
+        )
+        if (
+            previous_policy is None
+            or current_policy is None
+            or (
+                previous_policy.credential_filter_version,
+                previous_policy.pii_redaction_enabled,
+                previous_policy.pii_ruleset_revision_id,
+            )
+            != (
+                current_policy.credential_filter_version,
+                current_policy.pii_redaction_enabled,
+                current_policy.pii_ruleset_revision_id,
+            )
+        ):
+            raise ValueError("completed_tool_turn_policy")
+        origin_surface_head = (
+            None
+            if origin.surface_node_id is None
+            else self.repository.get_surface_node(cursor, origin.surface_node_id)
+        )
+        origin_head = (
+            self._call_message_tail(cursor, origin)
+            if restoring_source
+            else origin_surface_head
+        )
+        if (
+            origin_head is None
+            or origin_surface_head is None
+            or (
+                plan.start_sequence != origin_head.sequence
+                if restoring_source
+                else plan.start_sequence > origin_head.sequence + 1
+                if project_transition
+                else plan.start_sequence != origin_head.sequence + 1
+            )
+            or plan.end_sequence > tail.sequence
+            or not 1
+            <= plan.end_sequence - plan.start_sequence + 1
+            <= MAX_SURFACE_REPLACEMENT_SPAN
+        ):
+            raise ValueError("completed_tool_turn_range")
+        if restoring_source:
+            source = self.repository.get_semantic_revision(
+                cursor, witness.source_revision_id
+            )
+            pin = cursor.execute(
+                "SELECT semantic_revision_id FROM console_trace_events "
+                "WHERE call_id = ? AND event_type = 'call_boundary'",
+                (origin.call_id,),
+            ).fetchall()
+            if (
+                source is None
+                or len(pin) != 1
+                or pin[0][0] != witness.source_revision_id
+                or source.source_message_id != origin.turn_id
+                or source.source_conversation_id != owner.conversation_id
+                or source.normalized_role != "user"
+                or origin_head.component_kind != "active_request"
+                or origin_head.artifact_id is None
+            ):
+                raise ValueError("completed_turn_source")
+        assistant = (
+            None
+            if witness.assistant_revision_id is None
+            else self.repository.get_semantic_revision(
+                cursor, witness.assistant_revision_id
+            )
+        )
+        user = self.repository.get_semantic_revision(cursor, witness.user_revision_id)
+        link = self.repository.get_response_link(cursor, terminal.call_id)
+        if (
+            user is None
+            or (
+                not (source_after_failure or unanswered)
+                and (
+                    assistant is None
+                    or link is None
+                    or link.link_kind != "revision"
+                    or link.verification_outcome != "verified_equal"
+                    or link.semantic_revision_id != witness.assistant_revision_id
+                    or assistant.normalized_role != "assistant"
+                    or assistant.source_conversation_id != owner.conversation_id
+                )
+            )
+            or user.normalized_role != "user"
+            or user.source_conversation_id != owner.conversation_id
+            or user.source_message_id != current_turn_id
+            or not witness.matches_descriptors(descriptors)
+            or len(values) != witness.descriptor_count
+        ):
+            raise ValueError("completed_tool_turn_revision")
+        for descriptor, value in zip(descriptors, values, strict=True):
+            if type(descriptor) is not SavedRevisionTraceProvenance:
+                # The admitted current user and the verified assistant's typed
+                # thinking replay may carry provider artifacts. Their exact
+                # sources, response link and policy are checked above and at
+                # the preparation/final-value boundary.
+                continue
+            expected = self._resolve_reference_value(
+                cursor,
+                ("message", "revision", descriptor.revision_id),
+                owner_id=owner_id,
+            )
+            if _artifact_bytes(expected) != _artifact_bytes(value):
+                raise ValueError("completed_tool_turn_value")
+        if any(
+            not isinstance(value, Mapping)
+            or value.get("role") != "user"
+            or value.get("_chatbook_ephemeral_origin") != "project_instructions"
+            or (
+                descriptor.policy.credential_filter_version,
+                descriptor.policy.pii_redaction_enabled,
+                descriptor.policy.pii_ruleset_revision_id,
+            )
+            != (
+                current_policy.credential_filter_version,
+                current_policy.pii_redaction_enabled,
+                current_policy.pii_ruleset_revision_id,
+            )
+            for descriptor, value in zip(
+                descriptors[
+                    witness.descriptor_count - (witness.project_context_count or 0) :
+                ],
+                values[
+                    witness.descriptor_count - (witness.project_context_count or 0) :
+                ],
+                strict=True,
+            )
+        ):
+            raise ValueError("completed_project_context_value")
+        projection = self._surface_projection(cursor, segment_id, tail)
+        suffix = tuple(
+            (sequence, key)
+            for sequence, key in projection.entries
+            if plan.start_sequence <= sequence <= plan.end_sequence
+        )
+        if any(
+            sequence > plan.end_sequence
+            and _surface_reference_domain(key) != "provider_continuations"
+            for sequence, key in projection.entries
+        ):
+            raise ValueError("completed_tool_turn_range")
+        if project_transition and not restoring_source:
+            prefix = tuple(
+                key
+                for sequence, key in projection.entries
+                if sequence < plan.start_sequence
+                and _surface_reference_domain(key) == "messages_payload"
+            )
+            prior_user = (
+                self.repository.get_semantic_revision(cursor, prefix[-1][2])
+                if prefix and prefix[-1][1] == "revision"
+                else None
+            )
+            if (
+                prior_user is None
+                or prior_user.normalized_role != "user"
+                or prior_user.source_conversation_id != owner.conversation_id
+                or prior_user.source_message_id != terminal.turn_id
+            ):
+                raise ValueError("completed_project_turn_anchor")
+        if tuple(sequence for sequence, _ in suffix) != tuple(
+            range(plan.start_sequence, plan.end_sequence + 1)
+        ) or any(
+            key[0]
+            not in (
+                {"active_request"}
+                if restoring_source and sequence == origin_head.sequence
+                else {"project_instruction", "tool_call", "tool_result"}
+                if project_transition
+                else {"tool_call", "tool_result"}
+            )
+            or key[1] != "artifact"
+            or (
+                sequence <= origin_surface_head.sequence
+                and key[0] != "project_instruction"
+                and not (restoring_source and sequence == origin_head.sequence)
+            )
+            for sequence, key in suffix
+        ):
+            raise ValueError("completed_tool_turn_range")
+        # Every removed node must have been appended under a durable call from
+        # this run; generic artifact rows or later unrelated reservations do not
+        # establish that ownership. The output is bounded by the removed span.
+        rows = cursor.execute(
+            """SELECT n.sequence, c.owner_id, c.segment_id, c.turn_id, c.run_id,
+                      c.policy_id, c.route_identity, c.call_sequence
+                 FROM console_trace_surface_nodes n
+                 JOIN console_trace_events e ON e.surface_node_id = n.node_id
+                      AND e.segment_id = n.segment_id AND e.event_type = 'surface_append'
+                 JOIN console_trace_calls c ON c.call_id = (
+                     SELECT b.call_id FROM console_trace_events b
+                      WHERE b.segment_id = e.segment_id AND b.event_type = 'call_boundary'
+                        AND b.sequence < e.sequence ORDER BY b.sequence DESC LIMIT 1)
+                WHERE n.segment_id = ? AND n.sequence BETWEEN ? AND ?
+                ORDER BY n.sequence LIMIT 257""",
+            (segment_id, plan.start_sequence, plan.end_sequence),
+        ).fetchall()
+        if tuple(row[0] for row in rows) != tuple(
+            sequence for sequence, _ in suffix
+        ) or any(
+            tuple(row[1:6])
+            != (
+                owner_id,
+                segment_id,
+                terminal.turn_id,
+                chain_terminal.run_id,
+                terminal.policy_id,
+            )
+            or (
+                (row[6], row[7]) != (origin.route_identity, 0)
+                if (
+                    restoring_source
+                    and row[0] == origin_head.sequence
+                    or project_transition
+                    and row[0] <= origin_surface_head.sequence
+                )
+                else row[6] != "tool_loop"
+                or not 1 <= row[7] <= chain_terminal.call_sequence
+            )
+            for row in rows
+        ):
+            raise ValueError("completed_tool_turn_lineage")
+        foreign = cursor.execute(
+            """SELECT 1 FROM console_trace_events e
+                 JOIN console_trace_calls c ON c.call_id = e.call_id
+                WHERE e.segment_id = ? AND e.event_type = 'call_boundary'
+                  AND e.sequence > ? AND e.sequence <= ?
+                  AND (c.owner_id != ? OR c.run_id != ? OR c.turn_id != ? OR c.policy_id != ?)
+                LIMIT 1""",
+            (
+                segment_id,
+                origin_event_sequence,
+                terminal_event_sequence,
+                owner_id,
+                chain_terminal.run_id,
+                terminal.turn_id,
+                terminal.policy_id,
+            ),
+        ).fetchone()
+        if foreign is not None:
+            raise ValueError("completed_tool_turn_lineage")
+
+    def _completed_tool_turn_parent(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        tail: SurfaceNodeRecord,
+        projection: _SurfaceProjection,
+        route: str,
+        policy_id: str,
+        retained_descriptors: Mapping[int, TraceProvenance],
+    ) -> object:
+        """Build a cold compound parent entirely from committed references."""
+        policy = self.repository.get_policy(cursor, policy_id)
+        if policy is None:
+            raise ValueError("trace_policy_mismatch")
+        entries = []
+        domains = []
+        tool_loop = []
+        message_ordinal = 0
+        for sequence, key in projection.entries:
+            domain = _surface_reference_domain(key)
+            if sequence in retained_descriptors:
+                descriptor = retained_descriptors[sequence]
+            elif key[1] == "revision":
+                descriptor = SavedRevisionTraceProvenance(key[2])
+                if domain == "provider_continuations":
+                    descriptor = DerivedTraceProvenance(
+                        TraceTransformKind.CONTINUATION_ATTACHMENT,
+                        inputs=(descriptor,),
+                    )
+            elif key[1] == "artifact":
+                descriptor = ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource(key[0]), policy
+                )
+            else:
+                raise ValueError("completed_tool_turn_parent_unavailable")
+            entries.append((sequence, descriptor))
+            domains.append((sequence, domain))
+            if domain == "messages_payload":
+                if key[0] in {"tool_call", "tool_result"}:
+                    tool_loop.append(message_ordinal)
+                message_ordinal += 1
+        # Resolve every retained reference, including the removed tool suffix;
+        # the incoming prefix cannot substitute for unavailable durable bytes.
+        self._resolve_reference_values(
+            cursor, tuple(key for _, key in projection.entries), owner_id=owner_id
+        )
+        structure, policies = _surface_projection_metadata(item for _, item in entries)
+        capability = self._promote_surface_capability(
+            owner_id=owner_id,
+            segment_id=segment_id,
+            head_id=tail.node_id,
+            route=route,
+            root=projection.root,
+            descriptors=_DescriptorRoot(
+                None, base=tuple(entries), base_domains=tuple(domains)
+            ),
+            next_sequence=tail.sequence + 1,
+            tool_loop=tuple(tool_loop),
+            active_domains=dict(domains),
+            lineage_domains=dict(projection.lineage_domains),
+            surface_structure=structure,
+            surface_policies=policies,
+        )
+        assert capability is not None
+        return capability
+
+    def _bootstrap_surface_parent(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        tail: SurfaceNodeRecord,
+        provenance: ProviderRequestProvenance,
+        admitted: tuple[TraceProvenance, ...],
+        values: tuple[object, ...],
+        known_credentials: tuple[str, ...] = (),
+        rendered_system: tuple[_RenderedSystemSlot, object] | None = None,
+    ) -> tuple[
+        object, ProviderRequestProvenance, tuple[object, ...], dict[int, object]
+    ]:
+        projection = self._surface_projection(cursor, segment_id, tail)
+        message_descriptors = tuple(provenance.messages_payload)
+        continuation_descriptors = tuple(provenance.continuations)
+        if len(values) != len(message_descriptors) + len(continuation_descriptors):
+            raise ValueError("surface_prefix_mismatch")
+        domain_values = {
+            "messages_payload": (
+                message_descriptors,
+                values[: len(message_descriptors)],
+            ),
+            "provider_continuations": (
+                continuation_descriptors,
+                values[len(message_descriptors) :],
+            ),
+        }
+        durable_values = self._resolve_reference_values(
+            cursor,
+            tuple(
+                key
+                for _, key in projection.entries
+                if key[1] in {"artifact", "revision"}
+            ),
+            owner_id=owner_id,
+        )
+        consumed = {"messages_payload": 0, "provider_continuations": 0}
+        prefix_descriptors: list[tuple[int, TraceProvenance]] = []
+        prefix_domains: list[tuple[int, str]] = []
+        retained_artifact_values: dict[int, object] = {}
+        for sequence, key in projection.entries:
+            domain = _surface_reference_domain(key)
+            descriptors, provider_values = domain_values[domain]
+            ordinal = consumed[domain]
+            header_row = (
+                rendered_system is not None
+                and domain == "messages_payload"
+                and ordinal == 0
+                and sequence == rendered_system[0].sequence
+                and key
+                == ("rendered_system", "artifact", rendered_system[0].artifact_id)
+                and ordinal < len(descriptors)
+                and descriptors[ordinal] == rendered_system[0].descriptor
+                and _artifact_bytes(provider_values[ordinal])
+                == _artifact_bytes(rendered_system[1])
+            )
+            if ordinal >= len(descriptors) or not (
+                header_row
+                or self._durable_reference_matches(
+                    cursor,
+                    descriptors[ordinal],
+                    provider_values[ordinal],
+                    key,
+                    durable_values,
+                    owner_id=owner_id,
+                    known_credentials=known_credentials,
+                )
+            ):
+                raise ValueError("surface_prefix_mismatch")
+            prefix_descriptors.append((sequence, descriptors[ordinal]))
+            prefix_domains.append((sequence, domain))
+            if key[1] == "artifact" and not header_row:
+                retained_artifact_values[sequence] = provider_values[ordinal]
+            consumed[domain] += 1
+        message_delta = message_descriptors[consumed["messages_payload"] :]
+        continuation_delta = continuation_descriptors[
+            consumed["provider_continuations"] :
+        ]
+        if message_delta + continuation_delta != admitted:
+            raise ValueError("surface_delta_alignment")
+        delta_values = (
+            domain_values["messages_payload"][1][consumed["messages_payload"] :]
+            + domain_values["provider_continuations"][1][
+                consumed["provider_continuations"] :
+            ]
+        )
+        descriptor_root = _DescriptorRoot(
+            None,
+            base=tuple(prefix_descriptors),
+            base_domains=tuple(prefix_domains),
+        )
+        structure, policies = _surface_projection_metadata(
+            descriptor for _, descriptor in prefix_descriptors
+        )
+        capability = self._promote_surface_capability(
+            owner_id=owner_id,
+            segment_id=segment_id,
+            head_id=tail.node_id,
+            route=_route(provenance),
+            root=projection.root,
+            descriptors=descriptor_root,
+            next_sequence=tail.sequence + 1,
+            tool_loop=tuple(
+                index
+                for index in provenance.tool_loop
+                if index < consumed["messages_payload"]
+            ),
+            active_domains=dict(prefix_domains),
+            lineage_domains=dict(projection.lineage_domains),
+            surface_structure=structure,
+            surface_policies=policies,
+        )
+        assert capability is not None
+        delta_provenance = replace(
+            provenance,
+            messages=(
+                message_delta
+                if provenance.messages == provenance.messages_payload
+                else provenance.messages
+            ),
+            messages_payload=message_delta,
+            continuations=continuation_delta,
+            tool_loop=tuple(
+                index - consumed["messages_payload"]
+                for index in provenance.tool_loop
+                if index >= consumed["messages_payload"]
+            ),
+        )
+        return (
+            capability,
+            delta_provenance,
+            tuple(delta_values),
+            retained_artifact_values,
+        )
+
+    def prepare_surface_provenance(
+        self,
+        cursor: sqlite3.Cursor,
+        capability: object | None,
+        *,
+        provenance: ProviderRequestProvenance,
+        admission: object,
+        values: tuple[object, ...],
+        reserved_call: TraceCallRecord | None = None,
+        known_credentials: tuple[str, ...] = (),
+        retained_artifact_values: Mapping[int, object] | None = None,
+        rendered_system: tuple[_RenderedSystemSlot, object] | None = None,
+    ) -> _PreparedSurfaceBoundary:
+        """Derive one full structural projection from an opaque parent and delta.
+
+        ``provenance`` is delta-only for a warm parent. Cold reconstruction
+        also verifies the retained prefix. Callers cannot bless an arbitrary
+        full prefix.
+
+        Args:
+            cursor: Cursor in the caller-owned transaction used to verify refs.
+            capability: Opaque parent checkpoint, or None for a new or cold
+                surface whose parent must be reconstructed from the ledger.
+            provenance: Descriptors for the incoming delta, including the
+                retained prefix when cold reconstruction requires it.
+            admission: Preparation-owned surface delta and optional replacement
+                witness to validate against the parent.
+            values: Original provider values aligned with provenance.
+            reserved_call: Existing live reservation for an owned retry, if any.
+            known_credentials: Transient runtime secrets used to compare raw
+                artifacts with their filtered durable projection; never stored.
+            retained_artifact_values: Optional original artifact values keyed
+                by active physical sequence. Each is independently verified;
+                saved revisions cannot be overridden. Values remain local to
+                the immutable dispatch boundary and are not persisted.
+            rendered_system: Optional leading provider-owned system slot and
+                its original row. The slot is revalidated independently and
+                the row is verified and persisted through the call header.
+
+        Returns:
+            An owned boundary with verified provenance and original dispatch
+            values that can extend the admitted parent surface.
+
+        Raises:
+            TypeError: If admission is not a SurfaceDeltaAdmission.
+            ValueError: If the parent, values, provenance or replacement witness
+                cannot be verified against the durable ledger.
+        """
+
+        if type(admission) is not SurfaceDeltaAdmission:
+            raise TypeError("admission")
+        retained_artifact_values = dict(retained_artifact_values or {})
+        initial_parent = capability is None
+        if capability is None:
+            owner_id = str(getattr(admission, "owner_id", ""))
+            segment_id = str(getattr(admission, "segment_id", ""))
+            if getattr(admission, "projection_checkpoint", None) is not None:
+                raise ValueError("surface_checkpoint_identity")
+            self._validate_owner(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+            )
+            tail = self._effective_surface_tail(cursor, segment_id)
+            expected_head = None if tail is None else tail.node_id
+            if getattr(admission, "predecessor_surface_head_id", None) != expected_head:
+                raise ValueError("surface_predecessor_mismatch")
+            admitted = tuple(getattr(admission, "descriptors", ()))
+            if tail is None:
+                capability = self._promote_surface_capability(
+                    owner_id=owner_id,
+                    segment_id=segment_id,
+                    head_id=None,
+                    route=_route(provenance),
+                    root=_ProjectionRoot(None),
+                    descriptors=_DescriptorRoot(None),
+                    next_sequence=0,
+                    tool_loop=(),
+                )
+            else:
+                capability, provenance, values, bootstrap_artifact_values = (
+                    self._bootstrap_surface_parent(
+                        cursor,
+                        owner_id=owner_id,
+                        segment_id=segment_id,
+                        tail=tail,
+                        provenance=provenance,
+                        admitted=admitted,
+                        values=values,
+                        known_credentials=known_credentials,
+                        rendered_system=rendered_system,
+                    )
+                )
+                retained_artifact_values.update(bootstrap_artifact_values)
+            assert capability is not None
+        parent = self._parent_capabilities.get(id(capability))
+        admitted = tuple(getattr(admission, "descriptors", ()))
+        replacement_range = getattr(admission, "replacement_range", None)
+        if (
+            parent is None
+            or parent.capability is not capability
+            or not parent.live
+            or (
+                not initial_parent
+                and getattr(admission, "projection_checkpoint", None) is not capability
+            )
+            or getattr(admission, "owner_id", None) != parent.owner_id
+            or getattr(admission, "segment_id", None) != parent.segment_id
+            or getattr(admission, "predecessor_surface_head_id", None) != parent.head_id
+            or getattr(admission, "route_identity", None) != parent.route
+            or tuple(provenance.messages_payload) + tuple(provenance.continuations)
+            != admitted
+            or len(values) != len(admitted)
+        ):
+            raise ValueError("surface_checkpoint_identity")
+        if retained_artifact_values:
+            # These values live only in this dispatch boundary. Independently
+            # verify every supplied artifact against the durable disclosure
+            # projection; saved revisions never accept raw-value overrides.
+            parent_keys = dict(parent.root.iter_entries())
+            parent_descriptors = dict(parent.descriptors.iter_entries())
+            durable_values = self._resolve_reference_values(
+                cursor,
+                tuple(
+                    parent_keys[sequence]
+                    for sequence in retained_artifact_values
+                    if sequence in parent_keys
+                ),
+                owner_id=parent.owner_id,
+            )
+            for sequence, value in retained_artifact_values.items():
+                key = parent_keys.get(sequence)
+                descriptor = parent_descriptors.get(sequence)
+                if (
+                    key is None
+                    or key[1] != "artifact"
+                    or descriptor is None
+                    or not self._durable_reference_matches(
+                        cursor,
+                        descriptor,
+                        value,
+                        key,
+                        durable_values,
+                        owner_id=admission.owner_id,
+                        known_credentials=known_credentials,
+                    )
+                ):
+                    raise ValueError("surface_prefix_mismatch")
+        if rendered_system is not None:
+            slot, system_value = rendered_system
+            self._validate_rendered_system_slot(
+                cursor,
+                parent.root,
+                slot,
+                system_value,
+                current_policy_id=None
+                if reserved_call is None
+                else reserved_call.policy_id,
+            )
+            prior_descriptor = next(parent.descriptors.iter_domain("messages_payload"))[
+                1
+            ]
+            prior_policy = _artifact_policy(prior_descriptor)
+            if prior_policy is None or (
+                prior_policy.credential_filter_version,
+                prior_policy.pii_redaction_enabled,
+                prior_policy.pii_ruleset_revision_id,
+            ) != (
+                slot.descriptor.policy.credential_filter_version,
+                slot.descriptor.policy.pii_redaction_enabled,
+                slot.descriptor.policy.pii_ruleset_revision_id,
+            ):
+                raise ValueError("trace_policy_mismatch")
+            retained_artifact_values[slot.sequence] = system_value
+        replacement_component_ordinal: int | None = None
+        if admission.completed_tool_turn is not None:
+            if replacement_range is None:
+                raise ValueError("completed_tool_turn_unavailable")
+            witness = admission.completed_tool_turn
+            terminal = self.repository.get_call(cursor, witness.terminal_call_id)
+            user = self.repository.get_semantic_revision(
+                cursor, witness.user_revision_id
+            )
+            self._validate_completed_tool_turn(
+                cursor,
+                owner_id=parent.owner_id,
+                segment_id=parent.segment_id,
+                witness=witness,
+                plan=replacement_range,
+                descriptors=admitted,
+                values=values,
+                current_turn_id=None if user is None else user.source_message_id,
+                current_policy_id=(
+                    reserved_call.policy_id
+                    if reserved_call is not None
+                    else None
+                    if terminal is None
+                    else terminal.policy_id
+                ),
+                reserved_call=reserved_call,
+            )
+        if replacement_range is not None:
+            replacement_position = parent.root.first_position_in_range(
+                replacement_range.start_sequence,
+                replacement_range.end_sequence,
+            )
+            if replacement_position is None:
+                raise ValueError("surface_replacement_target_inactive")
+            replacement_component_ordinal = parent.descriptors.domain_count_before(
+                replacement_range.component_name,
+                replacement_position,
+            )
+            if replacement_range.current_ordinal != replacement_position or (
+                replacement_range.component_ordinal is not None
+                and replacement_range.component_ordinal != replacement_component_ordinal
+            ):
+                raise ValueError("replacement_component_ordinal")
+            replacement_item = VerifiedSurfaceDeltaItem(
+                replacement_range.component_name,
+                replacement_component_ordinal,
+                admitted[0],
+            )
+            self._validate_replacement_range(
+                cursor,
+                segment_id=parent.segment_id,
+                tail=self._effective_surface_tail(cursor, parent.segment_id),
+                plan=VerifiedSurfaceReplacement(
+                    predecessor_head_id=replacement_range.predecessor_head_id,
+                    start_node_id=replacement_range.start_node_id,
+                    end_node_id=replacement_range.end_node_id,
+                    start_sequence=replacement_range.start_sequence,
+                    end_sequence=replacement_range.end_sequence,
+                    current_ordinal=replacement_range.current_ordinal,
+                    item=replacement_item,
+                ),
+                descriptor_count=1,
+            )
+        for descriptor in admitted:
+            for saved in _saved_descriptors(descriptor):
+                self._validate_revision_owner(
+                    cursor, parent.owner_id, saved.revision_id
+                )
+        admitted_domains = ("messages_payload",) * len(provenance.messages_payload) + (
+            "provider_continuations",
+        ) * len(provenance.continuations)
+        replaced_domain_counts: Counter[str] = Counter()
+        if replacement_range is not None:
+            if admitted_domains[0] != replacement_range.component_name:
+                raise ValueError("replacement_component_domain")
+            for sequence in range(
+                replacement_range.start_sequence,
+                replacement_range.end_sequence + 1,
+            ):
+                if parent.lineage_domains.get(sequence) != admitted_domains[0]:
+                    raise ValueError("replacement_component_domain")
+                active_domain = parent.active_domains.get(sequence)
+                if active_domain is not None:
+                    replaced_domain_counts[active_domain] += 1
+        parent_domain_counts = {
+            domain: parent.descriptors.domain_count(domain)
+            for domain in {"messages_payload", "provider_continuations"}
+        }
+        prepared_items = tuple(
+            VerifiedSurfaceDeltaItem(
+                domain,
+                parent_domain_counts[domain]
+                + sum(previous == domain for previous in admitted_domains[:offset]),
+                descriptor,
+            )
+            for offset, (domain, descriptor) in enumerate(
+                zip(admitted_domains, admitted, strict=True)
+            )
+        )
+        if replacement_range is not None:
+            prepared_items = tuple(
+                replace(item, ordinal=cast(int, replacement_component_ordinal) + offset)
+                for offset, item in enumerate(prepared_items)
+            )
+        if replacement_range is None:
+            appended = tuple(
+                (parent.next_sequence + offset, descriptor)
+                for offset, descriptor in enumerate(admitted)
+            )
+            descriptor_root = _DescriptorRoot(
+                parent.descriptors,
+                appended=appended,
+                appended_domains=tuple(
+                    (parent.next_sequence + offset, domain)
+                    for offset, domain in enumerate(admitted_domains)
+                ),
+            )
+        else:
+            if len(admitted) != (
+                admission.completed_tool_turn.descriptor_count
+                if admission.completed_tool_turn is not None
+                else 1
+            ):
+                raise ValueError("surface_delta_shape")
+            descriptor_root = _DescriptorRoot(
+                parent.descriptors,
+                appended=tuple(
+                    (parent.next_sequence + offset, item)
+                    for offset, item in enumerate(admitted)
+                ),
+                replacement=(
+                    int(getattr(replacement_range, "start_sequence")),
+                    int(getattr(replacement_range, "end_sequence")),
+                ),
+                appended_domains=tuple(
+                    (parent.next_sequence + offset, domain)
+                    for offset, domain in enumerate(admitted_domains)
+                ),
+                removed_domain_counts=tuple(replaced_domain_counts.items()),
+            )
+        message_delta = tuple(provenance.messages_payload)
+        continuation_delta = tuple(provenance.continuations)
+        message_delta_ordinal = next(
+            (
+                item.ordinal
+                for item in prepared_items
+                if item.component_name == "messages_payload"
+            ),
+            parent_domain_counts["messages_payload"],
+        )
+        continuation_delta_ordinal = next(
+            (
+                item.ordinal
+                for item in prepared_items
+                if item.component_name == "provider_continuations"
+            ),
+            parent_domain_counts["provider_continuations"],
+        )
+        full_messages = _ProjectedDescriptors(
+            descriptor_root,
+            "messages_payload",
+            message_delta,
+            message_delta_ordinal,
+        )
+        full_continuations = _ProjectedDescriptors(
+            descriptor_root,
+            "provider_continuations",
+            continuation_delta,
+            continuation_delta_ordinal,
+        )
+        if replacement_range is None:
+            parent_message_count = len(full_messages) - len(message_delta)
+            projected_tool_loop = parent.tool_loop + tuple(
+                parent_message_count + index for index in provenance.tool_loop
+            )
+        else:
+            if admitted_domains[0] == "provider_continuations":
+                if provenance.tool_loop:
+                    raise ValueError("replacement_component_domain")
+                projected_tool_loop = parent.tool_loop
+            else:
+                component_ordinal = cast(int, replacement_component_ordinal)
+                replaced_count = replaced_domain_counts[admitted_domains[0]]
+                projected_tool_loop = tuple(
+                    index if index < component_ordinal else index - replaced_count + 1
+                    for index in parent.tool_loop
+                    if not component_ordinal
+                    <= index
+                    < component_ordinal + replaced_count
+                )
+                if provenance.tool_loop:
+                    projected_tool_loop = tuple(
+                        sorted((*projected_tool_loop, component_ordinal))
+                    )
+        projected = _project_verified_provider_request_provenance(
+            provenance,
+            messages=(
+                full_messages
+                if provenance.messages == provenance.messages_payload
+                else provenance.messages
+            ),
+            messages_payload=full_messages,
+            continuations=full_continuations,
+            tool_loop=projected_tool_loop,
+        )
+        projected_values = tuple(
+            (parent.next_sequence + offset, descriptor, value)
+            for offset, (descriptor, value) in enumerate(
+                zip(admitted, values, strict=True)
+            )
+        )
+        replacement_span = (
+            None
+            if replacement_range is None
+            else (
+                replacement_range.start_sequence,
+                replacement_range.end_sequence,
+            )
+        )
+        message_values = _ProjectedProviderValues(
+            self,
+            cursor,
+            parent.root,
+            projected_values,
+            replacement_span,
+            descriptor_root,
+            parent.owner_id,
+            "messages_payload",
+            retained_artifact_values,
+        )
+        continuation_values = _ProjectedProviderValues(
+            self,
+            cursor,
+            parent.root,
+            projected_values,
+            replacement_span,
+            descriptor_root,
+            parent.owner_id,
+            "provider_continuations",
+            retained_artifact_values,
+        )
+        boundary = _PreparedSurfaceBoundary(
+            self,
+            projected,
+            message_values,
+            continuation_values,
+            {
+                domain: tuple(
+                    value
+                    for value, value_domain in zip(
+                        values, admitted_domains, strict=True
+                    )
+                    if value_domain == domain
+                )
+                for domain in {"messages_payload", "provider_continuations"}
+            }
+            | (
+                {"rendered_system_row": (rendered_system[1],)}
+                if rendered_system
+                else {}
+            ),
+        )
+        self._prepared_capabilities[id(projected)] = _PreparedState(
+            projected,
+            capability,
+            admission,
+            descriptor_root,
+            id(boundary),
+            prepared_items,
+            rendered_system_slot=None
+            if rendered_system is None
+            else rendered_system[0],
+        )
+        return boundary
+
+    def _validate_rendered_system_slot(
+        self,
+        cursor: sqlite3.Cursor,
+        root: _ProjectionRoot,
+        slot: _RenderedSystemSlot,
+        value: object,
+        *,
+        current_policy_id: str | None,
+    ) -> None:
+        first = next(root.iter_entries(), None)
+        if (
+            type(slot) is not _RenderedSystemSlot
+            or first
+            != (slot.sequence, ("rendered_system", "artifact", slot.artifact_id))
+            or not _is_rendered_system_row(slot.descriptor, value)
+            or self.repository.get_policy(cursor, slot.descriptor.policy.policy_id)
+            != slot.descriptor.policy
+            or (
+                current_policy_id is not None
+                and current_policy_id != slot.descriptor.policy.policy_id
+            )
+        ):
+            raise ValueError("rendered_system_slot_mismatch")
+        artifact = self.repository.get_artifact(cursor, slot.artifact_id)
+        if artifact is None:
+            raise ValueError("rendered_system_slot_unavailable")
+        # The source artifact must really be a system row; provenance alone
+        # cannot turn a saved user/tool slot into an overridable header.
+        original = json.loads(artifact.sanitized_bytes)
+        if not isinstance(original, dict) or original.get("role") != "system":
+            raise ValueError("rendered_system_slot_mismatch")
+
+    def _extend_prepared_surface_boundary(
+        self,
+        boundary: object,
+        *,
+        admission: object,
+        replacement: VerifiedSurfaceReplacement | None,
+        preparation_identity: str,
+        items: tuple[VerifiedSurfaceDeltaItem, ...],
+        bundle: ProviderRequestShadowBundle,
+        surface_boundary_identity: int,
+        provenance: ProviderRequestProvenance,
+    ) -> object:
+        prepared = self._prepared_capabilities.get(id(provenance))
+        if (
+            prepared is None
+            or prepared.provenance is not provenance
+            or prepared.boundary_identity != id(boundary)
+            or surface_boundary_identity != id(boundary)
+        ):
+            raise ValueError("surface_verified_bundle")
+        return self._extend_surface_capability(
+            prepared.parent,
+            admission=admission,
+            replacement=replacement,
+            preparation_identity=preparation_identity,
+            items=items,
+            bundle=bundle,
+            surface_boundary_identity=surface_boundary_identity,
+            provenance=provenance,
+        )
+
+    def _verify_prepared_boundary(
+        self,
+        boundary: object,
+        provenance: ProviderRequestProvenance,
+        actual_values: object,
+        expected_values: object,
+        issuer: object,
+    ) -> bool:
+        prepared = self._prepared_capabilities.get(id(provenance))
+        if (
+            prepared is None
+            or issuer is not _SURFACE_VERIFICATION_ISSUER
+            or prepared.provenance is not provenance
+            or prepared.boundary_identity != id(boundary)
+            or not isinstance(actual_values, Mapping)
+            or not isinstance(expected_values, Mapping)
+        ):
+            return False
+        offsets = {"messages_payload": 0, "provider_continuations": 0}
+        matches = True
+        for item in prepared.items:
+            actual_domain = actual_values.get(item.component_name)
+            expected_domain = expected_values.get(item.component_name)
+            offset = offsets[item.component_name]
+            if (
+                not isinstance(actual_domain, (list, tuple))
+                or not isinstance(expected_domain, (list, tuple))
+                or item.ordinal >= len(actual_domain)
+                or offset >= len(expected_domain)
+                or _artifact_bytes(actual_domain[item.ordinal])
+                != _artifact_bytes(expected_domain[offset])
+            ):
+                matches = False
+                break
+            offsets[item.component_name] += 1
+        matches = matches and all(
+            offsets[domain]
+            == len(cast(Sequence[object], expected_values.get(domain, ())))
+            for domain in offsets
+        )
+        if prepared.rendered_system_slot is not None:
+            actual_messages = actual_values.get("messages_payload")
+            expected_system = expected_values.get("rendered_system_row")
+            matches = matches and (
+                isinstance(actual_messages, (list, tuple))
+                and bool(actual_messages)
+                and isinstance(expected_system, (list, tuple))
+                and len(expected_system) == 1
+                and _artifact_bytes(actual_messages[0])
+                == _artifact_bytes(expected_system[0])
+            )
+        if matches:
+            parent = self._parent_capabilities[id(prepared.parent)]
+            delta_descriptors = tuple(item.provenance for item in prepared.items)
+            structure = _structural_provenance(
+                delta_descriptors,
+                parent.surface_structure,
+            )
+            _, delta_policies = _surface_projection_metadata(delta_descriptors)
+            policies_by_id = {
+                policy.policy_id: policy
+                for policy in (*parent.surface_policies, *delta_policies)
+            }
+            policies = tuple(policies_by_id[key] for key in sorted(policies_by_id))
+            if prepared.rendered_system_slot is not None:
+                slot = prepared.rendered_system_slot
+                structure, policies = _surface_projection_metadata(
+                    slot.descriptor if sequence == slot.sequence else descriptor
+                    for sequence, descriptor in prepared.descriptors.iter_entries()
+                )
+            elif (
+                cast(SurfaceDeltaAdmission, prepared.admission).completed_tool_turn
+                is not None
+            ):
+                # Removed tool artifacts no longer contribute disclosure policy
+                # or structural metadata to the composed request.
+                structure, policies = _surface_projection_metadata(
+                    descriptor for _, descriptor in prepared.descriptors.iter_entries()
+                )
+            self._prepared_capabilities[id(provenance)] = replace(
+                prepared,
+                verified=True,
+                surface_structure=structure,
+                surface_policies=policies,
+            )
+        else:
+            self._prepared_capabilities.pop(id(provenance), None)
+        return matches
+
+    def _bind_verified_bundle(
+        self,
+        boundary: object,
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+        issuer: object,
+    ) -> None:
+        prepared = self._prepared_capabilities.get(id(provenance))
+        if (
+            prepared is None
+            or issuer is not _SURFACE_VERIFICATION_ISSUER
+            or prepared.provenance is not provenance
+            or prepared.boundary_identity != id(boundary)
+            or not prepared.verified
+            or prepared.verified_bundle is not None
+        ):
+            raise ValueError("surface_verified_bundle")
+        self._prepared_capabilities[id(provenance)] = replace(
+            prepared,
+            verified_bundle=ref(bundle),
+        )
+
+    def _extend_surface_capability(
+        self,
+        capability: object,
+        *,
+        admission: object,
+        replacement: VerifiedSurfaceReplacement | None,
+        preparation_identity: str,
+        items: tuple[VerifiedSurfaceDeltaItem, ...],
+        bundle: ProviderRequestShadowBundle,
+        surface_boundary_identity: int,
+        provenance: ProviderRequestProvenance,
+    ) -> object:
+        if type(admission) is not SurfaceDeltaAdmission:
+            raise TypeError("admission")
+        parent = self._parent_capabilities.get(id(capability))
+        prepared = self._prepared_capabilities.get(id(provenance))
+        if (
+            parent is None
+            or parent.capability is not capability
+            or not parent.live
+            or getattr(admission, "owner_id", None) != parent.owner_id
+            or getattr(admission, "segment_id", None) != parent.segment_id
+            or getattr(admission, "predecessor_surface_head_id", None) != parent.head_id
+            or getattr(admission, "route_identity", None) != parent.route
+            or getattr(admission, "preparation_identity", None) != preparation_identity
+        ):
+            raise ValueError("surface_checkpoint_identity")
+        if (
+            prepared is None
+            or prepared.provenance is not provenance
+            or prepared.parent is not capability
+            or prepared.admission is not admission
+            or not prepared.verified
+            or prepared.boundary_identity != surface_boundary_identity
+            or prepared.verified_bundle is None
+            or prepared.verified_bundle() is not bundle
+        ):
+            raise ValueError("surface_verified_bundle")
+        replacement_range = admission.replacement_range
+        if replacement_range is None:
+            expected_items = prepared.items
+            expected_replacement = None
+        else:
+            expected_items = prepared.items
+            expected_replacement = VerifiedSurfaceReplacement(
+                predecessor_head_id=replacement_range.predecessor_head_id,
+                start_node_id=replacement_range.start_node_id,
+                end_node_id=replacement_range.end_node_id,
+                start_sequence=replacement_range.start_sequence,
+                end_sequence=replacement_range.end_sequence,
+                current_ordinal=replacement_range.current_ordinal,
+                item=expected_items[0],
+            )
+        if items != expected_items or replacement != expected_replacement:
+            raise ValueError("surface_prefix_mismatch")
+        binding = _ChildSurfaceCapability()
+        state = _ChildState(
+            binding,
+            capability,
+            parent.owner_id,
+            parent.segment_id,
+            parent.head_id,
+            str(getattr(admission, "route_identity")),
+            preparation_identity,
+            ref(bundle),
+            provenance,
+            tuple(
+                (item.component_name, item.ordinal, item.provenance) for item in items
+            ),
+            replacement,
+            prepared.descriptors,
+            prepared.surface_structure or _structural_provenance((), {}),
+            prepared.surface_policies,
+            admission.completed_tool_turn,
+            prepared.rendered_system_slot,
+        )
+        self._child_capabilities[id(binding)] = state
+        self._prepared_capabilities.pop(id(provenance), None)
+        return binding
+
+    def _validated_child_binding(
+        self,
+        cursor: sqlite3.Cursor,
+        delta: VerifiedSurfaceDelta,
+        *,
+        owner_id: str,
+        segment_id: str,
+        head_id: str | None,
+        bundle: ProviderRequestShadowBundle,
+        provenance: ProviderRequestProvenance,
+    ) -> _ChildState | None:
+        binding = delta.child_binding
+        if binding is None:
+            return None
+        child = self._child_capabilities.get(id(binding))
+        items = (
+            ((delta.replacement.item,) + delta.items)
+            if delta.replacement is not None
+            else delta.items
+        )
+        signature = tuple(
+            (item.component_name, item.ordinal, item.provenance) for item in items
+        )
+        if (
+            child is None
+            or id(binding) in self._pending_child_uses
+            or child.binding is not binding
+            or child.owner_id != owner_id
+            or child.segment_id != segment_id
+            or child.head_id != head_id
+            or child.route != delta.route_identity
+            or child.preparation_identity != delta.preparation_identity
+            or child.bundle() is not bundle
+            or child.provenance is not provenance
+            or child.item_signature != signature
+            or child.replacement != delta.replacement
+            or child.completed_tool_turn != delta.completed_tool_turn
+        ):
+            raise ValueError("surface_child_binding")
+        return child
+
+    def _mark_child_used(
+        self,
+        connection: sqlite3.Connection,
+        transaction_token: object,
+        child: _ChildState,
+    ) -> None:
+        key = id(child.binding)
+        if key in self._pending_child_uses:
+            raise ValueError("surface_child_binding")
+        self._pending_child_uses[key] = transaction_token
+
+        def complete(committed: bool | None) -> None:
+            if self._pending_child_uses.get(key) is not transaction_token:
+                return
+            self._pending_child_uses.pop(key, None)
+            if committed is not False:
+                self._child_capabilities.pop(key, None)
+                self._prune_unreferenced_parents()
+
+        try:
+            register_transaction_completion(
+                connection,
+                transaction_token,
+                complete,
+            )
+        except Exception:
+            self._pending_child_uses.pop(key, None)
+            raise
+
+    def _prune_unreferenced_parents(self) -> None:
+        retained = (
+            {id(child.parent) for child in self._child_capabilities.values()}
+            | {id(prepared.parent) for prepared in self._prepared_capabilities.values()}
+            | {
+                id(projection.checkpoint)
+                for projection in self._surface_ref_cache.values()
+                if projection.checkpoint is not None
+            }
+        )
+        for key in tuple(self._parent_capabilities):
+            if key not in retained:
+                self._parent_capabilities.pop(key, None)
+
+    def _promote_surface_capability(
+        self,
+        *,
+        owner_id: str,
+        segment_id: str,
+        head_id: str | None,
+        route: str,
+        root: _ProjectionRoot,
+        descriptors: _DescriptorRoot | None,
+        next_sequence: int,
+        tool_loop: tuple[int, ...],
+        active_domains: dict[int, str] | None = None,
+        lineage_domains: dict[int, str] | None = None,
+        surface_structure: Mapping[str, object] | None = None,
+        surface_policies: tuple[FrozenTracePolicy, ...] = (),
+    ) -> object | None:
+        if descriptors is None:
+            return None
+        capability = _ParentSurfaceCapability(self)
+        current_domains = (
+            dict(descriptors.materialize_domains())
+            if active_domains is None
+            else active_domains
+        )
+        self._parent_capabilities[id(capability)] = _ParentState(
+            capability,
+            owner_id,
+            segment_id,
+            head_id,
+            route,
+            root,
+            descriptors,
+            next_sequence,
+            tool_loop,
+            current_domains,
+            dict(current_domains) if lineage_domains is None else lineage_domains,
+            True,
+            {} if surface_structure is None else surface_structure,
+            surface_policies,
+        )
+        return capability
+
+    def _effective_surface_tail(
+        self,
+        cursor: sqlite3.Cursor,
+        segment_id: str,
+    ) -> SurfaceNodeRecord | None:
+        """Return the segment-local tail or its immutable inherited head."""
+
+        tail = self.repository.get_surface_tail(cursor, segment_id)
+        if tail is not None:
+            return tail
+        segment = self.repository.get_segment(cursor, segment_id)
+        if segment is None or segment.inherited_surface_head_id is None:
+            return None
+        inherited = self.repository.get_surface_node(
+            cursor,
+            segment.inherited_surface_head_id,
+        )
+        if inherited is None:
+            raise ValueError("inherited_surface_head_unavailable")
+        return inherited
+
+    def _surface_projection(
+        self,
+        cursor: sqlite3.Cursor,
+        segment_id: str,
+        tail: SurfaceNodeRecord | None,
+    ) -> _SurfaceProjection:
+        segment = self.repository.get_segment(cursor, segment_id)
+        if segment is None:
+            raise ValueError("surface_segment_unavailable")
+        inherited_projection: _SurfaceProjection | None = None
+        if (
+            segment.parent_segment_id is not None
+            and segment.inherited_surface_head_id is not None
+        ):
+            inherited_head = self.repository.get_surface_node(
+                cursor,
+                segment.inherited_surface_head_id,
+            )
+            if inherited_head is None:
+                raise ValueError("inherited_surface_head_unavailable")
+            inherited_projection = self._surface_projection(
+                cursor,
+                segment.parent_segment_id,
+                inherited_head,
+            )
+            if tail is None:
+                tail = inherited_head
+        head_id = None if tail is None else tail.node_id
+        cached = self._surface_ref_cache.get(segment_id)
+        if cached is not None and cached.head_id == head_id:
+            return cached
+        nodes: list[SurfaceNodeRecord] = []
+        continuation = None
+        while True:
+            page = self.repository.read_surface_nodes(
+                cursor,
+                segment_id,
+                after=continuation,
+            )
+            nodes.extend(page)
+            if page.next_cursor is None:
+                break
+            continuation = page.next_cursor
+        if tail is not None:
+            nodes = [node for node in nodes if node.sequence <= tail.sequence]
+        local_node_ids = {node.node_id for node in nodes}
+        replacements = tuple(
+            record
+            for record in self.repository.read_surface_replacements(
+                cursor,
+                segment_id,
+            )
+            if record.replacement.replacement_node_id in local_node_ids
+        )
+        replacement_ids = {
+            item.replacement.replacement_node_id for item in replacements
+        }
+        root_node: _SequenceNode | None = None
+        active: dict[int, _SequenceNode] = {}
+        if inherited_projection is not None:
+            for sequence, key in inherited_projection.entries:
+                sequence_node = _SequenceNode(sequence, key)
+                root_node = _sequence_merge(root_node, sequence_node)
+                active[sequence] = sequence_node
+        for node in nodes:
+            if node.node_id in replacement_ids:
+                continue
+            sequence_node = _SequenceNode(
+                node.sequence,
+                self._node_reference_key(node),
+            )
+            root_node = _sequence_merge(root_node, sequence_node)
+            active[node.sequence] = sequence_node
+        by_id = {node.node_id: node for node in nodes}
+        for record in replacements:
+            replacement = record.replacement
+            span = replacement.end_sequence - replacement.start_sequence + 1
+            if span > MAX_SURFACE_REPLACEMENT_SPAN:
+                raise ValueError("surface_replacement_span")
+            node = by_id[replacement.replacement_node_id]
+            anchors = tuple(
+                active[sequence]
+                for sequence in range(
+                    replacement.start_sequence,
+                    replacement.end_sequence + 1,
+                )
+                if sequence in active
+            )
+            if not anchors:
+                raise ValueError("surface_replacement_target_inactive")
+            insert_at = min(_sequence_rank(anchor) for anchor in anchors)
+            for sequence in range(
+                replacement.start_sequence,
+                replacement.end_sequence + 1,
+            ):
+                removed = active.pop(sequence, None)
+                if removed is not None:
+                    root_node = _sequence_delete(root_node, removed)
+            sequence_node = _SequenceNode(
+                node.sequence,
+                self._node_reference_key(node),
+            )
+            root_node = _sequence_insert(root_node, insert_at, sequence_node)
+            active[node.sequence] = sequence_node
+        entries = _sequence_entries(root_node)
+        root = _ProjectionRoot(None, base=tuple(entries))
+        inherited_lineage = (
+            () if inherited_projection is None else inherited_projection.lineage_domains
+        )
+        projection = _SurfaceProjection(
+            head_id,
+            root,
+            lineage_domains=inherited_lineage
+            + tuple(
+                (
+                    node.sequence,
+                    _surface_reference_domain(self._node_reference_key(node)),
+                )
+                for node in nodes
+            ),
+        )
+        self._surface_ref_cache[segment_id] = projection
+        return projection
+
+    @staticmethod
+    def _updated_projection_entries(
+        entries: tuple[tuple[int, SurfaceReferenceKey], ...],
+        appended: list[SurfaceNodeRecord],
+        replacement: VerifiedSurfaceReplacement | None,
+    ) -> tuple[tuple[int, SurfaceReferenceKey], ...]:
+        result = list(entries)
+        for node in appended:
+            key = ConsoleTraceService._node_reference_key(node)
+            if replacement is None or node.node_id != appended[0].node_id:
+                result.append((node.sequence, key))
+                continue
+            insert_at = ConsoleTraceService._active_replacement_position(
+                result,
+                replacement,
+            )
+            result = [
+                entry
+                for entry in result
+                if not replacement.start_sequence
+                <= entry[0]
+                <= replacement.end_sequence
+            ]
+            result.insert(insert_at, (node.sequence, key))
+        return tuple(result)
+
+    def _validate_replacement_projection(
+        self,
+        cursor: sqlite3.Cursor,
+        entries: tuple[tuple[int, SurfaceReferenceKey], ...],
+        replacement: VerifiedSurfaceReplacement,
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+        replacement_descriptor: TraceProvenance,
+        replacement_value: object,
+    ) -> None:
+        bindings = {item.name: item for item in bundle.components}
+        message_binding = bindings.get("messages_payload")
+        continuation_binding = bindings.get("provider_continuations")
+        if message_binding is None or not isinstance(message_binding.value, tuple):
+            raise ValueError("surface_values_unavailable")
+        continuation_values = (
+            () if continuation_binding is None else continuation_binding.value
+        )
+        if not isinstance(continuation_values, tuple):
+            raise ValueError("surface_values_unavailable")
+        domain_values = {
+            "messages_payload": (
+                tuple(provenance.messages_payload),
+                message_binding.value,
+            ),
+            "provider_continuations": (
+                tuple(provenance.continuations),
+                continuation_values,
+            ),
+        }
+        expected: list[tuple[int, SurfaceReferenceKey | None]] = list(entries)
+        insert_at = self._active_replacement_position(
+            expected,
+            replacement,
+        )
+        expected = [
+            entry
+            for entry in expected
+            if not replacement.start_sequence <= entry[0] <= replacement.end_sequence
+        ]
+        expected.insert(insert_at, (-1, None))
+        if (
+            len(expected)
+            != sum(len(descriptors) for descriptors, _ in domain_values.values())
+            or replacement.current_ordinal != insert_at
+        ):
+            raise ValueError("surface_prefix_mismatch")
+        consumed = {"messages_payload": 0, "provider_continuations": 0}
+        for index, (_, key) in enumerate(expected):
+            domain = (
+                replacement.item.component_name
+                if index == insert_at
+                else _surface_reference_domain(cast(SurfaceReferenceKey, key))
+            )
+            descriptors, values = domain_values[domain]
+            ordinal = consumed[domain]
+            if ordinal >= len(descriptors) or ordinal >= len(values):
+                raise ValueError("surface_prefix_mismatch")
+            descriptor = descriptors[ordinal]
+            value = values[ordinal]
+            if index == insert_at:
+                if (
+                    replacement.item.ordinal != ordinal
+                    or descriptor != replacement_descriptor
+                    or _artifact_bytes(value) != _artifact_bytes(replacement_value)
+                ):
+                    raise ValueError("surface_prefix_mismatch")
+            elif self._reference_key(cursor, descriptor, value) != key:
+                raise ValueError("surface_prefix_mismatch")
+            consumed[domain] += 1
+        if any(
+            consumed[domain] != len(descriptors) or len(descriptors) != len(values)
+            for domain, (descriptors, values) in domain_values.items()
+        ):
+            raise ValueError("surface_prefix_mismatch")
+
+    @staticmethod
+    def _active_replacement_position(
+        entries: Sequence[tuple[int, object]],
+        replacement: VerifiedSurfaceReplacement,
+    ) -> int:
+        position = next(
+            (
+                index
+                for index, (sequence, _) in enumerate(entries)
+                if replacement.start_sequence <= sequence <= replacement.end_sequence
+            ),
+            None,
+        )
+        if position is None:
+            raise ValueError("surface_replacement_target_inactive")
+        return position
+
+    @staticmethod
+    def _node_reference_key(node: SurfaceNodeRecord) -> SurfaceReferenceKey:
+        identity = (
+            node.semantic_revision_id or node.artifact_id or node.omission_reason_code
+        )
+        if identity is None:
+            raise ValueError("surface_reference")
+        return node.component_kind, node.reference_kind, identity
+
+    def reconstruct_header(
+        self,
+        cursor: sqlite3.Cursor,
+        header_id: str,
+    ) -> ReconstructedRequestHeader:
+        """Read the complete immutable header selected for a request."""
+
+        header = self.repository.get_request_header(cursor, header_id)
+        if header is None:
+            raise ValueError("request_header_unavailable")
+        components: list[ReconstructedHeaderComponent] = []
+        for component in header.components:
+            artifact = self.repository.get_artifact(cursor, component.artifact_id)
+            if (
+                artifact is None
+                or artifact.media_type != TRACE_VALUE_MEDIA_TYPE
+                or artifact.normalization_version != TRACE_VALUE_NORMALIZATION_VERSION
+            ):
+                raise ValueError("request_header_component_unavailable")
+            try:
+                value = json.loads(artifact.sanitized_bytes)
+            except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                raise ValueError("request_header_component_invalid") from exc
+            components.append(
+                ReconstructedHeaderComponent(
+                    component.component_kind,
+                    component.ordinal,
+                    value,
+                )
+            )
+        composition = self._resolve_system_composition(header)
+        return ReconstructedRequestHeader(
+            header.header_id,
+            header.provider_name,
+            header.model_name,
+            header.route_identity,
+            header.endpoint_identity,
+            header.generation_parameters,
+            header.adapter_defaults,
+            header.response_format,
+            header.reasoning_controls,
+            tuple(components),
+            tuple(
+                cast(str, item["revision_id"])
+                for item in composition
+                if item.get("kind") == "revision"
+            ),
+            composition,
+        )
+
+    @staticmethod
+    def _resolve_system_composition(
+        header: RequestHeaderRecord,
+    ) -> tuple[Mapping[str, object], ...]:
+        raw = header.adapter_defaults.get("system_composition")
+        if raw is None:
+            return ()
+        if (
+            not isinstance(raw, tuple)
+            or len(raw) > MAX_SURFACE_REPLACEMENT_SPAN
+            or any(not isinstance(item, Mapping) for item in raw)
+        ):
+            raise ValueError("system_composition_invalid")
+        return cast(tuple[Mapping[str, object], ...], raw)
+
+    reconstruct_logical_header = reconstruct_header
+
+    def _validate_owner(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+    ) -> None:
+        effective = self.repository.get_effective_owner(cursor, segment_id)
+        if (
+            effective is None
+            or effective.owner_id != owner_id
+            or not effective.attached
+        ):
+            raise ValueError("surface_owner_mismatch")
+
+    def _expected_descriptor_value(
+        self,
+        cursor: sqlite3.Cursor,
+        owner_id: str,
+        descriptor: TraceProvenance,
+        supplied: object,
+    ) -> object:
+        key = _saved_reference_key(descriptor)
+        if key is None:
+            return supplied
+        return self._resolve_reference_value(
+            cursor,
+            key,
+            owner_id=owner_id,
+        )
+
+    def _resolve_reference_value(
+        self,
+        cursor: sqlite3.Cursor,
+        key: SurfaceReferenceKey,
+        *,
+        owner_id: str,
+    ) -> object:
+        _, reference_kind, identity = key
+        if reference_kind == "artifact":
+            artifact = self.repository.get_artifact(cursor, identity)
+            if artifact is None:
+                raise ValueError("surface_value_unavailable")
+            try:
+                return json.loads(artifact.sanitized_bytes)
+            except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                raise ValueError("surface_value_unavailable") from exc
+        if reference_kind != "revision":
+            raise ValueError("surface_value_unavailable")
+        self._validate_revision_owner(cursor, owner_id, identity)
+        revision = self.repository.get_semantic_revision(cursor, identity)
+        if revision is None:
+            raise ValueError("revision_owner_mismatch")
+        if key[0] == "continuation":
+            return project_semantic_revision_provider_continuations(
+                cursor,
+                revision_ids=(identity,),
+                expected_conversation_id=revision.source_conversation_id,
+            )[identity]
+        return project_semantic_revision_provider_message(
+            cursor,
+            revision_id=identity,
+            expected_conversation_id=revision.source_conversation_id,
+        )
+
+    def _resolve_reference_values(
+        self,
+        cursor: sqlite3.Cursor,
+        keys: tuple[SurfaceReferenceKey, ...],
+        *,
+        owner_id: str,
+    ) -> dict[SurfaceReferenceKey, object]:
+        """Resolve canonical provider values in bounded SQL batches.
+
+        This is the provider-surface verification path, not a trace-disclosure
+        reader. It deliberately returns live canonical values without applying
+        trace-only PII masks, because masking must never alter bytes sent to a
+        provider. Historical viewer/export code must instead resolve each call
+        with its frozen policy through
+        ``project_semantic_revision_trace_message``. Retired canonical locators
+        remain unavailable here rather than substituting a masked trace artifact
+        into a future provider request.
+        """
+
+        unique = tuple(dict.fromkeys(keys))
+        artifact_keys = tuple(key for key in unique if key[1] == "artifact")
+        revision_keys = tuple(key for key in unique if key[1] == "revision")
+        if len(artifact_keys) + len(revision_keys) != len(unique):
+            raise ValueError("surface_value_unavailable")
+        resolved: dict[SurfaceReferenceKey, object] = {}
+        for offset in range(0, len(artifact_keys), 256):
+            chunk = artifact_keys[offset : offset + 256]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = cursor.execute(
+                f"""SELECT artifact_id, sanitized_bytes
+                       FROM console_trace_artifacts
+                      WHERE artifact_id IN ({placeholders})""",
+                tuple(key[2] for key in chunk),
+            ).fetchall()
+            by_id = {str(row[0]): row[1] for row in rows}
+            for key in chunk:
+                raw = by_id.get(key[2])
+                if raw is None:
+                    raise ValueError("surface_value_unavailable")
+                try:
+                    resolved[key] = json.loads(raw)
+                except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                    raise ValueError("surface_value_unavailable") from exc
+        revision_keys_by_conversation: dict[str, list[SurfaceReferenceKey]] = {}
+        for key in revision_keys:
+            self._validate_revision_owner(cursor, owner_id, key[2])
+            revision = self.repository.get_semantic_revision(cursor, key[2])
+            if revision is None:
+                raise ValueError("revision_owner_mismatch")
+            revision_keys_by_conversation.setdefault(
+                revision.source_conversation_id,
+                [],
+            ).append(key)
+        for conversation_id, conversation_keys in revision_keys_by_conversation.items():
+            for offset in range(0, len(conversation_keys), 256):
+                chunk = conversation_keys[offset : offset + 256]
+                message_chunk = tuple(key for key in chunk if key[0] != "continuation")
+                continuation_chunk = tuple(
+                    key for key in chunk if key[0] == "continuation"
+                )
+                if message_chunk:
+                    projected = project_semantic_revision_provider_messages(
+                        cursor,
+                        revision_ids=tuple(key[2] for key in message_chunk),
+                        expected_conversation_id=conversation_id,
+                    )
+                    resolved.update((key, projected[key[2]]) for key in message_chunk)
+                if continuation_chunk:
+                    projected_continuations = (
+                        project_semantic_revision_provider_continuations(
+                            cursor,
+                            revision_ids=tuple(key[2] for key in continuation_chunk),
+                            expected_conversation_id=conversation_id,
+                        )
+                    )
+                    resolved.update(
+                        (key, projected_continuations[key[2]])
+                        for key in continuation_chunk
+                    )
+        return resolved
+
+    @staticmethod
+    def _resolve_child_items(
+        bundle: ProviderRequestShadowBundle,
+        items: tuple[VerifiedSurfaceDeltaItem, ...],
+    ) -> tuple[tuple[TraceProvenance, ...], tuple[object, ...]]:
+        """Resolve only service-bound delta ordinals from the verified bundle."""
+
+        bindings = {item.name: item for item in bundle.components}
+        descriptors: list[TraceProvenance] = []
+        values: list[object] = []
+        for item in items:
+            binding = bindings.get(item.component_name)
+            if (
+                binding is None
+                or not isinstance(binding.value, tuple)
+                or item.ordinal >= len(binding.value)
+            ):
+                raise ValueError("surface_delta_alignment")
+            descriptors.append(item.provenance)
+            values.append(binding.value[item.ordinal])
+        return tuple(descriptors), tuple(values)
+
+    @staticmethod
+    def _resolve_delta_items(
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+        items: tuple[VerifiedSurfaceDeltaItem, ...],
+    ) -> tuple[tuple[TraceProvenance, ...], tuple[object, ...]]:
+        if not bundle.available:
+            if len(items) != 1:
+                raise ValueError("surface_delta_alignment")
+            item = items[0]
+            if (
+                getattr(item, "component_name", None) != "omission"
+                or getattr(item, "ordinal", None) != 0
+                or type(getattr(item, "provenance", None)) is not OmittedTraceProvenance
+            ):
+                raise ValueError("surface_delta_alignment")
+            return (cast(TraceProvenance, item.provenance),), (None,)
+        bindings = {item.name: item for item in bundle.components}
+        resolved_descriptors: list[TraceProvenance] = []
+        resolved_values: list[object] = []
+        descriptor_slots = {
+            "messages_payload": provenance.messages_payload,
+            "provider_continuations": provenance.continuations,
+        }
+        for item in items:
+            name = getattr(item, "component_name", None)
+            ordinal = getattr(item, "ordinal", None)
+            if name not in descriptor_slots or type(ordinal) is not int:
+                raise ValueError("surface_delta_alignment")
+            descriptors = descriptor_slots[name]
+            binding = bindings.get(name)
+            if (
+                binding is None
+                or not isinstance(binding.value, tuple)
+                or ordinal < 0
+                or ordinal >= len(descriptors)
+                or ordinal >= len(binding.value)
+                or descriptors[ordinal] != getattr(item, "provenance", None)
+            ):
+                raise ValueError("surface_delta_alignment")
+            resolved_descriptors.append(descriptors[ordinal])
+            resolved_values.append(binding.value[ordinal])
+        return tuple(resolved_descriptors), tuple(resolved_values)
+
+    @staticmethod
+    def _full_surface_values(
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+    ) -> tuple[tuple[TraceProvenance, ...], tuple[object, ...]]:
+        bindings = {item.name: item for item in bundle.components}
+        messages = bindings.get("messages_payload")
+        if messages is None or not isinstance(messages.value, tuple):
+            raise ValueError("surface_values_unavailable")
+        descriptors = tuple(provenance.messages_payload)
+        values = tuple(messages.value)
+        continuation = bindings.get("provider_continuations")
+        if continuation is not None:
+            if not isinstance(continuation.value, tuple):
+                raise ValueError("surface_values_unavailable")
+            descriptors += provenance.continuations
+            values += tuple(continuation.value)
+        if len(descriptors) != len(values):
+            raise ValueError("surface_provenance_mismatch")
+        return descriptors, values
+
+    def _reference_key(
+        self,
+        cursor: sqlite3.Cursor,
+        descriptor: TraceProvenance,
+        value: object,
+    ) -> SurfaceReferenceKey | None:
+        if type(descriptor) is SavedRevisionTraceProvenance:
+            return (
+                "message",
+                "revision",
+                cast(SavedRevisionTraceProvenance, descriptor).revision_id,
+            )
+        if type(descriptor) is OmittedTraceProvenance:
+            omitted = cast(OmittedTraceProvenance, descriptor)
+            return omitted.source.value, "omission", omitted.reason.value
+        if type(descriptor) is ProviderArtifactTraceProvenance:
+            artifact = self.repository.find_sanitized_artifact(
+                cursor,
+                sanitized_bytes=_artifact_bytes(value),
+                media_type=TRACE_VALUE_MEDIA_TYPE,
+                normalization_version=TRACE_VALUE_NORMALIZATION_VERSION,
+            )
+            return (
+                None
+                if artifact is None
+                else (
+                    cast(ProviderArtifactTraceProvenance, descriptor).source.value,
+                    "artifact",
+                    artifact.artifact_id,
+                )
+            )
+        if type(descriptor) is not DerivedTraceProvenance:
+            return None
+        derived = cast(DerivedTraceProvenance, descriptor)
+        if derived.artifact is not None:
+            artifact = self.repository.find_sanitized_artifact(
+                cursor,
+                sanitized_bytes=_artifact_bytes(value),
+                media_type=TRACE_VALUE_MEDIA_TYPE,
+                normalization_version=TRACE_VALUE_NORMALIZATION_VERSION,
+            )
+            return (
+                None
+                if artifact is None
+                else (derived.artifact.source.value, "artifact", artifact.artifact_id)
+            )
+        saved_inputs = _saved_inputs(derived)
+        if len(saved_inputs) == 1:
+            return (
+                _saved_revision_component_kind(derived),
+                "revision",
+                saved_inputs[0].revision_id,
+            )
+        omitted_inputs = _omitted_inputs(derived)
+        if len(omitted_inputs) == 1:
+            return (
+                omitted_inputs[0].source.value,
+                "omission",
+                omitted_inputs[0].reason.value,
+            )
+        return (
+            derived.transform.value,
+            "omission",
+            TraceOmissionReason.SOURCE_UNAVAILABLE.value,
+        )
+
+    def _durable_reference_matches(
+        self,
+        cursor: sqlite3.Cursor,
+        descriptor: TraceProvenance,
+        value: object,
+        durable_key: SurfaceReferenceKey,
+        durable_values: Mapping[SurfaceReferenceKey, object],
+        *,
+        owner_id: str,
+        known_credentials: tuple[str, ...] = (),
+    ) -> bool:
+        artifact = (
+            descriptor
+            if type(descriptor) is ProviderArtifactTraceProvenance
+            else descriptor.artifact
+            if type(descriptor) is DerivedTraceProvenance
+            else None
+        )
+        if artifact is not None:
+            if (
+                durable_key[:2] != (artifact.source.value, "artifact")
+                or durable_key not in durable_values
+            ):
+                return False
+            if (
+                type(descriptor) is DerivedTraceProvenance
+                and descriptor.transform is TraceTransformKind.CONTINUATION_ATTACHMENT
+            ):
+                if (_saved_reference_key(descriptor) or ())[:2] != (
+                    "continuation",
+                    "revision",
+                ):
+                    # Masked bytes cannot establish an unsaved attachment's
+                    # source identity. Preserve its exact artifact comparison.
+                    return _artifact_bytes(value) == _artifact_bytes(
+                        durable_values[durable_key]
+                    )
+                canonical = self._expected_descriptor_value(
+                    cursor, owner_id, descriptor, value
+                )
+                if _artifact_bytes(canonical) != _artifact_bytes(value):
+                    return False
+            # Provider input stays raw. Only the durable comparison uses the
+            # frozen disclosure projection, after exact saved-source checks.
+            sanitized = CredentialSanitizer(
+                known_credentials=known_credentials
+            ).sanitize(value)
+            if not sanitized.available:
+                return False
+            projected = self._pii_projected_value(
+                sanitized.value, policy=artifact.policy
+            )
+            return _artifact_bytes(projected) == _artifact_bytes(
+                durable_values[durable_key]
+            )
+        expected = self._reference_key(cursor, descriptor, value)
+        if expected != durable_key:
+            return False
+        return durable_key[1] != "revision" or (
+            durable_key in durable_values
+            and _artifact_bytes(value) == _artifact_bytes(durable_values[durable_key])
+        )
+
+    def _append_descriptor(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        tail: SurfaceNodeRecord | None,
+        descriptor: TraceProvenance,
+        value: object,
+    ) -> SurfaceNodeRecord:
+        component_kind, reference = self._reference(
+            cursor,
+            owner_id=owner_id,
+            descriptor=descriptor,
+            value=value,
+        )
+        return self.repository.append_surface_node(
+            cursor,
+            segment_id=segment_id,
+            sequence=0 if tail is None else tail.sequence + 1,
+            predecessor_node_id=None if tail is None else tail.node_id,
+            component_kind=component_kind,
+            reference=reference,
+        )
+
+    def _reference(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        descriptor: TraceProvenance,
+        value: object,
+    ) -> tuple[str, SemanticRevisionRef | TraceContentRef | TraceOmission]:
+        if type(descriptor) is SavedRevisionTraceProvenance:
+            saved = cast(SavedRevisionTraceProvenance, descriptor)
+            self._validate_revision_owner(cursor, owner_id, saved.revision_id)
+            return "message", SemanticRevisionRef(saved.revision_id)
+        if type(descriptor) is OmittedTraceProvenance:
+            omitted = cast(OmittedTraceProvenance, descriptor)
+            return omitted.source.value, TraceOmission(
+                omitted.source.value,
+                omitted.reason.value,
+            )
+        if type(descriptor) is ProviderArtifactTraceProvenance:
+            artifact = cast(ProviderArtifactTraceProvenance, descriptor)
+            return artifact.source.value, self._store_artifact(
+                cursor,
+                value,
+                policy=artifact.policy,
+            )
+        if type(descriptor) is DerivedTraceProvenance:
+            derived = cast(DerivedTraceProvenance, descriptor)
+            if derived.artifact is not None:
+                return derived.artifact.source.value, self._store_artifact(
+                    cursor,
+                    value,
+                    policy=derived.artifact.policy,
+                )
+            saved_inputs = _saved_inputs(derived)
+            if len(saved_inputs) == 1:
+                self._validate_revision_owner(
+                    cursor, owner_id, saved_inputs[0].revision_id
+                )
+                return _saved_revision_component_kind(derived), SemanticRevisionRef(
+                    saved_inputs[0].revision_id
+                )
+            omitted_inputs = _omitted_inputs(derived)
+            if len(omitted_inputs) == 1:
+                item = omitted_inputs[0]
+                return item.source.value, TraceOmission(
+                    item.source.value,
+                    item.reason.value,
+                )
+            return derived.transform.value, TraceOmission(
+                derived.transform.value,
+                TraceOmissionReason.SOURCE_UNAVAILABLE.value,
+            )
+        raise ValueError("unsupported_surface_descriptor")
+
+    def _surface_reference_matches(
+        self,
+        cursor: sqlite3.Cursor,
+        node: SurfaceNodeRecord,
+        descriptor: TraceProvenance,
+        value: object,
+    ) -> bool:
+        if type(descriptor) is SavedRevisionTraceProvenance:
+            saved = cast(SavedRevisionTraceProvenance, descriptor)
+            return (
+                node.component_kind == "message"
+                and node.reference_kind == "revision"
+                and node.semantic_revision_id == saved.revision_id
+            )
+        if type(descriptor) is OmittedTraceProvenance:
+            omitted = cast(OmittedTraceProvenance, descriptor)
+            return (
+                node.component_kind == omitted.source.value
+                and node.reference_kind == "omission"
+                and node.omission_reason_code == omitted.reason.value
+            )
+        if type(descriptor) is ProviderArtifactTraceProvenance:
+            artifact = cast(ProviderArtifactTraceProvenance, descriptor)
+            return self._artifact_node_matches(
+                cursor,
+                node,
+                component_kind=artifact.source.value,
+                value=value,
+                policy=artifact.policy,
+            )
+        if type(descriptor) is not DerivedTraceProvenance:
+            return False
+        derived = cast(DerivedTraceProvenance, descriptor)
+        if derived.artifact is not None:
+            return self._artifact_node_matches(
+                cursor,
+                node,
+                component_kind=derived.artifact.source.value,
+                value=value,
+                policy=derived.artifact.policy,
+            )
+        saved_inputs = _saved_inputs(derived)
+        if len(saved_inputs) == 1:
+            return (
+                node.component_kind == _saved_revision_component_kind(derived)
+                and node.reference_kind == "revision"
+                and node.semantic_revision_id == saved_inputs[0].revision_id
+            )
+        omitted_inputs = _omitted_inputs(derived)
+        if len(omitted_inputs) == 1:
+            return (
+                node.component_kind == omitted_inputs[0].source.value
+                and node.reference_kind == "omission"
+                and node.omission_reason_code == omitted_inputs[0].reason.value
+            )
+        return (
+            node.component_kind == derived.transform.value
+            and node.reference_kind == "omission"
+            and node.omission_reason_code
+            == TraceOmissionReason.SOURCE_UNAVAILABLE.value
+        )
+
+    def _artifact_node_matches(
+        self,
+        cursor: sqlite3.Cursor,
+        node: SurfaceNodeRecord,
+        *,
+        component_kind: str,
+        value: object,
+        policy: FrozenTracePolicy | None,
+    ) -> bool:
+        if (
+            node.component_kind != component_kind
+            or node.reference_kind != "artifact"
+            or node.artifact_id is None
+        ):
+            return False
+        projected = self._pii_projected_value(value, policy=policy)
+        artifact = self.repository.find_sanitized_artifact(
+            cursor,
+            sanitized_bytes=_artifact_bytes(projected),
+            media_type=TRACE_VALUE_MEDIA_TYPE,
+            normalization_version=TRACE_VALUE_NORMALIZATION_VERSION,
+        )
+        return artifact is not None and artifact.artifact_id == node.artifact_id
+
+    def _validate_revision_owner(
+        self,
+        cursor: sqlite3.Cursor,
+        owner_id: str,
+        revision_id: str,
+    ) -> None:
+        owner = self.repository.get_owner(cursor, owner_id)
+        revision = self.repository.get_semantic_revision(cursor, revision_id)
+        if owner is None or owner.conversation_id is None or revision is None:
+            raise ValueError("revision_owner_mismatch")
+        if revision.source_conversation_id == owner.conversation_id:
+            return
+        segment = self.repository.get_segment(cursor, owner.root_segment_id)
+        inherited_head = None if segment is None else segment.inherited_surface_head_id
+        head = (
+            None
+            if inherited_head is None
+            else self.repository.get_surface_node(cursor, inherited_head)
+        )
+        if head is None:
+            raise ValueError("revision_owner_mismatch")
+        assert segment is not None and segment.parent_segment_id is not None
+        inherited = self._surface_projection(
+            cursor,
+            segment.parent_segment_id,
+            head,
+        )
+        if not any(
+            key[1] == "revision" and key[2] == revision_id
+            for _sequence, key in inherited.entries
+        ):
+            raise ValueError("revision_owner_mismatch")
+
+    def _store_artifact(
+        self,
+        cursor: sqlite3.Cursor,
+        value: object,
+        *,
+        policy: FrozenTracePolicy | None = None,
+    ) -> TraceContentRef:
+        redaction = None
+        projected = value
+        if policy is not None and policy.pii_redaction_enabled:
+            if policy.pii_ruleset_revision_id is None:
+                projected = {"omitted": CUSTOM_PII_RULESET_UNAVAILABLE}
+            else:
+                redaction = redact_pii_value_for_ruleset_revision(
+                    value,
+                    policy.pii_ruleset_revision_id,
+                )
+                projected = (
+                    redaction.value
+                    if redaction.available
+                    else {
+                        "omitted": redaction.omission_reason_code
+                        or CUSTOM_PII_RULESET_UNAVAILABLE
+                    }
+                )
+        body = _artifact_bytes(projected)
+        artifact = self.repository.store_sanitized_artifact(
+            cursor,
+            sanitized_bytes=body,
+            media_type=TRACE_VALUE_MEDIA_TYPE,
+            normalization_version=TRACE_VALUE_NORMALIZATION_VERSION,
+        )
+        if redaction is not None and redaction.available:
+            assert policy is not None
+            by_path: dict[str, list[PIIRedactionSpan]] = {}
+            for item in redaction.field_redactions:
+                by_path.setdefault(item.field_path, []).append(item.span)
+            for field_path, spans in sorted(by_path.items()):
+                self.repository.ensure_redaction_spans(
+                    cursor,
+                    policy_id=policy.policy_id,
+                    semantic_revision_id=None,
+                    artifact_id=artifact.artifact_id,
+                    field_path=field_path,
+                    spans=spans,
+                )
+        return TraceContentRef(artifact.artifact_id, "trace_artifact")
+
+    @staticmethod
+    def _pii_projected_value(
+        value: object,
+        *,
+        policy: FrozenTracePolicy | None,
+    ) -> object:
+        if policy is None or not policy.pii_redaction_enabled:
+            return value
+        if policy.pii_ruleset_revision_id is None:
+            return {"omitted": CUSTOM_PII_RULESET_UNAVAILABLE}
+        result = redact_pii_value_for_ruleset_revision(
+            value,
+            policy.pii_ruleset_revision_id,
+        )
+        if not result.available:
+            return {
+                "omitted": result.omission_reason_code or CUSTOM_PII_RULESET_UNAVAILABLE
+            }
+        return result.value
+
+    def _append_omission(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        tail: SurfaceNodeRecord | None,
+        component_kind: str,
+        reason: TraceOmissionReason,
+    ) -> SurfaceNodeRecord:
+        node = self.repository.append_surface_node(
+            cursor,
+            segment_id=segment_id,
+            sequence=0 if tail is None else tail.sequence + 1,
+            predecessor_node_id=None if tail is None else tail.node_id,
+            component_kind=component_kind,
+            reference=TraceOmission(component_kind, reason.value),
+        )
+        self._append_event(
+            cursor,
+            segment_id=segment_id,
+            event_type="surface_append",
+            surface_node_id=node.node_id,
+        )
+        self._append_event(
+            cursor,
+            segment_id=segment_id,
+            event_type="gap",
+            omission_reason_code=reason.value,
+        )
+        return node
+
+    def _replace_surface(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        tail: SurfaceNodeRecord | None,
+        descriptors: tuple[TraceProvenance, ...],
+        values: tuple[object, ...],
+        plan: VerifiedSurfaceReplacement,
+    ) -> tuple[SurfaceNodeRecord, SurfaceReplacementRecord]:
+        self._validate_replacement_range(
+            cursor,
+            segment_id=segment_id,
+            tail=tail,
+            plan=plan,
+            descriptor_count=len(descriptors),
+        )
+        assert tail is not None
+        replacement_node = self._append_descriptor(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            tail=tail,
+            descriptor=descriptors[0],
+            value=values[0],
+        )
+        replacement = self.repository.append_surface_replacement(
+            cursor,
+            segment_id=segment_id,
+            replacement=SurfaceReplacement(
+                predecessor_head_id=plan.predecessor_head_id,
+                start_node_id=plan.start_node_id,
+                end_node_id=plan.end_node_id,
+                start_sequence=plan.start_sequence,
+                end_sequence=plan.end_sequence,
+                replacement_node_id=replacement_node.node_id,
+            ),
+        )
+        self._append_event(
+            cursor,
+            segment_id=segment_id,
+            event_type="surface_replace",
+            surface_replacement_id=replacement.replacement_id,
+        )
+        return replacement_node, replacement
+
+    def _validate_replacement_range(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        tail: SurfaceNodeRecord | None,
+        plan: VerifiedSurfaceReplacement,
+        descriptor_count: int,
+    ) -> None:
+        """Validate the complete bounded range before any trace write."""
+
+        if tail is None or tail.node_id != plan.predecessor_head_id:
+            raise ValueError("replacement_predecessor_mismatch")
+        if plan.end_sequence < plan.start_sequence:
+            raise ValueError("replacement_range_order")
+        if descriptor_count != 1:
+            raise ValueError("replacement_value")
+        nodes = self.repository.read_lineage_surface_nodes(
+            cursor,
+            segment_id=segment_id,
+            start_sequence=plan.start_sequence,
+            end_sequence=plan.end_sequence,
+        )
+        nodes_by_sequence = {node.sequence: node for node in nodes}
+        start = nodes_by_sequence.get(plan.start_sequence)
+        end = nodes_by_sequence.get(plan.end_sequence)
+        if (
+            start is None
+            or end is None
+            or start.node_id != plan.start_node_id
+            or end.node_id != plan.end_node_id
+            or start.sequence != plan.start_sequence
+            or end.sequence != plan.end_sequence
+        ):
+            raise ValueError("replacement_range_mismatch")
+        if len(nodes_by_sequence) != len(nodes) or (
+            len(nodes) != plan.end_sequence - plan.start_sequence + 1
+        ):
+            raise ValueError("replacement_range_noncontiguous")
+
+    def _persist_header(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        provenance: ProviderRequestProvenance,
+        bundle: ProviderRequestShadowBundle,
+        surface_structure: Mapping[str, object],
+        artifact_policy_id: str | None,
+        response_projection: Mapping[str, object] | None = None,
+        rendered_system_slot: _RenderedSystemSlot | None = None,
+    ) -> RequestHeaderRecord:
+        route = _route(provenance)
+        components: list[HeaderComponentRef] = []
+        omissions: dict[str, str] = {}
+        adapter_system_composition: tuple[Mapping[str, object], ...] = ()
+        if bundle.available:
+            bindings = {item.name: item for item in bundle.components}
+            provider = _required_string(bindings["api_endpoint"].value, "provider_name")
+            model = _required_string(bindings["model"].value, "model_name")
+            endpoint = _required_string(bundle.endpoint_identity, "endpoint_identity")
+            system = _binding(bundle, "system_message")
+            if system is not None and provenance.system_message is not None:
+                provider_values = bundle.system_components
+                if not provider_values and not _saved_descriptors(
+                    provenance.system_message
+                ):
+                    provider_values = (system.value,)
+                adapter_system_composition = self._persist_system_composition(
+                    cursor,
+                    provenance.system_message,
+                    provider_values,
+                    components,
+                )
+            else:
+                adapter_system_composition = ()
+            if rendered_system_slot is not None:
+                # Bundle values have already passed credential filtering and
+                # exact dispatch verification. Never persist the raw row.
+                message_binding = bindings["messages_payload"]
+                self._header_component(
+                    cursor,
+                    components,
+                    omissions,
+                    kind="rendered_system_row",
+                    ordinal=0,
+                    descriptor=rendered_system_slot.descriptor,
+                    value=message_binding.value[0],
+                )
+            tools = _binding(bundle, "tools")
+            if tools is not None:
+                if not isinstance(tools.value, tuple):
+                    raise ValueError("tool_values_unavailable")
+                for ordinal, (descriptor, value) in enumerate(
+                    zip(provenance.tools, tools.value, strict=True)
+                ):
+                    self._header_component(
+                        cursor,
+                        components,
+                        omissions,
+                        kind="tool_schema",
+                        ordinal=ordinal,
+                        descriptor=descriptor,
+                        value=value,
+                    )
+            generation = {
+                key: binding.value
+                for key, binding in bindings.items()
+                if key in _GENERATION_KEYS
+            }
+            response_format = _object_field(
+                bindings["response_format"].value
+                if "response_format" in bindings
+                else None
+            )
+            reasoning = {
+                key: bindings[key].value
+                for key in sorted(_REASONING_KEYS)
+                if key in bindings
+            }
+        else:
+            provider = model = endpoint = "unavailable"
+            generation = {}
+            response_format = {}
+            reasoning = {}
+            omissions["provider_request"] = (
+                bundle.omission_reason or TraceOmissionReason.SOURCE_UNAVAILABLE
+            ).value
+
+        adapter_defaults: dict[str, object] = {
+            "normalization_version": TRACE_VALUE_NORMALIZATION_VERSION,
+            "credential_source": bundle.credential_source.value,
+            "parameter_sources": {
+                item.kind.split(":", 1)[1]: item.source
+                for item in (bundle.overlays if bundle.available else ())
+                if item.kind.startswith("parameter:")
+            },
+            "provider_overlays": [
+                {"kind": item.kind, "source": item.source}
+                for item in (bundle.overlays if bundle.available else ())
+                if not item.kind.startswith("parameter:")
+            ],
+            "handler_projection": [
+                {"name": item.name, "redacted": item.redacted}
+                for item in (bundle.handler_components if bundle.available else ())
+            ],
+            **surface_structure,
+            **_header_structural_provenance(provenance),
+        }
+        if adapter_system_composition:
+            adapter_defaults["system_composition"] = list(adapter_system_composition)
+        if response_projection is not None:
+            adapter_defaults["response_projection"] = dict(response_projection)
+        if rendered_system_slot is not None:
+            adapter_defaults["rendered_system_slot"] = 0
+        adapter_defaults["artifact_policy_id"] = artifact_policy_id
+        literal = bundle.literal_payload_value if bundle.available else None
+        if literal is not None:
+            if not isinstance(literal, Mapping):
+                omissions["provider_literal_envelope"] = (
+                    TraceOmissionReason.SOURCE_UNAVAILABLE.value
+                )
+            else:
+                literal_envelope = {
+                    str(key): value
+                    for key, value in literal.items()
+                    if key != "messages"
+                }
+                if "messages" in literal:
+                    adapter_defaults["literal_surface_field"] = "messages"
+                if literal_envelope:
+                    artifact = self._store_artifact(
+                        cursor,
+                        literal_envelope,
+                        policy=(
+                            None
+                            if artifact_policy_id is None
+                            else self.repository.get_policy(cursor, artifact_policy_id)
+                        ),
+                    )
+                    components.append(
+                        HeaderComponentRef(
+                            "provider_literal_envelope",
+                            0,
+                            artifact.content_id,
+                        )
+                    )
+        if omissions:
+            adapter_defaults["header_omissions"] = omissions
+        return self.repository.create_or_reuse_request_header(
+            cursor,
+            provider_name=provider,
+            model_name=model,
+            route_identity=route,
+            endpoint_identity=endpoint,
+            generation_parameters=generation,
+            adapter_defaults=adapter_defaults,
+            response_format=response_format,
+            reasoning_controls=reasoning,
+            components=components,
+        )
+
+    def _header_component(
+        self,
+        cursor: sqlite3.Cursor,
+        components: list[HeaderComponentRef],
+        omissions: dict[str, str],
+        *,
+        kind: str,
+        ordinal: int,
+        descriptor: TraceProvenance,
+        value: object,
+    ) -> None:
+        if type(descriptor) is OmittedTraceProvenance:
+            omissions[f"{kind}:{ordinal}"] = cast(
+                OmittedTraceProvenance, descriptor
+            ).reason.value
+            return
+        artifact = self._store_artifact(
+            cursor,
+            value,
+            policy=_artifact_policy(descriptor),
+        )
+        components.append(HeaderComponentRef(kind, ordinal, artifact.content_id))
+
+    def _persist_system_composition(
+        self,
+        cursor: sqlite3.Cursor,
+        descriptor: TraceProvenance,
+        provider_values: tuple[object, ...],
+        components: list[HeaderComponentRef],
+    ) -> tuple[Mapping[str, object], ...]:
+        tokens: list[Mapping[str, object]] = []
+        provider_ordinal = 0
+
+        def visit(item: TraceProvenance) -> None:
+            nonlocal provider_ordinal
+            if type(item) is SavedRevisionTraceProvenance:
+                tokens.append(
+                    {
+                        "kind": "revision",
+                        "revision_id": cast(
+                            SavedRevisionTraceProvenance, item
+                        ).revision_id,
+                    }
+                )
+                return
+            if type(item) is OmittedTraceProvenance:
+                omitted = cast(OmittedTraceProvenance, item)
+                tokens.append(
+                    {
+                        "kind": "omission",
+                        "source": omitted.source.value,
+                        "reason": omitted.reason.value,
+                    }
+                )
+                return
+            if type(item) is ProviderArtifactTraceProvenance:
+                if provider_ordinal >= len(provider_values):
+                    raise ValueError("system_component_alignment")
+                artifact = self._store_artifact(
+                    cursor,
+                    provider_values[provider_ordinal],
+                    policy=cast(ProviderArtifactTraceProvenance, item).policy,
+                )
+                components.append(
+                    HeaderComponentRef(
+                        "rendered_system_part",
+                        provider_ordinal,
+                        artifact.content_id,
+                    )
+                )
+                tokens.append(
+                    {"kind": "artifact", "component_ordinal": provider_ordinal}
+                )
+                provider_ordinal += 1
+                return
+            if type(item) is not DerivedTraceProvenance:
+                raise ValueError("system_component_alignment")
+            derived = cast(DerivedTraceProvenance, item)
+            tokens.append(
+                {"kind": "transform_start", "transform": derived.transform.value}
+            )
+            for nested in derived.inputs:
+                visit(nested)
+            if derived.artifact is not None:
+                visit(derived.artifact)
+            tokens.append(
+                {"kind": "transform_end", "transform": derived.transform.value}
+            )
+
+        visit(descriptor)
+        if provider_ordinal != len(provider_values):
+            raise ValueError("system_component_alignment")
+        if len(tokens) > MAX_SURFACE_REPLACEMENT_SPAN:
+            raise ValueError("system_composition_span")
+        return tuple(tokens)
+
+    @staticmethod
+    def _validate_system_composition_shape(
+        descriptor: TraceProvenance,
+        provider_value_count: int,
+    ) -> None:
+        token_count = 0
+        provider_count = 0
+
+        def visit(item: TraceProvenance) -> None:
+            nonlocal provider_count, token_count
+            if type(item) in {SavedRevisionTraceProvenance, OmittedTraceProvenance}:
+                token_count += 1
+                return
+            if type(item) is ProviderArtifactTraceProvenance:
+                token_count += 1
+                provider_count += 1
+                return
+            if type(item) is not DerivedTraceProvenance:
+                raise ValueError("system_component_alignment")
+            derived = cast(DerivedTraceProvenance, item)
+            token_count += 2
+            for nested in derived.inputs:
+                visit(nested)
+            if derived.artifact is not None:
+                visit(derived.artifact)
+
+        visit(descriptor)
+        if token_count > MAX_SURFACE_REPLACEMENT_SPAN:
+            raise ValueError("system_composition_span")
+        if provider_count != provider_value_count:
+            raise ValueError("system_component_alignment")
+
+    def _validate_saved_system_values(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        descriptor: TraceProvenance,
+        bundle: ProviderRequestShadowBundle,
+    ) -> None:
+        leaves: list[TraceProvenance] = []
+
+        def visit(item: TraceProvenance) -> None:
+            if type(item) in {
+                SavedRevisionTraceProvenance,
+                ProviderArtifactTraceProvenance,
+            }:
+                leaves.append(item)
+                return
+            if type(item) is OmittedTraceProvenance:
+                return
+            if type(item) is not DerivedTraceProvenance:
+                raise ValueError("system_component_alignment")
+            derived = cast(DerivedTraceProvenance, item)
+            for nested in derived.inputs:
+                visit(nested)
+            if derived.artifact is not None:
+                visit(derived.artifact)
+
+        visit(descriptor)
+        saved = tuple(
+            cast(SavedRevisionTraceProvenance, item)
+            for item in leaves
+            if type(item) is SavedRevisionTraceProvenance
+        )
+        if not saved:
+            return
+        parts = bundle.system_leaf_components
+        if not parts:
+            system = _binding(bundle, "system_message")
+            if len(leaves) != 1 or system is None:
+                raise ValueError("system_revision_value_mismatch")
+            parts = (system.value,)
+        if len(parts) != len(leaves):
+            raise ValueError("system_revision_value_mismatch")
+        keys = tuple(("message", "revision", item.revision_id) for item in saved)
+        canonical = self._resolve_reference_values(cursor, keys, owner_id=owner_id)
+        saved_index = 0
+        for leaf, supplied in zip(leaves, parts, strict=True):
+            if type(leaf) is not SavedRevisionTraceProvenance:
+                continue
+            value = canonical[keys[saved_index]]
+            saved_index += 1
+            if isinstance(value, Mapping) and "content" in value:
+                value = value["content"]
+            if _artifact_bytes(value) != _artifact_bytes(supplied):
+                raise ValueError("system_revision_value_mismatch")
+
+    def _append_event(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        event_type: TraceEventType,
+        **references: str,
+    ) -> None:
+        tail = self.repository.get_event_tail(cursor, segment_id)
+        self.repository.append_event(
+            cursor,
+            segment_id=segment_id,
+            sequence=0 if tail is None else tail.sequence + 1,
+            event_type=event_type,
+            **references,
+        )
+
+
+def _binding(
+    bundle: ProviderRequestShadowBundle,
+    name: str,
+) -> FinalValueBinding | None:
+    return next((item for item in bundle.components if item.name == name), None)
+
+
+def _validate_bundle(bundle: ProviderRequestShadowBundle) -> None:
+    if type(bundle.credential_source) is not ProviderCredentialSource:
+        raise ValueError("credential_source")
+    if not bundle.available:
+        if bundle.omission_reason is None:
+            raise ValueError("unavailable_bundle_reason")
+        if any(
+            (
+                bundle.components,
+                bundle.handler_components,
+                bundle.literal_payload is not None,
+                bundle.system_components,
+                bundle.system_leaf_components,
+                bundle.endpoint_identity is not None,
+                bundle.overlays,
+            )
+        ):
+            raise ValueError("unavailable_bundle_content")
+        return
+    if bundle.omission_reason is not None:
+        raise ValueError("available_bundle_omission")
+    if type(bundle.endpoint_identity) is not str or not bundle.endpoint_identity:
+        raise ValueError("endpoint_identity")
+    if any(type(item) is not FinalValueBinding for item in bundle.components):
+        raise TypeError("components")
+    if any(type(item) is not FinalValueBinding for item in bundle.handler_components):
+        raise TypeError("handler_components")
+    if type(bundle.system_components) is not tuple:
+        raise TypeError("system_components")
+    if type(bundle.system_leaf_components) is not tuple:
+        raise TypeError("system_leaf_components")
+    if any(type(item) is not ProviderOverlayProvenance for item in bundle.overlays):
+        raise TypeError("overlays")
+    component_names = [item.name for item in bundle.components]
+    handler_names = [item.name for item in bundle.handler_components]
+    if len(component_names) != len(set(component_names)):
+        raise ValueError("duplicate_components")
+    if len(handler_names) != len(set(handler_names)):
+        raise ValueError("duplicate_handler_components")
+    if not {"api_endpoint", "messages_payload", "model"}.issubset(component_names):
+        raise ValueError("required_components")
+
+
+def _required_string(value: object, field_name: str) -> str:
+    if type(value) is not str or not value:
+        raise ValueError(field_name)
+    return cast(str, value)
+
+
+def _object_field(value: object) -> Mapping[str, object]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return cast(Mapping[str, object], value)
+    return {"value": value}
+
+
+def _route(provenance: ProviderRequestProvenance) -> str:
+    routes = tuple(
+        item
+        for item in provenance.metadata
+        if type(item) is RequestRouteTraceProvenance
+    )
+    if len(routes) != 1:
+        raise ValueError("request_route_unavailable")
+    return routes[0].route.value
+
+
+def _surface_reference_domain(key: SurfaceReferenceKey) -> str:
+    return (
+        "provider_continuations"
+        if key[0] in {"continuation", TraceTransformKind.CONTINUATION_ATTACHMENT.value}
+        else "messages_payload"
+    )
+
+
+def _response_projection_profile(resolution: object | None) -> dict[str, object] | None:
+    """Freeze only the existing supported typed-thinking response contract."""
+    if (
+        getattr(resolution, "thinking_stream_disposition", None)
+        not in {"displayable", "proprietary"}
+        or getattr(resolution, "thinking_round_trip_version", None) != 1
+    ):
+        return None
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _DISPLAYABLE_THINKING_EXECUTION_KEYS,
+        _HOSTED_THINKING_FINISH_POLICIES,
+        _thinking_protocol,
+    )
+
+    execution_key = getattr(resolution, "execution_key", "")
+    disposition = getattr(resolution, "thinking_stream_disposition", None)
+    hosted_policy = _HOSTED_THINKING_FINISH_POLICIES.get(execution_key)
+    if (
+        execution_key not in _DISPLAYABLE_THINKING_EXECUTION_KEYS
+        if disposition == "displayable"
+        else hosted_policy is None
+        or hosted_policy.reasoning_disposition != "proprietary"
+    ):
+        return None
+    return {
+        "version": 1,
+        "thinking_stream_disposition": disposition,
+        "thinking_round_trip_version": 1,
+        "provider": execution_key,
+        "model": getattr(resolution, "model", None),
+        "protocol": _thinking_protocol(resolution),
+        "source_format": "start_anchored_think"
+        if disposition == "displayable"
+        else "reasoning_content",
+    }
+
+
+def _saved_reference_key(
+    descriptor: TraceProvenance,
+) -> SurfaceReferenceKey | None:
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return (
+            "message",
+            "revision",
+            cast(SavedRevisionTraceProvenance, descriptor).revision_id,
+        )
+    if type(descriptor) is not DerivedTraceProvenance:
+        return None
+    derived = cast(DerivedTraceProvenance, descriptor)
+    # A saved continuation is persisted as a policy-owned artifact, but its
+    # provider value must still match the immutable revision that supplied it.
+    if (
+        derived.artifact is not None
+        and derived.transform is not TraceTransformKind.CONTINUATION_ATTACHMENT
+    ):
+        return None
+    saved = _saved_inputs(derived)
+    if len(saved) != 1:
+        return None
+    return _saved_revision_component_kind(derived), "revision", saved[0].revision_id
+
+
+def _saved_inputs(
+    descriptor: DerivedTraceProvenance,
+) -> tuple[SavedRevisionTraceProvenance, ...]:
+    result: list[SavedRevisionTraceProvenance] = []
+    for item in descriptor.inputs:
+        if type(item) is SavedRevisionTraceProvenance:
+            result.append(cast(SavedRevisionTraceProvenance, item))
+        elif type(item) is DerivedTraceProvenance:
+            result.extend(_saved_inputs(cast(DerivedTraceProvenance, item)))
+    return tuple(result)
+
+
+def _saved_revision_component_kind(descriptor: DerivedTraceProvenance) -> str:
+    if descriptor.transform is TraceTransformKind.CONTINUATION_ATTACHMENT:
+        return "continuation"
+    return "message"
+
+
+def _saved_descriptors(
+    descriptor: TraceProvenance,
+) -> tuple[SavedRevisionTraceProvenance, ...]:
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return (cast(SavedRevisionTraceProvenance, descriptor),)
+    if type(descriptor) is DerivedTraceProvenance:
+        return _saved_inputs(cast(DerivedTraceProvenance, descriptor))
+    return ()
+
+
+def _revision_only(descriptor: TraceProvenance) -> bool:
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return True
+    if type(descriptor) is not DerivedTraceProvenance:
+        return False
+    derived = cast(DerivedTraceProvenance, descriptor)
+    return derived.artifact is None and all(
+        _revision_only(item) for item in derived.inputs
+    )
+
+
+def _omitted_inputs(
+    descriptor: DerivedTraceProvenance,
+) -> tuple[OmittedTraceProvenance, ...]:
+    result: list[OmittedTraceProvenance] = []
+    for item in descriptor.inputs:
+        if type(item) is OmittedTraceProvenance:
+            result.append(cast(OmittedTraceProvenance, item))
+        elif type(item) is DerivedTraceProvenance:
+            result.extend(_omitted_inputs(cast(DerivedTraceProvenance, item)))
+    return tuple(result)
+
+
+def _structural_provenance(
+    descriptors: tuple[TraceProvenance, ...],
+    previous_defaults: Mapping[str, object],
+) -> dict[str, object]:
+    sources: Counter[str] = Counter()
+    transforms: Counter[str] = Counter()
+    omissions: Counter[str] = Counter()
+
+    for key, counter in (
+        ("surface_sources", sources),
+        ("surface_transforms", transforms),
+        ("surface_omissions", omissions),
+    ):
+        previous = previous_defaults.get(key)
+        if isinstance(previous, Mapping):
+            counter.update({str(item): 1 for item in previous})
+
+    def visit(item: TraceProvenance) -> None:
+        if type(item) is ProviderArtifactTraceProvenance:
+            artifact = cast(ProviderArtifactTraceProvenance, item)
+            sources[artifact.source.value] = 1
+        elif type(item) is OmittedTraceProvenance:
+            omitted = cast(OmittedTraceProvenance, item)
+            sources[omitted.source.value] = 1
+            omissions[f"{omitted.source.value}:{omitted.reason.value}"] = 1
+        elif type(item) is DerivedTraceProvenance:
+            derived = cast(DerivedTraceProvenance, item)
+            transforms[derived.transform.value] = 1
+            if derived.artifact is not None:
+                sources[derived.artifact.source.value] = 1
+            for nested in derived.inputs:
+                visit(nested)
+
+    for descriptor in descriptors:
+        visit(descriptor)
+    return {
+        "surface_sources": dict(sorted(sources.items())),
+        "surface_transforms": dict(sorted(transforms.items())),
+        "surface_omissions": dict(sorted(omissions.items())),
+    }
+
+
+def _surface_projection_metadata(
+    descriptors: Iterable[TraceProvenance],
+) -> tuple[Mapping[str, object], tuple[FrozenTracePolicy, ...]]:
+    """Fold one verified structural projection during provider verification."""
+
+    sources: Counter[str] = Counter()
+    transforms: Counter[str] = Counter()
+    omissions: Counter[str] = Counter()
+    policies: dict[str, FrozenTracePolicy] = {}
+
+    def add_policy(policy: FrozenTracePolicy) -> None:
+        if policies.get(policy.policy_id, policy) != policy:
+            raise ValueError("trace_policy_mismatch")
+        policies[policy.policy_id] = policy
+
+    def visit(item: TraceProvenance) -> None:
+        if type(item) is ProviderArtifactTraceProvenance:
+            artifact = cast(ProviderArtifactTraceProvenance, item)
+            sources[artifact.source.value] = 1
+            add_policy(artifact.policy)
+        elif type(item) is OmittedTraceProvenance:
+            omitted = cast(OmittedTraceProvenance, item)
+            sources[omitted.source.value] = 1
+            omissions[f"{omitted.source.value}:{omitted.reason.value}"] = 1
+        elif type(item) is DerivedTraceProvenance:
+            derived = cast(DerivedTraceProvenance, item)
+            transforms[derived.transform.value] = 1
+            if derived.artifact is not None:
+                sources[derived.artifact.source.value] = 1
+                add_policy(derived.artifact.policy)
+            for nested in derived.inputs:
+                visit(nested)
+
+    for descriptor in descriptors:
+        visit(descriptor)
+    return (
+        {
+            "surface_sources": dict(sorted(sources.items())),
+            "surface_transforms": dict(sorted(transforms.items())),
+            "surface_omissions": dict(sorted(omissions.items())),
+        },
+        tuple(policies[key] for key in sorted(policies)),
+    )
+
+
+def _header_structural_provenance(
+    provenance: ProviderRequestProvenance,
+) -> dict[str, object]:
+    sources: Counter[str] = Counter()
+    transforms: Counter[str] = Counter()
+    omissions: Counter[str] = Counter()
+
+    def visit(item: TraceProvenance) -> None:
+        if type(item) is ProviderArtifactTraceProvenance:
+            sources[cast(ProviderArtifactTraceProvenance, item).source.value] += 1
+        elif type(item) is OmittedTraceProvenance:
+            omitted = cast(OmittedTraceProvenance, item)
+            sources[omitted.source.value] += 1
+            omissions[f"{omitted.source.value}:{omitted.reason.value}"] += max(
+                1, omitted.omitted_count
+            )
+        elif type(item) is DerivedTraceProvenance:
+            derived = cast(DerivedTraceProvenance, item)
+            transforms[derived.transform.value] += 1
+            if derived.artifact is not None:
+                sources[derived.artifact.source.value] += 1
+            for nested in derived.inputs:
+                visit(nested)
+
+    if provenance.system_message is not None:
+        visit(provenance.system_message)
+    for descriptor in (
+        *provenance.tools,
+        *provenance.thinking,
+        *provenance.metadata,
+    ):
+        if type(descriptor) is not RequestRouteTraceProvenance:
+            visit(descriptor)
+    return {
+        "header_sources": dict(sorted(sources.items())),
+        "header_transforms": dict(sorted(transforms.items())),
+        "header_provenance_omissions": dict(sorted(omissions.items())),
+    }
+
+
+def _omission_source(
+    provenance: ProviderRequestProvenance,
+) -> TraceProvenanceSource:
+    for descriptor in provenance.messages_payload:
+        if type(descriptor) is OmittedTraceProvenance:
+            return cast(OmittedTraceProvenance, descriptor).source
+        if type(descriptor) is ProviderArtifactTraceProvenance:
+            return cast(ProviderArtifactTraceProvenance, descriptor).source
+    return TraceProvenanceSource.PROVIDER_OVERLAY
+
+
+def _policies(
+    provenance: ProviderRequestProvenance,
+    surface_descriptors: tuple[TraceProvenance, ...],
+) -> tuple[FrozenTracePolicy, ...]:
+    policies: dict[str, FrozenTracePolicy] = {}
+
+    def visit(item: TraceProvenance) -> None:
+        if type(item) is ProviderArtifactTraceProvenance:
+            policy = cast(ProviderArtifactTraceProvenance, item).policy
+            if policies.get(policy.policy_id, policy) != policy:
+                raise ValueError("trace_policy_mismatch")
+            policies[policy.policy_id] = policy
+        elif type(item) is DerivedTraceProvenance:
+            derived = cast(DerivedTraceProvenance, item)
+            if derived.artifact is not None:
+                policy = derived.artifact.policy
+                if policies.get(policy.policy_id, policy) != policy:
+                    raise ValueError("trace_policy_mismatch")
+                policies[policy.policy_id] = policy
+            for nested in derived.inputs:
+                visit(nested)
+
+    if provenance.system_message is not None:
+        visit(provenance.system_message)
+    for descriptor in (
+        *provenance.tools,
+        *provenance.thinking,
+        *provenance.metadata,
+        *surface_descriptors,
+    ):
+        visit(descriptor)
+    return tuple(policies[key] for key in sorted(policies))
+
+
+def _artifact_policy(descriptor: TraceProvenance) -> FrozenTracePolicy | None:
+    """Return the frozen policy that owns one provider-only artifact."""
+
+    if type(descriptor) is ProviderArtifactTraceProvenance:
+        return cast(ProviderArtifactTraceProvenance, descriptor).policy
+    if type(descriptor) is DerivedTraceProvenance:
+        artifact = cast(DerivedTraceProvenance, descriptor).artifact
+        return None if artifact is None else artifact.policy
+    return None
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
+
+
+def _artifact_bytes(value: object) -> bytes:
+    return json.dumps(
+        _thaw(value),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")

@@ -1,10 +1,19 @@
-"""Conflicts tab for the Schedules workbench."""
+"""Sync-conflicts view for the Schedules workbench.
+
+The module keeps its `conflicts_tab` name (redesign PR-4 task 5's own
+judgment: renaming the file buys nothing but churn), but the TAB it was
+built for is retired. `ConflictsTab` is now mounted only as a fresh
+instance inside a pushed `WorkbenchHostScreen`, opened from the status
+strip's Conflicts badge (task 1) -- so it self-populates from
+`initial_conflicts` rather than being driven by an owner screen.
+"""
 
 from __future__ import annotations
 
 from typing import Any, Protocol
 
 from loguru import logger
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -12,6 +21,7 @@ from textual.message import Message
 from textual.widgets import Button, DataTable, Static
 
 from ....Widgets.confirmation_dialog import ConfirmationDialog
+from .unified_rows import _format_local_timestamp
 
 logger = logger.bind(module="ConflictsTab")
 
@@ -38,7 +48,14 @@ class ConflictsTab(Vertical):
         height: 1fr;
     }
     #scheduling-conflicts-table {
-        height: 1fr;
+        /* 31713 AC#4: a `height: 1fr` table left a handful of conflict
+           rows sitting atop a wall of blank DataTable background in a
+           full-height pushed pane. Bounded to a reasonable row count
+           (independently scrollable beyond it, nothing lost) and the
+           freed space goes to the detail pane below, which is the
+           actually content-rich half of this screen. */
+        height: auto;
+        max-height: 15;
     }
     #scheduling-conflicts-empty {
         color: $text-muted;
@@ -49,8 +66,10 @@ class ConflictsTab(Vertical):
         height: auto;
     }
     #scheduling-conflict-detail {
-        height: auto;
-        max-height: 9;
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping a version comparison to 9 rows
+           regardless of how much screen is free. */
+        height: 1fr;
         padding: 0 1;
         color: $text;
         border-top: solid $surface-lighten-2;
@@ -60,16 +79,30 @@ class ConflictsTab(Vertical):
     }
     """
 
-    def __init__(self, sync_engine: _SyncEngineProtocol | None, **kwargs) -> None:
+    def __init__(
+        self,
+        sync_engine: _SyncEngineProtocol | None,
+        *,
+        initial_conflicts: list[dict[str, Any]] | None = None,
+        **kwargs: object,
+    ) -> None:
         """Initialize the conflicts tab.
 
         Args:
             sync_engine: Engine providing ``resolve_conflict(conflict_id, resolution)``.
+            initial_conflicts: When given, ``populate()``s the table with
+                these on mount. A pushed instance (redesign PR-4, Task
+                1's conflicts-badge overlay, via ``WorkbenchHostScreen``)
+                has no external ``.populate()`` driver the way the
+                retired mounted tab instance did, so it self-populates
+                instead. Still optional: ``populate()`` remains callable
+                from outside.
             **kwargs: Passed to the parent widget.
         """
         super().__init__(**kwargs)
         self.sync_engine = sync_engine
         self._conflicts_by_id: dict[str, dict[str, Any]] = {}
+        self._initial_conflicts = initial_conflicts
 
     def compose(self) -> ComposeResult:
         """Build the tab layout."""
@@ -113,14 +146,22 @@ class ConflictsTab(Vertical):
             server_state = conflict.get("server_state") or {}
             local_state = conflict.get("local_state") or {}
             local_row = local_state.get("record") or local_state or {}
-            server_updated = server_state.get("updated_at", "—")
-            local_updated = local_row.get("updated_at", "—")
+            # task-31711 AC#3: `updated_at` is a raw ISO-8601 string --
+            # render it as a human-readable local timestamp.
+            server_updated = _format_local_timestamp(server_state.get("updated_at"))
+            local_updated = _format_local_timestamp(local_row.get("updated_at"))
             self._conflicts_by_id[conflict["id"]] = conflict
+            # `Text`, not `str`, for everything that came from outside
+            # this module (task 6 round 2, D8): `DataTable` runs string
+            # cells through `rich.text.Text.from_markup`, so a
+            # user-authored title carrying `[bold]` would be silently
+            # eaten. `_conflict_type_label` is this module's own
+            # vocabulary and stays a plain str.
             table.add_row(
-                local_row.get("title", "Untitled"),
+                Text(str(local_row.get("title", "Untitled"))),
                 _conflict_type_label(conflict),
-                server_updated,
-                local_updated,
+                Text(str(server_updated)),
+                Text(str(local_updated)),
                 key=conflict["id"],
             )
         has_rows = bool(conflicts)
@@ -147,10 +188,13 @@ class ConflictsTab(Vertical):
             )
 
     def on_mount(self) -> None:
-        """Configure the table cursor."""
+        """Configure the table cursor, and self-populate if constructed with data."""
         table = self.query_one("#scheduling-conflicts-table", DataTable)
         table.cursor_type = "row"
-        self._set_actions_enabled(False)
+        if self._initial_conflicts is not None:
+            self.populate(self._initial_conflicts)
+        else:
+            self._set_actions_enabled(False)
 
     @on(DataTable.RowHighlighted, "#scheduling-conflicts-table")
     def _on_conflict_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -167,7 +211,9 @@ class ConflictsTab(Vertical):
             return missing_text
         record = state.get("record") or state
         title = record.get("title") or "Untitled"
-        updated = state.get("updated_at") or record.get("updated_at") or "—"
+        updated = _format_local_timestamp(
+            state.get("updated_at") or record.get("updated_at")
+        )
         details: list[str] = []
         schedule = (
             record.get("schedule_kind")

@@ -13,6 +13,8 @@ name: Perf Guard
 
 on:
   pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
@@ -42,7 +44,7 @@ on:
 # runs must not queue up competing for scarce runners).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 jobs:
   ui-latency-guardrails:
@@ -62,4 +64,28 @@ jobs:
         run: |
           pytest Tests/Performance/test_ui_latency_guardrails.py \
             Tests/Utils/test_ui_responsiveness_stall_persist.py \
+            -v --timeout=300
+
+      # task-24461: the ADR-097 boot budgets ran ONLY in the slow full suite,
+      # so for three review cycles running they were re-breached within ~24h of
+      # every paydown and each breach was found by a periodic review rather
+      # than by the PR that caused it. They are cheap (~15s together) and they
+      # already print the culprit modules, so the breaching PR now gets that
+      # list here, in minutes.
+      #
+      # test_boot_css_byte_budget.py joined this list with task-24459
+      # (2026-09-04), once its ratchet was paid back to green (779,320 B
+      # against a tightened 804,000 B pin). Before that it was deliberately
+      # excluded -- it was red on dev, and a red guard here blocks every
+      # unrelated PR. If it ever reds on dev again, fix dev (defer the CSS
+      # or shed equivalent bytes -- ADR-097), do NOT remove it from this
+      # list: four review cycles of silent re-breaches are exactly what its
+      # absence cost.
+      - name: Run boot budget ratchets
+        run: |
+          pytest Tests/Performance/test_app_import_weight.py \
+            Tests/Performance/test_ui_ready_module_census.py \
+            Tests/Performance/test_boot_worker_census.py \
+            Tests/Performance/test_textual_css_fastpath.py \
+            Tests/Performance/test_boot_css_byte_budget.py \
             -v --timeout=300

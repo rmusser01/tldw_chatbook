@@ -11,6 +11,7 @@ failed by a delivery problem.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping
 
 from loguru import logger
@@ -31,7 +32,9 @@ def _handoff_message_content(payload: Mapping[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def insert_research_completion_message(db: Any, payload: Mapping[str, Any]) -> str | None:
+def insert_research_completion_message(
+    db: Any, payload: Mapping[str, Any]
+) -> str | None:
     """Insert the completion handoff message into the target conversation.
 
     Args:
@@ -65,7 +68,9 @@ def insert_research_completion_message(db: Any, payload: Mapping[str, Any]) -> s
                 "conversation_id": conversation_id,
                 "sender": "assistant",
                 "content": _handoff_message_content(payload),
-                "metadata_json": metadata,
+                "metadata_json": json.dumps(
+                    metadata, sort_keys=True, separators=(",", ":")
+                ),
             }
         )
     except Exception as exc:  # noqa: BLE001 - delivery degrades to the notification fallback

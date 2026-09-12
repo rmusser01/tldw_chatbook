@@ -10,6 +10,7 @@ TASK-1846 gave arguments the full row width but not this: the cap is a text
 budget, not a layout one, so the extra cells went unused while the path
 stayed hidden.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -64,6 +65,14 @@ def test_short_arguments_are_still_rendered_verbatim():
 
 
 @pytest.mark.unit
+def test_raw_shell_dedicated_view_does_not_expand_the_generic_summary_budget():
+    rendered = _summarize_arguments({"command": "x" * 500})
+
+    assert len(rendered) <= 80
+    assert "…" in rendered
+
+
+@pytest.mark.unit
 def test_secret_redaction_still_applies_after_reordering():
     """Redaction parity must survive the new ordering (TASK-1845)."""
     rendered = _summarize_arguments(
@@ -76,12 +85,26 @@ def test_secret_redaction_still_applies_after_reordering():
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "key",
-    ["path", "file_path", "filePath", "dest", "destination", "src", "source",
-     "output_dir", "url", "uri", "command", "target", "filename", "host"],
+    [
+        "path",
+        "file_path",
+        "filePath",
+        "dest",
+        "destination",
+        "src",
+        "source",
+        "output_dir",
+        "url",
+        "uri",
+        "command",
+        "target",
+        "filename",
+        "host",
+    ],
 )
 def test_destination_like_keys_are_recognised(key: str):
     """Args:
-        key: An argument name that names WHERE a call acts.
+    key: An argument name that names WHERE a call acts.
     """
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         _is_destination_key,
@@ -91,7 +114,9 @@ def test_destination_like_keys_are_recognised(key: str):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("key", ["profile", "filter", "compiled", "urinal", "hostility"])
+@pytest.mark.parametrize(
+    "key", ["profile", "filter", "compiled", "urinal", "hostility"]
+)
 def test_ordinary_keys_are_not_mistaken_for_destinations(key: str):
     """Substring matching treats `profile` as a file and `urinal` as a URL.
 
@@ -134,8 +159,7 @@ def test_the_destination_survives_when_it_is_the_last_of_many_arguments():
     rendered = _summarize_arguments(arguments)
 
     assert "IMPORTANT.md" in rendered, (
-        f"the destination was clipped off the end of a long argument list: "
-        f"{rendered!r}"
+        f"the destination was clipped off the end of a long argument list: {rendered!r}"
     )
 
 

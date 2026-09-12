@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.tls_trust import build_httpx_client
 
 
 def _module_available(name: str) -> bool:
@@ -823,7 +824,11 @@ class DocextOCRBackend(OCRBackend):
                         "openai_base_url", "http://localhost:8000/v1"
                     )
                     api_key = self.config.get("openai_api_key", "123")
-                    self.client = OpenAI(api_key=api_key, base_url=base_url)
+                    self.client = OpenAI(
+                        api_key=api_key,
+                        base_url=base_url,
+                        http_client=build_httpx_client(timeout=60.0),
+                    )
                     logger.info(f"Docext OpenAI client initialized at {base_url}")
 
                 self._initialized = True
@@ -1100,6 +1105,21 @@ Prefer using ☐ and ☑ for check boxes."""
                 and torch.cuda.is_available()
             ):
                 torch.cuda.empty_cache()
+        if self.mode == "openai" and self.client is not None:
+            # The policy-aware httpx client injected at initialization
+            # (task-21513) is OWNED by this backend: the OpenAI SDK only
+            # closes http clients it created itself, so close ours (and the
+            # SDK wrapper) explicitly to release the connection pool --
+            # reinitialization would otherwise leak it (qodo PR #2223,
+            # finding 2). Cleanup must never raise.
+            try:
+                injected = getattr(self.client, "http_client", None)
+                if injected is not None:
+                    injected.close()
+                self.client.close()
+            except Exception:
+                pass
+            self.client = None
         self._initialized = False
 
 

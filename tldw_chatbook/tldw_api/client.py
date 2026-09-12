@@ -6,6 +6,7 @@ from __future__ import annotations
 # Imports
 import json  # For MediaWiki streaming
 import math
+import ssl
 from pathlib import Path  # For utils.prepare_files_for_httpx
 from typing import Optional, Dict, Any, List, AsyncGenerator, Union, Literal
 from urllib.parse import quote
@@ -13,7 +14,7 @@ from urllib.parse import quote
 #
 # 3rd-party Libraries
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 #
 # Local Imports
@@ -36,6 +37,7 @@ from .schemas import (
     ProcessXMLResponseItem,  # Add specific XML/MediaWiki later if needed
 )
 from .notes_workspace_schemas import (
+    MAX_WORKSPACE_SOURCE_ID_CHARS,
     MediaSearchRequest,
     NoteLinkCreate,
     NoteCreateRequest,
@@ -43,10 +45,19 @@ from .notes_workspace_schemas import (
     NoteUpdateRequest,
     WorkspaceArtifactCreateRequest,
     WorkspaceArtifactUpdateRequest,
+    WorkspaceCapabilitiesResponse,
     WorkspaceCreateRequest,
     WorkspaceNoteCreateRequest,
     WorkspaceNoteUpdateRequest,
     WorkspaceSourceCreateRequest,
+    WorkspaceSourceDeleteResponse,
+    WorkspaceSourceListResponse,
+    WorkspaceSourcePreviewResponse,
+    WorkspaceSourceReorderRequest,
+    WorkspaceSourceSelectionRequest,
+    WorkspaceSourceStatusListResponse,
+    WorkspaceSourceWriteResponse,
+    WorkspaceSourceResponse,
     WorkspaceSourceUpdateRequest,
     WorkspaceUpdateRequest,
 )
@@ -403,6 +414,10 @@ from .text2sql_schemas import Text2SQLRequest, Text2SQLResponse
 from .sync_schemas import (
     ClientChangesPayload,
     ServerChangesResponse,
+    SyncPersonalContextBootstrapRequest,
+    SyncPersonalContextBootstrapErrorResponse,
+    SyncPersonalContextBootstrapResponse,
+    SyncPersonalContextLinkCompleteRequest,
     SyncV2AttachmentUploadRequest,
     SyncV2AttachmentUploadResponse,
     SyncV2CapabilitiesResponse,
@@ -965,6 +980,19 @@ from .notifications_reminders_schemas import (
 from .server_notifications_schemas import (
     ServerNotificationStreamEvent,
 )
+from .scheduled_tasks_automation_schemas import (
+    ScheduledTaskAutomationCapabilities,
+    ScheduledTaskAutomationDefinition,
+    ScheduledTaskAutomationDefinitionList,
+    ScheduledTaskAutomationRunNowResponse,
+    ScheduledTaskAuditList,
+    ScheduledTaskDefinitionCreateRequest,
+    ScheduledTaskDefinitionUpdateRequest,
+    ScheduledTaskPreview,
+    ScheduledTaskPreviewCreateRequest,
+    ScheduledTaskResult,
+    ScheduledTaskResultList,
+)
 from .outputs_schemas import (
     OutputArtifact,
     OutputCreateRequest,
@@ -1023,6 +1051,7 @@ from .exceptions import (
     APIRequestError,
     APIResponseError,
     AuthenticationError,
+    PersonalContextBootstrapAttentionError,
 )
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
 #
@@ -1041,6 +1070,30 @@ class ChatQueueActivityResponse(BaseModel):
     """Placeholder response for chat queue activity endpoints."""
 
     model_config = ConfigDict(extra="ignore")
+
+
+# task-19557 Qodo round: actual redirect statuses only. The whole 3xx band
+# also contains 304 Not Modified, which is a cache-validation response (no
+# `Location`, not a redirect) that conditional-GET callers rely on reaching
+# normal processing -- e.g. `get_user_profile_catalog(if_none_match=...)`.
+# Treating 304 as a refused redirect would break that path.
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+def _workspace_source_path_id(value: Any, field_name: str) -> str:
+    """Validate and quote one opaque workspace/source path segment."""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be text")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be blank")
+    if (
+        len(normalized) > MAX_WORKSPACE_SOURCE_ID_CHARS
+        or len(normalized.encode("utf-8")) > 4096
+    ):
+        raise ValueError(f"{field_name} is too long")
+    return quote(normalized, safe="")
 
 
 class TLDWAPIClient:
@@ -1099,6 +1152,7 @@ class TLDWAPIClient:
         token: Optional[str] = None,
         timeout: float = 300.0,
         connect_timeout: Optional[float] = None,
+        ssl_verify: bool | str | ssl.SSLContext = True,
     ):
         """Initialize the API client.
 
@@ -1112,6 +1166,7 @@ class TLDWAPIClient:
                 connection. Defaults to ``timeout`` capped at
                 ``DEFAULT_CONNECT_TIMEOUT_SECONDS``, because a long read is
                 sometimes right but a long connect never is.
+            ssl_verify: TLS trust for the client (True/False/CA path/SSLContext), forwarded to httpx verify.
 
         Raises:
             TypeError: If either timeout is not a number.
@@ -1131,6 +1186,10 @@ class TLDWAPIClient:
             self.connect_timeout = self._validate_timeout(
                 connect_timeout, "connect_timeout"
             )
+        # Forwarded verbatim to httpx ``verify=``: the standalone client stays
+        # policy-agnostic; the embedding app resolves its TLS trust policy and
+        # passes the resolved value (bool or SSLContext) in.
+        self.ssl_verify = ssl_verify
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -1146,9 +1205,71 @@ class TLDWAPIClient:
                 base_url=self.base_url,
                 headers=headers,
                 timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
-                follow_redirects=True,
+                # task-19557: this client authenticates via the client-level
+                # `X-API-KEY` header (api-key is the DEFAULT auth mode; an
+                # optional bearer `Authorization` may also be present). httpx's
+                # built-in redirect-follower strips only `Authorization`/`Cookie`
+                # on a cross-host hop -- it has no notion of `X-API-KEY`, so a
+                # redirecting or compromised server (or a MITM on an `http://`
+                # base URL) could otherwise capture the real API key verbatim.
+                # `follow_redirects=False` plus `_raise_if_redirected` below
+                # refuses to follow ANY redirect rather than partially forward
+                # credentials -- the same "refuse rather than risk forwarding"
+                # shape as the `x-goog-api-key` fix in
+                # `LLM_Calls/LLM_API_Calls.py` (`chat_with_google`).
+                follow_redirects=False,
+                verify=self.ssl_verify,
             )
         return self._client
+
+    @staticmethod
+    async def _raise_if_redirected(response: httpx.Response, endpoint: str) -> None:
+        """Refuse a redirect response rather than following it with credentials.
+
+        The shared client carries the ``X-API-KEY`` (and possibly bearer
+        ``Authorization``) header and is constructed with
+        ``follow_redirects=False`` (see ``_get_client``) specifically so a
+        redirect response lands here instead of httpx silently completing
+        the hop. There is no legitimate reason for this client to follow a
+        redirect -- ``base_url`` is the server the caller explicitly
+        configured -- so an actual redirect is treated as hostile/
+        misconfigured and refused outright.
+
+        Only ``_REDIRECT_STATUS_CODES`` (301/302/303/307/308) trigger the
+        refusal -- NOT the whole 3xx band. 304 Not Modified is a
+        cache-validation response, not a redirect (no ``Location``), and
+        conditional-GET callers (e.g. ``get_user_profile_catalog``'s
+        ``if_none_match``) rely on it reaching normal processing rather
+        than being refused here.
+
+        The redirect ``Location`` is deliberately never echoed in the
+        raised message -- it is server- (and on a hostile/compromised
+        endpoint, attacker-) controlled data, same reasoning as the
+        Anthropic/Google redirect-refusal sites in ``LLM_API_Calls.py``.
+
+        Explicitly closes ``response`` before raising. httpx's own
+        ``send()``/``stream()`` already release the connection on the
+        paths that reach here (an eagerly-read non-streaming response, or
+        the ``stream()`` context manager's own ``finally: aclose()``), but
+        ``aclose()`` is idempotent and this makes the guarantee explicit
+        here rather than resting on a reader's trust of that internal
+        contract.
+
+        Args:
+            response: The response to inspect.
+            endpoint: The request path, used only for the error message.
+
+        Raises:
+            APIConnectionError: If ``response`` is an actual redirect.
+        """
+        if response.status_code not in _REDIRECT_STATUS_CODES:
+            return
+        await response.aclose()
+        raise APIConnectionError(
+            f"Server returned a redirect ({response.status_code}) for "
+            f"{endpoint}; refusing to follow with the X-API-KEY/Authorization "
+            "credential."
+        )
 
     async def close(self):
         if self._client and not self._client.is_closed:
@@ -1229,6 +1350,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )  # Pass endpoint directly
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
             if response.status_code in {204, 205}:
                 return {}
@@ -1248,6 +1370,29 @@ class TLDWAPIClient:
                         error_detail = f"Validation Error: {response_data['detail'][0].get('msg', '')} for field '{'.'.join(map(str, response_data['detail'][0].get('loc', [])))}'"
                     elif isinstance(response_data["detail"], str):
                         error_detail = response_data["detail"]
+                    elif isinstance(response_data["detail"], dict):
+                        # Structured refusal: tldw_server returns
+                        # `{"detail": {"code", "message", "details",
+                        # "retryable"}}` for its deterministic 4xx
+                        # refusals. Without this branch `error_detail`
+                        # stayed the raw httpx text ("Client error '409
+                        # Conflict' for url ... For more information
+                        # check: https://developer.mozilla.org/..."), so
+                        # the server's own explanation was dropped on the
+                        # floor and callers could only report a generic
+                        # failure -- exactly what made a 409
+                        # `scheduled_task_definition_archived` surface to
+                        # the user as "this action requires a server
+                        # connection" (schedules task 6 round 2, D9).
+                        # `message` is the human sentence, `code` the
+                        # machine token; prefer the former, fall back to
+                        # the latter, and only then to the raw text.
+                        detail_obj = response_data["detail"]
+                        error_detail = str(
+                            detail_obj.get("message")
+                            or detail_obj.get("code")
+                            or error_detail
+                        )
             except ValueError:
                 pass  # Ignore if response is not JSON or detail not found
 
@@ -1310,6 +1455,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             content_disposition = response.headers.get("content-disposition")
             return ReadingExportResponse(
@@ -1379,6 +1525,7 @@ class TLDWAPIClient:
             response = await client.request(
                 method, endpoint, params=params, headers=headers
             )
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             return {
                 str(key).lower(): str(value) for key, value in response.headers.items()
@@ -1423,6 +1570,7 @@ class TLDWAPIClient:
             async with client.stream(
                 method, endpoint, data=data, files=files
             ) as response:
+                await self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line:
@@ -1495,6 +1643,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             ) as response:
+                await self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line == "":
@@ -2450,19 +2599,31 @@ class TLDWAPIClient:
             "DELETE", f"/api/v1/workspaces/{workspace_id}/notes/{note_id}"
         )
 
-    async def list_workspace_sources(self, workspace_id: str) -> Dict[str, Any]:
-        return await self._request("GET", f"/api/v1/workspaces/{workspace_id}/sources")
+    async def list_workspace_sources(
+        self, workspace_id: str
+    ) -> list[Dict[str, Any]]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        response = await self._request(
+            "GET", f"/api/v1/workspaces/{workspace_path}/sources"
+        )
+        validated = WorkspaceSourceListResponse.model_validate(response)
+        return [item.model_dump(mode="json") for item in validated.root]
 
     async def create_workspace_source(
         self,
         workspace_id: str,
         request_data: WorkspaceSourceCreateRequest,
     ) -> Dict[str, Any]:
-        return await self._request(
-            "POST",
-            f"/api/v1/workspaces/{workspace_id}/sources",
-            json_data=request_data.model_dump(mode="json"),
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        request = WorkspaceSourceCreateRequest.model_validate(
+            request_data.model_dump(mode="json")
         )
+        response = await self._request(
+            "POST",
+            f"/api/v1/workspaces/{workspace_path}/sources",
+            json_data=request.model_dump(mode="json"),
+        )
+        return WorkspaceSourceResponse.model_validate(response).model_dump(mode="json")
 
     async def update_workspace_source(
         self,
@@ -2470,18 +2631,109 @@ class TLDWAPIClient:
         source_id: str,
         request_data: WorkspaceSourceUpdateRequest,
     ) -> Dict[str, Any]:
-        return await self._request(
-            "PUT",
-            f"/api/v1/workspaces/{workspace_id}/sources/{source_id}",
-            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        source_path = _workspace_source_path_id(source_id, "source_id")
+        request = WorkspaceSourceUpdateRequest.model_validate(
+            request_data.model_dump(exclude_unset=True, mode="json")
         )
+        response = await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_path}/sources/{source_path}",
+            json_data=request.model_dump(exclude_unset=True, mode="json"),
+        )
+        return WorkspaceSourceResponse.model_validate(response).model_dump(mode="json")
 
     async def delete_workspace_source(
         self, workspace_id: str, source_id: str
-    ) -> Dict[str, Any]:
-        return await self._request(
-            "DELETE", f"/api/v1/workspaces/{workspace_id}/sources/{source_id}"
+    ) -> Any:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        source_path = _workspace_source_path_id(source_id, "source_id")
+        response = await self._request(
+            "DELETE",
+            f"/api/v1/workspaces/{workspace_path}/sources/{source_path}",
         )
+        return WorkspaceSourceDeleteResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def get_workspace_source_preview(
+        self,
+        workspace_id: str,
+        source_id: str,
+        *,
+        max_chars: int = 3000,
+        chunk_limit: int = 3,
+    ) -> Dict[str, Any]:
+        if type(max_chars) is not int or not 1 <= max_chars <= 12_000:
+            raise ValueError("max_chars must be between 1 and 12000")
+        if type(chunk_limit) is not int or not 0 <= chunk_limit <= 10:
+            raise ValueError("chunk_limit must be between 0 and 10")
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        source_path = _workspace_source_path_id(source_id, "source_id")
+        response = await self._request(
+            "GET",
+            f"/api/v1/workspaces/{workspace_path}/sources/{source_path}/preview",
+            params={"max_chars": max_chars, "chunk_limit": chunk_limit},
+        )
+        return WorkspaceSourcePreviewResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def get_workspace_source_status(
+        self, workspace_id: str
+    ) -> Dict[str, Any]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        response = await self._request(
+            "GET", f"/api/v1/workspaces/{workspace_path}/sources/status"
+        )
+        return WorkspaceSourceStatusListResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def get_workspace_capabilities(
+        self, workspace_id: str
+    ) -> Dict[str, Any]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        response = await self._request(
+            "GET", f"/api/v1/workspaces/{workspace_path}/capabilities"
+        )
+        return WorkspaceCapabilitiesResponse.model_validate(response).model_dump(
+            mode="json"
+        )
+
+    async def set_workspace_source_selection(
+        self,
+        workspace_id: str,
+        request_data: WorkspaceSourceSelectionRequest,
+    ) -> list[Dict[str, Any]]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        request = WorkspaceSourceSelectionRequest.model_validate(
+            request_data.model_dump(mode="json")
+        )
+        response = await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_path}/sources/selection",
+            json_data=request.model_dump(mode="json"),
+        )
+        WorkspaceSourceWriteResponse.model_validate(response)
+        return await self.list_workspace_sources(workspace_id)
+
+    async def reorder_workspace_sources(
+        self,
+        workspace_id: str,
+        request_data: WorkspaceSourceReorderRequest,
+    ) -> list[Dict[str, Any]]:
+        workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
+        request = WorkspaceSourceReorderRequest.model_validate(
+            request_data.model_dump(mode="json")
+        )
+        response = await self._request(
+            "PUT",
+            f"/api/v1/workspaces/{workspace_path}/sources/reorder",
+            json_data=request.model_dump(mode="json"),
+        )
+        WorkspaceSourceWriteResponse.model_validate(response)
+        return await self.list_workspace_sources(workspace_id)
 
     async def list_workspace_artifacts(self, workspace_id: str) -> Dict[str, Any]:
         return await self._request(
@@ -7826,6 +8078,341 @@ class TLDWAPIClient:
     async def delete_reminder_task(self, task_id: str) -> ReminderTaskDeleteResponse:
         response = await self._request("DELETE", f"/api/v1/tasks/{task_id}")
         return ReminderTaskDeleteResponse.model_validate(response)
+
+    async def get_scheduled_task_automation_capabilities(
+        self,
+    ) -> ScheduledTaskAutomationCapabilities:
+        """Probe server-advertised Scheduled Tasks automation capabilities.
+
+        Mirrors `get_sync_v2_capabilities`'s probe-and-validate shape
+        (task-3, schedules UAT remediation ruling 5). The caller
+        (`SchedulingServerClient.get_capabilities`) treats a 404 here as
+        "this server predates Scheduled Tasks automation entirely" -- an
+        honest degrade, never a crash (root-causes.md #7).
+
+        Returns:
+            The parsed capabilities response.
+        """
+        response = await self._request(
+            "GET", "/api/v1/scheduled-tasks/capabilities"
+        )
+        return ScheduledTaskAutomationCapabilities.model_validate(response)
+
+    async def list_scheduled_task_automation_definitions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ScheduledTaskAutomationDefinitionList:
+        """List the authenticated user's server-side automation definitions.
+
+        Args:
+            limit: Page size to request. The server clamps to 1..200.
+            offset: Pagination offset to request.
+
+        Returns:
+            The definition list response (items plus total/has_more
+            pagination fields).
+        """
+        response = await self._request(
+            "GET",
+            "/api/v1/scheduled-tasks/definitions",
+            params={"limit": limit, "offset": offset},
+        )
+        return ScheduledTaskAutomationDefinitionList.model_validate(response)
+
+    async def run_scheduled_task_automation_definition_now(
+        self,
+        definition_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ScheduledTaskAutomationRunNowResponse:
+        """Trigger one immediate server-side execution of a definition.
+
+        Args:
+            definition_id: The server definition to dispatch.
+            idempotency_key: Optional ``Idempotency-Key`` header value; the
+                server dedupes repeated triggers within its run-slot window
+                when present.
+
+        Returns:
+            The run reference (definition, run slot, job id, dedupe flag) for
+            correlating the trigger with the eventual result notification.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/run",
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return ScheduledTaskAutomationRunNowResponse.model_validate(response)
+
+    async def pause_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Pause a server-side automation definition (spec §5.1 lifecycle).
+
+        Args:
+            definition_id: The server definition to pause.
+
+        Returns:
+            The definition row with its post-pause lifecycle state.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/pause",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def resume_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Resume a paused server-side automation definition.
+
+        Args:
+            definition_id: The server definition to resume.
+
+        Returns:
+            The definition row with its post-resume lifecycle state.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/resume",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def archive_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Archive a server-side automation definition.
+
+        Args:
+            definition_id: The server definition to archive.
+
+        Returns:
+            The definition row with its post-archive lifecycle state
+            (``lifecycle="archived"``, ``archived_at`` set).
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/archive",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def mark_scheduled_task_definition_solved(
+        self, definition_id: str, *, result_id: str | None = None
+    ) -> ScheduledTaskAutomationDefinition:
+        """Mark a Recurring Question definition solved (spec §4.3 / PR-6 Task 2).
+
+        Mirrors the server's ``ScheduledTaskMarkSolvedRequest`` (one field,
+        ``resolved_result_id``).
+
+        Args:
+            definition_id: The server definition to mark solved.
+            result_id: The server result id that triggered the resolution,
+                if any.
+
+        Returns:
+            The definition row with its post-solve resolution state
+            (``resolution_state="solved"``, ``resolved_at``/``resolved_by``/
+            ``resolved_result_id`` set). Idempotent server-side: marking an
+            already-solved definition solved again is a no-op that returns
+            the current row unchanged, not an error.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/mark-solved",
+            json_data={"resolved_result_id": result_id},
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def reopen_scheduled_task_definition(
+        self,
+        definition_id: str,
+        *,
+        target_lifecycle: str = "paused",
+        reason: str | None = None,
+    ) -> ScheduledTaskAutomationDefinition:
+        """Reopen a solved Recurring Question definition (spec §4.3 / PR-6 Task 2).
+
+        Mirrors the server's ``ScheduledTaskReopenRequest`` (``target_
+        lifecycle`` -- ``"configured"`` or ``"paused"``, default
+        ``"paused"`` -- plus an optional free-text ``reason``).
+
+        Args:
+            definition_id: The server definition to reopen.
+            target_lifecycle: Lifecycle to restore the definition to.
+            reason: Optional free-text reason recorded on the audit event.
+
+        Returns:
+            The definition row with ``resolution_state="open"`` and
+            ``resolved_at``/``resolved_by``/``resolved_result_id`` cleared.
+
+        Raises:
+            APIResponseError: If the definition is not currently solved
+                (the server refuses the transition -- reopening is NOT a
+                no-op like mark-solved).
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/reopen",
+            json_data={"target_lifecycle": target_lifecycle, "reason": reason},
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def list_scheduled_task_automation_definition_audit(
+        self,
+        definition_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str | None = None,
+    ) -> ScheduledTaskAuditList:
+        """List one definition's durable audit trail (ADR-077 AC#4).
+
+        Args:
+            definition_id: The server definition whose trail to fetch.
+            limit: Page size to request. The server clamps to 1..200.
+            offset: Pagination offset to request.
+            event_type: Optional event-type filter (e.g. ``run_succeeded``).
+
+        Returns:
+            The audit list response (``run_{status}`` events from the
+            consumer plus lifecycle/authoring events, newest first).
+        """
+        response = await self._request(
+            "GET",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/audit",
+            params={
+                "limit": limit,
+                "offset": offset,
+                "event_type": event_type,
+            },
+        )
+        return ScheduledTaskAuditList.model_validate(response)
+
+    async def list_scheduled_task_results(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        definition_id: str | None = None,
+        review_state: str | None = None,
+    ) -> ScheduledTaskResultList:
+        """List the authenticated user's scheduled-task results (spec §4.2).
+
+        Args:
+            limit: Page size to request. The server clamps to 1..200.
+            offset: Pagination offset to request.
+            definition_id: Optional filter to one definition's results.
+            review_state: Optional filter (``unread``/``read``/``dismissed``).
+
+        Returns:
+            The result list response (items plus total/has_more pagination).
+        """
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if definition_id is not None:
+            params["definition_id"] = definition_id
+        if review_state is not None:
+            params["review_state"] = review_state
+        response = await self._request(
+            "GET",
+            "/api/v1/scheduled-tasks/results",
+            params=params,
+        )
+        return ScheduledTaskResultList.model_validate(response)
+
+    async def review_scheduled_task_result(
+        self,
+        result_id: str,
+        review_state: str,
+        *,
+        review_note: str | None = None,
+    ) -> ScheduledTaskResult:
+        """Set one result's review state (``ScheduledTaskResultReviewRequest``).
+
+        Args:
+            result_id: The server result to update.
+            review_state: New review state (``read``/``dismissed``/etc).
+            review_note: Optional free-text note attached to the review.
+
+        Returns:
+            The updated result row.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/results/{result_id}/review",
+            json_data={"review_state": review_state, "review_note": review_note},
+        )
+        return ScheduledTaskResult.model_validate(response)
+
+    async def preview_scheduled_task_definition(
+        self, request: ScheduledTaskPreviewCreateRequest
+    ) -> ScheduledTaskPreview:
+        """Create a server-side authoring preview (spec §5.1).
+
+        Args:
+            request: The preview request (mode/family/config/schedule/etc).
+
+        Returns:
+            The created preview, including ``status``, ``validation_errors``,
+            ``warnings``, and the ``normalized_config`` the server would
+            persist if the preview were consumed.
+        """
+        response = await self._request(
+            "POST",
+            "/api/v1/scheduled-tasks/previews",
+            json_data=request.model_dump(exclude_none=True, mode="json"),
+        )
+        return ScheduledTaskPreview.model_validate(response)
+
+    async def create_scheduled_task_definition(
+        self,
+        preview_id: str,
+        *,
+        initial_lifecycle: str = "configured",
+    ) -> ScheduledTaskAutomationDefinition:
+        """Create a server-side automation definition from a consumed preview.
+
+        Args:
+            preview_id: The valid create-mode preview to consume
+                (``ScheduledTaskPreview.id``).
+            initial_lifecycle: Starting lifecycle -- ``"configured"``
+                (default) or ``"paused"``.
+
+        Returns:
+            The created definition row.
+        """
+        request = ScheduledTaskDefinitionCreateRequest(
+            preview_id=preview_id, initial_lifecycle=initial_lifecycle
+        )
+        response = await self._request(
+            "POST",
+            "/api/v1/scheduled-tasks/definitions",
+            json_data=request.model_dump(mode="json"),
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def update_scheduled_task_definition(
+        self,
+        definition_id: str,
+        preview_id: str,
+    ) -> ScheduledTaskAutomationDefinition:
+        """Apply a consumed update-mode preview to an existing definition.
+
+        Args:
+            definition_id: The definition to update.
+            preview_id: The valid update-mode preview to consume.
+
+        Returns:
+            The updated definition row.
+        """
+        request = ScheduledTaskDefinitionUpdateRequest(preview_id=preview_id)
+        response = await self._request(
+            "PATCH",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}",
+            json_data=request.model_dump(mode="json"),
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
 
     async def list_output_templates(
         self,
@@ -15681,8 +16268,15 @@ class TLDWAPIClient:
         )
         return ServerChangesResponse.model_validate(response)
 
-    async def get_sync_v2_capabilities(self) -> SyncV2CapabilitiesResponse:
+    async def get_sync_v2_capabilities(
+        self,
+        *,
+        dataset_id: str | None = None,
+    ) -> SyncV2CapabilitiesResponse:
         """Fetch server-advertised Sync v2 protocol capabilities.
+
+        Args:
+            dataset_id: Optional authorized dataset used to calculate current writability.
 
         Returns:
             Parsed capability record with protocol versions, supported domains, and limits.
@@ -15691,7 +16285,14 @@ class TLDWAPIClient:
             Exception: Propagates request failures and response validation errors.
         """
 
-        response = await self._request("GET", "/api/v1/sync/capabilities")
+        if dataset_id is None:
+            response = await self._request("GET", "/api/v1/sync/capabilities")
+        else:
+            response = await self._request(
+                "GET",
+                "/api/v1/sync/capabilities",
+                params={"dataset_id": dataset_id},
+            )
         return SyncV2CapabilitiesResponse.model_validate(response)
 
     async def get_sync_v2_profile(
@@ -15729,7 +16330,8 @@ class TLDWAPIClient:
         returned device_id/dataset_id before pushing (persisted in P2).
 
         Args:
-            request_data: Bootstrap request (mode, device name, requested domains).
+            request_data: Bootstrap request including the requested domains and
+                their supported adapter versions.
 
         Returns:
             Parsed bootstrap response including assigned device_id and dataset_id.
@@ -15744,6 +16346,46 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(mode="json"),
         )
         return SyncV2ProfileBootstrapResponse.model_validate(response)
+
+    async def bootstrap_sync_v2_personal_context(
+        self,
+        request_data: SyncPersonalContextBootstrapRequest,
+    ) -> SyncPersonalContextBootstrapResponse:
+        """Fetch one authenticated, cursor-bounded canonical profile snapshot."""
+
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/sync/personal-context/bootstrap",
+                json_data=request_data.model_dump(mode="json"),
+            )
+        except APIResponseError as exc:
+            if exc.status_code != 409:
+                raise
+            try:
+                error_response = SyncPersonalContextBootstrapErrorResponse.model_validate(
+                    exc.response_data
+                )
+            except ValidationError:
+                raise exc from None
+            if error_response.detail.attention is None:
+                raise
+            raise PersonalContextBootstrapAttentionError(
+                error_response.detail.attention
+            ) from None
+        return SyncPersonalContextBootstrapResponse.model_validate(response)
+
+    async def complete_sync_v2_personal_context_link(
+        self,
+        request_data: SyncPersonalContextLinkCompleteRequest,
+    ) -> None:
+        """Confirm that this device completed the exact reviewed bootstrap."""
+
+        await self._request(
+            "POST",
+            "/api/v1/sync/personal-context/complete",
+            json_data=request_data.model_dump(mode="json"),
+        )
 
     async def register_sync_v2_device(
         self,

@@ -14,9 +14,34 @@ Missing optional features do not mean Chatbook is broken. They mean the user has
 | --- | --- | --- | --- | --- |
 | RAG and retrieval | `embeddings_rag` | `pip install -e ".[embeddings_rag]"` | `pip install "tldw_chatbook[embeddings_rag]"` | Library Search/RAG |
 | Media ingestion and transcription | `audio`, `video`, `pdf`, `ebook` | `pip install -e ".[audio,video,pdf,ebook]"` | `pip install "tldw_chatbook[audio,video,pdf,ebook]"` | Library import/media |
+| Local Chatterbox speech | `chatterbox` | `pip install -e ".[chatterbox]"` | `pip install "tldw_chatbook[chatterbox]"` | Speech Lab and Speak replies |
 | MCP integration | `mcp` | `pip install -e ".[mcp]"` | `pip install "tldw_chatbook[mcp]"` | MCP destination |
 | Local inference | `local_vllm`, `local_mlx`, `local_transformers` | `pip install -e ".[local_vllm]"` | `pip install "tldw_chatbook[local_vllm]"` | Console/provider setup |
 | Web access | `web` | `pip install -e ".[web]"` | `pip install "tldw_chatbook[web]"` | Web/browser serving |
+
+## Chatterbox installation and recovery
+
+Install the `chatterbox` extra in the environment that runs Chatbook, using the
+source or packaged command above. It requires Chatterbox 0.1.7 or newer to avoid
+older releases' `pkuseg` source-build failure. The `chatterbox` and `all-tools`
+extras also include a temporary `setuptools<82` runtime requirement for Perth's
+watermarker; the core install has neither requirement.
+
+If an older installation reports `No module named 'pkg_resources'`, or model
+loading fails with `'NoneType' object is not callable` inside Perth, repair that
+environment with:
+
+```bash
+python -m pip install "chatterbox-tts>=0.1.7" "setuptools<82"
+```
+
+Perth 1.0.1 uses `pkg_resources` to locate its bundled watermarker assets but
+does not declare that dependency. It catches the failed import, so importing
+Chatterbox alone can succeed while loading a model fails. Setuptools
+[removed `pkg_resources` in version 82](https://setuptools.pypa.io/en/latest/history.html#v82-0-0).
+Remove the compatibility cap when the supported Perth release replaces this
+import and declares its runtime dependencies, after verifying a fresh extra
+install can import the watermarker and locate its bundled assets.
 
 ## Standalone MCP recovery contract
 
@@ -40,11 +65,11 @@ persistent URL or file ingestion.
 - **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
-- **Library tools excluded from standalone (18):** `library_list_media`, `library_get_media`, `library_search_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
 
 ### Standalone behavior and controls
 
-All 18 Library tools are excluded from the standalone stdio catalog and remain
+All 24 Library tools are excluded from the standalone stdio catalog and remain
 behind the gated and logged direct Library action; raw in-app `tools/call` is
 refused.
 
@@ -68,7 +93,7 @@ card exists in the stdio client.
 | Provider/model setup | Home shows `Model: Blocked`; Console shows provider setup copy before live model work. | Configure a provider and model in Settings. For OpenAI, set `OPENAI_API_KEY` or add the provider key under the OpenAI API settings. | See README `Configuration` and `Environment Variables`. |
 | Server/local mode | Home shows server sync status such as `Configured; local mode`; server-backed work can show reconnect/auth recovery when active server state requires it. | Local mode is usable without a server. For server-backed work, configure/select the active server and reconnect or authenticate when prompted. | See README `Configuration File` and `Web Server Access`. |
 | ACP runtime setup | ACP shows `Runtime not configured`, `Why: no ACP-compatible runtime is configured.`, and owner `ACP runtime`. | Configure an ACP-compatible runtime in ACP, then start or resume an ACP session before launching or following agent work. | ACP runtime setup remains owned by the ACP destination, not global Settings. |
-| MCP server management | Console shows `MCP: Not wired - MCP servers.`; MCP opens in Servers mode with `Add server`, `Import…`, and readiness callouts, while Tools shows discovered tools. | Open MCP → Servers to add, import, or configure a server, then use Tools to inspect runnable tools. Install optional MCP support with `pip install -e ".[mcp]"` when MCP dependencies are needed. | See README `Model Context Protocol (MCP) Integration`. |
+| MCP server management | Console's Live work sources row shows `MCP: Not wired - MCP servers.` until the catalog reports tools, and `MCP: Connected - N tools ready.` once servers are wired (TASK-24601/TASK-24704 -- an absent count and a probed-but-empty catalog are indistinguishable to the reader, so both report Not wired); MCP opens in Servers mode with `Add server`, `Import…`, and readiness callouts, while Tools shows discovered tools. | Open MCP → Servers to add, import, or configure a server, then use Tools to inspect runnable tools. Install optional MCP support with `pip install -e ".[mcp]"` when MCP dependencies are needed. | See README `Model Context Protocol (MCP) Integration`. |
 | Optional dependency recovery | Disabled feature states name the missing optional dependency group and owner. | Install the matching optional extra, such as `pip install -e ".[embeddings_rag]"` or `pip install "tldw_chatbook[embeddings_rag]"` for Search/RAG dependencies, or the relevant audio/video/transcription extras for media workflows. | See README `Installation with Optional Features` and `Optional Feature Groups`. |
 | Missing-source recovery | Home and Console show `RAG: Missing sources`, `RAG/source: not staged`, or Library source-selection recovery copy. | Add/import Library content, select a source or RAG result, then stage it into Console before asking grounded questions. | Use Library `Sources`, `Search/RAG`, and `Import/Export Sources` modes. |
 

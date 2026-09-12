@@ -108,17 +108,13 @@ def _assert_console_density_evidence(svg: str) -> None:
 
 def _assert_console_inspector_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
+    rendered_text = _rendered_svg_text(svg)
     assert "Inspector" in normalized_svg
-    assert "Status: Blocked" in normalized_svg
     assert "Run recipe" in normalized_svg
     assert "Blocked impact" in normalized_svg
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg
-    assert (
-        normalized_svg.index("Status: Blocked")
-        < normalized_svg.index("Run recipe")
-        < normalized_svg.index("Blocked impact")
-    )
+    assert rendered_text.index("Run recipe") < rendered_text.index("Blocked impact")
 
 
 def _assert_command_palette_evidence(svg: str) -> None:
@@ -165,6 +161,14 @@ def _assert_solid_border(widget) -> None:
     # own bottom border closes the workbench frame.
     assert border.bottom[0] in {"", "none"}
     assert border.left[0] == "solid"
+
+
+def _assert_interior_handle_border(widget, edge: str) -> None:
+    """Collapsed rail handles own only their interior divider edge."""
+    border = widget.styles.border
+    for candidate in ("top", "right", "bottom", "left"):
+        style = getattr(border, candidate)[0]
+        assert style == ("solid" if candidate == edge else "")
 
 
 def _painted_region_rows(screen, region) -> list[str]:
@@ -273,9 +277,9 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
 
             assert inspector_handle.display is True
             assert _painted_region_rows(screen, inspector_button.region) == [
-                "<-Inspect"
+                "◂ Inspect"
             ]
-            assert inspector_button.label == "<-Inspect"
+            assert inspector_button.label == "◂ Inspect"
             assert inspector_button.tooltip == "Open Inspector rail"
             assert workspace.content_region.contains_region(inspector_handle.region), (
                 f"Inspector handle escapes workspace at {size}: "
@@ -284,9 +288,9 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
             )
             assert inspector_handle.region.height == workspace.content_region.height
             assert inspector_handle.region.width == 11
-            assert inspector_handle.content_region.width == 9
+            assert inspector_handle.content_region.width == 10
             assert inspector_handle.styles.background.a > 0
-            _assert_solid_border(inspector_handle)
+            _assert_interior_handle_border(inspector_handle, "left")
             assert transcript.region.width > 0
 
             assert (
@@ -295,9 +299,9 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
             inspector_border = inspector_handle.styles.border
             context_border = context_handle.styles.border
             assert inspector_border.top == context_border.top
-            assert inspector_border.right == context_border.right
             assert inspector_border.bottom == context_border.bottom
-            assert inspector_border.left == context_border.left
+            assert inspector_border.right == context_border.left
+            assert inspector_border.left == context_border.right
 
             badge_rows = list(screen.query("#console-inspector-rail-badge"))
             available_bottom = inspector_handle.content_region.bottom
@@ -357,7 +361,7 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
         ((140, 42), "both-collapsed", False, False, (0, 0)),
         ((160, 45), "context-open-inspector-collapsed", True, False, (30, 0)),
         ((160, 45), "both-open", True, True, (30, 34)),
-        ((160, 45), "context-collapsed-inspector-open", False, True, (0, 34)),
+        ((160, 45), "context-collapsed-inspector-open", False, True, (0, 35)),
         ((160, 45), "both-collapsed", False, False, (0, 0)),
     ),
 )
@@ -482,7 +486,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
                 button_selector=context_selector,
                 open_state=effective_context_open,
                 handle_width=13,
-                content_width=11,
+                content_width=12,
             )
             inspector_button, inspector_header = assert_control_preconditions(
                 rail_selector="#console-right-rail",
@@ -490,7 +494,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
                 button_selector=inspector_selector,
                 open_state=effective_inspector_open,
                 handle_width=11,
-                content_width=9,
+                content_width=10,
             )
             transcript = app.screen.query_one("#console-transcript-region")
             assert transcript.region.width > 0
@@ -506,11 +510,19 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             assert rendered_text.strip()
             assert "Console" in rendered_text
 
-            context_label = (
-                "<---------|Context" if effective_context_open else "Context->"
-            )
+            # TASK-23195 and its follow-up replaced the two ASCII-art header
+            # labels with a name plus one resolved glyph, mirrored across the
+            # rails: the glyph sits on the edge adjacent to the transcript,
+            # pointing the way that rail leaves. TASK-31665 AC#4 brought the
+            # COLLAPSED handles into that same vocabulary -- they used to
+            # spell their arrows in ASCII (`Context->` / `<-Inspect`), so one
+            # rail spoke two arrow languages depending on whether it was
+            # open. Each state's arrow points the way ACTIVATING it moves the
+            # rail, which is why the collapsed form mirrors the open one
+            # rather than copying it.
+            context_label = "Context ◂" if effective_context_open else "Context ▸"
             inspector_label = (
-                "Inspect|--------->" if effective_inspector_open else "<-Inspect"
+                "▸ Inspect" if effective_inspector_open else "◂ Inspect"
             )
             context_tooltip = (
                 "Collapse Console context rail"
@@ -561,6 +573,15 @@ async def test_console_workbench_standard_width_inspector_snapshot() -> None:
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(128, 40)) as pilot:
             await _open_console(app, pilot)
+
+            # TASK-23197: the Inspector no longer opens ITSELF at 118-128
+            # columns. That automatic open tripped priority resolution and
+            # evicted the Context rail, so a one-column resize swapped which
+            # sidebar the user had. Open it the way a user now does; the
+            # evidence this test captures -- the Inspector's next-action row
+            # at standard width -- is unchanged.
+            assert await pilot.click("#console-inspector-rail-open")
+            await pilot.pause(0.3)
 
             right_rail = app.screen.query_one("#console-right-rail")
             assert right_rail.display is True

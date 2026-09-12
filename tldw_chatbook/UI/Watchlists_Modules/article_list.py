@@ -70,12 +70,16 @@ def _sort_key(item: dict[str, Any]) -> datetime:
     return effective_date(item) or _EPOCH
 
 
-def _render_row(item: dict[str, Any]) -> Text:
+def _render_row(item: dict[str, Any], *, now: datetime | None = None) -> Text:
     """One item as a three-line `Text`: meta, title, snippet.
 
     Appended, never parsed -- see the module docstring. The status-derived
     vocabulary is the filter's own (`_FILTER_OPTIONS`): `new` is "unread",
     `reviewed` is "read", `ingested` renders read-styled with a marker.
+
+    Args:
+        item: The subscription item to render.
+        now: Optional reference instant for deterministic relative timestamps.
     """
     status = str(item.get("status") or "new").lower()
     unread = status == "new"
@@ -86,7 +90,7 @@ def _render_row(item: dict[str, Any]) -> Text:
         out.append(f"{ArticleListPane._UNREAD_DOT} ", style="bold blue")
     source = strip_control_characters(str(item.get("source_name") or "unknown source"))
     out.append(source, style="dim")
-    stamp = relative_time(effective_date(item))
+    stamp = relative_time(effective_date(item), now=now)
     if stamp != "-":
         out.append(f" · {stamp}", style="dim")
     if item.get("is_flagged"):
@@ -173,10 +177,16 @@ class _ArticleRow(ListItem):
     widget that no longer exists.
     """
 
-    def __init__(self, item: dict[str, Any], *, visible: bool = True) -> None:
+    def __init__(
+        self,
+        item: dict[str, Any],
+        *,
+        visible: bool = True,
+        reference_now: datetime | None = None,
+    ) -> None:
         self.item_id_key = str(item.get("id") or "")
         self.display_overrides: dict[str, Any] = {}
-        self._content = _render_row(item)
+        self._content = _render_row(item, now=reference_now)
         super().__init__(classes="article-row")
         self.set_row_visible(visible)
 
@@ -294,6 +304,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     items = reactive[list[dict[str, Any]]](list)
     selected_item = reactive[dict[str, Any] | None](None)
     status_filter = reactive("all")
+    status_filter_disabled_reason: reactive[str | None] = reactive(None)
     search_query = reactive("")
     runtime_backend = reactive("local")
     #: The pill's text ("" hides it). Screen-pushed after a refresh-all --
@@ -301,6 +312,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     #: `recompose=True`: flipping it must update one Static in place, never
     #: rebuild the ListView under the user's cursor.
     new_items_note = reactive("")
+    snapshot_count = reactive(0)
     page_number = reactive(1)
     has_previous = reactive(False)
     has_next = reactive(False)
@@ -316,8 +328,17 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         pill.update(note)
         pill.display = bool(note)
 
+    def watch_snapshot_count(self, count: int) -> None:
+        """Update the frozen snapshot total without rebuilding the pane."""
+        try:
+            label = self.query_one("#items-snapshot-count", Static)
+        except NoMatches:
+            return
+        noun = "item" if count == 1 else "items"
+        label.update(f"{count} {noun} in snapshot")
+
     def show_new_items_pill(self, count: int) -> None:
-        """Post-refresh notice: "N new items" (click reloads + dismisses).
+        """Format the screen-owned arrival count as pill copy.
 
         Args:
             count: How many new items the refresh produced; <= 0 hides the
@@ -330,15 +351,28 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         self.new_items_note = f"{count} new {noun}"
 
     def on_click(self, event) -> None:
-        """A pill click reloads (the Refresh button's own message) + dismisses."""
+        """A pill click requests refresh; success owns its dismissal."""
         widget_id = getattr(getattr(event, "widget", None), "id", None)
         if widget_id == "items-new-items-pill":
             event.stop()
-            self.new_items_note = ""
             self.post_message(RefreshItemsRequested())
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        reference_now: datetime | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create the pane with an optional deterministic clock.
+
+        Args:
+            *args: Positional arguments forwarded to the Textual container.
+            reference_now: Reference instant for day labels and relative times.
+                Uses the ambient clock when omitted.
+            **kwargs: Keyword arguments forwarded to the Textual container.
+        """
         super().__init__(*args, **kwargs)
+        self._reference_now = reference_now
         #: The exact sequence `compose()` last turned into rows, headers
         #: excluded. Same authority argument as `ItemsPane._rendered_items`:
         #: rows are built once and status/queued repaints mutate item dicts
@@ -362,46 +396,64 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         exactly that on every workbench rebuild) paints filtered on its
         first frame rather than flashing the unfiltered page.
         """
-        with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
-            yield Button(
-                "Refresh",
-                id="items-refresh-button",
-                variant="primary",
-                tooltip="Reload the items list.",
-            )
-            yield Input(
-                placeholder="Search items...",
-                id="items-search-input",
-                value=self.search_query,
-                # TASK-3071 introduced this because a recompose re-focused a
-                # freshly built input and Textual's default would select-all,
-                # so the next keystroke REPLACED the query. task-15460 removed
-                # that teardown entirely, but the property stays on its own
-                # merits: clicking back into a half-typed search must put the
-                # caret where you clicked, not arm the whole term for deletion.
-                select_on_focus=False,
-                compact=True,
-            )
-            yield PruneSafeSelect(
-                self._FILTER_OPTIONS,
-                value=self.status_filter,
-                id="items-status-select",
-                allow_blank=False,
-                compact=True,
-            )
-            # TASK-3791 plan task 5: the "N new items" pill. A Static, not a
-            # Button: the strip's buttons are VERBS and this is a notice you
-            # can act on (click reloads through the same message the Refresh
-            # button posts). Hidden whenever there is nothing to say; the
-            # screen owns the count (`show_new_items_pill`), this pane never
-            # computes one itself.
-            pill = Static(
-                self.new_items_note,
-                id="items-new-items-pill",
-                classes="watchlists-new-items-pill",
-            )
-            pill.display = bool(self.new_items_note)
-            yield pill
+        toolbar = Vertical(id="items-toolbar")
+        toolbar.styles.height = 2
+        toolbar.styles.min_height = 2
+        with toolbar:
+            with Horizontal(
+                id="items-toolbar-search", classes="destination-filter-strip"
+            ):
+                yield Input(
+                    placeholder="Search items...",
+                    id="items-search-input",
+                    value=self.search_query,
+                    # TASK-3071 introduced this because a recompose re-focused a
+                    # freshly built input and Textual's default would select-all,
+                    # so the next keystroke REPLACED the query. task-15460 removed
+                    # that teardown entirely, but the property stays on its own
+                    # merits: clicking back into a half-typed search must put the
+                    # caret where you clicked, not arm the whole term for deletion.
+                    select_on_focus=False,
+                    compact=True,
+                )
+            with Horizontal(
+                id="items-toolbar-actions", classes="destination-filter-strip"
+            ):
+                yield Button(
+                    "Refresh",
+                    id="items-refresh-button",
+                    variant="primary",
+                    compact=True,
+                    tooltip="Reload the items list.",
+                )
+                yield PruneSafeSelect(
+                    self._FILTER_OPTIONS,
+                    value=self.status_filter,
+                    id="items-status-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=self.status_filter_disabled_reason is not None,
+                    tooltip=self.status_filter_disabled_reason,
+                )
+        # TASK-3791 plan task 5: the "N new items" pill. A Static, not a
+        # Button: the toolbar's controls are VERBS and this is a notice you
+        # can act on (click reloads through the same message the Refresh
+        # button posts). The frozen total supports the whole Feed Items pane,
+        # not one toolbar action, so both facts sit below the controls and
+        # leave the bounded Reader column's search usable.
+        pill = Static(
+            self.new_items_note,
+            id="items-new-items-pill",
+            classes="watchlists-new-items-pill",
+        )
+        pill.display = bool(self.new_items_note)
+        yield pill
+        count_noun = "item" if self.snapshot_count == 1 else "items"
+        yield Static(
+            f"{self.snapshot_count} {count_noun} in snapshot",
+            id="items-snapshot-count",
+            classes="watchlists-hint-line",
+        )
 
         rows = self._build_rows()
         # Both the empty state and the list are always mounted, their
@@ -462,7 +514,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         header: _DayHeader | None = None
         header_has_visible = False
         for item in sorted(self.items, key=_sort_key, reverse=True):
-            bucket = day_bucket(effective_date(item))
+            bucket = day_bucket(effective_date(item), now=self._reference_now)
             if bucket != last_bucket:
                 _set_header_visible(header, header_has_visible)
                 header = _DayHeader(bucket)
@@ -471,7 +523,13 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 last_bucket = bucket
             visible = str(item.get("id") or "") in visible_keys
             header_has_visible = header_has_visible or visible
-            rows.append(_ArticleRow(item, visible=visible))
+            rows.append(
+                _ArticleRow(
+                    item,
+                    visible=visible,
+                    reference_now=self._reference_now,
+                )
+            )
         _set_header_visible(header, header_has_visible)
         return rows
 
@@ -601,7 +659,9 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         """
         status_filter = self.status_filter
         query = (
-            "" if self.search_results_authoritative else self.search_query.strip().lower()
+            ""
+            if self.search_results_authoritative
+            else self.search_query.strip().lower()
         )
         selected = self.selected_item
         selected_id: str | None = None
@@ -625,7 +685,14 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 # must not be filtered OUT of the page it just arrived on.
                 text = " ".join(
                     str(item.get(key) or "")
-                    for key in ("title", "url", "source_name", "status", "content", "author")
+                    for key in (
+                        "title",
+                        "url",
+                        "source_name",
+                        "status",
+                        "content",
+                        "author",
+                    )
                 ).lower()
                 if query not in text:
                     continue
@@ -667,8 +734,27 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             self.focus_first_row_without_selecting()
 
     def watch_status_filter(self, status_filter: str) -> None:
+        try:
+            select = self.query_one("#items-status-select", Select)
+            if select.value != status_filter:
+                select.value = status_filter
+        except NoMatches:
+            pass
         self._apply_row_visibility()
         self._post_filter_changed()
+
+    def watch_status_filter_disabled_reason(self, reason: str | None) -> None:
+        """Lock the status control while a contextual scope owns it.
+
+        Args:
+            reason: Disabled-state explanation, or ``None`` to unlock.
+        """
+        try:
+            select = self.query_one("#items-status-select", Select)
+        except NoMatches:
+            return
+        select.disabled = reason is not None
+        select.tooltip = reason
 
     def watch_search_query(self, search_query: str) -> None:
         self._apply_row_visibility()
@@ -754,13 +840,22 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         if row is None:
             return
         item = next(
-            (candidate for candidate in self.items if str(candidate.get("id")) == row.item_id_key),
+            (
+                candidate
+                for candidate in self.items
+                if str(candidate.get("id")) == row.item_id_key
+            ),
             None,
         )
         if item is None:
             return
         row.display_overrides.update(writes)
-        row.update_content(_render_row({**item, **row.display_overrides}))
+        row.update_content(
+            _render_row(
+                {**item, **row.display_overrides},
+                now=self._reference_now,
+            )
+        )
 
     def update_item_status_cell(self, item_id: Any, status: str) -> None:
         """Repaint one row after a status write.

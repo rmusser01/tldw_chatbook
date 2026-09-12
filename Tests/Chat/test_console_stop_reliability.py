@@ -10,7 +10,6 @@ thread and assert the message never grows past the stop point.
 
 import asyncio
 import threading
-from types import SimpleNamespace
 
 import pytest
 
@@ -22,6 +21,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.console_provider_doubles import provider_resolution
 
 
 class _ChunkThenParkGateway:
@@ -32,7 +32,7 @@ class _ChunkThenParkGateway:
         self.release = threading.Event()
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+        return provider_resolution(ready=True, provider="llama_cpp", visible_copy="")
 
     async def stream_chat(self, _resolution, _messages, **_kwargs):
         yield "Once upon a "
@@ -46,10 +46,10 @@ class _ChunkThenParkGateway:
 
 def _controller(tmp_path, gateway):
     store = ConsoleChatStore()
+    session = store.create_session(title="Stop reliability", ephemeral=True)
+    store.active_session_id = session.id
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,

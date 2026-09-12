@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta  # Use timezone-aware UTC
 from math import ceil
 from pathlib import Path
-from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Union
+from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Sequence, Union
 
 #
 # Third-Party Libraries (Ensure these are installed if used)
@@ -51,10 +51,21 @@ from loguru import logger
 # Local Imports
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..STT.persistence import dump_transcription_provenance_document
-from .sql_validation import validate_table_name, validate_column_name
+from .sql_validation import (
+    validate_column_name,
+    validate_identifier,
+    validate_table_name,
+)
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
+from tldw_chatbook.Utils.fts5_match_forms import (
+    build_and_match_expression,
+    fts5_query_is_searchable,
+    fts5_query_tokens,
+    quote_fts5_prefix,
+    quote_fts5_token,
+)
 #
 ########################################################################################################################
 #
@@ -140,6 +151,32 @@ _MEDIA_POST_DELETE_CALLBACKS_LOCK = threading.Lock()
 #: small-allowlist case.
 _MEDIA_IDS_FILTER_JSON_EACH_THRESHOLD = 500
 
+#: Whether the NEWEST LIVE document version of a media row carries analysis
+#: text (task-28008). The same rule the Reader applies in
+#: ``Library.library_media_viewer_state._latest_version_analysis_text``, which
+#: reads ``get_all_document_versions`` -- and that filters ``deleted = 0``, so
+#: BOTH legs here must too. Without the filter,
+#: ``soft_delete_document_version`` (which leaves the row with ``deleted = 1``)
+#: would let the list claim "analysed" off a version the Reader no longer
+#: shows.
+#: Projected in SQL rather than looked up per row: both legs still ride the
+#: existing ``UNIQUE (media_id, version_number)`` index, so no new index is
+#: needed. The plan is pinned in ``Tests/DB/test_client_media_pagination.py``
+#: with ``sqlite_stat1`` ABSENT -- no DB module here runs ``ANALYZE``, so
+#: that is the state every real user's database is planned in.
+_HAS_ANALYSIS_SELECT = (
+    "EXISTS ("
+    "SELECT 1 FROM DocumentVersions v"
+    " WHERE v.media_id = m.id"
+    " AND v.deleted = 0"
+    " AND v.version_number = ("
+    "SELECT MAX(version_number) FROM DocumentVersions"
+    " WHERE media_id = m.id AND deleted = 0"
+    ")"
+    " AND TRIM(COALESCE(v.analysis_content, '')) <> ''"
+    ") AS has_analysis"
+)
+
 
 def register_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
     """Register a callback invoked after a media item is added or updated.
@@ -223,7 +260,7 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
 
-    _CURRENT_SCHEMA_VERSION = 6  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 9  # Define the version this code supports
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -261,6 +298,30 @@ class MediaDatabase:
             "function": "_apply_migration_v5_to_v6",
             "description": "Add chunk engine version stamp to UnvectorizedMediaChunks",
         },
+        6: {
+            "to_version": 7,
+            "function": "_apply_migration_v6_to_v7",
+            "description": (
+                "Rebuild ChunkingTemplates with uuid/tags/is_builtin/version/"
+                "deleted, convert rows, seed six server built-ins"
+            ),
+        },
+        7: {
+            "to_version": 8,
+            "function": "_apply_migration_v7_to_v8",
+            "description": (
+                "Add the engine-version census covering index to "
+                "UnvectorizedMediaChunks"
+            ),
+        },
+        8: {
+            "to_version": 9,
+            "function": "_apply_migration_v8_to_v9",
+            "description": (
+                "Add four active-media partial indexes so the stats-free "
+                "planner stops sorting the whole library per list render"
+            ),
+        },
     }
 
     _TRANSCRIPTION_PROVENANCE_MIGRATION_SQL = """
@@ -283,6 +344,301 @@ class MediaDatabase:
         ADD COLUMN chunk_engine_version TEXT DEFAULT NULL;
         UPDATE schema_version SET version = 6;
     """
+
+    # TASK-21126: the Library Search/RAG panel's legacy-chunk census
+    # (``LocalRAGAdminService.count_chunks_by_engine_version`` — "SELECT
+    # chunk_engine_version, COUNT(DISTINCT media_id) ... WHERE deleted = 0
+    # GROUP BY chunk_engine_version") ran once per Search/RAG panel show
+    # against `idx_unvectorizedmediachunks_deleted` plus two temp B-trees —
+    # i.e. one table row-lookup per live chunk row. Measured on a real
+    # production-schema DB: 119 ms at 200k live chunk rows (64 MB), 701 ms
+    # at 1M (325 MB).
+    #
+    # The COLUMN ORDER here is measured, not aesthetic. `deleted` leads even
+    # though the partial predicate already pins it to 0, because THIS
+    # DATABASE NEVER RUNS `ANALYZE` (there is no ANALYZE anywhere in this
+    # file, so no user's media DB has a `sqlite_stat1`). With no stats the
+    # planner ignores a `(chunk_engine_version, media_id) WHERE deleted = 0`
+    # index completely — measured 120 ms, i.e. a dead 5 MB index — and keeps
+    # using `idx_unvectorizedmediachunks_deleted`. Leading with `deleted`
+    # makes this index answer the same equality search that one does, while
+    # additionally COVERING the GROUP BY and the COUNT(DISTINCT), so the
+    # no-stats planner picks it: measured 119 -> 23.4 ms at 200k (5.1x) and
+    # 701 -> 122.8 ms at 1M (5.7x), plan `SEARCH ... USING COVERING INDEX
+    # (deleted=?)` with zero TEMP B-TREE lines. (For the record, the same
+    # index reaches 4.2 / 25.0 ms once `sqlite_stat1` exists; deliberately
+    # not chasing that here — running ANALYZE would re-plan every other
+    # query in this database for one report line.)
+    #
+    # Write-side cost: +0.06 ms on a 50-chunk ingest batch (0.660 -> 0.720 ms
+    # median) and ~30 bytes per LIVE chunk row on disk (+9% file size: 64.3
+    # -> 70.2 MB at 200k rows, 325.2 -> 354.8 MB at 1M). Soft-deleted rows
+    # are excluded by the partial predicate and cost nothing.
+    #
+    # Like every migration-added artifact in this file, it lives ONLY here
+    # and not in _TABLES_SQL_V1 (fresh databases replay the whole chain).
+    _CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL = """
+        CREATE INDEX IF NOT EXISTS idx_unvectorizedmediachunks_engine_census
+            ON UnvectorizedMediaChunks(deleted, chunk_engine_version, media_id)
+            WHERE deleted = 0;
+        UPDATE schema_version SET version = 8;
+    """
+
+    # TASK-21593: the follow-up audit v8 asked for. Every Media list surface
+    # filters `deleted = 0 AND is_trash = 0` and then orders; with no
+    # `sqlite_stat1` the planner answered ALL of them by searching
+    # `idx_media_deleted` and sorting the entire live library in a temp
+    # B-tree to hand back twenty rows. Measured on a 20,000-media /
+    # 200,000-chunk / 278 MB production-schema DB (no ANALYZE -- see the
+    # note on _CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL):
+    #
+    #   Library page (list_library_media_page)      19.5 -> 0.07 ms
+    #   Library page at OFFSET 15000               119.9 -> 1.07 ms
+    #   Library page count                          16.3 -> 0.86 ms
+    #   Media browse page (search_media_db)         24.8 -> 0.08 ms
+    #   Media browse count                          16.8 -> 1.30 ms
+    #   Media browse, type facet                    20.1 -> 0.10 ms
+    #   get_paginated_files page                    19.6 -> 0.06 ms
+    #   selection-dropdown page                     19.8 -> 0.27 ms
+    #   read-it-later list                          17.4 -> 1.44 ms
+    #   sort=date_desc  / date_asc            25.0/28.0 -> 0.42/0.52 ms
+    #   sort=title_asc  / title_desc          23.9/24.2 -> 0.08/0.08 ms
+    #   get_distinct_media_types                    21.9 -> 2.49 ms
+    #
+    # The COLUMN ORDER is measured, not aesthetic, and follows the rule v8
+    # paid for: **lead with the equality columns the stats-free planner
+    # already likes.** A bare `(last_modified DESC, id DESC) WHERE deleted =
+    # 0 AND is_trash = 0` index -- the textbook shape for these ORDER BYs --
+    # is never chosen in that state; every one of the queries above stays on
+    # `idx_media_deleted` plus its temp B-tree. Leading with
+    # `(deleted, is_trash)` makes each index answer a two-column equality
+    # search, which the no-stats planner prefers to the one-column search it
+    # was using, and the trailing sort key then comes out in order for free.
+    #
+    # Why FOUR indexes and not one. `idx_media_active_recent` alone is a
+    # large net win but it REGRESSES the three list queries whose ORDER BY
+    # or DISTINCT it cannot serve, because the planner switches to it anyway
+    # and then still sorts: sort=date_desc 24.1 -> 32.9 ms, sort=title_asc
+    # 23.6 -> 32.8 ms, get_distinct_media_types 20.9 -> 28.7 ms. Shipping
+    # one index would have made three user-selectable surfaces ~38% slower.
+    # The other three exist to take those same queries onto an ordered index
+    # instead, and with all four present every sampled list query is at or
+    # below its pre-change time.
+    #
+    # All four are PARTIAL on the same predicate the readers use, so trashed
+    # and soft-deleted rows cost nothing. (The partial predicate is a DISK
+    # property, not a plan one: dropping it leaves every plan above
+    # byte-identical -- proven by mutation, and the reason the test file
+    # pins it as DDL text rather than pretending a plan assertion covers
+    # it. The same is true of the DESC keywords, which SQLite satisfies by
+    # scanning an ASC index backwards.) Write-side, measured over 200 real
+    # `add_media_with_keywords` calls against the same corpus: +0.05 ms
+    # median (0.612 -> 0.663 ms), +0.78% file size (2.28 MB of 282 MB),
+    # soft-delete unchanged (62.6 -> 62.1 ms), and a one-off 138 ms build for
+    # all four at the first open after upgrade.
+    #
+    # WHAT THIS COSTS, stated. Four queries get SLOWER, all for one reason:
+    # where the ONLY useful predicate is `deleted = 0 AND is_trash = 0` and
+    # there is no ORDER BY for an index to serve, the planner now walks one
+    # of these indexes and looks rows up in ITS order rather than in rowid
+    # order, losing sequential page access. Measured over 15 alternating
+    # repetitions: `search_library_media_page` count 27.0 -> 35.2 ms and
+    # page 43.6 -> 51.0 ms (the `library.search` tool, per call, and already
+    # dominated by two `content LIKE '%q%'` passes over every live row);
+    # the `chunking_status` count 18.3 -> 28.3 ms; `get_media_by_title`
+    # 17.4 -> 22.5 ms. `get_all_active_media_ids` moves +0.35 ms, i.e. noise.
+    #
+    # A fifth, narrow `(deleted, is_trash) WHERE deleted = 0 AND is_trash =
+    # 0` index fixes exactly that class -- it restores rowid-order lookups
+    # and takes those three back to 26.7 / 43.1 / 18.1 ms -- and was
+    # REJECTED, because the planner then prefers it for the ordered queries
+    # too and sort=date_desc goes 0.46 -> 26.05 ms, a 57x loss on a facet
+    # a user clicks. Recorded here with its numbers so nobody re-derives it.
+    #
+    # Like every migration-added artifact in this file they live ONLY here,
+    # not in _INDICES_SQL_V1 (fresh databases replay the whole chain).
+    _ACTIVE_MEDIA_INDEX_MIGRATION_SQL = """
+        CREATE INDEX IF NOT EXISTS idx_media_active_recent
+            ON Media(deleted, is_trash, last_modified DESC, id DESC)
+            WHERE deleted = 0 AND is_trash = 0;
+        CREATE INDEX IF NOT EXISTS idx_media_active_type
+            ON Media(deleted, is_trash, type)
+            WHERE deleted = 0 AND is_trash = 0;
+        CREATE INDEX IF NOT EXISTS idx_media_active_ingested
+            ON Media(deleted, is_trash, ingestion_date DESC, id DESC)
+            WHERE deleted = 0 AND is_trash = 0;
+        CREATE INDEX IF NOT EXISTS idx_media_active_title
+            ON Media(deleted, is_trash, title COLLATE NOCASE, id)
+            WHERE deleted = 0 AND is_trash = 0;
+        UPDATE schema_version SET version = 9;
+    """
+
+    # task-7 (chunking template parity, spec §5.2): v7 rebuilds
+    # ChunkingTemplates as a table REBUILD — the first in this file. SQLite
+    # cannot drop/rename columns portably at the versions in play, so the
+    # migration creates ChunkingTemplates_v7, converts rows into it from
+    # Python (see _apply_migration_v6_to_v7), then drops the old table,
+    # renames, and recreates the indices AND the update-timestamp trigger
+    # (a rebuild that forgets the trigger silently freezes updated_at).
+    # DDL is §5.2 verbatim: column names follow the SERVER (is_builtin, not
+    # is_system) and the partial unique index replaces the bare UNIQUE(name)
+    # so a soft-deleted row never blocks a re-add.
+    _CHUNKING_TEMPLATES_V7_CREATE_SQL = """
+        CREATE TABLE ChunkingTemplates_v7 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            template_json TEXT NOT NULL,
+            tags TEXT,
+            is_builtin BOOLEAN NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 1,
+            deleted BOOLEAN NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """
+
+    _CHUNKING_TEMPLATES_V7_CUTOVER_SQL = """
+        DROP TABLE ChunkingTemplates;
+        ALTER TABLE ChunkingTemplates_v7 RENAME TO ChunkingTemplates;
+
+        CREATE UNIQUE INDEX idx_chunking_templates_name_live
+            ON ChunkingTemplates(name) WHERE deleted = 0;
+        CREATE INDEX idx_chunking_templates_is_builtin
+            ON ChunkingTemplates(is_builtin);
+        CREATE INDEX idx_chunking_templates_deleted
+            ON ChunkingTemplates(deleted);
+
+        CREATE TRIGGER update_chunking_templates_timestamp
+        AFTER UPDATE ON ChunkingTemplates
+        BEGIN
+            UPDATE ChunkingTemplates SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = NEW.id;
+        END;
+
+        UPDATE schema_version SET version = 7;
+    """
+
+    # The six server built-ins, lifted AS DATA from
+    # tldw_Server_API/app/core/Chunking/template_initialization.py:132-208
+    # (the "Strategy 3" hardcoded fallback that actually runs at this pin)
+    # at pin 385afa951922c8a9dc2002c675bb6cad65e4ac23 — provenance kept
+    # here so a future sync can diff them. These are data, not vendored
+    # code: they are NOT in the engine manifest and the sync script does
+    # not manage them. All six were executed against chatbook's engine
+    # before this seeding shipped (spec §5.5); seed validation runs at
+    # BUILD/TEST time (Tests/DB/test_media_db_schema_v7.py), never inside
+    # a user's migration — a validation failure at runtime would roll back
+    # the whole ADR-030 transaction.
+    _SERVER_BUILTIN_CHUNKING_TEMPLATES = [
+        # upstream template_initialization.py:133-149
+        {
+            "name": "academic_paper",
+            "description": "Template for processing academic papers",
+            "tags": ["academic", "research", "papers"],
+            "template": {
+                "name": "academic_paper",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}},
+                    {"operation": "extract_sections", "config": {"pattern": r"^#+\s+(.+)$"}},
+                ],
+                "chunking": {"method": "sentences", "config": {"max_size": 5, "overlap": 1}},
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 20}},
+                    {"operation": "merge_small", "config": {"min_size": 200}},
+                ],
+            },
+        },
+        # upstream template_initialization.py:150-163
+        {
+            "name": "code_documentation",
+            "description": "Template for processing code documentation",
+            "tags": ["code", "docs"],
+            "template": {
+                "name": "code_documentation",
+                "preprocessing": [
+                    {"operation": "clean_markdown", "config": {"remove_images": True}}
+                ],
+                "chunking": {
+                    "method": "structure_aware",
+                    "config": {
+                        "max_size": 500,
+                        "overlap": 50,
+                        "preserve_code_blocks": True,
+                        "preserve_headers": True,
+                    },
+                },
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 50}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:164-177
+        {
+            "name": "chat_conversation",
+            "description": "Template for processing chat conversations",
+            "tags": ["chat", "conversation"],
+            "template": {
+                "name": "chat_conversation",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                ],
+                "chunking": {"method": "sentences", "config": {"max_size": 10, "overlap": 2}},
+                "postprocessing": [
+                    {"operation": "add_overlap", "config": {"size": 100, "marker": "---"}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:178-190
+        {
+            "name": "book_chapters",
+            "description": "Template for processing book chapters",
+            "tags": ["books", "chapters"],
+            "template": {
+                "name": "book_chapters",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                ],
+                "chunking": {"method": "ebook_chapters", "config": {"max_size": 1200, "overlap": 100}},
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 50}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:191-201
+        {
+            "name": "transcript_dialogue",
+            "description": "Template for processing transcripts and dialogue",
+            "tags": ["transcript", "dialogue", "audio"],
+            "template": {
+                "name": "transcript_dialogue",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                ],
+                "chunking": {"method": "sentences", "config": {"max_size": 8, "overlap": 2}},
+                "postprocessing": [
+                    {"operation": "merge_small", "config": {"min_size": 80}}
+                ],
+            },
+        },
+        # upstream template_initialization.py:202-208
+        {
+            "name": "legal_document",
+            "description": "Template for processing legal documents",
+            "tags": ["legal", "contracts"],
+            "template": {
+                "name": "legal_document",
+                "preprocessing": [
+                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                ],
+                "chunking": {"method": "paragraphs", "config": {"max_size": 1, "overlap": 0}},
+                "postprocessing": [
+                    {"operation": "filter_empty", "config": {"min_length": 50}}
+                ],
+            },
+        },
+    ]
 
     # <<< Schema Definition (Version 1) >>>
 
@@ -708,6 +1064,16 @@ class MediaDatabase:
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
 
+        task-22224 EXCEPTION -- this held connection keeps the legacy
+        default isolation level for now instead of the store template's
+        ``isolation_level = None`` (rule: ``Library_Ingest_Jobs_DB.py``
+        module docstring). ``transaction()`` here borrows via
+        ``in_transaction`` and write helpers still rely on implicit
+        transactions (``execute_query(commit=True)``/``execute_many``), so
+        flipping requires this file's own commit/rollback/write-site census
+        first, as done for ``ChaChaNotes_DB`` -- its own task. Do NOT copy
+        this pattern into new stores.
+
         task-261: the ``SELECT 1`` liveness ping is gated behind an idle
         threshold (``_LIVENESS_PING_IDLE_SECONDS``) instead of running on
         every call — connections are thread-local and long-lived, and
@@ -772,7 +1138,19 @@ class MediaDatabase:
                     type(error).__name__,
                 )
                 self._local.conn = None
-                raise DatabaseError("Failed to connect to media database.") from None
+                # `from error`, NOT `from None` (TASK-19569): the raised
+                # message stays scrubbed (no path, no driver text), but the
+                # private-path contract identifies its boundary failure by
+                # walking `__cause__` to a `PrivatePathError`. Severing the
+                # chain here made this owner the only one of five whose
+                # unsafe-namespace rejection was unidentifiable to callers --
+                # the log line above already records the type, so the
+                # information was being thrown away, not withheld. Chaining is
+                # privacy-safe: `PrivatePathError.__str__` is
+                # `"<status>: <symbolic reason>"` with no path in it (see
+                # `Utils/private_paths.py`), matching the `from e` chaining
+                # the ChaChaNotes and Prompts owners already do.
+                raise DatabaseError("Failed to connect to media database.") from error
         self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
@@ -915,15 +1293,22 @@ class MediaDatabase:
             )
             raise TypeError(f"Parameter list format error: {te}") from te
 
-    # --- Transaction Context (Unchanged) ---
+    # --- Transaction Context ---
     @contextmanager
-    def transaction(self):
+    def transaction(self, immediate: bool = False):
         """
         Provides a context manager for database transactions.
 
         Ensures that a block of operations is executed atomically. Commits
         on successful exit, rolls back on any exception. Handles nested
         transactions gracefully (only outermost commit/rollback matters).
+
+        Args:
+            immediate: When True, the outermost transaction opens with
+                ``BEGIN IMMEDIATE`` (reserving SQLite's writer slot before
+                any work runs) instead of the deferred ``BEGIN``. Nested
+                calls always join the already-open outer transaction,
+                exactly like the deferred path.
 
         Yields:
             sqlite3.Connection: The current thread's database connection.
@@ -936,7 +1321,7 @@ class MediaDatabase:
         in_outer = conn.in_transaction
         try:
             if not in_outer:
-                conn.execute("BEGIN")
+                conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
                 logging.debug("Started transaction.")
             # Yield the connection
             yield conn
@@ -1449,6 +1834,274 @@ class MediaDatabase:
                 f"Unexpected error during migration v5->v6: {error}"
             ) from error
 
+    def _apply_migration_v6_to_v7(self, conn: sqlite3.Connection):
+        """Rebuild ChunkingTemplates for the v7 column set (task-7, §5).
+
+        The first table rebuild in this file: create ``ChunkingTemplates_v7``
+        (§5.2 DDL), convert every surviving row into it from Python, drop the
+        old table, rename, recreate the indices and the update-timestamp
+        trigger, then seed the six server built-ins.
+
+        ADR-030: the DDL, per-row conversion, seeding, and the version bump
+        all run inside ONE real transaction, statement-by-statement via
+        ``_execute_transactional_script`` — a stray ``executescript`` would
+        implicitly commit and defeat rollback. The transaction is opened
+        with ``BEGIN IMMEDIATE`` (not the house deferred ``BEGIN``): this
+        machine routinely runs concurrent sessions, and a DROP+RENAME
+        widens the two-instance race from "one failed ALTER" to
+        "unopenable DB". A seeded mid-rebuild failure must leave the DB at
+        v6 with the original table and rows intact.
+
+        Conversion precedence (§5.3): rows with ``is_system = 1`` whose
+        names the six built-ins re-cover are dropped and re-seeded;
+        ``general``/``conversational``/``contextual`` (and every custom row)
+        are converted and kept as non-builtin rows — nothing a user could
+        have selected disappears. A built-in name that already exists as a
+        live custom row is left alone and logged (the server's idempotent
+        seeding semantics).
+
+        Lazy import: ``Chunking._template_conversion`` stays out of this
+        module's import graph (import-weight), and the per-call ``from``
+        import is the seam the mid-rebuild-failure test monkeypatches.
+
+        Raises:
+            DatabaseError: On any failure, after rolling the transaction
+                back (the DB remains at v6).
+        """
+        # Lazy on purpose — see docstring.
+        from tldw_chatbook.Chunking._template_conversion import (
+            convert_template_row,
+        )
+
+        try:
+            # Foreign keys are ON, but no table references ChunkingTemplates
+            # — asserted, not trusted: the DROP below fails mid-flight if
+            # that ever changes (spec §5.3).
+            self._assert_no_foreign_keys_reference(conn, "ChunkingTemplates")
+
+            if conn.in_transaction:
+                raise SchemaError(
+                    "Migration v6->v7 requires an idle connection to open "
+                    "its own BEGIN IMMEDIATE transaction"
+                )
+            with self.transaction(immediate=True):
+                self._execute_transactional_script(
+                    conn, self._CHUNKING_TEMPLATES_V7_CREATE_SQL
+                )
+
+                builtin_names = {
+                    seed["name"]
+                    for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES
+                }
+                insert_sql = (
+                    "INSERT INTO ChunkingTemplates_v7 "
+                    "(uuid, name, description, template_json, tags, "
+                    "is_builtin, version, deleted, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
+                )
+                rows = conn.execute(
+                    "SELECT name, description, template_json, is_system, "
+                    "created_at, updated_at FROM ChunkingTemplates"
+                ).fetchall()
+                for row in rows:
+                    if bool(row["is_system"]) and row["name"] in builtin_names:
+                        logging.info(
+                            "[Migration v6->v7] Dropping old seed %r; the "
+                            "six built-ins re-seed it",
+                            row["name"],
+                        )
+                        continue
+                    converted = convert_template_row(dict(row))
+                    # §5.3 precedence: the six seeds are the ONLY built-ins
+                    # after v7. Rows reaching this conversion — including the
+                    # old general/conversational/contextual seeds — are kept
+                    # as non-builtin rows; the converter's mechanical
+                    # ``is_builtin ← is_system`` mapping is overridden here.
+                    converted["is_builtin"] = False
+                    conn.execute(
+                        insert_sql,
+                        (
+                            converted["uuid"],
+                            converted["name"],
+                            converted["description"],
+                            converted["template_json"],
+                            converted["tags"],
+                            int(converted["is_builtin"]),
+                            int(converted["deleted"]),
+                            converted["created_at"],
+                            converted["updated_at"],
+                        ),
+                    )
+
+                self._execute_transactional_script(
+                    conn, self._CHUNKING_TEMPLATES_V7_CUTOVER_SQL
+                )
+
+                self._seed_server_builtin_chunking_templates(conn, builtin_names)
+
+            logging.info(
+                "[Migration v6->v7] ChunkingTemplates rebuild applied "
+                "successfully."
+            )
+        except sqlite3.Error as e:
+            logging.error(
+                f"[Migration v6->v7] Failed during migration: {e}", exc_info=True
+            )
+            raise DatabaseError(f"Migration v6->v7 failed: {e}") from e
+        except Exception as e:
+            logging.error(
+                f"[Migration v6->v7] Unexpected error during migration: {e}",
+                exc_info=True,
+            )
+            raise DatabaseError(f"Unexpected error during migration v6->v7: {e}") from e
+
+    def _apply_migration_v7_to_v8(self, conn: sqlite3.Connection):
+        """Add the engine-version census covering index (TASK-21126).
+
+        Pure index addition: no column, table, trigger or row is touched,
+        so there is nothing to back-fill and nothing a partial application
+        could corrupt. The measurements that chose this index's exact
+        shape are recorded on
+        ``_CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL``.
+
+        Build cost is proportional to live chunk rows and is paid once, at
+        the first open after upgrade: measured 167 ms on a 200k-row / 64 MB
+        media DB and 2.05 s on a 1M-row / 325 MB one. That is a one-off
+        open-time stall on a very large library; it buys back 578 ms per
+        Library Search/RAG panel show at that size.
+
+        Raises:
+            DatabaseError: On any failure, after rolling the transaction
+                back (the DB remains at v7 and keeps working — the census
+                simply falls back to the pre-index scan plan).
+        """
+
+        try:
+            with self.transaction():
+                self._execute_transactional_script(
+                    conn,
+                    self._CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL,
+                )
+        except sqlite3.Error as error:
+            raise DatabaseError(f"Migration v7->v8 failed: {error}") from error
+        except Exception as error:
+            raise DatabaseError(
+                f"Unexpected error during migration v7->v8: {error}"
+            ) from error
+
+    def _apply_migration_v8_to_v9(self, conn: sqlite3.Connection):
+        """Add the four active-media partial indexes (TASK-21593).
+
+        Pure index addition, exactly like v7->v8: no column, table, trigger
+        or row is touched, so there is nothing to back-fill and nothing a
+        partial application could corrupt. The measurements that chose each
+        index's exact shape -- and the reason there are four of them rather
+        than one -- are recorded on
+        ``_ACTIVE_MEDIA_INDEX_MIGRATION_SQL``.
+
+        Build cost is proportional to LIVE media rows and is paid once, at
+        the first open after upgrade: measured 138 ms for all four on a
+        20,000-media / 278 MB database. It buys back ~19 ms per Library or
+        Media list render at that size, and ~119 ms on a deep page.
+
+        Raises:
+            DatabaseError: On any failure, after rolling the transaction
+                back (the DB remains at v8 and keeps working -- the list
+                surfaces simply stay on the pre-index sort plan).
+        """
+
+        try:
+            with self.transaction():
+                self._execute_transactional_script(
+                    conn,
+                    self._ACTIVE_MEDIA_INDEX_MIGRATION_SQL,
+                )
+        except sqlite3.Error as error:
+            raise DatabaseError(f"Migration v8->v9 failed: {error}") from error
+        except Exception as error:
+            raise DatabaseError(
+                f"Unexpected error during migration v8->v9: {error}"
+            ) from error
+
+    @staticmethod
+    def _assert_no_foreign_keys_reference(
+        conn: sqlite3.Connection, table: str
+    ) -> None:
+        """Guard rebuild DROPs: fail before touching anything if any table
+        holds a foreign key targeting ``table``.
+
+        Raises:
+            SchemaError: Naming the referencing table(s).
+        """
+        offenders = []
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        for row in tables:
+            other = row["name"]
+            # sqlite_master names are still untrusted input: validate
+            # through the central ``sql_validation`` module before
+            # interpolating into the PRAGMA. This guard protects a DROP,
+            # so a rejected name fails LOUD — a silently skipped table
+            # would be a table whose foreign keys were never checked.
+            if not validate_identifier(other, "table name"):
+                raise SchemaError(
+                    f"sqlite_master table name {other!r} failed SQL "
+                    "identifier validation; cannot safely inspect its "
+                    f"foreign keys for references to {table}"
+                )
+            for fk in conn.execute(f'PRAGMA foreign_key_list("{other}")'):
+                if fk["table"] == table:
+                    offenders.append(other)
+        if offenders:
+            raise SchemaError(
+                f"Cannot rebuild {table}: foreign keys from {offenders} "
+                f"reference it"
+            )
+
+    def _seed_server_builtin_chunking_templates(
+        self, conn: sqlite3.Connection, builtin_names: set
+    ) -> None:
+        """Seed the six server built-ins inside the caller's transaction.
+
+        Idempotent semantics (§5.3, after ``media_db/api.py``): a built-in
+        name that already exists as a LIVE (``deleted = 0``) row is left
+        alone and logged, never overwritten. The six are pre-proven at
+        build/test time (spec §5.5) — no per-seed validation runs here,
+        because a failure inside this transaction would roll back the whole
+        migration.
+        """
+        insert_sql = (
+            "INSERT INTO ChunkingTemplates "
+            "(uuid, name, description, template_json, tags, is_builtin, "
+            "version, deleted) VALUES (?, ?, ?, ?, ?, 1, 1, 0)"
+        )
+        for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES:
+            name = seed["name"]
+            if name not in builtin_names:
+                continue
+            existing = conn.execute(
+                "SELECT 1 FROM ChunkingTemplates WHERE name = ? AND deleted = 0",
+                (name,),
+            ).fetchone()
+            if existing is not None:
+                logging.info(
+                    "[Migration v6->v7] Built-in %r already exists as a "
+                    "custom row; left alone per idempotent seeding",
+                    name,
+                )
+                continue
+            conn.execute(
+                insert_sql,
+                (
+                    str(uuid.uuid4()),
+                    name,
+                    seed["description"],
+                    json.dumps(seed["template"]),
+                    json.dumps(seed["tags"]),
+                ),
+            )
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1742,11 +2395,14 @@ class MediaDatabase:
         try:
             # Delete based on rowid, ignore if not found
             conn.execute("DELETE FROM media_fts WHERE rowid = ?", (media_id,))
-            logging.debug(f"Deleted FTS entry for Media ID {media_id}")
+            logging.debug(
+                "Media FTS mutation operation=delete status=committed count=1"
+            )
         except sqlite3.Error as e:
             logging.error(
-                f"Failed to delete from media_fts for Media ID {media_id}: {e}",
-                exc_info=True,
+                "Media FTS mutation operation=delete status=failed count=0 "
+                "category=%s",
+                type(e).__name__,
             )
             raise DatabaseError(
                 f"Failed to delete FTS for Media ID {media_id}: {e}"
@@ -1825,7 +2481,9 @@ class MediaDatabase:
         self,
         search_query: Optional[
             str
-        ],  # Main text for FTS/LIKE (can be pre-formatted for exact phrase)
+        ],  # PLAIN user text for FTS/LIKE -- each token quoted and the
+        # tokens AND-ed (TASK-19558), never a phrase. A caller-built MATCH
+        # expression goes through `fts_match_query`, never through here.
         search_fields: Optional[List[str]] = None,
         media_types: Optional[List[str]] = None,
         date_range: Optional[Dict[str, datetime]] = None,  # Expects datetime objects
@@ -1854,15 +2512,31 @@ class MediaDatabase:
         items marked as trash or soft-deleted.
 
         Args:
-            search_query (Optional[str]): The primary text string for searching.
-                If `search_fields` include 'title' or 'content', this query is
-                matched against the FTS index. It can be pre-formatted for exact
-                phrases (e.g., "\"exact phrase\""). For 'author' or 'type' in
+            search_query (Optional[str]): The primary PLAIN-TEXT string for
+                searching. If `search_fields` include 'title' or 'content',
+                every token of this query is quoted individually and the
+                tokens are ANDed
+                (`Utils.fts5_match_forms.build_and_match_query`) before being
+                matched against the FTS index -- TASK-19558; it is no longer
+                accepted pre-formatted, and FTS5 operators typed into it are
+                inert. AND-of-tokens rather than one whole-query phrase, so
+                `dragon lore` still finds media titled "lore of the dragon
+                reversed" as the pre-TASK-19558 raw bind did. Supply a real
+                MATCH expression through `fts_match_query` instead. For 'author' or 'type' in
                 `search_fields`, it's used in a LIKE '%query%' match.
+                Leading/trailing whitespace is stripped, and a whitespace-only
+                value is treated as no text search at all. Text with no
+                alphanumeric run ("!!!", "-") cannot produce a MATCH
+                expression, so the FTS leg is dropped and the LIKE legs alone
+                answer it -- it is NOT turned into "no rows".
             search_fields (Optional[List[str]]): A list of fields to apply the
                 `search_query` against. Valid fields: 'title', 'content' (FTS),
-                'author', 'type' (LIKE). Defaults to ['title', 'content'] if
-                `search_query` is provided.
+                'author', 'type' (LIKE), 'keywords' (LIKE over the media's
+                active keywords, OR-ed with the other legs -- TASK-31274; the
+                FTS leg then matches through an id subquery rather than the
+                joined MATCH, so relevance sorting is unavailable while it is
+                requested). Defaults to ['title', 'content'] if `search_query`
+                is provided.
             media_types (Optional[List[str]]): A list of media type strings
                 (e.g., ['video', 'pdf']) to filter results. Only items matching
                 one of these types will be returned.
@@ -1901,8 +2575,10 @@ class MediaDatabase:
                 any author/type LIKE predicates continue to use ``search_query``.
             offset (Optional[int]): Exact zero-based row offset. When omitted,
                 the legacy ``page`` coordinate determines the offset.
-            library_summary (bool): Select only the four fields required by the
-                Library browse surface. Generic callers retain the broad row.
+            library_summary (bool): Select only the fields required by the
+                Library browse surface (id/title/type/last_modified plus the
+                projected ``has_analysis`` flag). Generic callers retain the
+                broad row.
             chunking_status (Optional[str]): Exact Media chunking status to include.
 
         Returns:
@@ -1949,15 +2625,30 @@ class MediaDatabase:
         if resolved_offset > sqlite_integer_max:
             raise ValueError("Pagination offset exceeds SQLite's integer range")
 
+        # TASK-19558 review round 2 (Qodo #1): a search box the user typed only
+        # whitespace into is an EMPTY search, not a search for spaces. Stripping
+        # here also stops accidental padding from vetoing rows: the LIKE leg is
+        # AND-ed with the FTS leg further down, so `%  dragon  %` used to
+        # subtract the rows FTS had already matched (measured on dev: `dragon`
+        # -> 1 row, `  dragon  ` -> 0).
+        if isinstance(search_query, str):
+            search_query = search_query.strip() or None
+
         if search_query and not search_fields:
             search_fields = ["title", "content"]  # Default fields for search_query
         elif not search_fields:  # Ensure search_fields is a list even if empty
             search_fields = []
 
-        valid_text_search_fields = {"title", "content", "author", "type"}
+        valid_text_search_fields = {"title", "content", "author", "type", "keywords"}
         sanitized_text_search_fields = [
             f for f in search_fields if f in valid_text_search_fields
         ]
+        # TASK-31274: 'keywords' is a substring match over the media's active
+        # keywords, OR-ed with the title/content/author/type legs (a tag the
+        # user filed items under is not in the title or the body, so an AND
+        # would never fire). It is NOT the `must_have_keywords` filter above,
+        # which is an exact-match AND over every listed keyword.
+        keyword_field_active = "keywords" in sanitized_text_search_fields
 
         # Define base SELECT, FROM clauses
         broad_select_parts = [
@@ -1981,7 +2672,7 @@ class MediaDatabase:
             "m.deleted",
         ]
         base_select_parts = (
-            ["m.id", "m.title", "m.type", "m.last_modified"]
+            ["m.id", "m.title", "m.type", "m.last_modified", _HAS_ANALYSIS_SELECT]
             if library_summary
             else broad_select_parts
         )
@@ -2065,12 +2756,34 @@ class MediaDatabase:
         )
         if cleaned_must_have:
             kw_mh_placeholders = ",".join("?" * len(cleaned_must_have))
-            # Subquery to ensure media_id is linked to ALL provided keywords
+            # Subquery to ensure media_id is linked to ALL provided keywords.
+            #
+            # TASK-21593: the predicate is `k_mh.keyword IN (...)`, NOT
+            # `LOWER(k_mh.keyword) IN (...)`. Wrapping the column in a
+            # function makes it non-sargable, so the planner could not use
+            # `sqlite_autoindex_Keywords_1` and instead walked EVERY live
+            # keyword for EVERY candidate media row -- measured 12.3 s on a
+            # 20,000-media / 3,000-keyword database, on a path the chat
+            # scope picker runs per debounced keystroke. Bare, it is
+            # `SEARCH k_mh USING INDEX sqlite_autoindex_Keywords_1
+            # (keyword=?)`: 12,292 -> 18.3 ms with the v9 indexes.
+            #
+            # Dropping LOWER() is not a behaviour change here. `keyword` is
+            # declared `TEXT NOT NULL UNIQUE COLLATE NOCASE`, so a bare
+            # comparison against it is already case-insensitive, and
+            # `cleaned_must_have` above has Python-`.lower()`ed every bound
+            # value. Brute-forced over a hostile alphabet (ASCII case,
+            # E-acute, Turkish dotted/dotless I, sharp s, Kelvin sign, final
+            # sigma, digits, spaces, LIKE metacharacters): for every value
+            # this caller can bind, the two forms return identical row sets;
+            # they diverge only for bound values containing uppercase, which
+            # this caller cannot produce, and there the bare form is the
+            # WIDER of the two. Pinned in Tests/DB/test_media_db_schema_v9.py.
             conditions.append(f"""
                 (SELECT COUNT(DISTINCT k_mh.id)
                  FROM MediaKeywords mk_mh
                  JOIN Keywords k_mh ON mk_mh.keyword_id = k_mh.id
-                 WHERE mk_mh.media_id = m.id AND k_mh.deleted = 0 AND LOWER(k_mh.keyword) IN ({kw_mh_placeholders})
+                 WHERE mk_mh.media_id = m.id AND k_mh.deleted = 0 AND k_mh.keyword IN ({kw_mh_placeholders})
                 ) = ?
             """)
             params.extend(cleaned_must_have)
@@ -2084,12 +2797,17 @@ class MediaDatabase:
         )
         if cleaned_must_not_have:
             kw_mnh_placeholders = ",".join("?" * len(cleaned_must_not_have))
+            # Same TASK-21593 change, same reasoning, as the must-have leg
+            # above: bare column so `sqlite_autoindex_Keywords_1` is usable.
+            # Measured 80.8 -> 53.5 ms before the v9 indexes and 0.15 ->
+            # 0.13 ms after them (the index lets LIMIT short-circuit, which
+            # is where most of that arm's win comes from).
             conditions.append(f"""
                 NOT EXISTS (
                     SELECT 1
                     FROM MediaKeywords mk_mnh
                     JOIN Keywords k_mnh ON mk_mnh.keyword_id = k_mnh.id
-                    WHERE mk_mnh.media_id = m.id AND k_mnh.deleted = 0 AND LOWER(k_mnh.keyword) IN ({kw_mnh_placeholders})
+                    WHERE mk_mnh.media_id = m.id AND k_mnh.deleted = 0 AND k_mnh.keyword IN ({kw_mnh_placeholders})
                 )
             """)
             params.extend(cleaned_must_not_have)
@@ -2100,17 +2818,16 @@ class MediaDatabase:
             # LIKE search conditions
             like_conditions = []
             like_params = []
+            # TASK-31274: set only when the keyword leg needs the FTS match as
+            # an OR-able branch instead of the joined MATCH condition.
+            fts_or_branch: Optional[str] = None
+            fts_or_param: Optional[str] = None
 
             # FTS on 'title', 'content'
             if any(f in sanitized_text_search_fields for f in ["title", "content"]):
-                fts_search_active = True
                 effective_fts_query = (
                     fts_match_query if fts_match_query is not None else search_query
                 )
-                if not any(
-                    "media_fts fts" in j_item for j_item in joins
-                ):  # Ensure FTS join is added only once
-                    joins.append("JOIN media_fts fts ON fts.rowid = m.id")
 
                 # SQLite FTS doesn't allow multiple MATCH conditions combined with OR
                 # Instead, we'll use a single MATCH condition with the OR operator inside the FTS query
@@ -2125,36 +2842,99 @@ class MediaDatabase:
                     # matching is case-insensitive already.
                     fts_query_parts.append(effective_fts_query)
                 else:
-                    # For very short search terms (1-2 characters), add wildcards to improve matching
-                    is_quoted_fts_query = effective_fts_query.startswith(
-                        '"'
-                    ) and effective_fts_query.endswith('"')
-                    if len(effective_fts_query) <= 2 and not is_quoted_fts_query:
-                        # Add suffix wildcard for better partial matching with short terms
-                        fts_query_parts.append(f"{effective_fts_query}*")
-
-                        # Note: SQLite FTS5 doesn't support prefix wildcards (*term)
-                        # We'll handle "ends with" matching using LIKE conditions instead
-
-                        # Add case-insensitive versions if needed
-                        if effective_fts_query.lower() != effective_fts_query:
-                            fts_query_parts.append(f"{effective_fts_query.lower()}*")
+                    # TASK-19558: plain user text from the media search box.
+                    # It used to be bound to MATCH RAW, so a typed `"` raised
+                    # OperationalError('unterminated string') and a typed
+                    # `OR`/column filter executed as FTS5 syntax. Each token
+                    # is now quoted individually and the tokens are ANDed --
+                    # the raw bind's own semantics (FTS5 joins bare terms
+                    # with an implicit AND), so recall is unchanged, unlike
+                    # the whole-query phrase this task's first round used.
+                    #
+                    # The lowercased duplicates the raw path used to OR in
+                    # are gone with it: unicode61 matching is already
+                    # case-insensitive (the caller-owned branch above says
+                    # so), and a lowercased copy of a quoted literal is a
+                    # no-op OR-arm. The short-term (1-2 char) prefix widening
+                    # is kept, measured on the RAW length -- quoting adds two
+                    # characters, so testing the quoted string's length would
+                    # have silently retired that branch.
+                    tokens = (
+                        fts5_query_tokens(search_query)
+                        if fts5_query_is_searchable(search_query)
+                        else []
+                    )
+                    if not tokens:
+                        quoted_fts_query = ""
+                    elif len(search_query) <= 2:
+                        # Note: SQLite FTS5 doesn't support prefix wildcards
+                        # (*term); "ends with" is handled by the LIKE
+                        # conditions built below.
+                        quoted_fts_query = quote_fts5_prefix(search_query)
                     else:
-                        # For longer terms, use the original query
-                        fts_query_parts.append(effective_fts_query)
-
-                        # Add case-insensitive version if needed
-                        if (
-                            not is_quoted_fts_query
-                            and effective_fts_query.lower() != effective_fts_query
-                        ):
-                            fts_query_parts.append(effective_fts_query.lower())
+                        quoted_fts_query = build_and_match_expression(tokens)
+                    if quoted_fts_query:
+                        fts_query_parts.append(quoted_fts_query)
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
-                # Add a single MATCH condition
-                conditions.append("fts.media_fts MATCH ?")
-                params.append(combined_fts_query)
+                if combined_fts_query and keyword_field_active:
+                    # TASK-31274: FTS5 raises "unable to use function MATCH in
+                    # the requested context" when a joined MATCH sits inside an
+                    # OR, so the keyword leg cannot be OR-ed against the joined
+                    # form. Spelled as an uncorrelated id subquery it can be --
+                    # the same shape `search_library_media_page` already uses.
+                    # No `fts.rank` is available this way, so relevance sorting
+                    # falls back to the default order; the Library browse always
+                    # passes an explicit date/title sort.
+                    fts_or_branch = (
+                        "m.id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)"
+                    )
+                    fts_or_param = combined_fts_query
+                elif combined_fts_query:
+                    fts_search_active = True
+                    if not any(
+                        "media_fts fts" in j_item for j_item in joins
+                    ):  # Ensure FTS join is added only once
+                        joins.append("JOIN media_fts fts ON fts.rowid = m.id")
+                    # Add a single MATCH condition
+                    conditions.append("fts.media_fts MATCH ?")
+                    params.append(combined_fts_query)
+                else:
+                    # No executable MATCH expression came out of the builder.
+                    # `MATCH ''` is an FTS5 syntax error, so the leg cannot be
+                    # kept -- but WHY it is empty decides what replaces it,
+                    # because the reasons are not the same failure (TASK-19558
+                    # review round 2, Qodo #1: round 1 answered "0" to all of
+                    # them, and since these conditions are AND-joined that
+                    # forced the WHOLE query to zero rows -- a recall
+                    # regression, not a safety property).
+                    #
+                    #  * A caller-owned `fts_match_query` that came out blank
+                    #    means "no rows" by that seam's own contract
+                    #    (`build_and_match_query` returns "" for exactly that),
+                    #    and the title/content LIKE legs are deliberately NOT
+                    #    built in that branch -- so dropping the condition
+                    #    would leave no text filter at all and return
+                    #    EVERYTHING. It stays explicitly false.
+                    #  * A NUL byte truncates the bound parameter inside
+                    #    SQLite, so `%a\x00b%` reaches LIKE as `%a` -- the
+                    #    fallback is not merely useless there, it is WIDER
+                    #    than what was asked for (measured on dev:
+                    #    `dragon\x00lore` returned the `dragon` row). Also
+                    #    explicitly false.
+                    #  * Punctuation-only text ("!!!", "-", "***") simply has
+                    #    no alphanumeric run for FTS5 to index -- but LIKE
+                    #    '%!!!%' expresses the user's intent exactly. The FTS
+                    #    leg (and its JOIN, and relevance ordering) is DROPPED
+                    #    and the LIKE conditions below carry the search.
+                    fts_leg_must_be_false = (
+                        fts_match_query is not None
+                        or not isinstance(search_query, str)
+                        or "\x00" in search_query
+                    )
+                    if fts_leg_must_be_false:
+                        conditions.append("0")
 
                 # Add LIKE search for 'title' and 'content' to ensure partial matches work
                 title_content_like_parts = []
@@ -2209,7 +2989,35 @@ class MediaDatabase:
                     like_conditions.append(f"({' OR '.join(like_parts)})")
 
             # Add LIKE conditions to the main conditions list
-            if like_conditions:
+            if keyword_field_active:
+                # TASK-31274: keep the existing title/content legs exactly as
+                # they are (FTS AND LIKE) and OR the keyword leg beside them,
+                # so this only ADDS keyword hits. Params are extended here, in
+                # branch order, because the FTS param is no longer appended
+                # where its condition used to be.
+                text_and_parts = []
+                text_and_params: List[Any] = []
+                if fts_or_branch is not None:
+                    text_and_parts.append(fts_or_branch)
+                    text_and_params.append(fts_or_param)
+                if like_conditions:
+                    text_and_parts.append(f"({' OR '.join(like_conditions)})")
+                    text_and_params.extend(like_params)
+                branches = []
+                branch_params: List[Any] = []
+                if text_and_parts:
+                    branches.append(f"({' AND '.join(text_and_parts)})")
+                    branch_params.extend(text_and_params)
+                branches.append(
+                    "EXISTS (SELECT 1 FROM MediaKeywords mk_q "
+                    "JOIN Keywords k_q ON mk_q.keyword_id = k_q.id "
+                    "WHERE mk_q.media_id = m.id AND k_q.deleted = 0 "
+                    "AND k_q.keyword LIKE ? ESCAPE '\\')"
+                )
+                branch_params.append(f"%{self._escape_library_like(search_query)}%")
+                conditions.append(f"({' OR '.join(branches)})")
+                params.extend(branch_params)
+            elif like_conditions:
                 conditions.append(f"({' OR '.join(like_conditions)})")
                 params.extend(like_params)
 
@@ -2267,7 +3075,30 @@ class MediaDatabase:
         join_clause = " ".join(list(dict.fromkeys(joins)))  # Unique joins
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-        count_sql = f"SELECT {count_select} {base_from} {join_clause} {where_clause}"
+        # TASK-21593: the COUNT half of an FTS search had its join order
+        # inverted. With no `sqlite_stat1` the planner made Media the outer
+        # loop and probed `media_fts` once per live media row -- measured
+        # 276 ms against 29 ms for the same answer with `media_fts` outside,
+        # on a 20,000-media corpus. (The ROWS half already gets fts-first on
+        # its own, because its ORDER BY on `fts.rank` forces the issue; it is
+        # deliberately left alone.) A plain `FROM media_fts fts JOIN Media m`
+        # does NOT fix it -- the planner reorders straight back, measured
+        # 266 ms. CROSS JOIN is the only spelling SQLite treats as an order
+        # instruction rather than a suggestion.
+        #
+        # It is applied ONLY when no id allowlist is in play, and that
+        # exception is measured, not defensive: with a five-id
+        # `media_ids_filter` Media really is the cheap side and pinning
+        # fts first costs 0.10 -> 1.92 ms. Every other predicate
+        # (type facet, chunking_status, date range) leaves Media-first
+        # 3.3-9.5x slower, so they keep the pin.
+        count_from_clause = f"{base_from} {join_clause}"
+        if fts_search_active and not media_ids_filter:
+            count_from_clause = (
+                "FROM media_fts fts CROSS JOIN Media m ON fts.rowid = m.id"
+            )
+
+        count_sql = f"SELECT {count_select} {count_from_clause} {where_clause}"
         results_sql = (
             f"{final_select_stmt} {base_from} {join_clause} {where_clause} "
             f"{order_by_clause_str} LIMIT ? OFFSET ?"
@@ -2285,13 +3116,13 @@ class MediaDatabase:
                     ]
         except Exception as error:
             logger.error(
-                "Media search failed (error_type={}).", type(error).__name__
+                "Media search failed (error_type=%s).", type(error).__name__
             )
             raise DatabaseError("Media search failed.") from None
 
         if library_summary:
             logger.info(
-                "Media search completed (mode={}, limit={}, offset={}, sort={}, summary=true).",
+                "Media search completed (mode=%s, limit=%s, offset=%s, sort=%s, summary=true).",
                 "fts" if fts_search_active else "browse",
                 results_per_page,
                 resolved_offset,
@@ -2299,7 +3130,7 @@ class MediaDatabase:
             )
         else:
             logger.info(
-                "Media search completed (mode={}, limit={}, offset={}, result_count={}, total={}, sort={}).",
+                "Media search completed (mode=%s, limit=%s, offset=%s, result_count=%s, total=%s, sort=%s).",
                 "fts" if fts_search_active else "browse",
                 results_per_page,
                 resolved_offset,
@@ -2308,6 +3139,87 @@ class MediaDatabase:
                 resolved_sort_by,
             )
         return results_list, total_matches
+
+    def library_browse_keyword_only_matches(
+        self, media_ids: Sequence[int], query: str
+    ) -> Dict[int, str]:
+        """Return ``{media id: keyword}`` for page rows ONLY a keyword matched.
+
+        task-28008 (critique #5 P2): the Library browse filter also searches
+        keywords (``LIBRARY_BROWSE_SEARCH_FIELDS``), so a hit whose title and
+        body hold nothing the user typed reads as a mismatch. This is the
+        evidence the row needs to explain itself -- and only for the rows
+        that need it: a row whose title or content matched already shows the
+        user why it is there.
+
+        ONE statement for the whole page, not one per row. The title and
+        content legs are spelled exactly as ``search_media_db`` spells them
+        (raw ``%query%`` with ``COLLATE NOCASE``) and the keyword leg exactly
+        as its own branch does (``_escape_library_like`` plus ``ESCAPE``).
+
+        PRECONDITION: the search being explained asked for exactly the
+        Library browse's own fields (``LIBRARY_BROWSE_SEARCH_FIELDS``).
+        ``search_media_db``'s text branch is ``FTS AND (title/content LIKE OR
+        author/type LIKE)``, so with a wider field set a row the AUTHOR leg
+        matched would look keyword-only here. The one caller enforces that
+        equality; do not call this for any other field set. Within it the
+        probe cannot disagree with the search that produced the page: it
+        ignores only the FTS half of the text branch, which is AND-ed with
+        the LIKE half, and skipping that can only yield FEWER reasons.
+
+        A failure here is not a page failure. The reason is decoration on a
+        page that has already loaded, so a database error answers "no
+        reasons" rather than taking the rows down with it.
+
+        Args:
+            media_ids: Backing media ids of the page just fetched.
+            query: The raw user search text that fetched them.
+
+        Returns:
+            Matched keyword per keyword-only row; empty when the page has
+            none, when there is no query to explain, or when the probe
+            itself failed.
+        """
+        ids = [int(media_id) for media_id in media_ids]
+        if not ids or not query:
+            return {}
+        try:
+            return self._library_browse_keyword_only_matches(ids, query)
+        except (sqlite3.Error, DatabaseError):
+            # ``DatabaseError`` is this class's own connect-failure wrapper
+            # (a bare Exception subclass, not a sqlite3.Error) -- the
+            # docstring's "not a page failure" has to hold for it too.
+            return {}
+
+    def _library_browse_keyword_only_matches(
+        self, ids: List[int], query: str
+    ) -> Dict[int, str]:
+        """Run the keyword-only match probe. See the public wrapper above."""
+        placeholders = ",".join("?" * len(ids))
+        like_pattern = f"%{query}%"
+        keyword_pattern = f"%{self._escape_library_like(query)}%"
+        sql = f"""
+            SELECT m.id AS media_id,
+                   (SELECT k.keyword
+                      FROM MediaKeywords mk
+                      JOIN Keywords k ON mk.keyword_id = k.id
+                     WHERE mk.media_id = m.id AND k.deleted = 0
+                       AND k.keyword LIKE ? ESCAPE '\\'
+                     ORDER BY LENGTH(k.keyword), k.keyword
+                     LIMIT 1) AS keyword
+              FROM Media m
+             WHERE m.id IN ({placeholders})
+               AND COALESCE(m.title, '') NOT LIKE ? COLLATE NOCASE
+               AND COALESCE(m.content, '') NOT LIKE ? COLLATE NOCASE
+        """
+        params = [keyword_pattern, *ids, like_pattern, like_pattern]
+        with self.transaction() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
+        return {
+            row["media_id"]: row["keyword"]
+            for row in rows
+            if row["keyword"] is not None
+        }
 
     # --- Public Mutating Methods (Modified for Python Sync/FTS Logging) ---
     def add_keyword(self, keyword: str) -> Tuple[Optional[int], Optional[str]]:
@@ -2880,9 +3792,20 @@ class MediaDatabase:
             ) from e
 
     def list_read_it_later_media_ids(
-        self, *, include_deleted: bool = False, include_trash: bool = False
+        self,
+        *,
+        include_deleted: bool = False,
+        include_trash: bool = False,
+        limit: Optional[int] = None,
     ) -> List[int]:
-        """List media IDs saved in the local read-it-later table."""
+        """List media IDs saved in the local read-it-later table.
+
+        Args:
+            include_deleted: Include soft-deleted media.
+            include_trash: Include trashed media.
+            limit: Bound the result to the newest ``limit`` saves; ``None``
+                returns the whole queue (the pre-existing behavior).
+        """
         sql = """
             SELECT s.media_id
             FROM MediaReadItLaterState s
@@ -2894,14 +3817,57 @@ class MediaDatabase:
         if not include_trash:
             sql += " AND m.is_trash = 0"
         sql += " ORDER BY s.saved_at DESC, s.media_id DESC"
+        params: tuple = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (int(limit),)
         try:
-            cursor = self.execute_query(sql, ())
+            cursor = self.execute_query(sql, params)
             return [int(row["media_id"]) for row in cursor.fetchall()]
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(
                 f"Error listing read-it-later media IDs from DB '{self.db_path_str}': {e}"
             )
             raise DatabaseError("Failed to list read-it-later media IDs") from e
+
+    def count_read_it_later_media(
+        self, *, include_deleted: bool = False, include_trash: bool = False
+    ) -> int:
+        """Count media saved in the local read-it-later table.
+
+        Same filters as ``list_read_it_later_media_ids`` but a scalar
+        ``COUNT(*)`` -- callers needing only the total (Home's
+        read-it-later suggestion) must not materialize the id list.
+
+        Args:
+            include_deleted: Include soft-deleted media rows.
+            include_trash: Include trashed media rows.
+
+        Returns:
+            The number of matching read-it-later media rows.
+
+        Raises:
+            DatabaseError: On a database failure.
+        """
+        sql = """
+            SELECT COUNT(*) AS total
+            FROM MediaReadItLaterState s
+            JOIN Media m ON m.id = s.media_id
+            WHERE s.is_read_it_later = 1
+        """
+        if not include_deleted:
+            sql += " AND m.deleted = 0"
+        if not include_trash:
+            sql += " AND m.is_trash = 0"
+        try:
+            with self.transaction() as conn:
+                row = conn.execute(sql, ()).fetchone()
+                return int(row["total"]) if row is not None else 0
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(
+                f"Error counting read-it-later media in DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError("Failed to count read-it-later media") from e
 
     def soft_delete_media(self, media_id: int, cascade: bool = True) -> bool:
         """
@@ -6733,7 +7699,7 @@ class MediaDatabase:
                     row["type"] for row in cursor.fetchall() if row["type"].strip()
                 ]
             logger.info(
-                "Distinct media types loaded (result_count={}, include_deleted={}, include_trash={}).",
+                "Distinct media types loaded (result_count=%s, include_deleted=%s, include_trash=%s).",
                 len(results),
                 include_deleted,
                 include_trash,
@@ -6741,7 +7707,7 @@ class MediaDatabase:
             return results
         except Exception as error:
             logger.error(
-                "Distinct media types failed (error_type={}).", type(error).__name__
+                "Distinct media types failed (error_type=%s).", type(error).__name__
             )
             raise DatabaseError("Failed to fetch distinct media types.") from None
 
@@ -7619,15 +8585,18 @@ class MediaDatabase:
     def _library_fts_query(cls, raw_query: str) -> Optional[str]:
         """Build a safe FTS5 MATCH query from raw user text.
 
-        Tokens are extracted with a word-character regex and each is
-        double-quoted, so FTS operators in the raw input are inert. Returns
-        None when the input contains no usable tokens.
+        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
+        with a word-character regex, each is double-quoted (so FTS operators
+        in the raw input are inert) and they are space-joined, which is
+        FTS5's implicit AND -- every token must appear, in any order and not
+        necessarily adjacent. Returns None when the input contains no usable
+        tokens.
         """
         tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
         if not tokens:
             return None
         tokens = tokens[: cls._LIBRARY_FTS_TOKEN_LIMIT]
-        return " ".join(f'"{token}"' for token in tokens)
+        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_media(
         self, conn: sqlite3.Connection, media_ids: List[int]
@@ -7716,6 +8685,114 @@ class MediaDatabase:
                 f"Error listing library media page (limit={limit}, offset={offset}): {e}"
             )
             raise DatabaseError(f"Failed to list library media page: {e}") from e
+
+    def list_library_media_trash_page(
+        self,
+        *,
+        query: str = "",
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Return raw local Trash rows plus coherent total and complete facets.
+
+        The filtered rows and count include only active Trash records. Facets
+        instead describe every active Trash record, regardless of the current
+        query, type filter, or page. All three reads share one transaction.
+
+        Args:
+            query: Optional title substring matched literally.
+            media_type: Optional trimmed, exact case-sensitive type filter.
+            limit: Required page size, exactly 20.
+            offset: Number of matching records to skip.
+
+        Returns:
+            Dict containing narrow raw Trash ``items``, ``total``, request
+            coordinates, and complete-source ``types`` facets.
+
+        Raises:
+            ValueError: If request coordinates or filters are invalid.
+            DatabaseError: If the read cannot be completed.
+        """
+        if type(limit) is not int or limit != 20:
+            raise ValueError("Library Media Trash limit must equal 20.")
+        if type(offset) is not int or not 0 <= offset <= 2**63 - 1:
+            raise ValueError("Library Media Trash offset is invalid.")
+        if not isinstance(query, str):
+            raise ValueError("Library Media Trash query is invalid.")
+        query = query.strip()
+        if "\x00" in query or len(query) > 200:
+            raise ValueError("Library Media Trash query is invalid.")
+        if media_type is not None and not isinstance(media_type, str):
+            raise ValueError("Library Media Trash media type is invalid.")
+        media_type = media_type.strip() if media_type is not None else None
+        media_type = media_type or None
+
+        conditions = ["deleted = 0", "is_trash = 1"]
+        params: List[Any] = []
+        if query:
+            conditions.append("title LIKE ? ESCAPE '\\'")
+            params.append(f"%{self._escape_library_like(query)}%")
+        if media_type is not None:
+            conditions.append("TRIM(type) = ? COLLATE BINARY")
+            params.append(media_type)
+        where_clause = " AND ".join(conditions)
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM Media WHERE {where_clause}",
+                    tuple(params),
+                ).fetchone()["count"]
+                rows = conn.execute(
+                    f"""
+                    SELECT id, title, type, trash_date
+                    FROM Media
+                    WHERE {where_clause}
+                    ORDER BY trash_date IS NULL ASC,
+                             trash_date DESC,
+                             last_modified IS NULL ASC,
+                             last_modified DESC,
+                             id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params + [limit, offset]),
+                ).fetchall()
+                types = conn.execute(
+                    """
+                    SELECT DISTINCT TRIM(type) AS type
+                    FROM Media
+                    WHERE deleted = 0
+                      AND is_trash = 1
+                      AND TRIM(type) <> ''
+                    ORDER BY type COLLATE BINARY
+                    """
+                ).fetchall()
+            normalized_types = sorted(
+                {
+                    media_type_value.strip()
+                    for row in types
+                    if (media_type_value := row["type"]).strip()
+                }
+            )
+            return {
+                "items": [dict(row) for row in rows],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "types": normalized_types,
+            }
+        except sqlite3.Error as e:
+            logger.error(
+                "Media operation failed; operation=list_library_media_trash "
+                "limit={} offset={} has_query={} has_type={} exception_type={}",
+                limit,
+                offset,
+                bool(query),
+                media_type is not None,
+                type(e).__name__,
+            )
+            raise DatabaseError("Failed to list library media Trash page.") from e
 
     def search_library_media_page(
         self, *, query: str, limit: int, offset: int
@@ -8996,7 +10073,7 @@ def get_all_content_from_database(db_instance: MediaDatabase) -> List[Dict[str, 
 
 def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     """
-    Performs a HARD delete of a media item and its related data via cascades.
+    Permanently deletes one active Trash item and its related data via cascades.
 
     **DANGER:** This operation bypasses the soft delete mechanism and the sync log.
     It physically removes the row from the `Media` table. Foreign key constraints
@@ -9011,7 +10088,7 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
         media_id (int): The ID of the Media item to permanently delete.
 
     Returns:
-        bool: True if the item was found and deleted, False otherwise.
+        bool: True if the item was in Trash and deleted, False otherwise.
 
     Raises:
         TypeError: If `db_instance` is not a Database object.
@@ -9020,38 +10097,52 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     if not isinstance(db_instance, MediaDatabase):
         raise TypeError("db_instance required.")
     logger.warning(
-        f"!!! PERMANENT DELETE initiated Media ID: {media_id} DB {db_instance.db_path_str}. NOT SYNCED !!!"
+        "Media mutation operation=permanent_delete status=started count=1"
     )
     try:
-        with db_instance.transaction() as conn:
+        with db_instance.transaction(immediate=True) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
-            if not cursor.fetchone():
-                logger.warning(f"Permanent delete failed: Media {media_id} not found.")
-                return False
-            # Hard delete - Cascades should handle children via FKs
-            cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
+            cursor.execute(
+                "DELETE FROM Media "
+                "WHERE id = ? AND deleted = 0 AND is_trash = 1",
+                (media_id,),
+            )
             deleted_count = cursor.rowcount
+            if deleted_count == 0:
+                cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
+                status = "not_in_trash" if cursor.fetchone() else "not_found"
+                logger.warning(
+                    "Media mutation operation=permanent_delete "
+                    "status={} count=0",
+                    status,
+                )
+                return False
             # Manually delete from FTS (cascade should work, but belt-and-suspenders)
             db_instance._delete_fts_media(conn, media_id)
         if deleted_count > 0:
             logger.info(
-                f"Permanently deleted Media ID: {media_id}. NO sync log generated."
+                "Media mutation operation=permanent_delete "
+                "status=committed count=1"
             )
             return True
         else:
-            logger.error(f"Permanent delete failed unexpectedly Media {media_id}.")
+            logger.error(
+                "Media mutation operation=permanent_delete "
+                "status=no_rows count=0"
+            )
             return False
     except sqlite3.Error as e:
-        logger.opt(exception=True).error(
-            f"Error permanently deleting Media {media_id}: {e}"
+        logger.error(
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category={}",
+            type(e).__name__,
         )
         raise DatabaseError(f"Failed permanently delete item: {e}") from e
     except Exception as e:
-        (
-            logger.opt(exception=True).error(
-                f"Unexpected error permanently deleting Media {media_id}: {e}"
-            )
+        logger.error(
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category={}",
+            type(e).__name__,
         )
         raise DatabaseError(f"Unexpected permanent delete error: {e}") from e
 

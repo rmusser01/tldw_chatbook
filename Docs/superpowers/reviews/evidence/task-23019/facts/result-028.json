@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/UI/test_library_conversation_reader.py::test_reader_info_is_explicit_and_truthful",
+  "status": "PASS"
+}

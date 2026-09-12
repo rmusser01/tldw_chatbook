@@ -12,10 +12,17 @@ from tldw_chatbook.Chat.console_command_grammar import (
     default_console_registry,
 )
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.UI.Console_Modules import video as video_controller_module
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
+from Tests.UI.console_controller_stubs import (
+    stub_fleet_controller,
+    stub_library_activity_controller,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import VideoStore
@@ -74,6 +81,14 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         notify=lambda *args, **kwargs: notifications.append((args, kwargs)),
         push_screen=pushed.append,
     )
+    # Precede the `_console_chat_store` assignment: that setter reaches
+    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
+    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded. The
+    # `build_console_controllers` call below replaces both with the real
+    # thing; it runs too late for the store assignment.
+    stub_fleet_controller(screen, context="video actions bare screen")
+    stub_library_activity_controller(screen, context="video actions bare screen")
     screen._console_chat_store = store
     screen._ensure_console_chat_store = lambda: store
     screen._sync_native_console_chat_ui = AsyncMock()
@@ -140,17 +155,15 @@ def test_video_actions_absent_on_plain_messages():
 def test_video_actions_enabled_only_when_file_available():
     service = ConsoleMessageActionService()
     ready = {
-        a.action_id: a for a in service.available_actions(
-            _video_message(), video_file_available=True
-        )
+        a.action_id: a
+        for a in service.available_actions(_video_message(), video_file_available=True)
     }
     assert ready["video-play"].enabled
     assert ready["video-save-copy"].enabled
 
     expired = {
-        a.action_id: a for a in service.available_actions(
-            _video_message(), video_file_available=False
-        )
+        a.action_id: a
+        for a in service.available_actions(_video_message(), video_file_available=False)
     }
     assert not expired["video-play"].enabled
     assert "ephemeral video file is gone" in expired["video-play"].disabled_reason
@@ -181,13 +194,9 @@ async def test_handle_console_message_action_routes_video_play_with_persisted_st
     from tldw_chatbook.Media_Playback import player_pipeline
     from tldw_chatbook.UI.Screens import video_player_screen
 
-    monkeypatch.setattr(
-        player_pipeline, "playback_tools_available", lambda: (True, "")
-    )
+    monkeypatch.setattr(player_pipeline, "playback_tools_available", lambda: (True, ""))
     monkeypatch.setattr(video_player_screen, "VideoPlayerScreen", FakeVideoPlayerScreen)
-    button = Button(
-        "play", id=f"console-message-action-video-play-{message.id}"
-    )
+    button = Button("play", id=f"console-message-action-video-play-{message.id}")
 
     handled = await screen.handle_console_message_action(Button.Pressed(button))
 
@@ -213,9 +222,7 @@ async def test_handle_console_message_action_routes_video_save_with_persisted_st
         "get_cli_setting",
         lambda *_args, **_kwargs: str(export_root),
     )
-    button = Button(
-        "save", id=f"console-message-action-video-save-copy-{message.id}"
-    )
+    button = Button("save", id=f"console-message-action-video-save-copy-{message.id}")
 
     handled = await screen.handle_console_message_action(Button.Pressed(button))
     assert len(pending_workers) == 1
@@ -243,9 +250,7 @@ async def test_video_play_resolves_webm_from_metadata(tmp_path, monkeypatch):
     from tldw_chatbook.Media_Playback import player_pipeline
     from tldw_chatbook.UI.Screens import video_player_screen
 
-    monkeypatch.setattr(
-        player_pipeline, "playback_tools_available", lambda: (True, "")
-    )
+    monkeypatch.setattr(player_pipeline, "playback_tools_available", lambda: (True, ""))
     monkeypatch.setattr(video_player_screen, "VideoPlayerScreen", FakeVideoPlayerScreen)
 
     handled = await screen.handle_console_message_action(
@@ -275,9 +280,7 @@ async def test_video_save_copy_preserves_webm_extension_and_collision_names(
         "get_cli_setting",
         lambda *_args, **_kwargs: str(export_root),
     )
-    button = Button(
-        "save", id=f"console-message-action-video-save-copy-{message.id}"
-    )
+    button = Button("save", id=f"console-message-action-video-save-copy-{message.id}")
 
     assert await screen.handle_console_message_action(Button.Pressed(button)) is True
     await pending_workers.pop(0)

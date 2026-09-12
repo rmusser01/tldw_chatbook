@@ -145,11 +145,11 @@ persistent URL or file ingestion.
 - **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
-- **Library tools excluded from standalone (18):** `library_list_media`, `library_get_media`, `library_search_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
 
 ### Standalone behavior and controls
 
-All 18 Library tools are excluded from the standalone stdio catalog. They
+All 24 Library tools are excluded from the standalone stdio catalog. They
 remain available only through the app's gated, logged direct Library execution
 path, whose raw in-app `tools/call` route is refused.
 
@@ -165,6 +165,69 @@ because an stdio client cannot display Chatbook's operator approval card.
 
 > [!WARNING]
 > An external MCP client runs with the user's OS access. It can read private local Library content through exposed tools, resources, and prompts, and it may send that content off-device to a cloud model. Enable only the surface you intend to disclose and trust the client and its model provider.
+
+## Portable Tool Profiles
+
+Chatbook can export and import named tool permission profiles as deterministic
+`.tldw-tool-pack` V1 archives. These are policy packages, not MCP server bundles.
+They contain one flattened set of exact Allow/Ask/Deny rules, Ask/Deny
+future-tool fallbacks, stable permission identities, and contract fingerprints.
+The fingerprints cover raw tool name, description, input schema, and
+policy-relevant risk tags without disclosing description or schema text.
+
+The portability inventory is fail-closed and code-owned. It covers the
+permission-addressable built-in agent tools, the built-in Chatbook MCP tools,
+local/raw-shell/Virtual CLI tools, and local external MCP definitions available
+live or from validated cache. Display-only server-source tools, Library
+capabilities, managed-skill approval, runtime orchestration, and skills are
+explicitly counted as excluded. Adding a permission namespace without an
+inventory adapter or explicit exclusion blocks export.
+
+Export reads one strict permission snapshot and one complete inventory. The
+review is bound to the exact profile policy digest and, for imported profiles,
+its lifecycle revision. Named-profile inheritance, definition-change downgrade,
+and high-risk floors are resolved before serialization. Broad Allow fallbacks
+are clamped to Ask. The global kill switch, runtime availability, connection
+configuration, workspace/Persona gates, and project-instruction state remain
+destination-local and are never serialized.
+
+Import first validates a canonical two-member archive, then performs a
+side-effect-free review against one strict local policy snapshot and one
+inventory snapshot. Exact automatic matching requires authority, server key,
+raw tool name, and contract fingerprint. Mapping one external MCP server to
+another is manual, one-to-one, and shown in the review. A reviewed import creates
+an unbound named profile only; it does not connect a server, install a tool, or
+change any active workspace. Changed or missing Allow/Ask entries are omitted,
+while safe Deny entries may remain pending.
+
+The first bind is a separate workspace transaction and requires confirmation of
+the exact workspace, defaults, profile revision/digest, and effective posture.
+All later resolution, persistent decisions, session approvals, and tool tests
+remain scoped to the captured profile. Individual policy rules are edited only
+in MCP Permissions; Settings owns lifecycle actions and deep-links to that
+editor.
+
+Import receipts are private bounded evidence, never policy authority. Missing
+receipt data degrades provenance but does not weaken the stored policy or clear
+first-bind confirmation. Removal is allowed only for a valid imported profile
+with no active/archived workspace reference and no runtime lease, and leaves a
+hidden permanent-Deny tombstone. Publication, activation, binding, and removal
+use stable path-free failure categories and report uncertain outcomes rather
+than guessing after an ambiguous filesystem or store replacement.
+
+Native Windows archive publication is a separate capability and currently
+returns `tool_pack.export.publication_unsupported` when the required safe
+publication primitives are unavailable. It is not represented as a schema or
+import incompatibility.
+
+V1 rejects executable, skill, plugin, connection, credential, command,
+environment, endpoint, approval, receipt, workspace, Persona, and runtime-install
+fields. A combined Tools+Skills pack or plugin installer is future work and
+requires a new schema, ADR, provenance/signature policy, dependency model,
+permission review, and explicit installation UX. V1 readers must never treat
+unknown composition fields as installable content. See
+[ADR-107](../../backlog/decisions/107-portable-tool-use-packs.md) for the complete
+trust-boundary decision.
 
 ## MCP Tools
 
@@ -198,11 +261,16 @@ Have conversations with specific characters.
 
 #### `search_rag`
 Search the RAG (Retrieval-Augmented Generation) database.
+
+`use_semantic` remains a boolean compatibility switch: `false` forces media
+keyword search; `true` or omission follows the active RAG profile's `plain`,
+`semantic`, or `hybrid` search mode.
+
 - **Parameters**:
   - `query`: Search query
   - `limit`: Maximum results (default: 10)
   - `media_types`: Optional media type filter
-  - `use_semantic`: Use semantic search if available
+  - `use_semantic`: Enable profile-driven RAG search (default: `true`)
 - **Returns**: List of search results with content and metadata
 
 #### `search_conversations`
@@ -253,7 +321,8 @@ In addition to the standalone tools above, the in-process local MCP surface
 exposes 18 read-only `library_*` tools — `library_list_*`, `library_get_*`, and
 `library_search_*` for each of Media, Notes, Prompts, Skills, Conversations,
 and Collections. The same shared service and all 18 tools are also callable by
-Console agents when `[console].direct_library_tools` is enabled. They answer
+Console agents when that conversation allows assistant Library access and its
+**Direct / RAG selector** chooses Direct. They answer
 factual Library questions (list, count, view, lexical search) without touching
 the RAG/embedding pipeline.
 
@@ -267,8 +336,9 @@ the RAG/embedding pipeline.
   get tools read bounded windows with revision-checked continuation cursors;
   every serialized response fits within 32 KiB.
 - **Compatibility**: the standalone tools above are unchanged; the `library_*`
-  namespace is additive and independent of the Console
-  `[console].direct_library_tools` toggle.
+  namespace is additive and **independent of Console's per-conversation
+  Library policy**. MCP registration and permissions remain authoritative for
+  MCP calls.
 
 See `Docs/Development/Agent-Tools/local-library-tools.md` for the full
 contract (exact names, pagination, continuation, error codes, and security
@@ -380,6 +450,10 @@ fixed `GatewayLimits` defaults: 600 requests per minute and 16 in-flight
 requests. Those limits are not Chatbook config keys. When local tools are
 enabled, workspace confinement comes from `[console] workspace_root` and each
 call still uses the shared permission store and kill switch described above.
+Confinement is not the only path check: credential, permission-store and
+app-database paths (`Utils/sensitive_paths.py`) are refused regardless of the
+configured root, enforced for these tools inside
+`Tools/local_tool_impls.py`'s `resolve_workspace_path`.
 
 ## Installation and Setup
 

@@ -1,4 +1,4 @@
-"""SQLite persistence for agent run records (primary + sub-agent).
+"""SQLite persistence for run records keyed by an unconstrained kind string.
 
 Follows the Workspace_DB pattern (task-3011 form): BaseDB with a
 thread-local held connection — the earlier per-call shape paid full
@@ -14,22 +14,102 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence, Iterator, Union
+from typing import Any, Iterator, Mapping, Sequence, Union, overload
 
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
     AgentDefinition,
     TERMINAL_RUN_STATUSES,
     validate_agent_definition,
 )
+from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from .base_db import BaseDB
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+# SQLite caps host parameters per statement. The ceiling is build-dependent:
+# 32766 on SQLite >= 3.32, but 999 on older builds, and this project's floor
+# is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
+# chunked read is correct on every build rather than on the newest one.
+_IN_CLAUSE_CHUNK = 900
+CONSOLE_ACTIVITY_RECEIPT_PAGE_LIMIT = 200
+CONSOLE_ACTIVITY_RECEIPT_MAX_PAGE_LIMIT = 500
+
+# JSON text can expand each live UTF-8 byte to a six-byte escape. These caps
+# bound Python allocation while accommodating every valid raw-CLI field.
+_LOCAL_COMMAND_CALL_ARGS_JSON_BYTES = 160 * 1024
+_LOCAL_COMMAND_RESULT_ARGS_JSON_BYTES = 256 * 1024
+_LOCAL_COMMAND_STEPS_JSON_BYTES = 1024
+_LOCAL_COMMAND_CALL_PAYLOAD_BYTES = 512 * 1024
+# JSON can expand one durable output byte to a six-byte ``\u00xx`` escape.
+# The remaining allowance covers the independently bounded result args and
+# fixed step envelope before SQLite parses the payload.
+_LOCAL_COMMAND_RESULT_PAYLOAD_BYTES = (
+    DEFAULT_MAX_RECORD_BYTES * 6
+    + _LOCAL_COMMAND_RESULT_ARGS_JSON_BYTES
+    + _LOCAL_COMMAND_STEPS_JSON_BYTES
+)
+_LOCAL_COMMAND_STATUS_BYTES = 16
+_LOCAL_COMMAND_CREATED_AT_BYTES = 64
+
+
+class AgentStepConflictError(ValueError):
+    """A durable step index already owns a different canonical payload."""
+
+
+class ConsoleActivityReceiptsUnavailable(RuntimeError):
+    """The optional local Console activity-receipt capability is unavailable."""
+
+
+@dataclass(frozen=True)
+class ConsoleActivityReceiptPage:
+    """One bounded keyset page of current unseen activity receipts."""
+
+    rows: tuple[dict[str, Any], ...]
+    next_cursor: tuple[str, str] | None
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        return iter(self.rows)
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    @overload
+    def __getitem__(self, index: int) -> dict[str, Any]: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[dict[str, Any], ...]: ...
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> dict[str, Any] | tuple[dict[str, Any], ...]:
+        return self.rows[index]
+
+
+def _canonical_step_payload(index: int, payload: dict) -> str:
+    """Validate and serialize one explicit-index step before locking SQLite."""
+    if type(index) is not int:
+        raise TypeError("step index must be an int")
+    if index < 0:
+        raise ValueError("step index must be non-negative")
+    if not isinstance(payload, dict):
+        raise TypeError("step payload must be a dict")
+    if "index" not in payload:
+        raise ValueError("step payload must include index")
+    payload_index = payload["index"]
+    if type(payload_index) is not int:
+        raise TypeError("step payload index must be an int")
+    if payload_index != index:
+        raise ValueError("step payload index must match sequence index")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 class AgentRunsDB(BaseDB):
@@ -53,7 +133,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 12
+    _CURRENT_SCHEMA_VERSION = 15
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -63,6 +143,7 @@ class AgentRunsDB(BaseDB):
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._thread_local = threading.local()
+        self.receipt_capability_available = False
         super().__init__(db_path, client_id)
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
@@ -123,8 +204,7 @@ class AgentRunsDB(BaseDB):
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")
@@ -225,13 +305,45 @@ class AgentRunsDB(BaseDB):
                     -- run it resumed from. NULL for every ordinary run.
                     -- Lineage only: parent_run_id still points at the
                     -- RESUMING turn's primary, never at the old run.
-                    resumed_from_run_id TEXT
+                    resumed_from_run_id TEXT,
+                    -- v14 (ADR-080): the stable parent Trace event that
+                    -- caused this run to exist. NULL for primary and
+                    -- legacy runs whose precise cause was not captured.
+                    spawn_event_id TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
                     ON agent_runs(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_parent
                     ON agent_runs(parent_run_id);
+
+                -- v13 (task-18601 part A): agent_runs.steps was a single
+                -- JSON blob column that append_steps rewrote WHOLE on
+                -- every appended step -- read the entire blob, json.loads
+                -- it, extend, json.dumps, rewrite the whole column. O(n)
+                -- per append, O(n^2) per run; measured 44x slower by the
+                -- 2000th append on a real DB (~5.4 minutes of write churn
+                -- extrapolated to a 25k-step run). Steps now live here
+                -- instead, one row per step, keyed (run_id, seq) so
+                -- append_steps becomes a pure INSERT with no read of the
+                -- existing log. `agent_runs.steps` is left exactly as it
+                -- was (still the legacy blob column, still defaulting to
+                -- '[]' for every run created from now on) -- an existing
+                -- run's history stays in the blob; only NEW appends land
+                -- here. See `_rows_to_dicts`'s dual-read for how a run's
+                -- full step list is reassembled at read time (blob steps
+                -- first, then these rows, in order), and `append_steps`'s
+                -- own docstring for why concurrent callers on different
+                -- threads can't race on `seq`. ON DELETE CASCADE needs
+                -- `PRAGMA foreign_keys = ON`, already set unconditionally
+                -- by `_get_connection` for every connection this DB opens.
+                CREATE TABLE IF NOT EXISTS agent_run_steps (
+                    run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+                    seq INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, seq)
+                );
 
                 -- v3 (TASK-1971, Agent Change Review): one row per
                 -- (run, root) pair recording that turn's shadow-repo
@@ -387,9 +499,7 @@ class AgentRunsDB(BaseDB):
             # v4->v5 (fleet spec §4): definition audit identity on runs --
             # same idempotent-ALTER mechanism as above.
             if "agent_definition" not in existing_columns:
-                conn.execute(
-                    "ALTER TABLE agent_runs ADD COLUMN agent_definition TEXT"
-                )
+                conn.execute("ALTER TABLE agent_runs ADD COLUMN agent_definition TEXT")
             if "definition_fingerprint" not in existing_columns:
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN definition_fingerprint TEXT"
@@ -405,9 +515,7 @@ class AgentRunsDB(BaseDB):
             # (so no timestamp rule against the mark can recover which runs
             # a wake already delivered).
             if "wake_delivered_at" not in existing_columns:
-                conn.execute(
-                    "ALTER TABLE agent_runs ADD COLUMN wake_delivered_at TEXT"
-                )
+                conn.execute("ALTER TABLE agent_runs ADD COLUMN wake_delivered_at TEXT")
             # v10->v11 (fleet PR3b Task 4): continuation lineage -- the
             # run a resumed sub-agent was seeded from. Same idempotent-
             # ALTER mechanism as every column above; NULL (no DEFAULT) is
@@ -417,6 +525,10 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN resumed_from_run_id TEXT"
                 )
+            # v13->v14 (ADR-080): precise spawn causality. NULL is the
+            # honest migration value for every historical run.
+            if "spawn_event_id" not in existing_columns:
+                conn.execute("ALTER TABLE agent_runs ADD COLUMN spawn_event_id TEXT")
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -452,9 +564,7 @@ class AgentRunsDB(BaseDB):
             # re-derivation is built to handle.
             note_columns = {
                 row[1]
-                for row in conn.execute(
-                    "PRAGMA table_info(change_notes)"
-                ).fetchall()
+                for row in conn.execute("PRAGMA table_info(change_notes)").fetchall()
             }
             if "delivered_by_run_id" not in note_columns:
                 conn.execute(
@@ -468,9 +578,7 @@ class AgentRunsDB(BaseDB):
             # the legacy hunk_index+hunk_header fallback the card's
             # matching is built to handle.
             if "snapshot_id" not in note_columns:
-                conn.execute(
-                    "ALTER TABLE change_notes ADD COLUMN snapshot_id INTEGER"
-                )
+                conn.execute("ALTER TABLE change_notes ADD COLUMN snapshot_id INTEGER")
             # v10->v11 (TASK-18060 Task 1, review-rail spec §4): a file
             # created while change_notes existed but before the anchor-kind
             # extension did keeps its old 12-column table -- same
@@ -490,47 +598,308 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
                 )
             if "diff_line_text" not in note_columns:
-                conn.execute(
-                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
-                )
+                conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
             # when older version rows exist).
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (4)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (5)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (6)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (7)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (8)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (9)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (10)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (4)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (5)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (6)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (7)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (8)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (9)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (10)")
             # v11 is ALSO where _CURRENT_SCHEMA_VERSION was re-synced to
             # the version table (task-15669; see the class docstring for
             # the from-now-on contract).
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (11)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (11)")
             # v12: change_notes anchor kinds (TASK-18060 Task 1) --
             # renumbered from 11 at rebase time: task-15669 minted v11 on
             # dev concurrently, and the from-now-on contract requires each
             # migration to own a fresh number AND bump the constant.
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (12)"
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (12)")
+            # v13 (task-18601 part A): agent_run_steps child table -- see
+            # the CREATE TABLE comment above for the full rationale.
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (13)")
+            # v14 (ADR-080): agent_runs.spawn_event_id.
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (14)")
+            conn.execute("SAVEPOINT console_activity_receipts_v15")
+            try:
+                self._create_console_activity_receipts_schema(conn)
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_version (version) VALUES (15)"
+                )
+            except sqlite3.Error as exc:
+                conn.execute("ROLLBACK TO SAVEPOINT console_activity_receipts_v15")
+                conn.execute("RELEASE SAVEPOINT console_activity_receipts_v15")
+                logger.warning(
+                    "Console activity receipts are unavailable; "
+                    "core AgentRunsDB remains usable (exception_type={})",
+                    type(exc).__name__,
+                )
+            else:
+                conn.execute("RELEASE SAVEPOINT console_activity_receipts_v15")
+                self.receipt_capability_available = True
+
+    def _create_console_activity_receipts_schema(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Create the optional v15 receipt schema inside the caller's savepoint."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS console_activity_receipts (
+                activity_id TEXT PRIMARY KEY,
+                origin TEXT NOT NULL
+                    CHECK(origin IN ('ordinary', 'fleet_survivor')),
+                logical_outcome_id TEXT NOT NULL,
+                transition_revision INTEGER NOT NULL
+                    CHECK(transition_revision > 0),
+                session_id TEXT,
+                conversation_id TEXT,
+                run_id TEXT,
+                assistant_message_id TEXT,
+                status TEXT NOT NULL CHECK(status IN
+                    ('done', 'failed', 'stuck', 'stopped', 'cancelled')),
+                created_at TEXT NOT NULL,
+                acknowledged_at TEXT,
+                superseded_at TEXT,
+                CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL),
+                UNIQUE(origin, logical_outcome_id, transition_revision)
             )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_console_activity_receipts_unseen
+                ON console_activity_receipts(created_at DESC, activity_id)
+                WHERE acknowledged_at IS NULL AND superseded_at IS NULL
+            """
+        )
+
+    def _require_receipt_capability(self) -> None:
+        if not self.receipt_capability_available:
+            raise ConsoleActivityReceiptsUnavailable(
+                "Console activity receipts are unavailable for this database."
+            )
+
+    @staticmethod
+    def _validate_console_activity_fields(
+        *,
+        origin: str,
+        logical_outcome_id: str,
+        status: str,
+        session_id: str | None,
+        conversation_id: str | None,
+        run_id: str | None,
+        assistant_message_id: str | None,
+    ) -> None:
+        if origin not in {"ordinary", "fleet_survivor"}:
+            raise ValueError("Console activity origin is invalid.")
+        if status not in {"done", "failed", "stuck", "stopped", "cancelled"}:
+            raise ValueError("Console activity status is invalid.")
+        if type(logical_outcome_id) is not str or not logical_outcome_id.strip():
+            raise ValueError("Console activity logical outcome id is required.")
+        for field_name, value in (
+            ("session_id", session_id),
+            ("conversation_id", conversation_id),
+            ("run_id", run_id),
+            ("assistant_message_id", assistant_message_id),
+        ):
+            if value is not None and (type(value) is not str or not value.strip()):
+                raise ValueError(f"Console activity {field_name} is invalid.")
+        if session_id is None and conversation_id is None:
+            raise ValueError("Console activity requires a session or conversation.")
+
+    def _publish_console_activity_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        origin: str,
+        logical_outcome_id: str,
+        status: str,
+        session_id: str | None,
+        conversation_id: str | None,
+        run_id: str | None = None,
+        assistant_message_id: str | None = None,
+    ) -> tuple[str, bool]:
+        """Publish one revision using the caller's existing write transaction."""
+        self._require_receipt_capability()
+        self._validate_console_activity_fields(
+            origin=origin,
+            logical_outcome_id=logical_outcome_id,
+            status=status,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            assistant_message_id=assistant_message_id,
+        )
+        latest = conn.execute(
+            "SELECT activity_id, transition_revision, status, superseded_at "
+            "FROM console_activity_receipts WHERE origin = ? "
+            "AND logical_outcome_id = ? ORDER BY transition_revision DESC LIMIT 1",
+            (origin, logical_outcome_id),
+        ).fetchone()
+        if latest is not None and latest["status"] == status:
+            return str(latest["activity_id"]), False
+
+        created_at = _now_iso()
+        revision = int(latest["transition_revision"]) + 1 if latest else 1
+        activity_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                "tldw-chatbook:console-activity:"
+                f"{origin}:{logical_outcome_id}:{revision}:{status}",
+            )
+        )
+        if latest is not None and latest["superseded_at"] is None:
+            conn.execute(
+                "UPDATE console_activity_receipts SET superseded_at = ? "
+                "WHERE activity_id = ? AND superseded_at IS NULL",
+                (created_at, latest["activity_id"]),
+            )
+        conn.execute(
+            """
+            INSERT INTO console_activity_receipts (
+                activity_id, origin, logical_outcome_id, transition_revision,
+                session_id, conversation_id, run_id, assistant_message_id,
+                status, created_at, acknowledged_at, superseded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+            """,
+            (
+                activity_id,
+                origin,
+                logical_outcome_id,
+                revision,
+                session_id,
+                conversation_id,
+                run_id,
+                assistant_message_id,
+                status,
+                created_at,
+            ),
+        )
+        return activity_id, True
+
+    def publish_console_activity(
+        self,
+        *,
+        origin: str,
+        logical_outcome_id: str,
+        status: str,
+        session_id: str | None,
+        conversation_id: str | None,
+        run_id: str | None = None,
+        assistant_message_id: str | None = None,
+    ) -> tuple[str, bool]:
+        """Publish an idempotent Console activity receipt revision."""
+        with self.transaction() as conn:
+            return self._publish_console_activity_in_transaction(
+                conn,
+                origin=origin,
+                logical_outcome_id=logical_outcome_id,
+                status=status,
+                session_id=session_id,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                assistant_message_id=assistant_message_id,
+            )
+
+    def list_unseen_console_activity(
+        self,
+        *,
+        limit: int = CONSOLE_ACTIVITY_RECEIPT_PAGE_LIMIT,
+        cursor: tuple[str, str] | None = None,
+    ) -> ConsoleActivityReceiptPage:
+        """Return one bounded keyset page of current unseen activity.
+
+        Args:
+            limit: Maximum receipts to return, capped by the repository limit.
+            cursor: Optional ``(created_at, activity_id)`` key from the prior page.
+
+        Returns:
+            The bounded rows and a continuation cursor when more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor is invalid.
+        """
+        self._require_receipt_capability()
+        if (
+            type(limit) is not int
+            or limit < 1
+            or limit > CONSOLE_ACTIVITY_RECEIPT_MAX_PAGE_LIMIT
+        ):
+            raise ValueError(
+                "Console activity page limit must be between 1 and "
+                f"{CONSOLE_ACTIVITY_RECEIPT_MAX_PAGE_LIMIT}."
+            )
+        if cursor is not None and (
+            type(cursor) is not tuple
+            or len(cursor) != 2
+            or any(type(value) is not str or not value for value in cursor)
+        ):
+            raise ValueError("Console activity cursor is invalid.")
+        query = (
+            "SELECT * FROM console_activity_receipts "
+            "WHERE acknowledged_at IS NULL AND superseded_at IS NULL "
+        )
+        params: list[Any] = []
+        if cursor is not None:
+            created_at, activity_id = cursor
+            query += "AND (created_at < ? OR (created_at = ? AND activity_id > ?)) "
+            params.extend((created_at, created_at, activity_id))
+        query += "ORDER BY created_at DESC, activity_id LIMIT ?"
+        params.append(limit + 1)
+        with self.connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        visible = tuple(dict(row) for row in rows[:limit])
+        next_cursor = None
+        if len(rows) > limit and visible:
+            last = visible[-1]
+            next_cursor = (str(last["created_at"]), str(last["activity_id"]))
+        return ConsoleActivityReceiptPage(visible, next_cursor)
+
+    def acknowledge_console_activity(self, activity_ids: Sequence[str]) -> int:
+        """Acknowledge only the supplied current receipt revisions."""
+        self._require_receipt_capability()
+        ids: list[str] = []
+        seen: set[str] = set()
+        for activity_id in activity_ids:
+            if type(activity_id) is not str or not activity_id.strip():
+                raise ValueError("Console activity id is invalid.")
+            if activity_id not in seen:
+                ids.append(activity_id)
+                seen.add(activity_id)
+        if not ids:
+            return 0
+        acknowledged_at = _now_iso()
+        updated = 0
+        with self.transaction() as conn:
+            for start in range(0, len(ids), _IN_CLAUSE_CHUNK):
+                chunk = ids[start : start + _IN_CLAUSE_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor = conn.execute(
+                    "UPDATE console_activity_receipts SET acknowledged_at = ? "
+                    f"WHERE activity_id IN ({placeholders}) "
+                    "AND acknowledged_at IS NULL AND superseded_at IS NULL",
+                    (acknowledged_at, *chunk),
+                )
+                updated += int(cursor.rowcount)
+        return updated
+
+    def count_unseen_fleet_activity(self, conversation_id: str) -> int:
+        """Count current unseen FLEET-survivor receipts for one conversation."""
+        self._require_receipt_capability()
+        if type(conversation_id) is not str or not conversation_id.strip():
+            raise ValueError("Console activity conversation id is invalid.")
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM console_activity_receipts "
+                "WHERE origin = 'fleet_survivor' AND conversation_id = ? "
+                "AND acknowledged_at IS NULL AND superseded_at IS NULL",
+                (conversation_id,),
+            ).fetchone()
+        return int(row[0])
 
     def record_change_snapshot(
         self,
@@ -568,8 +937,37 @@ class AgentRunsDB(BaseDB):
                 ``"subagent_post_turn"`` (the window after a turn's E,
                 while its survivors kept working). PR3a-1 Task 6c.
         """
+        self.record_change_snapshots_batch(
+            run_id=run_id,
+            records=(
+                {
+                    "root": root,
+                    "baseline_sha": baseline_sha,
+                    "end_sha": end_sha,
+                    "files_changed": files_changed,
+                    "adds": adds,
+                    "dels": dels,
+                    "tracking_error": tracking_error,
+                    "untracked_oversize": untracked_oversize,
+                    "nested_repos": nested_repos,
+                },
+            ),
+            kind=kind,
+        )
+
+    def record_change_snapshots_batch(
+        self,
+        *,
+        run_id: str,
+        records: Sequence[Mapping[str, Any]],
+        kind: str = "turn",
+    ) -> None:
+        """Atomically record every root row for one completed review window."""
+        if not records:
+            return
+        created_at = _now_iso()
         with self.transaction() as conn:
-            conn.execute(
+            conn.executemany(
                 """
                 INSERT INTO change_snapshots
                     (run_id, root, baseline_sha, end_sha, files_changed,
@@ -577,19 +975,22 @@ class AgentRunsDB(BaseDB):
                      nested_repos, kind, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    run_id,
-                    root,
-                    baseline_sha,
-                    end_sha,
-                    files_changed,
-                    adds,
-                    dels,
-                    tracking_error,
-                    untracked_oversize,
-                    json.dumps(list(nested_repos)),
-                    kind,
-                    _now_iso(),
+                tuple(
+                    (
+                        run_id,
+                        str(record.get("root") or ""),
+                        str(record.get("baseline_sha") or ""),
+                        str(record.get("end_sha") or ""),
+                        int(record.get("files_changed") or 0),
+                        int(record.get("adds") or 0),
+                        int(record.get("dels") or 0),
+                        str(record.get("tracking_error") or ""),
+                        int(record.get("untracked_oversize") or 0),
+                        json.dumps(list(record.get("nested_repos") or ())),
+                        kind,
+                        created_at,
+                    )
+                    for record in records
                 ),
             )
 
@@ -617,9 +1018,7 @@ class AgentRunsDB(BaseDB):
             The distinct ``root`` values across all remaining rows.
         """
         with self.connection() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT root FROM change_snapshots"
-            ).fetchall()
+            rows = conn.execute("SELECT DISTINCT root FROM change_snapshots").fetchall()
         return {str(row[0]) for row in rows}
 
     def update_change_snapshot_reverted(
@@ -638,7 +1037,11 @@ class AgentRunsDB(BaseDB):
                 "SELECT reverted FROM change_snapshots WHERE id = ?",
                 (row_id,),
             ).fetchone()
-            existing = json.loads(current["reverted"]) if current and current["reverted"] else []
+            existing = (
+                json.loads(current["reverted"])
+                if current and current["reverted"]
+                else []
+            )
             merged = list(dict.fromkeys([*existing, *reverted_paths]))
             conn.execute(
                 "UPDATE change_snapshots SET reverted = ? WHERE id = ?",
@@ -915,8 +1318,7 @@ class AgentRunsDB(BaseDB):
                 (conversation_id,),
             ).fetchall()
         return {
-            (str(row["root"]), str(row["path"])): int(row["note_count"])
-            for row in rows
+            (str(row["root"]), str(row["path"])): int(row["note_count"]) for row in rows
         }
 
     def delivered_notes_for_conversation(self, conversation_id: str) -> list[dict]:
@@ -1018,10 +1420,134 @@ class AgentRunsDB(BaseDB):
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
+    #: Every ``agent_runs`` column EXCEPT ``steps`` -- the explicit list
+    #: the metadata-only read path (AC#2) selects, so a caller that only
+    #: wants status/budget/result/etc never even pulls the (potentially
+    #: large, legacy-blob) ``steps`` TEXT value off the page, let alone
+    #: parses it. Kept as one constant so the two metadata SELECTs below
+    #: can't drift apart from each other.
+    _METADATA_COLUMNS = (
+        "id, conversation_id, parent_run_id, agent_kind, task, status, "
+        "result, budget, created_at, updated_at, assistant_message_id, "
+        "agent_definition, definition_fingerprint, wake_delivered_at, "
+        "resumed_from_run_id, spawn_event_id"
+    )
+
+    def _batch_hydrate_steps(
+        self, conn: sqlite3.Connection, run_ids: Sequence[str]
+    ) -> dict[str, list[dict]]:
+        """Fetch every ``agent_run_steps`` row for many runs in ONE query.
+
+        Mirrors this file's existing no-N+1 precedent (e.g. TASK-1972's
+        conversation-level ``change_snapshots`` fetch): a multi-row read
+        (``list_runs``, ``undelivered_wake_runs``) must not issue one
+        child-table query per returned run.
+
+        Args:
+            conn: An open connection (read or write).
+            run_ids: The run ids to fetch step rows for. Duplicates are
+                harmless; an empty sequence short-circuits without a query.
+
+        Returns:
+            ``{run_id: [step_dict, ...]}`` in ``seq`` order, for every
+            run_id that has at least one row. A run_id with zero rows is
+            simply absent (not present with an empty list).
+
+        Note:
+            Issued in chunks of ``_IN_CLAUSE_CHUNK`` ids, because a bound
+            parameter per id runs into SQLite's host-parameter ceiling and
+            no caller bounds the list (``ConsoleAgentController.
+            subagent_runs`` asks for every run in a conversation). Chunking
+            keeps the no-N+1 property -- one query per 900 runs, not per run.
+        """
+        ids = list(dict.fromkeys(run_ids))
+        if not ids:
+            return {}
+        grouped: dict[str, list[dict]] = {}
+        for start in range(0, len(ids), _IN_CLAUSE_CHUNK):
+            chunk = ids[start : start + _IN_CLAUSE_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT run_id, payload FROM agent_run_steps "
+                f"WHERE run_id IN ({placeholders}) ORDER BY run_id, seq",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                grouped.setdefault(row["run_id"], []).append(json.loads(row["payload"]))
+        return grouped
+
+    def _rows_to_dicts(
+        self, conn: sqlite3.Connection, rows: Sequence[sqlite3.Row]
+    ) -> list[dict]:
+        """Turn ``agent_runs`` rows into API dicts, with full step hydration.
+
+        DUAL READ (task-18601 part A, AC#4): a run's steps can live in
+        TWO places -- the legacy ``agent_runs.steps`` JSON blob (every run
+        written before this change, and never touched again by
+        ``append_steps`` from now on) and the ``agent_run_steps`` child
+        table (every append from now on, for both brand-new runs and a
+        legacy run that gets appended to again after this change landed).
+
+        Chosen strategy: READ AND CONCATENATE both sources (blob steps
+        first, then child rows in ``seq`` order) rather than migrating a
+        legacy blob into rows on first append. Trade-off, deliberately
+        accepted: a run that mixes legacy blob-steps with new child rows
+        pays one extra query per hydrating read (parse the blob + select
+        the child rows) -- negligible next to the O(n^2) writer cost this
+        task fixes, and a steps-hydrating read of n steps is at best O(n)
+        regardless (it returns n items). The alternative (migrate-on-
+        first-append) would need a write on a READ-triggered path or an
+        extra step inside ``append_steps`` proper, and would still need a
+        migration guard forever (a DB can be opened by an older binary
+        between two appends). Concatenate-at-read is simpler and never
+        mutates data implicitly. A run created after this change has an
+        empty blob ('[]'), so its hydration is one indexed child-table
+        SELECT with no JSON blob to parse at all.
+
+        Args:
+            conn: An open connection (read or write) -- used for the
+                child-table query; a bare ``sqlite3.Row`` has no DB access
+                of its own, so this can no longer be a ``@staticmethod``.
+            rows: The ``agent_runs`` rows to convert.
+
+        Returns:
+            One dict per input row, in the same order, with ``steps`` a
+            list of dicts (blob steps then child-row steps, in order) and
+            ``budget`` JSON-decoded.
+        """
+        rows = list(rows)
+        child_by_run = self._batch_hydrate_steps(conn, [r["id"] for r in rows])
+        records: list[dict] = []
+        for row in rows:
+            record = dict(row)
+            blob_steps = json.loads(record["steps"] or "[]")
+            record["steps"] = blob_steps + child_by_run.get(record["id"], [])
+            record["budget"] = (
+                json.loads(record["budget"]) if record["budget"] else None
+            )
+            records.append(record)
+        return records
+
+    def _row_to_dict(self, conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+        """Single-row convenience wrapper around :meth:`_rows_to_dicts`."""
+        return self._rows_to_dicts(conn, [row])[0]
+
     @staticmethod
-    def _row_to_dict(row: sqlite3.Row) -> dict:
+    def _metadata_row_to_dict(row: sqlite3.Row) -> dict:
+        """Row -> dict for the metadata-only read path (AC#2).
+
+        No ``steps`` key at all -- deliberately, not ``[]`` and not
+        ``None``: every caller of the metadata-only methods below is
+        audited to never touch ``record["steps"]`` (see their docstrings
+        for exactly which real call site each replaced and why it is
+        provably steps-free), so a future caller that reaches for it by
+        mistake gets a loud ``KeyError`` instead of silently reading "no
+        steps recorded" off a query that never asked the DB about steps
+        at all. This never touches ``agent_run_steps`` and never
+        ``json.loads``es the legacy blob -- the caller's SELECT (see
+        ``_METADATA_COLUMNS``) doesn't even fetch the ``steps`` column.
+        """
         record = dict(row)
-        record["steps"] = json.loads(record["steps"] or "[]")
         record["budget"] = json.loads(record["budget"]) if record["budget"] else None
         return record
 
@@ -1037,13 +1563,17 @@ class AgentRunsDB(BaseDB):
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
         resumed_from_run_id: str | None = None,
+        spawn_event_id: str | None = None,
+        run_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
         Args:
             conversation_id: The owning Console conversation's id.
-            agent_kind: ``"primary"`` or ``"subagent"``.
-            task: The sub-agent's task text; ``None`` for a primary run.
+            agent_kind: Caller-owned kind, such as ``"primary"``,
+                ``"subagent"``, or ``"local_command"``.
+            task: A generic run label or sub-agent task; ``None`` when the
+                caller does not record one.
             parent_run_id: The parent run's id for a sub-agent; ``None``
                 for a primary run.
             budget: The run's ``RunBudget`` serialized to a dict, stored
@@ -1061,11 +1591,14 @@ class AgentRunsDB(BaseDB):
             resumed_from_run_id: For a CONTINUATION of a finished
                 sub-agent (fleet PR3b Task 4): the run id this run was
                 seeded from. ``None`` for every ordinary run.
+            spawn_event_id: Stable parent Trace event that caused this run.
+                ``None`` for primary and legacy runs.
+            run_id: Preallocated stable identity; generated when omitted.
 
         Returns:
             The newly created run's id (a hex UUID4).
         """
-        run_id = uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as conn:
             conn.execute(
@@ -1073,8 +1606,8 @@ class AgentRunsDB(BaseDB):
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
                     assistant_message_id, agent_definition, definition_fingerprint,
-                    resumed_from_run_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?)""",
+                    resumed_from_run_id, spawn_event_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1088,6 +1621,7 @@ class AgentRunsDB(BaseDB):
                     agent_definition,
                     definition_fingerprint,
                     resumed_from_run_id,
+                    spawn_event_id,
                 ),
             )
         return run_id
@@ -1123,9 +1657,7 @@ class AgentRunsDB(BaseDB):
                     ),
                 )
         except sqlite3.IntegrityError as exc:
-            raise ValueError(
-                f"an agent named '{defn.name}' already exists"
-            ) from exc
+            raise ValueError(f"an agent named '{defn.name}' already exists") from exc
         return definition_id
 
     def update_agent_definition(
@@ -1163,19 +1695,14 @@ class AgentRunsDB(BaseDB):
                     ),
                 )
                 if cursor.rowcount == 0:
-                    raise ValueError(
-                        f"agent definition not found: {definition_id}"
-                    )
+                    raise ValueError(f"agent definition not found: {definition_id}")
         except sqlite3.IntegrityError as exc:
-            raise ValueError(
-                f"an agent named '{defn.name}' already exists"
-            ) from exc
+            raise ValueError(f"an agent named '{defn.name}' already exists") from exc
 
     def soft_delete_agent_definition(self, definition_id: str) -> None:
         with self.transaction() as conn:
             conn.execute(
-                "UPDATE agent_definitions SET deleted = 1, updated_at = ? "
-                "WHERE id = ?",
+                "UPDATE agent_definitions SET deleted = 1, updated_at = ? WHERE id = ?",
                 (_now_iso(), definition_id),
             )
 
@@ -1206,25 +1733,139 @@ class AgentRunsDB(BaseDB):
     def append_steps(self, run_id: str, steps: list[dict]) -> None:
         """Append step records to a run's step log.
 
+        task-18601 part A: this used to be read-modify-write on the whole
+        ``agent_runs.steps`` JSON blob (read it, ``json.loads``, extend,
+        ``json.dumps``, rewrite the whole column) -- O(n) work per call
+        where n is every step ever recorded for the run, so O(n^2) over a
+        run's lifetime. Measured on a real DB: the 2000th append cost 44x
+        the 1st, ~5.4 minutes of write churn extrapolated to a 25k-step
+        run. Now a pure ``INSERT`` into ``agent_run_steps`` -- no read of
+        the existing log at all, just an existence check on ``run_id``
+        (an indexed point lookup) and a ``SELECT MAX(seq)`` (also indexed,
+        via the ``(run_id, seq)`` primary key -- SQLite answers a
+        ``MAX(seq) WHERE run_id = ?`` by walking straight to the last
+        matching index entry, not by scanning every row). ``agent_runs.
+        steps`` itself is left untouched -- see ``_rows_to_dicts``'s
+        dual-read docstring for how a run's full step list is reassembled
+        at read time.
+
+        Concurrency: computing ``next_seq`` and inserting the new rows
+        both happen inside the SAME ``self.transaction()`` (``BEGIN
+        IMMEDIATE``), which is this file's existing multi-writer-thread
+        discipline (see ``transaction()``'s own docstring: "a primary run
+        and its sub-agent runs" write concurrently today, each from its
+        own thread's held connection). ``BEGIN IMMEDIATE`` acquires
+        SQLite's single write lock up front, so a second thread's
+        ``append_steps`` call on ANY run blocks (up to ``busy_timeout``)
+        until this transaction commits or rolls back -- there is no
+        window between the ``MAX(seq)`` read and the ``INSERT`` for a
+        second writer to compute the same ``next_seq`` and collide on the
+        ``(run_id, seq)`` primary key.
+
         Args:
             run_id: The run to append to.
             steps: Serialized ``AgentStep`` dicts, appended in order after
-                any steps already recorded.
+                any steps already recorded (both the legacy blob's steps
+                and any already-inserted rows).
 
         Raises:
             KeyError: If ``run_id`` does not exist.
         """
+        stamp = _now_iso()
         with self.transaction() as conn:
-            row = conn.execute(
-                "SELECT steps FROM agent_runs WHERE id = ?", (run_id,)
+            exists = conn.execute(
+                "SELECT 1 FROM agent_runs WHERE id = ?", (run_id,)
             ).fetchone()
-            if row is None:
+            if exists is None:
                 raise KeyError(f"Unknown run id: {run_id}")
-            existing = json.loads(row["steps"] or "[]")
-            existing.extend(steps)
+            if steps:
+                max_row = conn.execute(
+                    "SELECT MAX(seq) AS max_seq FROM agent_run_steps WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                next_seq = (
+                    int(max_row["max_seq"]) + 1
+                    if max_row and max_row["max_seq"] is not None
+                    else 0
+                )
+                conn.executemany(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    [
+                        (run_id, next_seq + offset, json.dumps(step), stamp)
+                        for offset, step in enumerate(steps)
+                    ],
+                )
             conn.execute(
-                "UPDATE agent_runs SET steps = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(existing), _now_iso(), run_id),
+                "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
+                (stamp, run_id),
+            )
+
+    def insert_steps_at_indices(
+        self, run_id: str, steps: Sequence[tuple[int, dict]]
+    ) -> None:
+        """Insert caller-indexed steps without rewriting existing rows.
+
+        Live capture calls this with one step; terminal recovery calls it
+        with the complete outcome. Validation and canonical JSON encoding
+        finish before the write lock. Under the lock, an identical retry is
+        a no-op, missing rows are inserted, and divergent durable indices are
+        collected. The transaction commits before ``AgentStepConflictError``
+        reports those conflicts, so recovery never loses unrelated rows.
+        Step inserts do not change ``agent_runs.updated_at`` because that
+        timestamp records lifecycle transitions used by wake classification.
+
+        Raises:
+            KeyError: If ``run_id`` does not exist.
+            TypeError: If an index or payload has the wrong type, or JSON
+                serialization fails.
+            ValueError: If an index is negative or disagrees with its payload.
+            AgentStepConflictError: If one index has divergent payloads.
+        """
+        prepared: dict[int, str] = {}
+        for index, payload in steps:
+            canonical = _canonical_step_payload(index, payload)
+            if index in prepared and prepared[index] != canonical:
+                raise AgentStepConflictError(
+                    f"conflicting step payloads for run index {index}"
+                )
+            prepared[index] = canonical
+
+        stamp = _now_iso()
+        conflicts: list[int] = []
+        with self.transaction() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if exists is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            for index, canonical in prepared.items():
+                existing = conn.execute(
+                    "SELECT payload FROM agent_run_steps WHERE run_id = ? AND seq = ?",
+                    (run_id, index),
+                ).fetchone()
+                if existing is not None:
+                    try:
+                        stored = json.dumps(
+                            json.loads(existing["payload"]),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                    except (TypeError, ValueError):
+                        conflicts.append(index)
+                        continue
+                    if stored != canonical:
+                        conflicts.append(index)
+                    continue
+                conn.execute(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, stamp),
+                )
+        if conflicts:
+            indices = ", ".join(str(index) for index in conflicts)
+            raise AgentStepConflictError(
+                f"step payload conflicts with durable indices: {indices}"
             )
 
     def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
@@ -1256,6 +1897,58 @@ class AgentRunsDB(BaseDB):
                 (status, result, _now_iso(), run_id, *sorted(TERMINAL_RUN_STATUSES)),
             )
         return cursor.rowcount > 0
+
+    def set_terminal_with_step(
+        self,
+        run_id: str,
+        status: str,
+        result: str | None,
+        terminal_step: dict,
+    ) -> bool:
+        """Atomically persist a first-writer terminal state and observation."""
+        if status not in TERMINAL_RUN_STATUSES:
+            raise ValueError("status must be terminal")
+        index = terminal_step.get("index")
+        canonical = _canonical_step_payload(index, terminal_step)
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
+        stamp = _now_iso()
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT status FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            existing = conn.execute(
+                "SELECT payload FROM agent_run_steps WHERE run_id = ? AND seq = ?",
+                (run_id, index),
+            ).fetchone()
+            if existing is not None:
+                stored = json.dumps(
+                    json.loads(existing["payload"]),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                if stored != canonical:
+                    raise AgentStepConflictError(
+                        f"step payload conflicts with durable index: {index}"
+                    )
+            if row["status"] in TERMINAL_RUN_STATUSES:
+                return False
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, stamp),
+                )
+            cursor = conn.execute(
+                "UPDATE agent_runs SET status = ?, "
+                "result = COALESCE(?, result), updated_at = ? "
+                f"WHERE id = ? AND status NOT IN ({placeholders})",
+                (status, result, stamp, run_id, *sorted(TERMINAL_RUN_STATUSES)),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("terminal status changed during transaction")
+        return True
 
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
@@ -1310,15 +2003,144 @@ class AgentRunsDB(BaseDB):
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
         with self.transaction() as conn:
-            cur = conn.execute(
-                "UPDATE agent_runs "
-                "SET status = 'error', "
-                "    result = COALESCE(result, 'Interrupted by app restart'), "
-                "    updated_at = ? "
-                "WHERE status = 'running'",
-                (_now_iso(),),
-            )
-            rowcount = cur.rowcount
+
+            def run_observations(run_id: str) -> tuple[list[dict], int, str]:
+                parsed: list[dict] = []
+                for step_row in conn.execute(
+                    "SELECT payload FROM agent_run_steps WHERE run_id = ?",
+                    (run_id,),
+                ).fetchall():
+                    try:
+                        parsed.append(json.loads(step_row["payload"]))
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                ordered = [
+                    step
+                    for step in parsed
+                    if isinstance(step.get("owner_seq"), int)
+                    and isinstance(step.get("index"), int)
+                ]
+                latest = max(
+                    ordered,
+                    key=lambda step: (step["owner_seq"], step["index"]),
+                    default=None,
+                )
+                owner_seq = latest["owner_seq"] if latest is not None else -1
+                parent = (
+                    f"agent-step:{run_id}:{latest['index']}"
+                    if latest is not None
+                    else f"agent-run:{run_id}"
+                )
+                return parsed, owner_seq, parent
+
+            def insert_recovery_diagnostic(
+                run_id: str,
+                index: int,
+                summary: str,
+                field_states: dict[str, str],
+            ) -> None:
+                _steps, owner_seq, parent = run_observations(run_id)
+                diagnostic = {
+                    "index": index,
+                    "kind": "capture_failed",
+                    "summary": summary,
+                    "created_at": observed_at,
+                    "status": "incomplete",
+                    "owner_seq": owner_seq + 1,
+                    "parent_event_id": parent,
+                    "source_event_id": None,
+                    "field_states": {
+                        "payload": "capture_failed",
+                        **field_states,
+                    },
+                    "sensitivity": "diagnostic",
+                }
+                canonical = _canonical_step_payload(index, diagnostic)
+                conn.execute(
+                    "INSERT OR IGNORE INTO agent_run_steps "
+                    "(run_id, seq, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, observed_at),
+                )
+
+            orphan_rows = conn.execute(
+                "SELECT id, conversation_id, assistant_message_id "
+                "FROM agent_runs WHERE status = 'running' "
+                "AND agent_kind IN ('primary', 'subagent')"
+            ).fetchall()
+            orphan_ids = [row["id"] for row in orphan_rows]
+            local_orphan_ids = [
+                row["id"]
+                for row in conn.execute(
+                    "SELECT id FROM agent_runs WHERE status = 'running' "
+                    "AND agent_kind = 'local_command'"
+                ).fetchall()
+            ]
+            observed_at = _now_iso()
+            diagnostic_index = AGENT_LIFECYCLE_INDEX_BASE + 500
+            for orphan in orphan_rows:
+                run_id = str(orphan["id"])
+                self._publish_console_activity_in_transaction(
+                    conn,
+                    origin="fleet_survivor",
+                    logical_outcome_id=f"fleet-run:{run_id}",
+                    status="failed",
+                    session_id=None,
+                    conversation_id=str(orphan["conversation_id"]),
+                    run_id=run_id,
+                    assistant_message_id=orphan["assistant_message_id"],
+                )
+                insert_recovery_diagnostic(
+                    run_id,
+                    diagnostic_index,
+                    "Terminal state repaired after app restart",
+                    {"reconciliation": "observed"},
+                )
+                conn.execute(
+                    "UPDATE agent_runs SET status = 'error', "
+                    "result = COALESCE(result, 'Interrupted by app restart'), "
+                    "updated_at = ? WHERE id = ? AND status = 'running'",
+                    (observed_at, run_id),
+                )
+            for run_id in local_orphan_ids:
+                conn.execute(
+                    "UPDATE agent_runs SET status = 'error', updated_at = ? "
+                    "WHERE id = ? AND status = 'running' "
+                    "AND agent_kind = 'local_command'",
+                    (observed_at, run_id),
+                )
+            terminal_kind = {
+                "done": "agent_run_completed",
+                "cancelled": "agent_run_cancelled",
+                "superseded": "agent_run_superseded",
+                "error": "agent_run_failed",
+                "stuck": "agent_run_failed",
+            }
+            terminal_rows = conn.execute(
+                "SELECT id, status FROM agent_runs WHERE status != 'running' "
+                "AND agent_kind IN ('primary', 'subagent')"
+            ).fetchall()
+            split_rows = 0
+            repaired_orphans = set(orphan_ids)
+            for row in terminal_rows:
+                if row["id"] in repaired_orphans:
+                    continue
+                expected_kind = terminal_kind.get(row["status"])
+                if expected_kind is None:
+                    continue
+                steps, _owner_seq, _parent = run_observations(row["id"])
+                if any(step.get("kind") == expected_kind for step in steps):
+                    continue
+                insert_recovery_diagnostic(
+                    row["id"],
+                    AGENT_LIFECYCLE_INDEX_BASE + 501,
+                    "Preexisting terminal state lacked lifecycle capture",
+                    {
+                        "reconciliation": "observed",
+                        expected_kind: "not_observed",
+                    },
+                )
+                split_rows += 1
+            rowcount = len(orphan_ids) + len(local_orphan_ids) + split_rows
         self._swept_paths.add(self.db_path_str)
         return rowcount
 
@@ -1354,7 +2176,44 @@ class AgentRunsDB(BaseDB):
             row = conn.execute(
                 "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
             ).fetchone()
-        return self._row_to_dict(row) if row else None
+            return self._row_to_dict(conn, row) if row else None
+
+    def get_run_metadata(self, run_id: str) -> dict | None:
+        """Fetch one run's METADATA ONLY -- never touches the step log.
+
+        task-18601 part A, AC#2: a plain single-row SELECT over
+        ``_METADATA_COLUMNS`` (everything except ``steps``), so this
+        never fetches the ``steps`` blob off the page, never queries
+        ``agent_run_steps``, and never ``json.loads``es anything but
+        ``budget``. The returned dict has NO ``steps`` key at all -- see
+        ``_metadata_row_to_dict`` for why that is deliberate.
+
+        Use this instead of :meth:`get_run` wherever the caller only
+        inspects status/budget/result/task/etc, never
+        ``record["steps"]``. Two real call sites were switched to this
+        when it was added: ``ConsoleFleetWakeCoordinator._rows_for``
+        (the pending-wake poll -- ``compose_wake_notice`` only reads
+        id/agent_definition/status/task/result) and
+        ``AgentService.send_to_agent``'s "run finished in an earlier
+        session" check (only reads agent_kind/conversation_id/status).
+        :meth:`get_run` keeps its full (steps-hydrating) contract
+        unchanged for every other caller -- e.g.
+        ``change_review_screen.tool_touched_relpaths``, which reads
+        ``record["steps"]`` directly.
+
+        Args:
+            run_id: The run to fetch.
+
+        Returns:
+            The run as a dict with ``budget`` JSON-decoded and NO
+            ``steps`` key, or ``None`` if ``run_id`` does not exist.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        return self._metadata_row_to_dict(row) if row else None
 
     def get_run_fresh(self, run_id: str) -> dict | None:
         """Fetch one run through a dedicated, immediately-closed connection.
@@ -1389,7 +2248,39 @@ class AgentRunsDB(BaseDB):
             row = conn.execute(
                 "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
             ).fetchone()
-            return self._row_to_dict(row) if row else None
+            return self._row_to_dict(conn, row) if row else None
+        finally:
+            conn.close()
+
+    def get_run_metadata_fresh(self, run_id: str) -> dict | None:
+        """``get_run_metadata`` through the same dedicated-connection
+        escape hatch ``get_run_fresh`` uses -- see that method's
+        docstring for the pinned-snapshot rationale (task-15863). Used by
+        ``ConsoleFleetWakeCoordinator._rows_for``'s re-read-on-stale-
+        non-terminal path, which previously called ``get_run_fresh`` for
+        a result it only ever inspects ``status``/``wake_delivered_at``
+        on.
+
+        Args:
+            run_id: The run to read.
+
+        Returns:
+            The same metadata-only dict ``get_run_metadata`` returns (no
+            ``steps`` key), or ``None`` if no run has that id.
+
+        Raises:
+            sqlite3.Error: Propagated unchanged from the read. The private
+                connection is closed either way.
+        """
+        if self.is_memory_db:
+            return self.get_run_metadata(run_id)
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            return self._metadata_row_to_dict(row) if row else None
         finally:
             conn.close()
 
@@ -1416,7 +2307,39 @@ class AgentRunsDB(BaseDB):
                 "ORDER BY created_at DESC, id DESC LIMIT 1",
                 (conversation_id,),
             ).fetchone()
-        return self._row_to_dict(row) if row else None
+            return self._row_to_dict(conn, row) if row else None
+
+    def latest_primary_run_metadata(self, conversation_id: str) -> dict | None:
+        """``latest_primary_run`` METADATA ONLY -- never touches the step log.
+
+        task-18601 part A, AC#2: same query/ordering as
+        :meth:`latest_primary_run`, but over ``_METADATA_COLUMNS`` (no
+        ``steps``, no ``agent_run_steps`` query). Both of that method's
+        real callers only ever read ``id``/``assistant_message_id``
+        (``ConsoleAgentController.latest_primary_run_id`` and its
+        assistant-message-anchor sibling in
+        ``Chat/console_agent_bridge.py``) -- neither touches
+        ``record["steps"]`` -- so they were switched to this.
+        :meth:`latest_primary_run` keeps its full contract for any future
+        caller that does need steps.
+
+        Args:
+            conversation_id: The conversation whose runs to inspect.
+
+        Returns:
+            The newest matching run as a dict with ``budget`` JSON-
+            decoded and NO ``steps`` key, or ``None`` when the
+            conversation has no non-superseded primary run.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                f"SELECT {self._METADATA_COLUMNS} FROM agent_runs "
+                "WHERE conversation_id = ? "
+                "AND agent_kind = 'primary' AND status != 'superseded' "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return self._metadata_row_to_dict(row) if row else None
 
     def list_runs(
         self,
@@ -1435,8 +2358,8 @@ class AgentRunsDB(BaseDB):
                 runs (``ORDER BY created_at DESC, id DESC``). ``None``
                 (the default) returns every matching run, preserving prior
                 behavior.
-            agent_kind: When set (``"primary"`` or ``"subagent"``),
-                restricts to that kind IN THE QUERY -- e.g.
+            agent_kind: When set, restricts to that exact caller-owned kind
+                IN THE QUERY -- e.g.
                 ``search_run_log``'s ``scope="conversation"`` (task-1273
                 review finding A) wants only the conversation's PRIMARY
                 runs, and filtering here (rather than fetching everything
@@ -1463,7 +2386,7 @@ class AgentRunsDB(BaseDB):
             params.append(limit)
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
-        return [self._row_to_dict(r) for r in rows]
+            return self._rows_to_dicts(conn, rows)
 
     def count_runs(
         self,
@@ -1486,8 +2409,8 @@ class AgentRunsDB(BaseDB):
             conversation_id: The conversation to count runs for.
             include_superseded: When ``False``, excludes runs whose status
                 is ``"superseded"`` -- mirrors ``list_runs``' own filter.
-            agent_kind: When set (``"primary"`` or ``"subagent"``),
-                restricts the count to that kind -- mirrors ``list_runs``'
+            agent_kind: When set, restricts the count to that exact
+                caller-owned kind -- mirrors ``list_runs``'
                 own filter. ``None`` (the default) counts every kind.
 
         Returns:
@@ -1503,6 +2426,232 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             row = conn.execute(query, params).fetchone()
         return int(row["n"])
+
+    def list_running_run_ids(self) -> set[str]:
+        """Every run id NOT in a terminal status, across ALL conversations.
+
+        TASK-28238 phase 2 T7 final fix wave, I3 round 2. Process-wide,
+        crash-safe liveness truth for callers (e.g.
+        `AgentService._sweep_stale_agent_worktrees`) that must never treat
+        a genuinely still-running run as safe to garbage-collect around --
+        unlike any in-memory, coordinator-scoped source (a `FleetCoordinator`
+        snapshot, or a single `AgentService` instance's own bookkeeping),
+        this also protects a DIFFERENT conversation's live children sharing
+        the same workspace root, which those sources cannot see at all.
+        Mirrors `reconcile_orphaned_runs`'s own
+        ``SELECT id FROM agent_runs WHERE status = ...`` shape, generalized
+        to the full terminal set instead of hardcoding ``'running'``.
+
+        Returns:
+            The set of non-terminal run ids (empty when none are running).
+        """
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
+        query = f"SELECT id FROM agent_runs WHERE status NOT IN ({placeholders})"
+        with self.connection() as conn:
+            rows = conn.execute(query, tuple(TERMINAL_RUN_STATUSES)).fetchall()
+        return {row["id"] for row in rows}
+
+    def local_command_resume_records(self, conversation_id: str) -> list[dict]:
+        """Return bounded structural projections for local-command markers.
+
+        SQL admits only the exact kind, exact two-step card shape, bounded
+        metadata, and bounded JSON ``args`` objects. It never selects the
+        full step payload or tool-result ``result``. The strict display
+        parser remains the canonical validator for every field inside those
+        bounded objects.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                WITH eligible_local_commands AS MATERIALIZED (
+                    SELECT
+                        ar.rowid AS run_rowid,
+                        ar.id,
+                        ar.status,
+                        ar.assistant_message_id,
+                        ar.created_at,
+                        call_step.rowid AS call_step_rowid,
+                        result_step.rowid AS result_step_rowid
+                    FROM agent_runs AS ar
+                    JOIN agent_run_steps AS call_step
+                      ON call_step.run_id = ar.id AND call_step.seq = 0
+                    JOIN agent_run_steps AS result_step
+                      ON result_step.run_id = ar.id AND result_step.seq = 1
+                    WHERE ar.conversation_id = ?
+                      AND ar.agent_kind = 'local_command'
+                      AND ar.status != 'superseded'
+                      AND typeof(ar.id) = 'text'
+                      AND length(CAST(ar.id AS BLOB)) BETWEEN 1 AND 128
+                      AND (
+                          ar.assistant_message_id IS NULL
+                          OR (
+                              typeof(ar.assistant_message_id) = 'text'
+                              AND length(CAST(
+                                  ar.assistant_message_id AS BLOB
+                              )) BETWEEN 1 AND 128
+                          )
+                      )
+                      AND typeof(ar.status) = 'text'
+                      AND length(CAST(ar.status AS BLOB))
+                          BETWEEN 1 AND ?
+                      AND typeof(ar.created_at) = 'text'
+                      AND length(CAST(ar.created_at AS BLOB))
+                          BETWEEN 1 AND ?
+                      AND typeof(ar.steps) = 'text'
+                      AND length(CAST(ar.steps AS BLOB))
+                          BETWEEN 2 AND ?
+                      AND typeof(call_step.payload) = 'text'
+                      AND length(CAST(call_step.payload AS BLOB))
+                          BETWEEN 2 AND ?
+                      AND typeof(result_step.payload) = 'text'
+                      AND length(CAST(result_step.payload AS BLOB))
+                          BETWEEN 2 AND ?
+                      AND (
+                          SELECT COUNT(*) FROM agent_run_steps AS all_steps
+                          WHERE all_steps.run_id = ar.id
+                      ) = 2
+                ), projected AS (
+                    SELECT
+                        CAST(eligible.id AS BLOB) AS id,
+                        CAST(eligible.status AS BLOB) AS status,
+                        CAST(eligible.assistant_message_id AS BLOB)
+                            AS assistant_message_id,
+                        eligible.created_at,
+                        CAST(json_extract(
+                            call_step.payload, '$.args'
+                        ) AS BLOB) AS call_args_json,
+                        CAST(json_extract(
+                            result_step.payload, '$.args'
+                        ) AS BLOB) AS result_args_json,
+                        CAST(json_extract(
+                            result_step.payload, '$.status'
+                        ) AS BLOB) AS result_status
+                    FROM eligible_local_commands AS eligible
+                    JOIN agent_runs AS ar ON ar.rowid = eligible.run_rowid
+                    JOIN agent_run_steps AS call_step
+                      ON call_step.rowid = eligible.call_step_rowid
+                    JOIN agent_run_steps AS result_step
+                      ON result_step.rowid = eligible.result_step_rowid
+                    WHERE json_valid(call_step.payload) = 1
+                      AND json_valid(result_step.payload) = 1
+                      AND CASE WHEN json_valid(ar.steps) = 1
+                               THEN json_type(ar.steps) END = 'array'
+                      AND CASE WHEN json_valid(ar.steps) = 1
+                               THEN json_array_length(ar.steps) END = 0
+                      AND json_type(call_step.payload, '$') = 'object'
+                      AND json_type(call_step.payload, '$.index') = 'integer'
+                      AND json_extract(call_step.payload, '$.index') = 0
+                      AND json_type(call_step.payload, '$.kind') = 'text'
+                      AND json_extract(call_step.payload, '$.kind') = 'tool_call'
+                      AND json_type(call_step.payload, '$.tool_name') = 'text'
+                      AND json_extract(call_step.payload, '$.tool_name') = 'raw_cli'
+                      AND json_type(call_step.payload, '$.args') = 'object'
+                      AND length(CAST(json_extract(
+                          call_step.payload, '$.args'
+                      ) AS BLOB)) BETWEEN 2 AND ?
+                      AND json_type(result_step.payload, '$') = 'object'
+                      AND json_type(result_step.payload, '$.index') = 'integer'
+                      AND json_extract(result_step.payload, '$.index') = 1
+                      AND json_type(result_step.payload, '$.kind') = 'text'
+                      AND json_extract(result_step.payload, '$.kind') = 'tool_result'
+                      AND json_type(result_step.payload, '$.tool_name') = 'text'
+                      AND json_extract(result_step.payload, '$.tool_name') = 'raw_cli'
+                      AND json_type(result_step.payload, '$.args') = 'object'
+                      AND length(CAST(json_extract(
+                          result_step.payload, '$.args'
+                      ) AS BLOB)) BETWEEN 2 AND ?
+                      AND json_type(result_step.payload, '$.status') = 'text'
+                      AND length(CAST(json_extract(
+                          result_step.payload, '$.status'
+                      ) AS BLOB)) BETWEEN 1 AND 16
+                )
+                SELECT
+                    id,
+                    status,
+                    assistant_message_id,
+                    call_args_json,
+                    result_args_json,
+                    result_status
+                FROM projected
+                ORDER BY created_at ASC, id ASC
+                """,
+                (
+                    conversation_id,
+                    _LOCAL_COMMAND_STATUS_BYTES,
+                    _LOCAL_COMMAND_CREATED_AT_BYTES,
+                    _LOCAL_COMMAND_STEPS_JSON_BYTES,
+                    _LOCAL_COMMAND_CALL_PAYLOAD_BYTES,
+                    _LOCAL_COMMAND_RESULT_PAYLOAD_BYTES,
+                    _LOCAL_COMMAND_CALL_ARGS_JSON_BYTES,
+                    _LOCAL_COMMAND_RESULT_ARGS_JSON_BYTES,
+                ),
+            ).fetchall()
+
+        records: list[dict] = []
+        for row in rows:
+            try:
+                encoded_fields = (
+                    row["id"],
+                    row["status"],
+                    row["call_args_json"],
+                    row["result_args_json"],
+                    row["result_status"],
+                )
+                if any(type(value) is not bytes for value in encoded_fields):
+                    continue
+                (
+                    run_id,
+                    status,
+                    call_args_json,
+                    result_args_json,
+                    result_status,
+                ) = (value.decode("utf-8") for value in encoded_fields)
+                encoded_anchor = row["assistant_message_id"]
+                if encoded_anchor is None:
+                    anchor = None
+                elif type(encoded_anchor) is bytes:
+                    anchor = encoded_anchor.decode("utf-8")
+                else:
+                    continue
+                if (
+                    not run_id.strip()
+                    or len(run_id.encode("utf-8")) > 128
+                    or (
+                        anchor is not None
+                        and (not anchor.strip() or len(anchor.encode("utf-8")) > 128)
+                    )
+                ):
+                    continue
+                call_args = json.loads(call_args_json)
+                result_args = json.loads(result_args_json)
+                if type(call_args) is not dict or type(result_args) is not dict:
+                    continue
+            except (TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+                continue
+            records.append(
+                {
+                    "id": run_id,
+                    "agent_kind": "local_command",
+                    "status": status,
+                    "assistant_message_id": anchor,
+                    "steps": [
+                        {
+                            "index": 0,
+                            "kind": "tool_call",
+                            "tool_name": "raw_cli",
+                            "args": call_args,
+                        },
+                        {
+                            "index": 1,
+                            "kind": "tool_result",
+                            "tool_name": "raw_cli",
+                            "status": result_status,
+                            "args": result_args,
+                        },
+                    ],
+                }
+            )
+        return records
 
     def undelivered_wake_runs(self, conversation_id: str) -> list[dict]:
         """Sub-agent SURVIVOR runs whose result no wake has delivered yet.
@@ -1542,7 +2691,7 @@ class AgentRunsDB(BaseDB):
                 "SELECT child.* FROM agent_runs AS child "
                 "JOIN agent_runs AS parent ON parent.id = child.parent_run_id "
                 "WHERE child.conversation_id = ? "
-                "AND child.agent_kind != 'primary' "
+                "AND child.agent_kind = 'subagent' "
                 "AND child.wake_delivered_at IS NULL "
                 "AND child.status IN ('done', 'error', 'cancelled') "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
@@ -1550,7 +2699,7 @@ class AgentRunsDB(BaseDB):
                 "ORDER BY child.updated_at ASC, child.id ASC",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-        return [self._row_to_dict(row) for row in rows]
+            return self._rows_to_dicts(conn, rows)
 
     def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
         """Stamp runs as wake-delivered; already-stamped rows are left alone.
@@ -1639,7 +2788,7 @@ class AgentRunsDB(BaseDB):
         return {row["conversation_id"]: int(row["n"]) for row in rows}
 
     def supersede_run_tree(self, run_id: str) -> int:
-        """Mark a run, and its already-terminal direct children, ``superseded``.
+        """Mark an exact primary and terminal direct sub-agents superseded.
 
         PR3a-1 Task 2 lets a sub-agent outlive its turn, so a still-
         ``running`` child is not a dead attempt -- it is a live cross-turn
@@ -1669,8 +2818,8 @@ class AgentRunsDB(BaseDB):
         hole without adding a second code path.
 
         Args:
-            run_id: The run whose tree (itself + rows with
-                ``parent_run_id == run_id``) should be marked superseded.
+            run_id: The exact primary whose tree (itself + exact sub-agent
+                rows with ``parent_run_id == run_id``) should be marked superseded.
                 Used by retry/regenerate to retire a prior attempt while
                 keeping it for drill-in history.
 
@@ -1684,8 +2833,20 @@ class AgentRunsDB(BaseDB):
         with self.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = 'superseded', "
-                "updated_at = ? WHERE (id = ? OR parent_run_id = ?) "
+                "updated_at = ? WHERE ("
+                "(id = ? AND agent_kind = 'primary') OR "
+                "(parent_run_id = ? AND agent_kind = 'subagent' AND EXISTS ("
+                "SELECT 1 FROM agent_runs AS parent "
+                "WHERE parent.id = ? AND parent.agent_kind = 'primary'"
+                "))"
+                ") "
                 f"AND status IN ({placeholders})",
-                (_now_iso(), run_id, run_id, *sorted(TERMINAL_RUN_STATUSES)),
+                (
+                    _now_iso(),
+                    run_id,
+                    run_id,
+                    run_id,
+                    *sorted(TERMINAL_RUN_STATUSES),
+                ),
             )
             return cursor.rowcount

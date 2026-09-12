@@ -54,7 +54,6 @@ from tldw_chatbook.UI.Lab_Modules.lab_speech_status import (
 from textual.widgets import (
     Button,
     Collapsible,
-    ProgressBar,
     RichLog,
     Input,
     Select,
@@ -81,7 +80,7 @@ from .audio_cpp_runtime_card import (
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_clone_setup import SpeechCloneSetup
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
-from .speech_playground_model import AXIS_CONTROLS
+from .speech_playground_model import AXIS_CONTROLS, KOKORO_LANGUAGE_OPTIONS
 from .speech_profile_mixin import (
     AdoptStudioPreferencesRequested,
     SpeechProfileMixin,
@@ -115,6 +114,7 @@ from tldw_chatbook.TTS.profile_reference_types import (
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 _AUDIO_CPP_RUNTIME_POLL_SECONDS = 5.0
 
@@ -129,6 +129,7 @@ def _validate_clone_transcript_input(value: str) -> str:
     ):
         raise ValueError("reference_text")
     return validate_reference_text(value)
+
 
 if TYPE_CHECKING:
     pass
@@ -560,6 +561,21 @@ class SpeechPlaygroundPane(
             and navigation_provider_id != saved_provider_id
         )
         global_applies = provider_id == global_preferences.provider_id
+        if (
+            key in {"default_model", "default_voice"}
+            and self._selected_provider_id is not None
+            and self._selected_provider_id != provider_id
+        ):
+            # These exact IDs belong to the saved selection's provider.
+            # Returning to the global provider can still inherit its IDs;
+            # another provider must choose its own catalog defaults.
+            if self._selected_provider_id == global_preferences.provider_id:
+                return (
+                    global_preferences.model_id
+                    if key == "default_model"
+                    else global_preferences.voice_id
+                )
+            return default
         if key == "default_model":
             if navigation_changes_provider:
                 return None
@@ -1305,6 +1321,12 @@ class SpeechPlaygroundPane(
     def _saved_studio_param_values(self, provider: str) -> dict[str, object]:
         """Return saved request-scoped values keyed by Playground control ID."""
 
+        if provider == "kokoro":
+            return {
+                "tts-kokoro-use-onnx": self._cli_setting(
+                    "app_tts", "KOKORO_USE_ONNX", True
+                )
+            }
         preferences = self.studio_preferences
         if type(preferences) is not StudioTTSPreferencesSnapshot:
             return {}
@@ -1340,6 +1362,10 @@ class SpeechPlaygroundPane(
         cell.set_class(not applicable, "hidden")
         cell.display = applicable
         if applicable:
+            language = self.axis_values.get("tts-language-select", "")
+            choices = {value for _label, value in KOKORO_LANGUAGE_OPTIONS}
+            select.set_options(KOKORO_LANGUAGE_OPTIONS)
+            select.value = language if language in choices else ""
             select.disabled = False
             return
         label = AXIS_EMPTY_PROMPTS["tts-language-select"]
@@ -2463,9 +2489,7 @@ class SpeechPlaygroundPane(
             selected_model = self._current_select_value("#tts-model-select")
         except NoMatches:
             selected_model = None
-        selected_model_id = (
-            selected_model if isinstance(selected_model, str) else None
-        )
+        selected_model_id = selected_model if isinstance(selected_model, str) else None
         self.run_worker(
             partial(
                 self._observe_audio_cpp_runtime,
@@ -2904,11 +2928,13 @@ class SpeechPlaygroundPane(
                 classes="speech-player-transport hidden",
             ):
                 # `total` and `hidden` both matter. Without `total` a
-                # ProgressBar renders its indeterminate pulse, so an idle
+                # progress bar renders its indeterminate pulse, so an idle
                 # screen animates two bars forever; without `hidden` it is
                 # on screen with nothing to report. Legacy carried both and
                 # the rebuild dropped them -- visible only on a live run.
-                yield ProgressBar(
+                # TASK-23022: PausableProgressBar additionally stops the
+                # hidden bar's 1 Hz ETA sampler, which `hidden` never did.
+                yield PausableProgressBar(
                     id="audio-progress-bar",
                     total=100,
                     show_eta=False,
@@ -2948,7 +2974,7 @@ class SpeechPlaygroundPane(
                 classes="speech-generation-text",
                 markup=False,
             )
-            yield ProgressBar(
+            yield PausableProgressBar(
                 id="generation-progress",
                 total=100,
                 show_eta=True,

@@ -1,4 +1,7 @@
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
 
 
 def _seed_v20_database(db_path, monkeypatch) -> None:
@@ -79,7 +82,9 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path, monkeypatch):
     _seed_v20_database(db_path, monkeypatch)
 
     # Reopen the genuine v20 schema with current support.
-    migrated = CharactersRAGDB(str(db_path), client_id="test-client")
+    migrated = open_current_chachanotes_from_legacy(
+        db_path, client_id="test-client"
+    )
     mconn = migrated.get_connection()
     version = mconn.execute(
         "SELECT version FROM db_schema_version WHERE schema_name = ?",

@@ -1,21 +1,92 @@
 import base64
 import json
 import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime
+from uuid import UUID
+from types import MappingProxyType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
     CitationTraceRepository,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_chat_fork import (
+    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
+    ConsoleChatForkSnapshot,
+    encode_console_fork_message_metadata,
+    fingerprint_console_fork_selected_image,
+    validate_console_fork_image_payload,
+)
+from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
+    ContextPolicyWriteResult,
+    ContextPolicyWriteStatus,
 )
+from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDurableTurnAcceptance,
+)
+from tldw_chatbook.Chat.console_library_policy_repository import (
+    ConsoleLibraryPolicyRepository,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleLibraryPolicyCandidate,
+    ConsoleLibraryPolicySnapshot,
+    ConsoleLibraryPolicyWriteStatus,
+)
+from tldw_chatbook.Chat.console_generation_settings_metadata import (
+    ConsoleGenerationSettingsReadResult,
+    ConsoleGenerationSettingsReadStatus,
+    ConsoleGenerationSettingsSnapshot,
+    ConsoleGenerationSettingsWriteResult,
+    ConsoleGenerationSettingsWriteStatus,
+    merge_console_generation_settings,
+    parse_console_generation_settings,
+    snapshot_from_session_settings,
+    strict_json_metadata_object,
+)
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleExactNativeIdTransactionContribution,
+    ConsolePromotionTransactionContribution,
+    _scoped_console_transaction_writer,
+)
+from tldw_chatbook.Chat.console_trace_repository import (
+    ConsoleTraceRepository,
+    TraceForkBoundary,
+)
+from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        CompletedVoicePairCommit,
+        ResolvedVoicePromotionDestination,
+        VoicePromotionContext,
+        VoicePromotionIdentitySet,
+    )
+from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
@@ -26,49 +97,117 @@ from tldw_chatbook.Chat.console_speech_preferences import (
     merge_console_speech_preferences,
     parse_console_speech_preferences,
 )
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEndpointAdoptionReceipt,
+)
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_project_instructions import (
+    encode_project_context_json,
+)
+from tldw_chatbook.Chat.rag_scope import serialize_scope
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
     TrajectoryRowWrite,
 )
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_trace_maintenance import TraceGCResult
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
+_CONTEXT_POLICY_EXPECTED_REVISION_UNSET = object()
+CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH = 10_000
+
+# Complete census of direct ChaChaNotes message/revision locators. The schema
+# inventory regression requires every new locator to be classified before the
+# voice-pair reconciler can silently adopt it.
+_VOICE_PROMOTION_MANDATORY_LOCATORS = frozenset(
+    {
+        ("console_trace_semantic_revisions", "revision_id"),
+        ("console_trace_semantic_revisions", "source_message_id"),
+        ("console_trace_semantic_revisions", "live_message_id"),
+        ("console_trace_semantic_revisions", "predecessor_revision_id"),
+    }
+)
+_VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS = frozenset(
+    {
+        ("canvas_revisions", "origin_message_id"),
+        ("console_dispatch_checkpoints", "assistant_message_id"),
+        ("console_dispatch_checkpoints", "user_message_id"),
+        ("message_attachments", "message_id"),
+        ("message_exchanges", "message_id"),
+        ("message_generation_metadata", "message_id"),
+        ("message_trajectory_metadata", "message_id"),
+        ("rag_citation_traces", "legacy_message_id"),
+        ("rag_message_trace_owners", "message_id"),
+        ("transcript_annotations", "message_id"),
+    }
+)
+_VOICE_PROMOTION_FORBIDDEN_REVISION_LOCATORS = frozenset(
+    {
+        ("console_trace_events", "semantic_revision_id"),
+        ("console_trace_redaction_spans", "semantic_revision_id"),
+        ("console_trace_response_links", "semantic_revision_id"),
+        ("console_trace_revision_bindings", "revision_id"),
+        ("console_trace_surface_nodes", "semantic_revision_id"),
+    }
+)
+# These locators are core parent/conversation pointers or conversation-level
+# derived state, rather than typed sidecars owned by either promoted message.
+_VOICE_PROMOTION_LOCATOR_EXEMPTIONS = frozenset(
+    {
+        ("canvas_revisions", "parent_revision_id"),
+        ("console_conversation_memories", "boundary_message_id"),
+        ("console_conversation_memories", "captured_leaf_message_id"),
+        ("console_conversation_memory_scopes", "selection_anchor_message_id"),
+        ("console_conversation_memory_selections", "activation_message_id"),
+        ("console_trace_policies", "pii_ruleset_revision_id"),
+        ("conversations", "active_leaf_message_id"),
+        ("conversations", "active_leaf_before_message_id"),
+        ("conversations", "forked_from_message_id"),
+        ("conversations", "summary_boundary_message_id"),
+        ("conversations", "topic_last_tagged_message_id"),
+        ("messages", "parent_message_id"),
+        ("messages", "variant_of"),
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleForkCommitResult:
+    """Durable identities returned only after an atomic fork commit."""
+
+    conversation_id: str
+    active_leaf_message_id: str
+    message_id_map: dict[str, str]
+    policy: ConsoleLibraryPolicySnapshot
+    already_committed: bool = False
 
 
 def _initial_metadata_object(metadata: object) -> dict[str, object]:
     """Return strict JSON-object metadata without lossy key coercion."""
+    return strict_json_metadata_object(metadata)
 
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"Non-finite JSON constant {value!r} is not supported.")
 
+def _is_canonical_utc_timestamp(value: object) -> bool:
+    """Accept only the two exact UTC shapes emitted by ChaChaNotes writers."""
+    if type(value) is not str:
+        return False
+    timestamp_format: str
+    if len(value) == 24 and value.endswith("Z"):
+        timestamp_format = "%Y-%m-%dT%H:%M:%S.%fZ"
+    elif len(value) == 19:
+        # SQLite CURRENT_TIMESTAMP is UTC, emitted without a zone suffix.
+        timestamp_format = "%Y-%m-%d %H:%M:%S"
+    else:
+        return False
     try:
-        if isinstance(metadata, Mapping):
-            candidate = dict(metadata)
-            if not _mapping_keys_are_strings(candidate):
-                raise ValueError("Mapping keys must be strings.")
-            serialized = json.dumps(candidate, allow_nan=False, sort_keys=True)
-            decoded = json.loads(serialized, parse_constant=reject_constant)
-        elif type(metadata) is str:
-            decoded = json.loads(metadata, parse_constant=reject_constant)
-        else:
-            raise ValueError("Unsupported metadata type.")
-    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
-        raise ValueError("metadata must be a valid JSON object.") from exc
-    if not isinstance(decoded, dict):
-        raise ValueError("metadata must be a valid JSON object.")
-    return decoded
-
-
-def _mapping_keys_are_strings(value: object) -> bool:
-    if isinstance(value, Mapping):
-        return all(
-            type(key) is str and _mapping_keys_are_strings(item)
-            for key, item in value.items()
-        )
-    if isinstance(value, (list, tuple)):
-        return all(_mapping_keys_are_strings(item) for item in value)
+        datetime.strptime(value, timestamp_format)
+    except ValueError:
+        return False
     return True
 
 
@@ -83,6 +222,646 @@ class ChatPersistenceService:
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
         self.context_repository = ConsoleContextRepository(db)
+        self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
+        self.console_dispatch_repository = ConsoleDispatchRepository(db)
+        self._console_trace_repository = ConsoleTraceRepository()
+        self._semantic_revision_coordinator = SemanticRevisionCoordinator(
+            db,
+            repository=self._console_trace_repository,
+        )
+        self.local_marks = ConversationLocalMarksService(db)
+
+    @property
+    def console_trace_repository(self) -> ConsoleTraceRepository:
+        """Return the cursor-only semantic trace transaction participant."""
+        return self._console_trace_repository
+
+    @property
+    def semantic_revision_coordinator(self) -> SemanticRevisionCoordinator:
+        """Return the shared caller-transaction semantic mutation coordinator."""
+
+        return self._semantic_revision_coordinator
+
+    def purge_console_trace(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        detached_at: str,
+    ) -> "TraceGCResult":
+        """Detach and logically reclaim one conversation's unreachable trace."""
+
+        from tldw_chatbook.Chat.console_trace_maintenance import TraceGarbageCollector
+
+        return TraceGarbageCollector(self.db).purge_conversation(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            detached_at=detached_at,
+        )
+
+    def get_console_trace_fork_boundary(
+        self,
+        *,
+        conversation_id: str,
+        included_turn_ids: Sequence[str],
+    ) -> TraceForkBoundary | None:
+        """Read one immutable trace prefix boundary for a Console fork fence.
+
+        Args:
+            conversation_id: Durable source conversation identity.
+            included_turn_ids: Ordered unique trace-turn identities in the forked
+                message prefix.
+
+        Returns:
+            The newest reachable trace boundary for the prefix, or None when the
+            source has no attached trace owner or matching events.
+        """
+
+        with self.db.transaction() as cursor:
+            return self._console_trace_repository.capture_fork_boundary(
+                cursor,
+                conversation_id=conversation_id,
+                included_turn_ids=included_turn_ids,
+            )
+
+    def settle_provider_response_trace(
+        self,
+        *,
+        coordinator: object,
+        request: object,
+        canonical_message_id: str | None,
+    ) -> bool:
+        """Seal a response after canonical persistence, or trace-own it on failure.
+
+        Callers pass the newly persisted assistant ID only after its create
+        transaction succeeds. Passing ``None`` deliberately leaves the response
+        trace-owned as a sanitized artifact. Settlement remains best-effort and
+        never rolls back the already committed conversation message.
+        """
+
+        from tldw_chatbook.Chat.console_trace_settlement import (
+            ConsoleTraceSettlementCoordinator,
+            TraceSettlementRequest,
+        )
+
+        if not isinstance(coordinator, ConsoleTraceSettlementCoordinator):
+            raise TypeError("coordinator")
+        if type(request) is not TraceSettlementRequest:
+            raise TypeError("request")
+        return coordinator.submit(
+            self.db,
+            replace(
+                cast(TraceSettlementRequest, request),
+                canonical_message_id=canonical_message_id,
+            ),
+        )
+
+    @staticmethod
+    def thinking_round_trip_version() -> int:
+        """Return the thinking envelope version this local adapter round-trips."""
+        return 1
+
+    def persist_console_library_activity(
+        self,
+        *,
+        conversation_id: str,
+        contribution: LibraryActivityContribution,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        """Persist one bounded activity batch in a single owned transaction."""
+        if not isinstance(contribution, LibraryActivityContribution):
+            raise TypeError("contribution must be LibraryActivityContribution")
+        with self.db.transaction(immediate=True) as cursor:
+            conversation = cursor.execute(
+                "SELECT deleted FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if conversation is None or conversation["deleted"]:
+                raise RuntimeError("Durable conversation is unavailable.")
+            with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
+                contribution.write(
+                    writer=writer,
+                    conversation_id=conversation_id,
+                    message_ids=message_ids,
+                )
+    def _terminal_mark_type(
+        self,
+        terminal_receipt_id: str | None,
+        terminal_outcome: str | None,
+        metadata_json: str | None,
+        *,
+        assistant_owner: bool,
+        existing_metadata_json: str | None = None,
+    ) -> str | None:
+        """Validate one assistant receipt/outcome pair and its metadata."""
+        ordinary = MessageMetadata.from_json(metadata_json)
+        video = VideoGenerationMetadata.from_json(metadata_json)
+        metadata_receipt = (
+            video.terminal_receipt_id
+            if video is not None
+            else ordinary.terminal_receipt_id
+            if ordinary is not None
+            else ""
+        )
+        if terminal_receipt_id is None:
+            if terminal_outcome is not None:
+                raise ValueError("terminal outcome requires a terminal receipt")
+            if not metadata_receipt:
+                return None
+            existing_ordinary = MessageMetadata.from_json(existing_metadata_json)
+            existing_video = VideoGenerationMetadata.from_json(
+                existing_metadata_json
+            )
+            existing_receipt = (
+                existing_video.terminal_receipt_id
+                if existing_video is not None
+                else existing_ordinary.terminal_receipt_id
+                if existing_ordinary is not None
+                else ""
+            )
+            if metadata_receipt != existing_receipt:
+                raise ValueError(
+                    "terminal receipt metadata requires an atomic mark owner"
+                )
+            return None
+        if terminal_outcome not in {"complete", "failed"}:
+            raise ValueError("terminal outcome must be complete or failed")
+        if not assistant_owner:
+            raise ValueError("terminal receipt requires an assistant message")
+        mark_type = self.local_marks.console_unseen_mark_type(terminal_receipt_id)
+        if metadata_receipt != terminal_receipt_id:
+            raise ValueError("terminal receipt must match metadata_json")
+        return mark_type
+
+    def _set_terminal_outcome_and_mark_with_cursor(
+        self,
+        cursor: Any,
+        *,
+        conversation_id: str,
+        terminal_outcome: str | None,
+        mark_type: str | None,
+    ) -> None:
+        """Commit one exact local receipt/outcome pair in this transaction."""
+        if mark_type is None:
+            return
+        if terminal_outcome is None:
+            raise ValueError("terminal mark requires a terminal outcome")
+        receipt_id = self.local_marks.parse_console_unseen_mark_type(mark_type)
+        if receipt_id is None:
+            raise ValueError("terminal mark requires a valid receipt")
+        now = self.db._get_current_utc_timestamp_iso()
+        self.local_marks.set_console_terminal_with_cursor(
+            cursor,
+            conversation_id,
+            receipt_id,
+            terminal_outcome,
+            created_at=now,
+            updated_at=now,
+        )
+
+    @staticmethod
+    def _validate_completed_voice_pair_destination(
+        *,
+        destination: "ResolvedVoicePromotionDestination",
+        context: "VoicePromotionContext",
+    ) -> str:
+        """Validate the store-resolved destination before opening a transaction."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ResolvedVoicePromotionDestination,
+            VoicePromotionContext,
+        )
+        if type(destination) is not ResolvedVoicePromotionDestination:
+            raise TypeError("destination must be a ResolvedVoicePromotionDestination")
+        if type(context) is not VoicePromotionContext:
+            raise TypeError("context must be a VoicePromotionContext")
+        conversation_id = destination.persisted_conversation_id
+        if conversation_id is None:
+            raise ValueError("destination must identify a durable conversation")
+        origin = context.origin
+        if (
+            destination.session_id != origin.session_id
+            or destination.session_incarnation != origin.session_incarnation
+            or destination.capture_eligible_at_dispatch
+            != context.capture_eligible_at_dispatch
+        ):
+            raise ValueError("destination does not match the sealed promotion origin")
+        if origin.persisted_conversation_id is not None and (
+            conversation_id != origin.persisted_conversation_id
+            or destination.expected_persisted_leaf_id
+            != context.expected_persisted_leaf_id
+        ):
+            raise ValueError("destination does not match the sealed durable binding")
+        return conversation_id
+
+    @staticmethod
+    def _compare_and_swap_completed_voice_pair_leaf(
+        cursor: Any,
+        *,
+        conversation_id: str,
+        expected_leaf_message_id: str | None,
+        active_leaf_message_id: str,
+    ) -> None:
+        """Advance one local active leaf only from the store-resolved DB leaf."""
+        result = cursor.execute(
+            """UPDATE conversations
+                  SET active_leaf_message_id = ?
+                WHERE id = ?
+                  AND deleted = 0
+                  AND active_leaf_message_id IS ?""",
+            (
+                active_leaf_message_id,
+                conversation_id,
+                expected_leaf_message_id,
+            ),
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("Voice promotion active-leaf conflict.")
+
+    @staticmethod
+    def _voice_promotion_locator_exists(
+        cursor: Any,
+        *,
+        locators: frozenset[tuple[str, str]],
+        identifiers: tuple[str, ...],
+    ) -> bool:
+        """Return whether a classified typed-sidecar locator owns any ID."""
+        if not identifiers:
+            return False
+        placeholders = ", ".join("?" for _identifier in identifiers)
+        queries: list[str] = []
+        parameters: list[str] = []
+        for table, column in sorted(locators):
+            # Identifiers come only from the complete private schema census.
+            queries.append(
+                f'SELECT 1 FROM "{table}" WHERE "{column}" IN ({placeholders})'
+            )
+            parameters.extend(identifiers)
+        query = " UNION ALL ".join(queries) + " LIMIT 1"
+        return cursor.execute(query, parameters).fetchone() is not None
+
+    def _reconcile_completed_voice_pair(
+        self,
+        cursor: Any,
+        *,
+        conversation_id: str,
+        expected_leaf_message_id: str | None,
+        context: "VoicePromotionContext",
+        identities: "VoicePromotionIdentitySet",
+        assistant_metadata_json: str,
+    ) -> "CompletedVoicePairCommit | None":
+        """Adopt one complete exact-ID commit or fail closed on any residue."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            CompletedVoicePairCommit,
+        )
+        messages = cursor.execute(
+            """SELECT id, conversation_id, parent_message_id, sender, content,
+                      image_data, image_mime_type, timestamp, ranking,
+                      last_modified, deleted, client_id, version, feedback,
+                      role, variant_of, variant_number, is_selected_variant,
+                      total_variants, usage_json, metadata_json,
+                      provider_continuation_json, thinking_blocks_json,
+                      assistant_generation_state
+                 FROM messages
+                WHERE id IN (?, ?)""",
+            (identities.user_message_id, identities.assistant_message_id),
+        ).fetchall()
+        revisions = cursor.execute(
+            """SELECT revision_id, source_conversation_id, source_message_id,
+                      revision_sequence, normalized_role, content_kind,
+                      creation_reason, predecessor_revision_id, live_message_id,
+                      live_locator_retired_at, created_at
+                 FROM console_trace_semantic_revisions
+                WHERE source_message_id IN (?, ?)
+                   OR live_message_id IN (?, ?)""",
+            (
+                identities.user_message_id,
+                identities.assistant_message_id,
+                identities.user_message_id,
+                identities.assistant_message_id,
+            ),
+        ).fetchall()
+        message_sidecar = self._voice_promotion_locator_exists(
+            cursor,
+            locators=_VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS,
+            identifiers=(
+                identities.user_message_id,
+                identities.assistant_message_id,
+            ),
+        )
+        unseen_mark = self.local_marks.console_unseen_mark_type(
+            identities.terminal_receipt_id
+        )
+        complete_mark = self.local_marks.console_terminal_outcome_mark_type(
+            identities.terminal_receipt_id,
+            "complete",
+        )
+        outcome_prefix = (
+            f"{self.local_marks.CONSOLE_TERMINAL_OUTCOME_PREFIX}"
+            f"{identities.terminal_receipt_id}:%"
+        )
+        marks = cursor.execute(
+            """SELECT conversation_id, mark_type,
+                      CAST(created_at AS TEXT) AS created_at_text,
+                      CAST(updated_at AS TEXT) AS updated_at_text
+                 FROM conversation_local_marks
+                WHERE mark_type = ? OR mark_type LIKE ?""",
+            (unseen_mark, outcome_prefix),
+        ).fetchall()
+        if not messages and not revisions and not marks and not message_sidecar:
+            return None
+
+        by_id = {row["id"]: row for row in messages}
+        user = by_id.get(identities.user_message_id)
+        assistant = by_id.get(identities.assistant_message_id)
+        user_matches = bool(
+            user is not None
+            and user["conversation_id"] == conversation_id
+            and user["parent_message_id"] == expected_leaf_message_id
+            and user["sender"] == "user"
+            and user["role"] == "user"
+            and user["content"] == context.user_text
+            and user["image_data"] is None
+            and user["image_mime_type"] is None
+            and isinstance(user["timestamp"], datetime)
+            and user["last_modified"] == user["timestamp"]
+            and user["ranking"] is None
+            and user["deleted"] == 0
+            and user["client_id"] == self.db.client_id
+            and user["version"] == 1
+            and user["feedback"] is None
+            and user["variant_of"] is None
+            and user["variant_number"] == 1
+            and user["is_selected_variant"] == 1
+            and user["total_variants"] == 1
+            and user["usage_json"] is None
+            and user["metadata_json"] is None
+            and user["provider_continuation_json"] is None
+            and user["thinking_blocks_json"] is None
+            and user["assistant_generation_state"] is None
+        )
+        assistant_matches = bool(
+            assistant is not None
+            and assistant["conversation_id"] == conversation_id
+            and assistant["parent_message_id"] == identities.user_message_id
+            and assistant["sender"] == "assistant"
+            and assistant["role"] == "assistant"
+            and assistant["content"] == context.assistant_text
+            and assistant["image_data"] is None
+            and assistant["image_mime_type"] is None
+            and isinstance(assistant["timestamp"], datetime)
+            and assistant["last_modified"] == assistant["timestamp"]
+            and assistant["ranking"] is None
+            and assistant["deleted"] == 0
+            and assistant["client_id"] == self.db.client_id
+            and assistant["version"] == 1
+            and assistant["feedback"] is None
+            and assistant["variant_of"] is None
+            and assistant["variant_number"] == 1
+            and assistant["is_selected_variant"] == 1
+            and assistant["total_variants"] == 1
+            and assistant["usage_json"] == context.usage_json
+            and assistant["metadata_json"] == assistant_metadata_json
+            and assistant["provider_continuation_json"] is None
+            and assistant["thinking_blocks_json"] is None
+            and assistant["assistant_generation_state"] == "complete"
+        )
+        revisions_by_message = {row["source_message_id"]: row for row in revisions}
+        revisions_match = len(revisions) == 2 and all(
+            self._initial_voice_message_revision_matches(
+                revisions_by_message.get(message_id),
+                conversation_id=conversation_id,
+                message_id=message_id,
+                role=role,
+            )
+            for message_id, role in (
+                (identities.user_message_id, "user"),
+                (identities.assistant_message_id, "assistant"),
+            )
+        )
+        revision_ids = tuple(row["revision_id"] for row in revisions)
+        revision_sidecar = self._voice_promotion_locator_exists(
+            cursor,
+            locators=_VOICE_PROMOTION_FORBIDDEN_REVISION_LOCATORS,
+            identifiers=revision_ids,
+        )
+        expected_marks = {
+            (conversation_id, unseen_mark),
+            (conversation_id, complete_mark),
+        }
+        actual_marks = {(row["conversation_id"], row["mark_type"]) for row in marks}
+        mark_timestamp_pairs = {
+            (row["created_at_text"], row["updated_at_text"]) for row in marks
+        }
+        mark_timestamps_match = (
+            len(marks) == 2
+            and len(mark_timestamp_pairs) == 1
+            and all(
+                _is_canonical_utc_timestamp(created_at) and created_at == updated_at
+                for created_at, updated_at in mark_timestamp_pairs
+            )
+        )
+        conversation = cursor.execute(
+            """SELECT active_leaf_message_id, deleted
+                 FROM conversations
+                WHERE id = ?""",
+            (conversation_id,),
+        ).fetchone()
+        if not (
+            len(messages) == 2
+            and user_matches
+            and assistant_matches
+            and revisions_match
+            and not message_sidecar
+            and not revision_sidecar
+            and actual_marks == expected_marks
+            and mark_timestamps_match
+            and conversation is not None
+            and not conversation["deleted"]
+            and conversation["active_leaf_message_id"]
+            == identities.assistant_message_id
+        ):
+            raise RuntimeError("Voice promotion persistence conflict.")
+        return CompletedVoicePairCommit(
+            conversation_id=conversation_id,
+            user_message_id=identities.user_message_id,
+            assistant_message_id=identities.assistant_message_id,
+            terminal_receipt_id=identities.terminal_receipt_id,
+            active_leaf_message_id=identities.assistant_message_id,
+            already_committed=True,
+            user_revision_id=revisions_by_message[identities.user_message_id][
+                "revision_id"
+            ],
+            assistant_revision_id=revisions_by_message[identities.assistant_message_id][
+                "revision_id"
+            ],
+        )
+
+    @staticmethod
+    def _initial_voice_message_revision_matches(
+        revision: Any,
+        *,
+        conversation_id: str,
+        message_id: str,
+        role: str,
+    ) -> bool:
+        """Return whether one row is the canonical initial text revision."""
+        if revision is None or type(revision["revision_id"]) is not str:
+            return False
+        try:
+            parsed_revision_id = UUID(revision["revision_id"])
+        except (ValueError, AttributeError):
+            return False
+        return bool(
+            parsed_revision_id.version == 4
+            and str(parsed_revision_id) == revision["revision_id"]
+            and revision["source_conversation_id"] == conversation_id
+            and revision["source_message_id"] == message_id
+            and revision["revision_sequence"] == 0
+            and revision["normalized_role"] == role
+            and revision["content_kind"] == "text"
+            and revision["creation_reason"] == "message_create"
+            and revision["predecessor_revision_id"] is None
+            and revision["live_message_id"] == message_id
+            and revision["live_locator_retired_at"] is None
+            and _is_canonical_utc_timestamp(revision["created_at"])
+        )
+
+    def commit_completed_voice_pair(
+        self,
+        *,
+        destination: "ResolvedVoicePromotionDestination",
+        context: "VoicePromotionContext",
+    ) -> "CompletedVoicePairCommit":
+        """Atomically persist an already-complete no-tool voice pair.
+
+        The transaction owns only this service's ChaChaNotes database. Retries
+        reconcile the promotion-derived identities before checking the current
+        active leaf, covering an exception reported after a successful commit.
+        """
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            CompletedVoicePairCommit,
+            derive_voice_promotion_identities,
+        )
+        conversation_id = self._validate_completed_voice_pair_destination(
+            destination=destination,
+            context=context,
+        )
+        if self.db.get_connection().in_transaction:
+            raise RuntimeError("Voice promotion must own transaction commit.")
+        identities = derive_voice_promotion_identities(context.promotion_id)
+        assistant_metadata_json = MessageMetadata(
+            terminal_receipt_id=identities.terminal_receipt_id
+        ).to_json()
+        with self.db.transaction(immediate=True) as cursor:
+            reconciled = self._reconcile_completed_voice_pair(
+                cursor,
+                conversation_id=conversation_id,
+                expected_leaf_message_id=destination.expected_persisted_leaf_id,
+                context=context,
+                identities=identities,
+                assistant_metadata_json=assistant_metadata_json,
+            )
+            if reconciled is not None:
+                result = reconciled
+            else:
+                conversation = cursor.execute(
+                    """SELECT active_leaf_message_id, deleted, archived
+                         FROM conversations
+                        WHERE id = ?""",
+                    (conversation_id,),
+                ).fetchone()
+                if (
+                    conversation is None
+                    or conversation["deleted"]
+                    or conversation["archived"]
+                    or conversation["active_leaf_message_id"]
+                    != destination.expected_persisted_leaf_id
+                ):
+                    raise RuntimeError("Voice promotion active-leaf conflict.")
+                if destination.expected_persisted_leaf_id is not None:
+                    expected_parent = cursor.execute(
+                        """SELECT conversation_id, deleted
+                             FROM messages
+                            WHERE id = ?""",
+                        (destination.expected_persisted_leaf_id,),
+                    ).fetchone()
+                    if (
+                        expected_parent is None
+                        or expected_parent["deleted"]
+                        or expected_parent["conversation_id"] != conversation_id
+                    ):
+                        raise RuntimeError("Voice promotion active-leaf conflict.")
+
+                user_message_id = self.db.add_message(
+                    {
+                        "id": identities.user_message_id,
+                        "conversation_id": conversation_id,
+                        "parent_message_id": destination.expected_persisted_leaf_id,
+                        "sender": "user",
+                        "role": "user",
+                        "content": context.user_text,
+                    }
+                )
+                if user_message_id != identities.user_message_id:
+                    raise RuntimeError("Voice promotion user write failed.")
+                assistant_message_id = self.db.add_message(
+                    {
+                        "id": identities.assistant_message_id,
+                        "conversation_id": conversation_id,
+                        "parent_message_id": identities.user_message_id,
+                        "sender": "assistant",
+                        "role": "assistant",
+                        "content": context.assistant_text,
+                        "usage_json": context.usage_json,
+                        "metadata_json": assistant_metadata_json,
+                        "assistant_generation_state": "complete",
+                    }
+                )
+                if assistant_message_id != identities.assistant_message_id:
+                    raise RuntimeError("Voice promotion assistant write failed.")
+                revision_rows = cursor.execute(
+                    """SELECT source_message_id, revision_id
+                         FROM console_trace_semantic_revisions
+                        WHERE source_message_id IN (?, ?)
+                          AND revision_sequence = 0""",
+                    (identities.user_message_id, identities.assistant_message_id),
+                ).fetchall()
+                revisions_by_message = {
+                    row["source_message_id"]: row["revision_id"]
+                    for row in revision_rows
+                }
+                if set(revisions_by_message) != {
+                    identities.user_message_id,
+                    identities.assistant_message_id,
+                }:
+                    raise RuntimeError("Voice promotion revision write failed.")
+                now = self.db._get_current_utc_timestamp_iso()
+                self.local_marks.set_console_terminal_with_cursor(
+                    cursor,
+                    conversation_id,
+                    identities.terminal_receipt_id,
+                    "complete",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._compare_and_swap_completed_voice_pair_leaf(
+                    cursor,
+                    conversation_id=conversation_id,
+                    expected_leaf_message_id=destination.expected_persisted_leaf_id,
+                    active_leaf_message_id=identities.assistant_message_id,
+                )
+                result = CompletedVoicePairCommit(
+                    conversation_id=conversation_id,
+                    user_message_id=identities.user_message_id,
+                    assistant_message_id=identities.assistant_message_id,
+                    terminal_receipt_id=identities.terminal_receipt_id,
+                    active_leaf_message_id=identities.assistant_message_id,
+                    user_revision_id=revisions_by_message[identities.user_message_id],
+                    assistant_revision_id=revisions_by_message[
+                        identities.assistant_message_id
+                    ],
+                )
+        return result
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
@@ -112,13 +891,87 @@ class ChatPersistenceService:
         """
         if type(message_id) is not str or not message_id:
             return None
-        message = self.db.get_message_by_id(message_id)
+        # TASK-22226: per-send settle/continuation reconciles call this for
+        # just-written rows -- read the version without hydrating the BLOB.
+        message = self.db.get_message_by_id_without_blob(message_id)
         if message is None or message.get("deleted"):
             return None
         version = message.get("version")
         if type(version) is not int or version < 1:
             return None
         return version
+
+    def get_console_fork_source_message(
+        self, message_id: str
+    ) -> tuple[int, str] | None:
+        """Return one exact persisted source revision/body pair for fork fencing."""
+
+        if type(message_id) is not str or not message_id:
+            return None
+        message = self.db.get_message_by_id(message_id)
+        if message is None or message.get("deleted"):
+            return None
+        version = message.get("version")
+        body = message.get("content")
+        if type(version) is not int or version < 1 or type(body) is not str:
+            return None
+        return version, body
+
+    def get_console_fork_active_leaf(self, conversation_id: str) -> str | None:
+        """Return the canonical durable active leaf used by a fork fence."""
+
+        if type(conversation_id) is not str or not conversation_id:
+            return None
+        active_leaf = self.db.get_conversation_active_leaf(conversation_id)
+        return active_leaf if type(active_leaf) is str and active_leaf else None
+
+    def get_console_fork_citation_state(
+        self,
+        message_id: str,
+        revision: int,
+        source_body: str,
+        target_body: str,
+    ) -> tuple[str, str | None]:
+        """Return one authoritative citation state for immutable fork staging."""
+
+        repository = self.citation_repository
+        if repository is not None and repository.db is self.db:
+            return repository.classify_fork_message_owner(
+                message_id=message_id,
+                message_revision=revision,
+                source_message_body=source_body,
+                target_message_body=target_body,
+            )
+        connection = self.db.get_connection()
+        message = connection.execute(
+            """
+            SELECT version, content, deleted
+            FROM messages
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["deleted"]
+            or message["version"] != revision
+            or message["content"] != source_body
+        ):
+            raise CitationPersistenceUnavailable("fork_source_owner_unverifiable")
+        ambiguous = connection.execute(
+            """
+            SELECT 1
+            FROM rag_message_trace_owners
+            WHERE message_id = ? AND message_revision = ?
+            LIMIT 1
+            """,
+            (message_id, revision),
+        ).fetchone()
+        if ambiguous is not None:
+            raise CitationPersistenceUnavailable(
+                "fork_source_owner_authority_ambiguous"
+            )
+        return "none", None
 
     def get_conversation_version(self, conversation_id: str) -> int | None:
         """Return the current positive version for one active conversation."""
@@ -128,11 +981,7 @@ class ChatPersistenceService:
         if conversation is None or conversation.get("deleted"):
             return None
         version = conversation.get("version")
-        if (
-            not isinstance(version, int)
-            or isinstance(version, bool)
-            or version < 1
-        ):
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
             return None
         return version
 
@@ -178,14 +1027,157 @@ class ChatPersistenceService:
         """Return local sparse context-policy overrides for one conversation."""
         return self.context_repository.load_policy(conversation_id)
 
+    def get_conversation_generation_settings(
+        self, conversation_id: str
+    ) -> ConsoleGenerationSettingsReadResult:
+        """Read one conversation's complete safe generation snapshot."""
+        if type(conversation_id) is not str or not conversation_id:
+            return ConsoleGenerationSettingsReadResult(
+                ConsoleGenerationSettingsReadStatus.ABSENT
+            )
+        record = self.db.get_conversation_by_id(conversation_id)
+        if record is None or record.get("deleted"):
+            return ConsoleGenerationSettingsReadResult(
+                ConsoleGenerationSettingsReadStatus.ABSENT
+            )
+        return parse_console_generation_settings(record.get("metadata"))
+
+    def update_conversation_generation_settings(
+        self,
+        *,
+        conversation_id: str,
+        snapshot: ConsoleGenerationSettingsSnapshot,
+        expected_snapshot: ConsoleGenerationSettingsSnapshot | None,
+    ) -> ConsoleGenerationSettingsWriteResult:
+        """Compare-and-set one complete owned snapshot with one bounded retry.
+
+        A conversation version conflict is retryable only when a fresh read
+        proves this codec's complete owned value still equals the caller's
+        expected base. The retry then merges against that fresh record so
+        unrelated metadata siblings are preserved.
+        """
+        try:
+            merge_console_generation_settings({}, snapshot)
+            if expected_snapshot is not None:
+                merge_console_generation_settings({}, expected_snapshot)
+        except (TypeError, ValueError):
+            return ConsoleGenerationSettingsWriteResult(
+                ConsoleGenerationSettingsWriteStatus.INVALID
+            )
+
+        target = str(conversation_id)
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(target)
+            if record is None or record.get("deleted"):
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.MISSING
+                )
+            current = parse_console_generation_settings(record.get("metadata"))
+            if current.status is ConsoleGenerationSettingsReadStatus.INVALID:
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.INVALID
+                )
+            if (
+                current.status
+                is ConsoleGenerationSettingsReadStatus.UNSUPPORTED_VERSION
+            ):
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION
+                )
+            if current.snapshot != expected_snapshot:
+                return ConsoleGenerationSettingsWriteResult(
+                    ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+                    current.snapshot,
+                )
+            metadata = merge_console_generation_settings(
+                record.get("metadata"),
+                snapshot,
+            )
+            try:
+                self.db.update_conversation(
+                    target,
+                    {
+                        "metadata": json.dumps(
+                            metadata,
+                            allow_nan=False,
+                            sort_keys=True,
+                        )
+                    },
+                    expected_version=record["version"],
+                )
+            except ConflictError:
+                if attempt == 0:
+                    continue
+                fresh_record = self.db.get_conversation_by_id(target)
+                if fresh_record is None or fresh_record.get("deleted"):
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.MISSING
+                    )
+                fresh = parse_console_generation_settings(fresh_record.get("metadata"))
+                if fresh.status is ConsoleGenerationSettingsReadStatus.INVALID:
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.INVALID
+                    )
+                if (
+                    fresh.status
+                    is ConsoleGenerationSettingsReadStatus.UNSUPPORTED_VERSION
+                ):
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.UNSUPPORTED_VERSION
+                    )
+                if fresh.snapshot != expected_snapshot:
+                    return ConsoleGenerationSettingsWriteResult(
+                        ConsoleGenerationSettingsWriteStatus.SUPERSEDED,
+                        fresh.snapshot,
+                    )
+                raise
+            return ConsoleGenerationSettingsWriteResult(
+                ConsoleGenerationSettingsWriteStatus.WRITTEN,
+                snapshot,
+            )
+        raise AssertionError("Unreachable generation-settings retry state.")
+
     def update_conversation_context_policy(
         self,
         *,
         conversation_id: str,
         overrides: ConsoleContextPolicyOverrides,
-    ) -> int | None:
-        """Persist local sparse context-policy overrides without sync writes."""
+        expected_revision: int | None | object = (
+            _CONTEXT_POLICY_EXPECTED_REVISION_UNSET
+        ),
+    ) -> int | None | ContextPolicyWriteResult:
+        """Persist context policy, optionally guarding its owned revision.
+
+        Omitting ``expected_revision`` preserves the established unconditional
+        caller contract. Settings Apply passes an explicit revision, including
+        ``None`` for an absent row, and receives the typed CAS result.
+        """
+        if expected_revision is not _CONTEXT_POLICY_EXPECTED_REVISION_UNSET:
+            return self.context_repository.save_policy_if_revision(
+                conversation_id,
+                overrides,
+                expected_revision=expected_revision,  # type: ignore[arg-type]
+            )
         return self.context_repository.save_policy(conversation_id, overrides)
+
+    def update_conversation_thinking_history_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy: str,
+    ) -> bool:
+        """Persist one normalized conversation-owned thinking replay policy."""
+
+        version = self.get_conversation_version(conversation_id)
+        if version is None:
+            return False
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"thinking_history_policy": policy},
+                expected_version=version,
+            )
+        )
 
     @staticmethod
     def derive_conversation_title(
@@ -213,9 +1205,59 @@ class ChatPersistenceService:
             )
         return "New Chat"
 
+    def validate_console_conversation_identity(
+        self,
+        *,
+        runtime_backend: str,
+        assistant_kind: str | None,
+        assistant_id: str | None,
+        assistant_authority_id: str | None,
+        persona_memory_mode: str | None,
+        character_id: int | None,
+    ) -> tuple[str, str | None, str | None, int | None, str | None, str | None]:
+        """Require a Console identity to equal this database's canonical form.
+
+        Args:
+            runtime_backend: Exact local or server runtime value.
+            assistant_kind: Exact generic, character, persona, or null kind.
+            assistant_id: Exact stable assistant identifier.
+            assistant_authority_id: Exact destination authority identifier.
+            persona_memory_mode: Exact persona memory mode.
+            character_id: Exact local numeric character identifier.
+
+        Returns:
+            The database-normalized identity tuple when it equals the input.
+
+        Raises:
+            ValueError: If the database rejects or would normalize the identity.
+        """
+        normalized = self.db._normalize_conversation_identity(
+            runtime_backend=runtime_backend,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            persona_memory_mode=persona_memory_mode,
+            character_id=character_id,
+        )
+        candidate = (
+            runtime_backend,
+            assistant_kind,
+            assistant_id,
+            character_id,
+            persona_memory_mode,
+            assistant_authority_id,
+        )
+        if normalized != candidate:
+            raise ValueError("Console conversation identity is not canonical.")
+        return normalized
+
     def create_conversation(
         self,
         *,
+        conversation_id: str | None = None,
+        root_id: str | None = None,
+        parent_conversation_id: str | None = None,
+        forked_from_message_id: str | None = None,
         character_id: Optional[int] = None,
         character_name: Optional[str] = None,
         assistant_kind: Optional[str] = None,
@@ -231,10 +1273,15 @@ class ChatPersistenceService:
         system_prompt: Optional[str] = None,
         metadata: Mapping[str, object] | str | None = None,
         speech_preferences: ConsoleSpeechPreferences | None = None,
+        thinking_history_policy: str | None = None,
     ) -> str:
-        """Create a conversation and link it to a workspace when requested.
+        """Create a conversation after validating any workspace authority.
 
         Args:
+            conversation_id: Optional preallocated durable conversation identity.
+            root_id: Optional canonical conversation root identity.
+            parent_conversation_id: Optional durable source conversation identity.
+            forked_from_message_id: Optional persisted source boundary identity.
             character_id: Local character identifier associated with the conversation.
             character_name: Display name used to derive a title when no explicit
                 title is supplied.
@@ -248,12 +1295,12 @@ class ChatPersistenceService:
             discovery_owner: Owner of the assistant discovery record.
             discovery_entity_id: Discovery record identifier for the assistant.
             scope_type: Conversation scope. Only an explicit normalized
-                ``scope_type="workspace"`` validates and links workspace
-                membership here.
+                ``scope_type="workspace"`` validates the workspace target here.
+                Registry membership is a separate post-commit projection.
             workspace_id: Candidate workspace identifier forwarded to the
                 database and resolved for an explicit workspace scope.
                 Non-workspace/global persistence is normalized by the database
-                and may clear it; omitting scope does not create a link.
+                and may clear it; this method never creates registry membership.
             conversation_title: Explicit title, which takes precedence when
                 truthy; otherwise the character or assistant-derived title is used.
             system_prompt: Initial system prompt persisted with the conversation.
@@ -261,16 +1308,16 @@ class ChatPersistenceService:
                 string. Malformed or non-object values are rejected before creation.
             speech_preferences: Optional staged Console reply-speech preferences
                 to include in the conversation metadata before returning.
+            thinking_history_policy: Optional normalized conversation replay
+                preference. Null and missing values retain legacy Auto behavior.
 
         Returns:
             Persisted conversation ID.
 
         Raises:
             ValueError: If workspace scope is invalid or its workspace cannot be
-                resolved.
-            Exception: If workspace membership linkage fails after creation. A
-                best-effort soft-delete is attempted; a false result can leave
-                the row, and a cleanup exception may replace the link error.
+                resolved. Workspace registry membership is intentionally not
+                written here; it is a post-commit projection of the durable row.
         """
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
@@ -283,6 +1330,9 @@ class ChatPersistenceService:
             explicit_title=conversation_title,
         )
         conversation_data = {
+            "root_id": root_id,
+            "parent_conversation_id": parent_conversation_id,
+            "forked_from_message_id": forked_from_message_id,
             "character_id": character_id,
             "assistant_kind": assistant_kind,
             "assistant_id": assistant_id,
@@ -296,8 +1346,11 @@ class ChatPersistenceService:
             else workspace_id,
             "title": title,
             "system_prompt": system_prompt,
+            "thinking_history_policy": thinking_history_policy,
             "client_id": self.db.client_id,
         }
+        if conversation_id is not None:
+            conversation_data["id"] = conversation_id
         if assistant_authority_id is not _ASSISTANT_AUTHORITY_UNSET:
             conversation_data["assistant_authority_id"] = assistant_authority_id
         initial_metadata = (
@@ -317,18 +1370,799 @@ class ChatPersistenceService:
                 allow_nan=False,
                 sort_keys=True,
             )
-        conversation_id = self.db.add_conversation(conversation_data)
-        if safe_workspace_id is not None:
-            try:
-                self._link_workspace_conversation(
-                    workspace_id=safe_workspace_id,
-                    conversation_id=conversation_id,
-                    title=title,
+        return self.db.add_conversation(conversation_data)
+
+    def persist_console_conversation_with_policy(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit a first conversation row and its Library policy together."""
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True):
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
                 )
-            except Exception:
-                self._discard_created_conversation(conversation_id)
-                raise
-        return conversation_id
+            result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
+                )
+        return result.snapshot
+
+    def commit_durable_turn(
+        self,
+        *,
+        acceptance: ConsoleDurableTurnAcceptance,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+        context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+    ) -> ConsoleDispatchCheckpoint:
+        """Atomically create/validate and accept one durable Console turn.
+
+        The service owns the sole outer ``BEGIN IMMEDIATE``.  It intentionally
+        returns only durable values and never mutates the live Console session;
+        publication is a postcommit store/controller responsibility.
+        """
+
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True) as cursor:
+            conversation = cursor.execute(
+                "SELECT deleted FROM conversations WHERE id = ?",
+                (acceptance.conversation_id,),
+            ).fetchone()
+            if conversation is None:
+                created_id = self.create_conversation(
+                    conversation_id=acceptance.conversation_id,
+                    **dict(conversation_kwargs),
+                )
+                if created_id != acceptance.conversation_id:
+                    raise RuntimeError(
+                        "Persistence returned an unexpected conversation id."
+                    )
+                policy_result = self.console_library_policy_repository.insert(
+                    acceptance.conversation_id,
+                    policy_candidate,
+                )
+                if (
+                    policy_result.status
+                    is not ConsoleLibraryPolicyWriteStatus.COMMITTED
+                ):
+                    raise RuntimeError(
+                        "Console Library policy could not be committed with turn."
+                    )
+                if context_policy_overrides is not None:
+                    context_result = self.context_repository.save_policy_if_revision(
+                        acceptance.conversation_id,
+                        context_policy_overrides,
+                        expected_revision=None,
+                    )
+                    if context_result.status is not ContextPolicyWriteStatus.WRITTEN:
+                        raise RuntimeError(
+                            "Console context settings could not be committed with turn."
+                        )
+            else:
+                if conversation["deleted"]:
+                    raise RuntimeError("Durable conversation is unavailable.")
+                policy_row = cursor.execute(
+                    "SELECT auto_retrieve_on_send, assistant_library_access, "
+                    "policy_revision FROM console_conversation_library_policy "
+                    "WHERE conversation_id = ?",
+                    (acceptance.conversation_id,),
+                ).fetchone()
+                authority = acceptance.frozen_authority.policy
+                if (
+                    policy_row is None
+                    or authority.source != "durable"
+                    or authority.policy_revision != policy_row["policy_revision"]
+                    or int(policy_candidate.auto_retrieve.value == "automatic")
+                    != policy_row["auto_retrieve_on_send"]
+                    or int(policy_candidate.assistant_access.value == "allowed")
+                    != policy_row["assistant_library_access"]
+                ):
+                    raise RuntimeError(
+                        "Durable Console Library policy no longer matches acceptance."
+                    )
+            return self.console_dispatch_repository.insert_with_messages(
+                cursor,
+                acceptance,
+            )
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id: str,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+        messages: Sequence[Mapping[str, object]],
+        active_leaf_message_id: str | None,
+        context_summary: str | None = None,
+        context_summary_boundary_message_id: str | None = None,
+        project_context_json: str | None = None,
+        context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        contributions: Sequence[ConsolePromotionTransactionContribution] = (),
+        trace_boundary: TraceForkBoundary | None = None,
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Commit one temporary Console transcript and all Task-7 sidecars."""
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True) as cursor:
+            created_id = self.create_conversation(
+                conversation_id=conversation_id,
+                **dict(conversation_kwargs),
+            )
+            if created_id != conversation_id:
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
+            if trace_boundary is not None:
+                self._console_trace_repository.attach_fork_owner(
+                    cursor,
+                    conversation_id=conversation_id,
+                    boundary=trace_boundary,
+                )
+            policy_result = self.console_library_policy_repository.insert(
+                conversation_id,
+                policy_candidate,
+            )
+            if policy_result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with conversation."
+                )
+            native_message_ids: dict[str, str] = {}
+            message_ids: dict[str, str] = {}
+            for prepared in messages:
+                native_id = str(prepared["native_id"])
+                kwargs = dict(prepared["create_kwargs"])
+                persisted_id = self.create_message(
+                    conversation_id=conversation_id,
+                    **kwargs,
+                )
+                expected_id = str(kwargs["message_id"])
+                if persisted_id != expected_id:
+                    raise RuntimeError("Persistence returned an unexpected message id.")
+                native_message_ids[native_id] = persisted_id
+                message_ids[native_id] = persisted_id
+                role = str(kwargs["sender"])
+                if role in {"user", "assistant"}:
+                    message_ids[role] = persisted_id
+            self.db.set_conversation_active_leaf(
+                conversation_id,
+                active_leaf_message_id,
+            )
+            self.db.set_conversation_context_summary(
+                conversation_id,
+                context_summary,
+                context_summary_boundary_message_id,
+            )
+            if context_policy_overrides is not None:
+                self.context_repository.save_policy(
+                    conversation_id,
+                    context_policy_overrides,
+                )
+            if project_context_json is not None:
+                self.db.set_conversation_console_project_context(
+                    conversation_id,
+                    project_context_json,
+                )
+            if contributions:
+                exact_native_message_ids = MappingProxyType(dict(native_message_ids))
+                with _scoped_console_transaction_writer(
+                    cursor,
+                    conversation_id,
+                ) as writer:
+                    for contribution in contributions:
+                        if isinstance(
+                            contribution,
+                            ConsoleExactNativeIdTransactionContribution,
+                        ):
+                            contribution.write_exact(
+                                writer=writer,
+                                conversation_id=conversation_id,
+                                native_message_ids=exact_native_message_ids,
+                            )
+                        else:
+                            contribution.write(
+                                writer=writer,
+                                conversation_id=conversation_id,
+                                message_ids=message_ids,
+                            )
+        return policy_result.snapshot
+
+    def fork_console_conversation_bundle(
+        self,
+        *,
+        snapshot: ConsoleChatForkSnapshot,
+        conversation_kwargs: Mapping[str, object],
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        project_context_json: str,
+    ) -> ConsoleForkCommitResult | None:
+        """Commit one validated durable fork as a single SQLite bundle."""
+
+        self._validate_console_fork_persistence_input(
+            snapshot,
+            policy_candidate=policy_candidate,
+            project_context_json=project_context_json,
+        )
+        if not snapshot.durable:
+            return None
+        target_id = snapshot.fork_conversation_id
+        if target_id is None:
+            raise ValueError("Durable fork conversation id is unavailable.")
+        prepared_conversation = self._fork_conversation_kwargs(
+            snapshot,
+            conversation_kwargs,
+        )
+        self.validate_workspace_target(**prepared_conversation)
+        with self.db.transaction(immediate=True) as cursor:
+            committed = self._resolve_console_fork_commit_cursor(cursor, snapshot)
+            if committed is not None:
+                return committed
+            root_id, parent_id, boundary_id = self._recheck_fork_source(
+                cursor,
+                snapshot,
+            )
+            created_id = self.create_conversation(
+                conversation_id=target_id,
+                root_id=root_id,
+                parent_conversation_id=parent_id,
+                forked_from_message_id=boundary_id,
+                **prepared_conversation,
+            )
+            if created_id != target_id:
+                raise RuntimeError(
+                    "Persistence returned an unexpected conversation id."
+                )
+            if snapshot.trace_boundary is not None:
+                self._console_trace_repository.attach_fork_owner(
+                    cursor,
+                    conversation_id=target_id,
+                    boundary=snapshot.trace_boundary,
+                )
+            for message in snapshot.messages:
+                attachments = [
+                    {
+                        "position": attachment.position,
+                        "data": attachment.data,
+                        "mime_type": attachment.mime_type,
+                        "display_name": attachment.display_name,
+                    }
+                    for attachment in message.attachments
+                ]
+                generation_metadata = [
+                    {
+                        "position": metadata.position,
+                        "prompt": metadata.prompt,
+                        "negative_prompt": metadata.negative_prompt,
+                        "backend": metadata.backend,
+                        "model": metadata.model,
+                        "seed": metadata.seed,
+                        "style": metadata.style,
+                        "params_json": metadata.params_json,
+                    }
+                    for metadata in message.generation_metadata
+                ]
+                metadata_json = None
+                if message.video_tombstone is not None:
+                    video = message.video_tombstone
+                    metadata_json = VideoGenerationMetadata(
+                        name=f"forked-video-{message.native_message_id}",
+                        prompt=video.prompt,
+                        negative_prompt=video.negative_prompt,
+                        backend=video.backend,
+                        model=video.model,
+                        seed=video.seed,
+                        duration_seconds=video.duration_seconds,
+                        fps=video.fps,
+                        width=video.width,
+                        height=video.height,
+                        ratio=video.ratio,
+                        source_image_message_id=video.source_image_message_id,
+                        container=video.container,
+                        is_unavailable_tombstone=True,
+                    ).to_json()
+                else:
+                    metadata_json = encode_console_fork_message_metadata(
+                        message.status,
+                        attachments[0]["display_name"] if attachments else "",
+                        message.trace_turn_id,
+                    )
+                persisted_id = self.create_message(
+                    conversation_id=target_id,
+                    sender=message.role.value,
+                    content=message.content,
+                    message_id=message.persisted_message_id,
+                    parent_message_id=message.persisted_parent_id,
+                    attachments=attachments,
+                    generation_metadata=generation_metadata,
+                    metadata_json=metadata_json,
+                )
+                if persisted_id != message.persisted_message_id:
+                    raise RuntimeError("Persistence returned an unexpected message id.")
+            self._link_console_fork_citations(cursor, snapshot)
+            policy_result = self.console_library_policy_repository.insert(
+                target_id,
+                policy_candidate,
+            )
+            if policy_result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                raise RuntimeError(
+                    "Console Library policy could not be committed with fork."
+                )
+            self.context_repository.save_policy(
+                target_id,
+                snapshot.configuration.context_policy_overrides,
+            )
+            self.db.set_conversation_console_project_context(
+                target_id,
+                project_context_json,
+            )
+            active_leaf = snapshot.messages[-1].persisted_message_id
+            self.db.set_conversation_active_leaf(target_id, active_leaf)
+        return ConsoleForkCommitResult(
+            conversation_id=target_id,
+            active_leaf_message_id=active_leaf,
+            message_id_map=self._fork_message_id_map(snapshot),
+            policy=policy_result.snapshot,
+        )
+
+    def resolve_console_fork_commit(
+        self,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> ConsoleForkCommitResult | None:
+        """Resolve an ambiguous durable fork result without writing."""
+
+        if not isinstance(snapshot, ConsoleChatForkSnapshot):
+            raise TypeError("snapshot must be ConsoleChatForkSnapshot")
+        if not snapshot.durable:
+            return None
+        with self.db.transaction() as cursor:
+            return self._resolve_console_fork_commit_cursor(cursor, snapshot)
+
+    def _resolve_console_fork_commit_cursor(
+        self,
+        cursor: Any,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> ConsoleForkCommitResult | None:
+        target_id = snapshot.fork_conversation_id
+        if target_id is None:
+            raise ValueError("Durable fork conversation id is unavailable.")
+        row = cursor.execute(
+            """
+            SELECT id, root_id, parent_conversation_id, forked_from_message_id,
+                   title, active_leaf_message_id, deleted,
+                   console_project_context_json
+            FROM conversations WHERE id = ?
+            """,
+            (target_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        expected_parent = snapshot.source_conversation_id
+        expected_boundary = snapshot.source_boundary_persisted_message_id
+        if expected_parent is None:
+            expected_root = target_id
+        else:
+            source = cursor.execute(
+                "SELECT root_id FROM conversations WHERE id = ?",
+                (expected_parent,),
+            ).fetchone()
+            expected_root = source["root_id"] if source is not None else None
+        active_leaf = snapshot.messages[-1].persisted_message_id
+        expected_identity = (
+            target_id,
+            expected_root,
+            expected_parent,
+            expected_boundary,
+            snapshot.title,
+            active_leaf,
+            0,
+        )
+        actual_identity = (
+            row["id"],
+            row["root_id"],
+            row["parent_conversation_id"],
+            row["forked_from_message_id"],
+            row["title"],
+            row["active_leaf_message_id"],
+            row["deleted"],
+        )
+        if actual_identity != expected_identity:
+            raise RuntimeError("Console fork target identity collision.")
+        for message in snapshot.messages:
+            persisted = cursor.execute(
+                """
+                SELECT conversation_id, parent_message_id, sender, content, deleted
+                FROM messages WHERE id = ?
+                """,
+                (message.persisted_message_id,),
+            ).fetchone()
+            if persisted is None or tuple(persisted) != (
+                target_id,
+                message.persisted_parent_id,
+                message.role.value,
+                message.content,
+                0,
+            ):
+                raise RuntimeError("Console fork target identity collision.")
+        if snapshot.trace_boundary is not None and not (
+            self._console_trace_repository.fork_owner_matches_boundary(
+                cursor,
+                conversation_id=target_id,
+                boundary=snapshot.trace_boundary,
+            )
+        ):
+            raise RuntimeError("Console fork target identity collision.")
+        policy = self.console_library_policy_repository.read(target_id).durable_policy
+        if policy is None:
+            raise RuntimeError("Console fork target identity collision.")
+        return ConsoleForkCommitResult(
+            conversation_id=target_id,
+            active_leaf_message_id=active_leaf,
+            message_id_map=self._fork_message_id_map(snapshot),
+            policy=policy,
+            already_committed=True,
+        )
+
+    @staticmethod
+    def _fork_message_id_map(snapshot: ConsoleChatForkSnapshot) -> dict[str, str]:
+        return {
+            message.native_message_id: message.persisted_message_id
+            for message in snapshot.messages
+            if message.persisted_message_id is not None
+        }
+
+    def _recheck_fork_source(
+        self,
+        cursor: Any,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> tuple[str, str | None, str | None]:
+        source_id = snapshot.source_conversation_id
+        if source_id is None:
+            return snapshot.fork_conversation_id or "", None, None
+        source = cursor.execute(
+            """
+            SELECT root_id, version, deleted, active_leaf_message_id
+            FROM conversations WHERE id = ?
+            """,
+            (source_id,),
+        ).fetchone()
+        if (
+            source is None
+            or source["deleted"]
+            or type(snapshot.source_conversation_version) is not int
+            or source["version"] != snapshot.source_conversation_version
+            or source["active_leaf_message_id"]
+            != snapshot.source_active_leaf_persisted_message_id
+        ):
+            raise RuntimeError("Console fork source changed.")
+        previous_source_id = None
+        for message in snapshot.messages:
+            row = cursor.execute(
+                """
+                SELECT conversation_id, parent_message_id, version, content, deleted
+                FROM messages WHERE id = ?
+                """,
+                (message.source_persisted_message_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["conversation_id"] != source_id
+                or row["parent_message_id"] != previous_source_id
+                or row["version"] != message.source_persisted_revision
+                or row["deleted"]
+                or row["content"] != message.source_persisted_content
+            ):
+                raise RuntimeError("Console fork source changed.")
+            previous_source_id = message.source_persisted_message_id
+        if previous_source_id != snapshot.source_boundary_persisted_message_id:
+            raise RuntimeError("Console fork source changed.")
+        active_lineage_id = snapshot.source_active_leaf_persisted_message_id
+        seen: set[str] = set()
+        for _ in range(CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH):
+            if active_lineage_id in seen or not active_lineage_id:
+                raise RuntimeError("Console fork source changed.")
+            seen.add(active_lineage_id)
+            active_row = cursor.execute(
+                """
+                SELECT conversation_id, parent_message_id, deleted
+                FROM messages WHERE id = ?
+                """,
+                (active_lineage_id,),
+            ).fetchone()
+            if (
+                active_row is None
+                or active_row["conversation_id"] != source_id
+                or active_row["deleted"]
+            ):
+                raise RuntimeError("Console fork source changed.")
+            if active_lineage_id == previous_source_id:
+                break
+            active_lineage_id = active_row["parent_message_id"]
+        else:
+            raise RuntimeError("Console fork source changed.")
+        return source["root_id"], source_id, previous_source_id
+
+    def _link_console_fork_citations(
+        self,
+        cursor: Any,
+        snapshot: ConsoleChatForkSnapshot,
+    ) -> None:
+        target_by_source = {
+            message.source_persisted_message_id: message
+            for message in snapshot.messages
+            if message.source_persisted_message_id is not None
+        }
+        for link in snapshot.citation_links:
+            target = target_by_source.get(link.source_persisted_message_id)
+            if target is None:
+                raise CitationPersistenceUnavailable("fork_citation_owner_missing")
+            if link.state != "active_required":
+                continue
+            repository = self.citation_repository
+            if repository is None or repository.db is not self.db:
+                raise CitationPersistenceUnavailable("citation_repository_unavailable")
+            repository.link_fork_message_owner(
+                cursor,
+                source_message_id=link.source_persisted_message_id,
+                source_message_revision=link.source_revision,
+                source_message_body=target.source_persisted_content or "",
+                target_message_id=target.persisted_message_id or "",
+                target_message_revision=1,
+                target_message_body=target.content,
+                confirmed_state=link.state,
+                confirmed_trace_id=link.trace_id,
+            )
+
+    @staticmethod
+    def _fork_conversation_kwargs(
+        snapshot: ConsoleChatForkSnapshot,
+        conversation_kwargs: Mapping[str, object],
+    ) -> dict[str, object]:
+        configuration = snapshot.configuration
+        global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+        prepared: dict[str, object] = {
+            "conversation_title": snapshot.title,
+            "scope_type": "global" if global_scope else "workspace",
+            "workspace_id": None if global_scope else configuration.workspace_id,
+            "system_prompt": configuration.settings.system_prompt,
+            "runtime_backend": configuration.runtime_backend,
+            "assistant_kind": configuration.assistant_kind,
+            "assistant_id": configuration.assistant_id,
+            "assistant_authority_id": configuration.assistant_authority_id,
+            "persona_memory_mode": configuration.persona_memory_mode,
+            "character_id": configuration.character_id,
+            "character_name": configuration.character_name,
+            "speech_preferences": configuration.speech_preferences,
+            "thinking_history_policy": configuration.thinking_history_policy,
+        }
+        if dict(conversation_kwargs) != prepared:
+            raise ValueError("Console fork configuration changed.")
+        metadata: dict[str, object] = {}
+        serialized_settings = asdict(configuration.settings)
+        if configuration.ephemeral_endpoint_policy is not None:
+            serialized_settings.pop("base_url", None)
+        metadata["console_session_settings"] = {
+            "version": 1,
+            **serialized_settings,
+            "pinned_prefill": None,
+        }
+        metadata = merge_console_generation_settings(
+            metadata,
+            snapshot_from_session_settings(configuration.settings),
+        )
+        if configuration.rag_scope is not None:
+            metadata["rag_scope"] = serialize_scope(configuration.rag_scope)
+        if (
+            configuration.user_display_name_override is not None
+            or configuration.character_system_template is not None
+        ):
+            metadata = json.loads(
+                merge_console_roleplay_context(
+                    metadata,
+                    ConsoleRoleplayContext(
+                        user_name_override=(configuration.user_display_name_override),
+                        character_system_template=(
+                            configuration.character_system_template
+                        ),
+                    ),
+                )
+            )
+        prepared["metadata"] = metadata or None
+        return prepared
+
+    @staticmethod
+    def _validate_console_fork_persistence_input(
+        snapshot: ConsoleChatForkSnapshot,
+        *,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        project_context_json: str,
+    ) -> None:
+        if not isinstance(snapshot, ConsoleChatForkSnapshot):
+            raise TypeError("snapshot must be ConsoleChatForkSnapshot")
+        if policy_candidate != snapshot.configuration.library_policy:
+            raise ValueError("Console fork Library policy changed.")
+        if project_context_json != encode_project_context_json(
+            snapshot.configuration.project_instruction_state
+        ):
+            raise ValueError("Console fork project context changed.")
+        if not snapshot.messages:
+            raise ValueError("Console fork must contain a message.")
+        durable_ids = [message.persisted_message_id for message in snapshot.messages]
+        if snapshot.durable:
+            if (
+                not snapshot.fork_conversation_id
+                or any(not message_id for message_id in durable_ids)
+                or len(set(durable_ids)) != len(durable_ids)
+            ):
+                raise ValueError("Console fork durable identities are invalid.")
+        elif snapshot.fork_conversation_id is not None or any(durable_ids):
+            raise ValueError("Temporary fork cannot carry durable identities.")
+        if not snapshot.durable and (
+            snapshot.source_conversation_id is not None
+            or snapshot.source_conversation_version is not None
+            or snapshot.source_active_leaf_persisted_message_id is not None
+            or snapshot.source_boundary_persisted_message_id is not None
+            or snapshot.citation_links
+            or any(
+                message.source_persisted_message_id is not None
+                or message.source_persisted_revision is not None
+                or message.source_persisted_content is not None
+                for message in snapshot.messages
+            )
+        ):
+            raise ValueError("Temporary fork citation identity is invalid.")
+        source_carriers = tuple(
+            (
+                message.source_persisted_message_id,
+                message.source_persisted_revision,
+                message.source_persisted_content,
+            )
+            for message in snapshot.messages
+        )
+        if snapshot.source_conversation_id is not None:
+            if (
+                type(snapshot.source_conversation_version) is not int
+                or not snapshot.source_active_leaf_persisted_message_id
+                or not snapshot.source_boundary_persisted_message_id
+                or any(
+                    type(source_id) is not str
+                    or not source_id
+                    or type(revision) is not int
+                    or type(content) is not str
+                    for source_id, revision, content in source_carriers
+                )
+            ):
+                raise ValueError("Console fork durable source fence is invalid.")
+        elif snapshot.durable and (
+            snapshot.source_conversation_version is not None
+            or snapshot.source_active_leaf_persisted_message_id is not None
+            or snapshot.source_boundary_persisted_message_id is not None
+            or any(carrier != (None, None, None) for carrier in source_carriers)
+            or snapshot.citation_links
+        ):
+            raise ValueError(
+                "Unsaved fork source cannot carry durable source identity."
+            )
+        expected_citations = {
+            (
+                message.source_persisted_message_id,
+                message.source_persisted_revision,
+            )
+            for message in snapshot.messages
+            if message.source_persisted_message_id is not None
+        }
+        actual_citations = {
+            (link.source_persisted_message_id, link.source_revision)
+            for link in snapshot.citation_links
+        }
+        if (
+            len(actual_citations) != len(snapshot.citation_links)
+            or actual_citations != expected_citations
+            or any(
+                link.state not in {"active_required", "unavailable", "none"}
+                for link in snapshot.citation_links
+            )
+            or any(
+                (
+                    link.state == "active_required"
+                    and (type(link.trace_id) is not str or not link.trace_id)
+                )
+                or (link.state != "active_required" and link.trace_id is not None)
+                for link in snapshot.citation_links
+            )
+        ):
+            raise ValueError("Console fork citation states are invalid.")
+        prior_native = None
+        prior_persisted = None
+        image_ids: set[str] = set()
+        for message in snapshot.messages:
+            if message.status not in {"complete", "stopped", "failed"}:
+                raise ValueError("Console fork message status is invalid.")
+            if (
+                message.native_parent_id != prior_native
+                or message.persisted_parent_id != prior_persisted
+            ):
+                raise ValueError("Console fork lineage is invalid.")
+            if message.video_tombstone is not None:
+                if (
+                    message.attachments
+                    or message.generation_metadata
+                    or message.status != "complete"
+                    or message.content != CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+                    or message.video_tombstone.owner_native_message_id
+                    != message.native_message_id
+                    or message.video_tombstone.owner_persisted_message_id
+                    != message.persisted_message_id
+                    or (
+                        message.video_tombstone.source_image_message_id is not None
+                        and message.video_tombstone.source_image_message_id
+                        not in image_ids
+                    )
+                ):
+                    raise ValueError("Console fork video tombstone is invalid.")
+            if message.generation_metadata and len(message.generation_metadata) != len(
+                message.attachments
+            ):
+                raise ValueError("Console fork generation metadata is invalid.")
+            has_image = False
+            for position, attachment in enumerate(message.attachments):
+                if (
+                    attachment.owner_native_message_id != message.native_message_id
+                    or attachment.owner_persisted_message_id
+                    != message.persisted_message_id
+                    or attachment.position != position
+                    or type(attachment.data) is not bytes
+                    or not attachment.data
+                    or len(attachment.data) > MAX_ATTACHMENT_BYTES
+                    or type(attachment.mime_type) is not str
+                    or not attachment.mime_type
+                    or type(attachment.display_name) is not str
+                ):
+                    raise ValueError("Console fork attachment is invalid.")
+                if attachment.mime_type.startswith("image/"):
+                    validate_console_fork_image_payload(
+                        attachment.data,
+                        attachment.mime_type,
+                    )
+                    has_image = True
+            for position, metadata in enumerate(message.generation_metadata):
+                if (
+                    metadata.owner_native_message_id != message.native_message_id
+                    or metadata.owner_persisted_message_id
+                    != message.persisted_message_id
+                    or metadata.position != position
+                    or not has_image
+                ):
+                    raise ValueError("Console fork generation metadata is invalid.")
+                try:
+                    fingerprint_console_fork_selected_image(
+                        message.attachments[position],
+                        metadata,
+                    )
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "Console fork generation metadata is invalid."
+                    ) from None
+            if has_image:
+                image_id = (
+                    message.persisted_message_id
+                    if snapshot.durable
+                    else message.native_message_id
+                )
+                if image_id is None:
+                    raise ValueError("Console fork image identity is invalid.")
+                image_ids.add(image_id)
+            prior_native = message.native_message_id
+            prior_persisted = message.persisted_message_id
 
     def fork_conversation_into_workspace(
         self,
@@ -391,6 +2225,30 @@ class ChatPersistenceService:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
 
+    def validate_workspace_target(self, **conversation_kwargs: object) -> str | None:
+        """Validate an intended workspace before opening a Chat transaction."""
+        return self._require_workspace_scope(
+            scope_type=conversation_kwargs.get("scope_type"),
+            workspace_id=conversation_kwargs.get("workspace_id"),
+        )
+
+    def project_workspace_membership(self, conversation_id: str) -> Any | None:
+        """Project durable workspace authority into the registry idempotently."""
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if conversation is None:
+            raise ValueError(f"Conversation {conversation_id} not found")
+        safe_workspace_id = self._require_workspace_scope(
+            scope_type=conversation.get("scope_type"),
+            workspace_id=conversation.get("workspace_id"),
+        )
+        if safe_workspace_id is None:
+            return None
+        return self._link_workspace_conversation(
+            workspace_id=safe_workspace_id,
+            conversation_id=conversation_id,
+            title=str(conversation.get("title") or "Workspace conversation"),
+        )
+
     def _link_workspace_conversation(
         self,
         *,
@@ -405,25 +2263,6 @@ class ChatPersistenceService:
             role="workspace-thread",
             title=title,
         )
-
-    def _discard_created_conversation(self, conversation_id: str) -> None:
-        conversation = self.db.get_conversation_by_id(
-            conversation_id,
-            include_deleted=True,
-        )
-        if conversation is None or conversation.get("deleted"):
-            return
-        try:
-            expected_version = int(conversation["version"])
-            self.db.soft_delete_conversation(
-                conversation_id,
-                expected_version=expected_version,
-            )
-        except Exception:
-            logger.bind(conversation_id=conversation_id).opt(exception=True).error(
-                "Failed to soft-delete workspace conversation after membership link failure",
-            )
-            raise
 
     def update_conversation_system_prompt(
         self,
@@ -464,8 +2303,7 @@ class ChatPersistenceService:
         if (
             expected_system_prompts is not None
             and not allow_source_owned_repair
-            and current_conversation.get("system_prompt")
-            not in expected_system_prompts
+            and current_conversation.get("system_prompt") not in expected_system_prompts
         ):
             return False
 
@@ -483,6 +2321,7 @@ class ChatPersistenceService:
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
+        character_name_snapshot: str | None,
     ) -> bool:
         """Merge Console-owned roleplay identity context with one retry.
 
@@ -490,6 +2329,16 @@ class ChatPersistenceService:
         essential: a concurrent metadata writer can add unrelated sibling
         keys after our first read. Merging only the fresh record preserves
         those keys while this method changes its owned context.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            user_name_override: Optional saved user display-name override.
+            character_system_template: Optional saved character prompt template.
+            character_name_snapshot: Optional historical character display name.
+
+        Returns:
+            True when the roleplay context was persisted; False when the
+            conversation no longer exists.
         """
         for attempt in range(2):
             record = self.db.get_conversation_by_id(str(conversation_id))
@@ -500,6 +2349,7 @@ class ChatPersistenceService:
                 ConsoleRoleplayContext(
                     user_name_override=user_name_override,
                     character_system_template=character_system_template,
+                    character_name_snapshot=character_name_snapshot,
                 ),
             )
             try:
@@ -549,6 +2399,120 @@ class ChatPersistenceService:
             {"metadata": json.dumps(meta)},
             expected_version=record["version"],
         )
+        return True
+
+    def update_conversation_console_session_settings(
+        self,
+        *,
+        conversation_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Merge the current Console settings snapshot into conversation metadata.
+
+        The top-level conversation system prompt and pinned-prefill metadata remain
+        canonical on resume. This snapshot preserves the rest of the settings that
+        changed after the conversation's first durable write.
+
+        Args:
+            conversation_id: Durable conversation identifier.
+            settings: Complete current Console session settings.
+
+        Returns:
+            True when persisted; False when the conversation no longer exists.
+        """
+
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(str(conversation_id))
+            if record is None:
+                return False
+            metadata = _initial_metadata_object(record.get("metadata") or {})
+            metadata["console_session_settings"] = {
+                "version": 1,
+                **asdict(settings),
+            }
+            try:
+                self.db.update_conversation(
+                    str(conversation_id),
+                    {"metadata": json.dumps(metadata)},
+                    expected_version=record["version"],
+                )
+                return True
+            except ConflictError:
+                if attempt == 1:
+                    raise
+        return False
+
+    def adopt_console_session_endpoint_settings(
+        self,
+        *,
+        conversation_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> ConsoleEndpointAdoptionReceipt:
+        """Persist safe generation values and return an exact rollback receipt.
+
+        The caller owns the verified endpoint separately in process memory. The
+        endpoint-free generation codec is the only metadata owner changed here;
+        the complete settings codec (which includes ``base_url``) is deliberately
+        reserved for ordinary Console settings persistence.
+        """
+
+        for attempt in range(2):
+            record = self.db.get_conversation_by_id(str(conversation_id))
+            if record is None:
+                raise RuntimeError("Console conversation disappeared during adoption")
+            before_metadata = record.get("metadata")
+            metadata = _initial_metadata_object(before_metadata or {})
+            metadata = merge_console_generation_settings(
+                metadata,
+                snapshot_from_session_settings(settings),
+            )
+            written_metadata = json.dumps(metadata)
+            version = record.get("version")
+            if type(version) is not int:
+                raise RuntimeError("Console conversation version is invalid")
+            try:
+                self.db.update_conversation(
+                    str(conversation_id),
+                    {"metadata": written_metadata},
+                    expected_version=version,
+                )
+            except ConflictError:
+                if attempt == 1:
+                    raise
+                continue
+            return ConsoleEndpointAdoptionReceipt(
+                conversation_id=str(conversation_id),
+                before_metadata=before_metadata,
+                written_metadata=written_metadata,
+                written_version=version + 1,
+            )
+        raise RuntimeError("Console endpoint adoption could not be persisted")
+
+    def rollback_console_session_endpoint_adoption(
+        self,
+        *,
+        receipt: ConsoleEndpointAdoptionReceipt,
+    ) -> bool:
+        """Restore exact metadata only while the adoption still owns the row."""
+
+        if not isinstance(receipt, ConsoleEndpointAdoptionReceipt):
+            raise TypeError("Console endpoint adoption receipt is required")
+        record = self.db.get_conversation_by_id(receipt.conversation_id)
+        if record is None:
+            return False
+        if (
+            record.get("version") != receipt.written_version
+            or record.get("metadata") != receipt.written_metadata
+        ):
+            return False
+        try:
+            self.db.update_conversation(
+                receipt.conversation_id,
+                {"metadata": receipt.before_metadata},
+                expected_version=receipt.written_version,
+            )
+        except ConflictError:
+            return False
         return True
 
     def update_conversation_title(
@@ -625,12 +2589,17 @@ class ChatPersistenceService:
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        expected_version: int | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
+        assistant_generation_state: str | None = None,
         expected_roleplay_template_source: str | None = None,
         expected_message_contents: tuple[str, ...] | None = None,
         allow_source_owned_repair: bool = False,
         expected_roleplay_version: int | None = None,
         preserve_provider_continuation: bool = False,
         preserve_descendants: bool = False,
+        clear_generation_provenance: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -688,6 +2657,11 @@ class ChatPersistenceService:
             metadata_json: Optional structured message metadata JSON
                 (task-2364). Follows the same only-when-supplied rule as
                 ``usage_json``, for the same reason.
+            terminal_receipt_id: Validated local terminal receipt carried by
+                ``metadata_json``. When present, the row update and exact
+                namespaced mark share one immediate transaction.
+            terminal_outcome: Exact assistant terminal state paired with
+                ``terminal_receipt_id`` and committed in the same transaction.
             preserve_descendants: Skip descendant tombstones when this
                 update belongs to an authoritative bulk-history resave.
 
@@ -704,6 +2678,18 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
+        terminal_mark_type = self._terminal_mark_type(
+            terminal_receipt_id,
+            terminal_outcome,
+            metadata_json,
+            assistant_owner=current_message.get("role") == "assistant",
+            existing_metadata_json=current_message.get("metadata_json"),
+        )
+        if (
+            expected_version is not None
+            and current_message.get("version") != expected_version
+        ):
+            return False
         if (
             expected_roleplay_version is not None
             and current_message.get("version") != expected_roleplay_version
@@ -716,8 +2702,7 @@ class ChatPersistenceService:
             if (
                 current_metadata is None
                 or current_metadata.template_kind != "character_greeting"
-                or current_metadata.template_source
-                != expected_roleplay_template_source
+                or current_metadata.template_source != expected_roleplay_template_source
             ):
                 return False
         if (
@@ -769,6 +2754,14 @@ class ChatPersistenceService:
         # ``metadata_json`` column (task-2364).
         if metadata_json is not None:
             update_data["metadata_json"] = metadata_json
+        if clear_generation_provenance:
+            update_data["thinking_blocks_json"] = None
+            update_data["provider_continuation_json"] = None
+        lifecycle_state = assistant_generation_state
+        if lifecycle_state is None and terminal_mark_type is not None:
+            lifecycle_state = terminal_outcome
+        if lifecycle_state is not None:
+            update_data["assistant_generation_state"] = lifecycle_state
 
         citation_repository = self.citation_repository
         if citation_repository is not None and citation_repository.db is not self.db:
@@ -790,19 +2783,41 @@ class ChatPersistenceService:
         else:
             extra_rows = []
 
-        if citation_repository is not None:
-            with self.db.transaction() as cursor:
-                result = bool(
+        def coordinated_update() -> bool:
+            update_version = (
+                current_message["version"]
+                if expected_version is None
+                else expected_version
+            )
+            if attachments is None:
+                return bool(
                     self.db.update_message(
                         message_id,
                         update_data,
-                        expected_version=current_message["version"],
+                        expected_version=update_version,
                         preserve_provider_continuation=preserve_provider_continuation,
                         preserve_descendants=preserve_descendants,
                     )
                 )
-                if result and attachments is not None:
-                    self.db.set_message_attachments(message_id, extra_rows)
+            return bool(
+                self.db.update_message_with_attachments(
+                    message_id,
+                    update_data,
+                    expected_version=update_version,
+                    attachments=extra_rows,
+                    preserve_provider_continuation=preserve_provider_continuation,
+                    preserve_descendants=preserve_descendants,
+                )
+            )
+
+        if citation_repository is not None:
+            # IMMEDIATE (task-21100): `transaction(immediate=...)` is honored
+            # only at depth 0, so this OUTER wrapper decides the begin mode for
+            # the nested hot messages writers -- left DEFERRED it re-opens the
+            # snapshot-upgrade "database is locked" window their own IMMEDIATE
+            # closes (see add_message's scoping comment).
+            with self.db.transaction(immediate=True) as cursor:
+                result = coordinated_update()
                 if result:
                     citation_repository.transition_owner_for_message_update(
                         cursor,
@@ -810,6 +2825,12 @@ class ChatPersistenceService:
                         previous_revision=current_message["version"],
                         new_revision=current_message["version"] + 1,
                         new_body=content,
+                    )
+                    self._set_terminal_outcome_and_mark_with_cursor(
+                        cursor,
+                        conversation_id=str(current_message["conversation_id"]),
+                        terminal_outcome=terminal_outcome,
+                        mark_type=terminal_mark_type,
                     )
             return result
 
@@ -823,29 +2844,187 @@ class ChatPersistenceService:
             # attachments table write must be skipped -- otherwise
             # attachments would be rewritten while content/version were not,
             # leaving the two out of sync.
-            with self.db.transaction():
-                result = bool(
-                    self.db.update_message(
-                        message_id,
-                        update_data,
-                        expected_version=current_message["version"],
-                        preserve_provider_continuation=preserve_provider_continuation,
-                        preserve_descendants=preserve_descendants,
-                    )
-                )
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True) as cursor:
+                result = coordinated_update()
                 if result:
-                    self.db.set_message_attachments(message_id, extra_rows)
+                    self._set_terminal_outcome_and_mark_with_cursor(
+                        cursor,
+                        conversation_id=str(current_message["conversation_id"]),
+                        terminal_outcome=terminal_outcome,
+                        mark_type=terminal_mark_type,
+                    )
             return result
 
-        return bool(
-            self.db.update_message(
-                message_id,
-                update_data,
-                expected_version=current_message["version"],
-                preserve_provider_continuation=preserve_provider_continuation,
-                preserve_descendants=preserve_descendants,
+        if terminal_mark_type is not None:
+            with self.db.transaction(immediate=True) as cursor:
+                result = coordinated_update()
+                if result:
+                    self._set_terminal_outcome_and_mark_with_cursor(
+                        cursor,
+                        conversation_id=str(current_message["conversation_id"]),
+                        terminal_outcome=terminal_outcome,
+                        mark_type=terminal_mark_type,
+                    )
+            return result
+
+        return coordinated_update()
+
+    def read_canonical_generation_projection(
+        self, message_id: str
+    ) -> Mapping[str, Any] | None:
+        """Read the canonical fields required by body-only generation writers.
+
+        This explicit capability lets adapters hide their database handle while
+        still giving the Console a versioned, deletion-aware CAS boundary.
+        """
+        row = self.db.get_message_by_id(message_id)
+        if row is None:
+            return None
+        return {
+            "id": row.get("id"),
+            "conversation_id": row.get("conversation_id"),
+            "sender": row.get("sender"),
+            "version": row.get("version"),
+            "deleted": row.get("deleted"),
+            "content": row.get("content"),
+            "image_data": row.get("image_data"),
+            "image_mime_type": row.get("image_mime_type"),
+            "assistant_generation_state": row.get("assistant_generation_state"),
+            "thinking_blocks_json": row.get("thinking_blocks_json"),
+            "provider_continuation_json": row.get("provider_continuation_json"),
+            "usage_json": row.get("usage_json"),
+            "metadata_json": row.get("metadata_json"),
+        }
+
+    def read_canonical_generation_projection_bundle(
+        self, message_id: str
+    ) -> Mapping[str, Any] | None:
+        """Read a generation row and ordered sidecars from one SQLite snapshot."""
+
+        with self.db.transaction(immediate=True):
+            row = self.read_canonical_generation_projection(message_id)
+            if row is None:
+                return None
+            attachments = self.db.get_attachments_for_messages([message_id]).get(
+                message_id, []
             )
+            generation_metadata = self.db.get_generation_metadata_for_messages(
+                [message_id]
+            ).get(message_id, [])
+            return {
+                "message": dict(row),
+                "attachments": [dict(item) for item in attachments],
+                "generation_metadata": [dict(item) for item in generation_metadata],
+            }
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        expected_version: int | None = None,
+    ) -> int:
+        """Replace and return one committed selected-generation version."""
+        return self.db.replace_assistant_generation_projection(
+            message_id=message_id,
+            content=content,
+            thinking_blocks_json=thinking_blocks_json,
+            provider_continuation_json=provider_continuation_json,
+            assistant_generation_state=assistant_generation_state,
+            usage_json=usage_json,
+            expected_version=expected_version,
         )
+
+    def replace_assistant_generation_projection_with_contributions(
+        self,
+        *,
+        native_message_id: str,
+        message_id: str,
+        content: str,
+        thinking_blocks_json: str | None,
+        provider_continuation_json: str | None,
+        assistant_generation_state: str | None,
+        usage_json: str | None,
+        metadata_json: str | None,
+        update_metadata: bool,
+        contributions: Sequence[ConsolePromotionTransactionContribution],
+        on_durable_commit: Callable[[], object] | None = None,
+        expected_version: int | None = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
+    ) -> int:
+        """Replace one generation and append exact contributions atomically."""
+        terminal_mark_type = (
+            self._terminal_mark_type(
+                terminal_receipt_id,
+                terminal_outcome,
+                metadata_json,
+                assistant_owner=True,
+            )
+            if terminal_receipt_id is not None or terminal_outcome is not None
+            else None
+        )
+
+        def write_contributions(cursor: Any) -> None:
+            row = cursor.execute(
+                "SELECT conversation_id FROM messages WHERE id = ? AND deleted = 0",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Durable assistant owner is unavailable.")
+            conversation_id = str(row["conversation_id"])
+            self._set_terminal_outcome_and_mark_with_cursor(
+                cursor,
+                conversation_id=conversation_id,
+                terminal_outcome=terminal_outcome,
+                mark_type=terminal_mark_type,
+            )
+            message_ids = MappingProxyType(
+                {
+                    native_message_id: message_id,
+                    message_id: message_id,
+                    "assistant": message_id,
+                }
+            )
+            with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
+                for contribution in contributions:
+                    if isinstance(
+                        contribution, ConsoleExactNativeIdTransactionContribution
+                    ):
+                        contribution.write_exact(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            native_message_ids=message_ids,
+                        )
+                    else:
+                        contribution.write(
+                            writer=writer,
+                            conversation_id=conversation_id,
+                            message_ids=message_ids,
+                        )
+
+        committed_version = self.db.replace_assistant_generation_projection(
+            message_id=message_id,
+            content=content,
+            thinking_blocks_json=thinking_blocks_json,
+            provider_continuation_json=provider_continuation_json,
+            assistant_generation_state=assistant_generation_state,
+            usage_json=usage_json,
+            expected_version=expected_version,
+            metadata_json=metadata_json,
+            update_metadata=update_metadata,
+            transaction_callback=write_contributions,
+        )
+        if on_durable_commit is not None:
+            on_durable_commit()
+        return committed_version
 
     def update_message_usage(self, *, message_id: str, usage_json: str) -> bool:
         """Persist a message's normalized usage WITHOUT touching sync metadata.
@@ -878,6 +3057,56 @@ class ChatPersistenceService:
             updated; False otherwise.
         """
         return self.db.update_message_usage_local(message_id, usage_json)
+
+    def append_message_exchanges(
+        self, *, message_id: str, rows: Sequence[Mapping[str, Any]]
+    ) -> bool:
+        """Local-only exchange-capture flush (Conversation Inspector).
+
+        Same contract as ``update_message_usage``: version-neutral, never
+        enqueues sync rows. Unlike that sibling, this never lets a database
+        error escape -- exchange captures are best-effort diagnostic
+        payloads, not user-visible content, so a write failure is logged
+        under the stable ``exchange_append_failed`` category with only
+        ``message_id`` and the exception type -- never exception text, row
+        contents, or capture payloads -- and reported as ``False`` rather
+        than propagated.
+
+        Args:
+            message_id: UUID of the owning message row.
+            rows: Exchange rows to upsert; see
+                :meth:`CharactersRAGDB.append_message_exchanges_local`, including
+                local-only capture provenance.
+
+        Returns:
+            True if the rows were written; False if the write failed.
+        """
+        try:
+            self.db.append_message_exchanges_local(message_id, rows)
+            return True
+        except Exception as exc:  # noqa: BLE001 -- best-effort capture flush
+            logger.bind(message_id=message_id, error_type=type(exc).__name__).warning(
+                "exchange_append_failed"
+            )
+            return False
+
+    def list_full_exchange_keys_for_conversation(
+        self, conversation_id: str
+    ) -> set[tuple[str, str, int]]:
+        """Return queryable Full exchange keys for one conversation."""
+        return self.db.list_full_exchange_keys_for_conversation(conversation_id)
+
+    def delete_full_exchanges_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        expected_count: int | None = None,
+    ) -> int:
+        """Delete only Full exchange rows for one conversation."""
+        return self.db.delete_full_exchanges_for_conversation(
+            conversation_id,
+            expected_count=expected_count,
+        )
 
     def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
         """Atomically tombstone one persisted branch and return its versions."""
@@ -968,6 +3197,11 @@ class ChatPersistenceService:
         citation_write: SealedCitationWrite | None = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        thinking_blocks_json: Optional[str] = None,
+        provider_continuation_json: Optional[str] = None,
+        assistant_generation_state: Optional[str] = None,
+        terminal_receipt_id: str | None = None,
+        terminal_outcome: str | None = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -1002,9 +3236,7 @@ class ChatPersistenceService:
             message_id: Optional explicit message id; the DB generates one
                 when omitted.
             parent_message_id: Optional parent message id for threading.
-            feedback: Optional feedback value applied via a follow-up update
-                once the message exists (feedback is not part of the initial
-                insert payload).
+            feedback: Optional feedback value persisted with the initial row.
             attachments: Optional full 0..N-1 position list of attachment
                 rows (each a mapping with ``position``, ``data``,
                 ``mime_type``, and optional ``display_name``). When
@@ -1032,6 +3264,17 @@ class ChatPersistenceService:
                 (task-2364: engine provenance, interrupted flag, transcript
                 status), written into the row's local-only
                 ``metadata_json`` column via ``CharactersRAGDB.add_message``.
+            thinking_blocks_json: Canonical thinking envelope owned by this
+                initial assistant generation.
+            provider_continuation_json: Canonical private continuation owned
+                by this initial assistant generation.
+            assistant_generation_state: Portable lifecycle state for the
+                initial assistant generation.
+            terminal_receipt_id: Validated local terminal receipt carried by
+                ``metadata_json``. When present, the row create and exact
+                namespaced mark share one immediate transaction.
+            terminal_outcome: Exact assistant terminal state paired with
+                ``terminal_receipt_id`` and committed in the same transaction.
 
         Returns:
             The newly created message's id.
@@ -1051,14 +3294,21 @@ class ChatPersistenceService:
                 writes instead.
         """
         prepared_citation = None
+        citation_repository = self.citation_repository
+        terminal_mark_type = self._terminal_mark_type(
+            terminal_receipt_id,
+            terminal_outcome,
+            metadata_json,
+            assistant_owner=sender.strip().lower() == "assistant",
+        )
         if citation_write is not None:
-            if self.citation_repository is None:
+            if citation_repository is None:
                 raise CitationPersistenceUnavailable("citation_repository_unavailable")
-            if self.citation_repository.db is not self.db:
+            if citation_repository.db is not self.db:
                 raise CitationPersistenceUnavailable(
                     "citation_repository_database_mismatch"
                 )
-            prepared_citation = self.citation_repository.prepare_write(citation_write)
+            prepared_citation = citation_repository.prepare_write(citation_write)
 
         # Split addressing: when ``attachments`` is supplied it covers ALL
         # positions (0..N-1) and is authoritative -- position 0 overrides the
@@ -1102,9 +3352,19 @@ class ChatPersistenceService:
             "client_id": self.db.client_id,
             "usage_json": usage_json,
             "metadata_json": metadata_json,
+            "thinking_blocks_json": thinking_blocks_json,
+            "provider_continuation_json": provider_continuation_json,
+            "assistant_generation_state": (
+                assistant_generation_state
+                if assistant_generation_state is not None
+                else terminal_outcome
+            ),
         }
         if prepared_citation is not None:
-            with self.db.transaction() as cursor:
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True) as cursor:
                 existing_message = (
                     self.db.get_message_by_id(message_id)
                     if message_id is not None
@@ -1120,27 +3380,38 @@ class ChatPersistenceService:
                     )
                     created_message_id = existing_message["id"]
                 else:
-                    created_message_id = self.db.add_message(message_payload)
-                    if attachments is not None:
-                        self.db.set_message_attachments(created_message_id, extra_rows)
-                    if generation_metadata is not None:
-                        self.db.set_message_generation_metadata(
-                            created_message_id, list(generation_metadata)
-                        )
-                    if feedback is not None:
-                        created_message = self.db.get_message_by_id(created_message_id)
-                        self.db.update_message(
-                            created_message_id,
-                            {"feedback": feedback},
-                            expected_version=created_message["version"],
-                        )
-                created_message = self.db.get_message_by_id(created_message_id)
-                self.citation_repository.write_prepared(
+                    created_message_id = self.db.add_message_with_semantic_sidecars(
+                        message_payload,
+                        attachments=extra_rows if attachments is not None else (),
+                        generation_metadata=(
+                            [dict(row) for row in generation_metadata]
+                            if generation_metadata is not None
+                            else ()
+                        ),
+                        feedback=feedback,
+                    )
+                    if created_message_id is None:
+                        raise RuntimeError("Message persistence did not return an ID.")
+                # TASK-22226: only ``version`` (message_revision) is consumed
+                # here; write_prepared independently re-validates it against
+                # the messages row inside this same transaction.
+                created_message = self.db.get_message_by_id_without_blob(
+                    created_message_id
+                )
+                if created_message is None or citation_repository is None:
+                    raise RuntimeError("Committed message could not be reloaded.")
+                citation_repository.write_prepared(
                     cursor,
                     prepared_citation,
                     message_id=created_message_id,
                     message_revision=created_message["version"],
                     message_body=content,
+                )
+                self._set_terminal_outcome_and_mark_with_cursor(
+                    cursor,
+                    conversation_id=conversation_id,
+                    terminal_outcome=terminal_outcome,
+                    mark_type=terminal_mark_type,
                 )
             return created_message_id
         if attachments is not None or generation_metadata is not None:
@@ -1151,22 +3422,45 @@ class ChatPersistenceService:
             # attachments write always runs when this branch is taken -- an
             # empty list still clears any stale rows a prior attempt at this
             # same message_id may have left behind.
-            with self.db.transaction():
-                created_message_id = self.db.add_message(message_payload)
-                self.db.set_message_attachments(created_message_id, extra_rows)
-                if generation_metadata is not None:
-                    self.db.set_message_generation_metadata(
-                        created_message_id, list(generation_metadata)
-                    )
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True) as cursor:
+                created_message_id = self.db.add_message_with_semantic_sidecars(
+                    message_payload,
+                    attachments=extra_rows if attachments is not None else (),
+                    generation_metadata=(
+                        [dict(row) for row in generation_metadata]
+                        if generation_metadata is not None
+                        else ()
+                    ),
+                    feedback=feedback,
+                )
+                self._set_terminal_outcome_and_mark_with_cursor(
+                    cursor,
+                    conversation_id=conversation_id,
+                    terminal_outcome=terminal_outcome,
+                    mark_type=terminal_mark_type,
+                )
+        elif terminal_mark_type is not None:
+            with self.db.transaction(immediate=True) as cursor:
+                created_message_id = self.db.add_message_with_semantic_sidecars(
+                    message_payload,
+                    feedback=feedback,
+                )
+                self._set_terminal_outcome_and_mark_with_cursor(
+                    cursor,
+                    conversation_id=conversation_id,
+                    terminal_outcome=terminal_outcome,
+                    mark_type=terminal_mark_type,
+                )
         else:
-            created_message_id = self.db.add_message(message_payload)
-        if feedback is not None:
-            created_message = self.db.get_message_by_id(created_message_id)
-            self.db.update_message(
-                created_message_id,
-                {"feedback": feedback},
-                expected_version=created_message["version"],
+            created_message_id = self.db.add_message_with_semantic_sidecars(
+                message_payload,
+                feedback=feedback,
             )
+        if created_message_id is None:
+            raise RuntimeError("Message persistence did not return an ID.")
         return created_message_id
 
     def _verify_citation_message_retry(
@@ -1189,6 +3483,11 @@ class ChatPersistenceService:
             "image_data": message_payload["image_data"],
             "image_mime_type": message_payload["image_mime_type"],
             "client_id": message_payload["client_id"],
+            "usage_json": message_payload["usage_json"],
+            "metadata_json": message_payload["metadata_json"],
+            "provider_continuation_json": message_payload["provider_continuation_json"],
+            "thinking_blocks_json": message_payload["thinking_blocks_json"],
+            "assistant_generation_state": message_payload["assistant_generation_state"],
             "feedback": feedback,
         }
         if any(
@@ -1213,11 +3512,9 @@ class ChatPersistenceService:
         ):
             raise CitationPersistenceUnavailable("message_identity_conflict")
 
-        existing_generation_metadata = (
-            self.db.get_generation_metadata_for_messages([existing_message["id"]]).get(
-                existing_message["id"], []
-            )
-        )
+        existing_generation_metadata = self.db.get_generation_metadata_for_messages(
+            [existing_message["id"]]
+        ).get(existing_message["id"], [])
 
         def generation_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
             return (

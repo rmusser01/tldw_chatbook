@@ -48,7 +48,6 @@ def test_create_filter_helper_is_callable_and_matches():
     [
         "tldw_chatbook/Widgets/file_picker_dialog.py",
         "tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py",
-        "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",
         "tldw_chatbook/UI/Screens/personas_screen.py",
     ],
 )

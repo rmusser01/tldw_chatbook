@@ -2,6 +2,8 @@
 
 Date: 2026-09-04
 
+Status: Complete and merged into dev in [PR #2419](https://github.com/rmusser01/tldw_chatbook/pull/2419) on 2026-09-05. All 15 task criteria are checked; real text/image persistence and reuse evidence is recorded in the [live UAT report](../reviews/2026-09-05-llamacpp-slot-snapshots-uat.md). Automatic conversation binding, audio qualification, and Windows private storage remain deferred.
+Status: Written design for review; implementation not started.
 Status: Reviewed design; approved review amendments integrated. Implementation not started.
 
 Task: [TASK-31552](../../../backlog/tasks/task-31552%20-%20llama.cpp-manual-prompt-cache-snapshot-manager.md)
@@ -167,6 +169,8 @@ Apply short bounded readiness probes off the UI event loop. Each readiness or
 slot-observation HTTP request has a five-second overall deadline. This is not
 the Save/Restore deadline (see section 7). Do not enable or probe by performing
 a save or restore automatically.
+Apply short bounded readiness probes off the UI event loop. Do not enable or
+probe by performing a save or restore automatically.
 
 ## 5. Snapshot storage and retention
 
@@ -215,6 +219,14 @@ toward retention and never become eligible for automatic deletion.
    is no longer valid, do not publish or prune; report that the snapshot was not
    retained and clean up its acknowledged working output. Otherwise flush the
    completed binary, compute its SHA-256 digest off-thread, and publish binary
+   ownership before sending. Confirm the launch and selected slot are eligible.
+2. Submit once. On a valid successful response, verify returned slot/filename,
+   token and byte counts, regular-file identity, and on-disk bytes. Zero-token
+   saves are reported as empty and do not publish or prune.
+3. Revalidate the captured compatibility evidence and launch claim. If evidence
+   is no longer valid, do not publish or prune; report that the snapshot was not
+   retained and clean up its acknowledged working output. Otherwise flush the
+   completed binary, compute its SHA-256 digest off-thread, and publish binary
    and metadata under the catalog lock. Allocate publication order under that
    lock before writing metadata. The atomic metadata publication is the commit
    marker; only records with both validated members are restorable.
@@ -228,6 +240,9 @@ A full disk, failed HTTP request, invalid response, hash/write failure, missing
 or invalidated compatibility evidence, or interrupted publication preserves
 earlier completed snapshots and performs no retention. Metadata-first hiding/
 tombstoning during deletion prevents a removed
+A full disk, failed HTTP request, invalid response, hash/write failure, or
+interrupted publication preserves earlier completed snapshots and performs no
+retention. Metadata-first hiding/tombstoning during deletion prevents a removed
 binary from remaining listed as restorable if the process crashes between steps.
 The store reconciles its own interrupted publication/deletion records on entry;
 it never promotes an unacknowledged binary merely because its size stopped changing.
@@ -285,6 +300,7 @@ for inspection/deletion, and remove partial staging when safe. Recheck launch,
 compatibility, and destination eligibility after staging, which may take time.
 The checksum detects corruption; it is not authentication against another
 process able to rewrite both the private binary and its metadata.
+Save and inspection can still work when compatibility evidence is incomplete.
 
 "Matching configuration" is a preflight result, not a portability or speed
 guarantee. The server remains the binary loader and final validator. Do not parse
@@ -320,6 +336,13 @@ remain available because submitted restores use separate working copies.
 Existing Stop remains an explicit way to end the generation; it does not claim
 to preserve its cache. A proven pre-submission connection/preparation failure
 does not enter Outcome unknown and releases the operation after safe cleanup.
+
+After confirmed stop and settlement of local file work, discard only that
+operation's verified owned working files. Following an app crash, old working
+areas whose server liveness cannot be established remain incomplete and excluded
+from retention; they never block new
+Existing Stop remains an
+explicit way to end the generation; it does not claim to preserve its cache.
 
 After confirmed stop and settlement of local file work, discard only that
 operation's verified owned working files. Following an app crash, old working
@@ -379,6 +402,20 @@ Required evidence includes:
    elapsed-time updates, and visible controls at 80x24 and a normal wide terminal.
    Verify the cross-model keep-count wording beside Save, including count changes.
    Use the real CSS stack.
+2. Recording HTTP tests for optional/missing slot fields, readiness/auth, args
+   precedence, stale launch completion, busy races, timeout without retry, and
+   restore failure. A truncated or same-length corrupted snapshot must produce
+   no Restore POST and leave the destination untouched. Verify that proxy
+   environment settings cannot reroute management traffic and redirects cannot
+   trigger a second request or forward credentials. Test IPv4/IPv6 loopback and
+   rejection of non-loopback hostname results. Use fake clocks to distinguish a
+   five-second probe deadline from a longer pending mutation and its ten-minute
+   deadline/unknown outcome. Verify unsupported configurations have truthful controls.
+3. Production-shaped Textual tests for keyboard Save/Restore/Delete, disabled
+   reasons, preserved focus and selection, navigation away/back during operations,
+   elapsed-time updates, and visible controls at 80x24 and a normal wide terminal.
+   Verify the cross-model keep-count wording beside Save, including count changes.
+   Use the real CSS stack.
 4. Isolated opt-in real-server tests: text and image save, process restart, restore,
    then send the matching request without forcing `id_slot` and measure cached
    prefix reuse. A different image must not reuse its mismatched media prefix.
@@ -410,3 +447,5 @@ These amendments are mirrored in ADR-119 and the task's acceptance criteria.
 
 No production code, snapshot files, or model executions were created as part of
 this design. Implementation planning is the next phase.
+These choices are written for review before implementation planning. No production
+code, snapshot files, or model executions were created as part of this design.

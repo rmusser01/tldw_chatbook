@@ -19,6 +19,8 @@ name: CSS Bundle Guard
 
 on:
   pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'tldw_chatbook/css/**'
       # `**.py`, not `**/*.py`: GitHub documents the former as "all .py files"
@@ -36,15 +38,15 @@ on:
       - 'tldw_chatbook/**.py'
       - '.github/workflows/css-bundle-guard.yml'
 
-# One run per workflow per ref: a new push supersedes the previous run instead of
+# One PUSH run per workflow per ref: a new push supersedes the previous run instead of
 # queueing another alongside it. Without this, every push to `dev` stacked a full
-# run - 50+ obsolete runs accumulated, all competing for scarce macOS runners.
+# run - 50+ obsolete runs accumulated, all competing for the shared account pool.
 # The event name is part of the group so different trigger types (push,
 # pull_request, schedule) never cancel each other, and `main` is never cancelled
 # so its history stays complete.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 jobs:
   css-bundle-reproducible:
@@ -54,7 +56,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Bundle must match its source modules
         run: |
           # check_bundle_sync rebuilds the bundle into a temp file and diffs it

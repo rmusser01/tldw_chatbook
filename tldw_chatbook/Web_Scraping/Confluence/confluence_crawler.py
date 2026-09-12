@@ -235,7 +235,8 @@ class ConfluenceCrawler:
     async def _get_space_root_pages(self, space_key: str) -> List[Dict[str, str]]:
         """Get root-level pages in a space"""
         try:
-            response = self.auth.make_request(
+            response = await asyncio.to_thread(
+                self.auth.make_request,
                 "GET",
                 "/rest/api/content",
                 params={
@@ -266,7 +267,8 @@ class ConfluenceCrawler:
     async def _get_child_pages(self, page_id: str) -> List[Dict[str, str]]:
         """Get child pages of a given page"""
         try:
-            response = self.auth.make_request(
+            response = await asyncio.to_thread(
+                self.auth.make_request,
                 "GET", f"/rest/api/content/{page_id}/child/page", params={"limit": 100}
             )
 
@@ -286,7 +288,8 @@ class ConfluenceCrawler:
     async def _get_parent_page_id(self, page_id: str) -> Optional[str]:
         """Get parent page ID"""
         try:
-            response = self.auth.make_request(
+            response = await asyncio.to_thread(
+                self.auth.make_request,
                 "GET", f"/rest/api/content/{page_id}", params={"expand": "ancestors"}
             )
 

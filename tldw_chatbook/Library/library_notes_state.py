@@ -12,6 +12,7 @@ from rich.cells import get_character_cell_size
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
+    parse_browser_timestamp,
 )
 
 NOTES_SORT_MODES = ("newest", "oldest", "title")
@@ -406,6 +407,85 @@ class LibraryNoteDeleteReceipt:
     expected_version: int
 
 
+#: Rows the Trash view loads at once. Bounded for the same reason the folder
+#: tree's page is: a library with thousands of tombstones must not build one
+#: unbounded list, and the view's job is recovering what was just lost.
+LIBRARY_NOTES_TRASH_PAGE_SIZE = 20
+
+
+@dataclass(frozen=True)
+class LibraryNotesTrashRow:
+    """One soft-deleted note in the Library Notes Trash view.
+
+    Attributes:
+        note_id: The deleted note's id.
+        title: Display title (``"Untitled"`` when blank).
+        version: The tombstone's own version -- what ``restore_note``
+            expects handed back, so this row restores through exactly the
+            seam the delete receipt's Undo uses.
+        age_label: Relative age of the deletion (e.g. ``"5m"``), or ``""``
+            when the record carries no timestamp.
+    """
+
+    note_id: str
+    title: str
+    version: int
+    age_label: str = ""
+
+
+@dataclass(frozen=True)
+class LibraryNotesTrashState:
+    """Display state for the Library Notes Trash view and its opener row.
+
+    Attributes:
+        rows: The loaded page of soft-deleted notes, newest deletion first.
+        total: Exact number of soft-deleted notes, read with the same page
+            -- the count the "Recently deleted (N)" row names.
+    """
+
+    rows: tuple[LibraryNotesTrashRow, ...] = ()
+    total: int = 0
+
+
+def build_library_notes_trash_state(
+    records: Sequence[Mapping[str, Any]] | None,
+    *,
+    total: int | None = None,
+    now: datetime | None = None,
+) -> LibraryNotesTrashState:
+    """Project one repository page of soft-deleted notes into display state.
+
+    Records missing a mapping shape or an ``id`` are dropped rather than
+    raising, matching ``build_library_notes_list_state`` beside it.
+
+    Args:
+        records: The repository's ``items`` for the page, already ordered.
+        total: Exact soft-deleted total; defaults to the rendered row count.
+        now: Reference time for the relative-age labels.
+
+    Returns:
+        The Trash view's display state.
+    """
+    reference_now = now if now is not None else datetime.now(timezone.utc)
+    rows = tuple(
+        LibraryNotesTrashRow(
+            note_id=_text(record.get("id")),
+            title=_text(record.get("title")) or "Untitled",
+            version=int(record.get("version") or 0),
+            age_label=(
+                format_console_relative_age(_updated_raw(record), now=reference_now)
+                if _updated_raw(record)
+                else ""
+            ),
+        )
+        for record in (records or ())
+        if isinstance(record, Mapping) and _text(record.get("id"))
+    )
+    return LibraryNotesTrashState(
+        rows=rows, total=len(rows) if total is None else max(int(total), 0)
+    )
+
+
 @dataclass(frozen=True)
 class LibraryNotesListState:
     """Display state for the Library notes canvas's list view.
@@ -654,6 +734,39 @@ def sort_notes_records(
     return sorted(items, key=_updated_raw, reverse=reverse)
 
 
+def _absolute_local_label(value: str) -> str:
+    """Return ``YYYY-MM-DD HH:MM`` in local time, or ``""`` if unparseable.
+
+    task-32142 AC#3: Info's Properties section showed ONLY a relative age
+    ("Created 3m"), which decays into an unverifiable guess the longer a
+    note sits open -- the raw ISO string it comes from must never reach the
+    user (the copy rule against raw timestamps), so this reuses the SAME
+    parsed source ``format_console_relative_age`` already consumes and
+    reformats it into the codebase's established absolute-timestamp
+    convention (``strftime("%Y-%m-%d %H:%M")``, e.g. schedules' task_detail.py).
+    """
+    parsed = parse_browser_timestamp(value)
+    if parsed is None:
+        return ""
+    return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _relative_age_with_ago(relative: str) -> str:
+    """Append " ago" to a ``format_console_relative_age`` label -- except
+    its own literal ``"now"`` for under a minute, which reads as "just
+    now" instead of the grammatically broken "now ago" (fix round 1
+    Important 3, live-caught: "Modified 2026-09-08 23:51 · now ago").
+    Every OTHER caller of ``format_console_relative_age`` across the
+    codebase never appends "ago" and is unaffected -- this is scoped to
+    the one new concatenation task-32142 AC#3 introduced.
+    """
+    if not relative:
+        return relative
+    if relative == "now":
+        return "just now"
+    return f"{relative} ago"
+
+
 def _keywords_text(detail: Mapping[str, Any]) -> str:
     keywords = detail.get("keywords")
     if isinstance(keywords, str):
@@ -709,14 +822,18 @@ def build_library_note_editor_state(
     parts: list[str] = []
     created = _text(detail.get("created_at"))
     if created:
-        parts.append(
-            f"Created {format_console_relative_age(created, now=reference_now)}"
+        relative = _relative_age_with_ago(
+            format_console_relative_age(created, now=reference_now)
         )
+        absolute = _absolute_local_label(created)
+        parts.append(f"Created {absolute} · {relative}" if absolute else f"Created {relative}")
     modified = _updated_raw(detail)
     if modified:
-        parts.append(
-            f"Modified {format_console_relative_age(modified, now=reference_now)}"
+        relative = _relative_age_with_ago(
+            format_console_relative_age(modified, now=reference_now)
         )
+        absolute = _absolute_local_label(modified)
+        parts.append(f"Modified {absolute} · {relative}" if absolute else f"Modified {relative}")
     if version is not None:
         parts.append(f"v{version}")
     return LibraryNoteEditorState(

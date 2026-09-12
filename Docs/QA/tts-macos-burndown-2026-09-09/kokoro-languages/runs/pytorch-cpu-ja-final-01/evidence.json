@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "pid": 23423,
+  "started_utc": "2026-09-09T07:36:38.155667+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "銀色のコンパスがこの返答を始めます。真ん中には静かな果樹園があります。この返答は黄金色の朝焼けで終わります。",
+      "language": "ja",
+      "content_anchors": [],
+      "started_at": 2175507.653125208,
+      "native_calls": [],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "running",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "jf_alpha",
+        "speed": 1.0
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "pytorch",
+    "device": "cpu",
+    "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+    "voice": "jf_alpha",
+    "voice_dir": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices",
+    "voices": null,
+    "language": "ja",
+    "format": "wav",
+    "speed": 1.0,
+    "text_file": "/private/tmp/tts-macos-burndown/languages/text-ja.txt",
+    "cancel_text_file": null,
+    "scenarios": "playback",
+    "repeats": 1,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-01",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "159d70b3e56f64696715a6bf0e64b08d7c4f6324bb4b28c3d8c9324b9ecce4d2",
+  "assets": {
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/jf_alpha.pt": "1bf4c9dc69e45ee46183b071f4db766349aac5592acbcfeaf051018048a5d787"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2175504.780696291,
+    "threads": 2,
+    "rss_bytes": 226344960,
+    "peak_rss_bytes": 226344960
+  },
+  "runtime_files": {
+    "torch._C": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+      "sha256": "b5b5b86566d6e00ee22b73c51e6c243bd894ffbf06f12c58d0bab0549b1840ac"
+    },
+    "kokoro.model": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/kokoro/model.py",
+      "sha256": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db"
+    }
+  },
+  "backend_assets": [
+    {
+      "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+      "engine": "pytorch"
+    }
+  ],
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation failed: Kokoro PyTorch generation failed. Retry from the STTS Playground.",
+      "severity": "error"
+    }
+  ],
+  "completions": [],
+  "memory_after_cleanup": {
+    "at": 2175508.888075041,
+    "threads": 2,
+    "rss_bytes": 1479491584,
+    "peak_rss_bytes": 1479491584,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "failure": {
+    "type": "ValueError",
+    "message": "Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro PyTorch generation failed. Retry from the STTS Playground.', 'severity': 'error'}]",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1207, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1064, in run_live\n    raise ValueError(\nValueError: Speech Lab generation failed: [{'message': 'TTS generation failed: Kokoro PyTorch generation failed. Retry from the STTS Playground.', 'severity': 'error'}]\n"
+  },
+  "ended_utc": "2026-09-09T07:36:44.766194+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/harness/pytorch-cpu-ja-final-01/evidence.json",
+    "original_sha256": "a40b335647aaae0568898e28bc52491292679ae682333dac1aa04bca4fba8b46",
+    "source_map_references": {
+      "source_hashes": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      },
+      "source_hashes_after": {
+        "path": "../../../kokoro-english/provenance/source-hashes.json",
+        "overrides": {},
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "7038b5b7779d66c6fe66a15eafb0204de2fcca2d0cd41c437f33ce17290bd188"
+      }
+    },
+    "transformation": "Only source_hashes/source_hashes_after are factored; all other original JSON values are retained."
+  }
+}

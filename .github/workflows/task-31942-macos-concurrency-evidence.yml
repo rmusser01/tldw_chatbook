@@ -1,0 +1,179 @@
+name: TASK-32160 macOS SQLite concurrency evidence
+
+# TASK-32160 was TASK-31942 before the PR #2537 collision correction. Keep this
+# workflow filename, evidence-branch selector and artifact names for provenance.
+
+on:
+  push:
+    branches: [codex/task-31942-macos-concurrency-evidence]
+
+permissions:
+  contents: read
+
+jobs:
+  macos-concurrency-evidence:
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up exact Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12.10
+
+      - name: Record fixed runner metadata
+        run: |
+          python - "$RUNNER_TEMP/task-31942-metadata.txt" "$GITHUB_SHA" <<'PY'
+          import platform
+          import sqlite3
+          import sys
+          from pathlib import Path
+
+          output_path, tested_sha = sys.argv[1:]
+          metadata = (
+              f"tested_git_sha={tested_sha}\n"
+              f"python={platform.python_version()}\n"
+              f"sqlite={sqlite3.sqlite_version}\n"
+              f"macos={platform.mac_ver()[0]}\n"
+              f"architecture={platform.machine()}\n"
+          )
+          Path(output_path).write_text(metadata, encoding="utf-8")
+          PY
+
+      - name: Require isolated spawn lock control
+        run: |
+          set -o pipefail
+          python -I - <<'PY' | tee "$RUNNER_TEMP/task-31942-lock-control.json"
+          import gc
+          import json
+          import multiprocessing as mp
+          import sys
+
+          allocated = False
+          try:
+              probe = mp.get_context("spawn").Lock()
+              allocated = True
+              acquired = probe.acquire(False)
+              if acquired:
+                  probe.release()
+              del probe
+              gc.collect()
+              print(json.dumps({
+                  "probe": "stdlib_spawn_lock",
+                  "allocated": allocated,
+                  "acquired": acquired,
+                  "owned_cleanup": "finalizer_completed",
+              }, sort_keys=True))
+          except OSError as error:
+              print(json.dumps({
+                  "probe": "stdlib_spawn_lock",
+                  "allocated": allocated,
+                  "acquired": False,
+                  "error_type": type(error).__name__,
+                  "errno": error.errno,
+              }, sort_keys=True))
+              sys.exit(1)
+          if not acquired:
+              sys.exit(1)
+          PY
+
+      - name: Install existing development dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run the eleven concurrency cases once
+        run: |
+          set -o pipefail
+          python -m pytest \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[0] \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[1] \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[2] \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[0] \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[1] \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[2] \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[3] \
+            Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[4] \
+            Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[0] \
+            Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[1] \
+            Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[2] \
+            --junitxml="$RUNNER_TEMP/task-31942-junit.xml" \
+            -q --tb=short 2>&1 | tee "$RUNNER_TEMP/task-31942-pytest.log"
+
+      - name: Validate exact JUnit evidence
+        if: always()
+        run: |
+          python - "$RUNNER_TEMP/task-31942-junit.xml" <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
+
+          EXPECTED = (
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[0]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[1]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_open_one_fresh_store_concurrently[2]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[0]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[1]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[2]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[3]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_repositories_resolve_sqlite_constraint_race_safely[4]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[0]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[1]",
+              "Tests/TTS/test_profile_repository.py::test_spawned_set_delete_race_is_serialized_without_partial_mutation[2]",
+          )
+
+          def reject(reason: str) -> None:
+              print(f"invalid TASK-32160 JUnit: {reason}", file=sys.stderr)
+              raise SystemExit(1)
+
+          junit_path = Path(sys.argv[1])
+          if not junit_path.is_file():
+              reject("missing")
+          try:
+              root = ET.parse(junit_path).getroot()
+          except (OSError, ET.ParseError):
+              reject("malformed")
+
+          suites = root.findall(".//testsuite")
+          if len(suites) != 1:
+              reject("suite count differs")
+          suite = suites[0]
+          if suite.get("tests") != "11" or any(
+              suite.get(outcome) != "0"
+              for outcome in ("errors", "failures", "skipped")
+          ):
+              reject("suite outcome differs")
+
+          observed = []
+          for case in suite.findall(".//testcase"):
+              classname = case.get("classname")
+              name = case.get("name")
+              if not classname or not name:
+                  reject("case identity missing")
+              if any(case.find(outcome) is not None for outcome in ("error", "failure", "skipped")):
+                  reject("non-passing case")
+              observed.append(f"{classname.replace('.', '/')}.py::{name}")
+
+          if Counter(observed) != Counter(EXPECTED) or len(observed) != len(EXPECTED):
+              reject("case identities differ")
+          print("validated exact 11 passing cases")
+          PY
+
+      - name: Upload narrow macOS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-31942-macos-concurrency-evidence
+          path: |
+            ${{ runner.temp }}/task-31942-metadata.txt
+            ${{ runner.temp }}/task-31942-lock-control.json
+            ${{ runner.temp }}/task-31942-pytest.log
+            ${{ runner.temp }}/task-31942-junit.xml
+          if-no-files-found: error

@@ -65,7 +65,11 @@ def main(argv=None) -> int:
         )
         return 1
 
-    from ..config import get_chachanotes_db_path, get_media_db_path
+    from ..config import (
+        get_chachanotes_db_path,
+        get_media_db_path,
+        load_console_library_migration_seed,
+    )
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
     from ..DB.Client_Media_DB_v2 import MediaDatabase
 
@@ -74,7 +78,11 @@ def main(argv=None) -> int:
     if ITEM_TYPE_MEDIA in item_types:
         media_db = MediaDatabase(get_media_db_path(), client_id="rag_backfill_cli")
     if ITEM_TYPE_NOTE in item_types or ITEM_TYPE_CONVERSATION in item_types:
-        chachanotes_db = CharactersRAGDB(get_chachanotes_db_path(), "rag_backfill_cli")
+        chachanotes_db = CharactersRAGDB(
+            get_chachanotes_db_path(),
+            "rag_backfill_cli",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
 
     def _progress(update):
         print(

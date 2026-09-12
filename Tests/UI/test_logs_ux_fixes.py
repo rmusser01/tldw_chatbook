@@ -163,7 +163,11 @@ async def test_empty_state_shows_guidance() -> None:
         assert empty.display is True
         text = str(empty.render())
         assert "No log entries yet" in text
-        assert "share them when asking for help" in text
+        # Describe the approved credential/PII-only log policy and its limits.
+        assert "Copy visible logs" in text
+        assert "Recognized credentials and PII are masked" in text
+        assert "Diagnostic text remains readable" in text
+        assert "Review logs before sharing" in text
 
 
 # ---------------------------------------------------------------------------

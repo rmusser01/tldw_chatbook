@@ -1,0 +1,77 @@
+{
+  "basic_default": true,
+  "collapsed": {
+    "items_open": true,
+    "library_open": false,
+    "restore_focusable": [
+      true,
+      true
+    ],
+    "restore_names": [
+      "Expand Library pane",
+      "Collapse Prompts pane"
+    ],
+    "work": {
+      "height": 19,
+      "width": 38,
+      "x": 42,
+      "y": 4
+    }
+  },
+  "effective": {
+    "items_open": false,
+    "library_open": false,
+    "priority_pane": null
+  },
+  "grip_names": [
+    "Expand Library pane",
+    "Expand Prompts pane"
+  ],
+  "regions": {
+    "items": {
+      "height": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "items_grip": {
+      "height": 19,
+      "width": 5,
+      "x": 5,
+      "y": 4
+    },
+    "library": {
+      "height": 0,
+      "width": 0,
+      "x": 0,
+      "y": 0
+    },
+    "library_grip": {
+      "height": 19,
+      "width": 5,
+      "x": 0,
+      "y": 4
+    },
+    "shell": {
+      "height": 19,
+      "width": 80,
+      "x": 0,
+      "y": 4
+    },
+    "work": {
+      "height": 19,
+      "width": 70,
+      "x": 10,
+      "y": 4
+    }
+  },
+  "retained_roles": {
+    "items": true,
+    "work": true
+  },
+  "size": [
+    80,
+    24
+  ],
+  "svg": "prompts-80x24.svg"
+}

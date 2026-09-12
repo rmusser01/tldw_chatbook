@@ -1,0 +1,69 @@
+{
+  "run_id": "kokoro-20260905-434174cc5b",
+  "child_pid": 5687,
+  "wrapper_pid": 5682,
+  "import_root": "/private/tmp/chatbook-migu-dragging-20260905/tldw_chatbook",
+  "provider": "kokoro",
+  "microphone_opened": false,
+  "visual_before": true,
+  "visual_reason": null,
+  "lifecycle_events": [
+    {
+      "request_id": 1,
+      "state": "playing",
+      "accepted": true
+    },
+    {
+      "request_id": 1,
+      "state": "stopped",
+      "accepted": true
+    },
+    {
+      "request_id": 1,
+      "state": "stopped",
+      "accepted": false
+    },
+    {
+      "request_id": 2,
+      "state": "playing",
+      "accepted": true
+    },
+    {
+      "request_id": 2,
+      "state": "stopped",
+      "accepted": true
+    },
+    {
+      "request_id": 2,
+      "state": "stopped",
+      "accepted": false
+    }
+  ],
+  "sink": {
+    "outcome": "drained",
+    "bytes_fed": 128000,
+    "terminal_reason": "drained"
+  },
+  "playbacks": [
+    {
+      "outcome": "drained",
+      "bytes_fed": 128000,
+      "terminal_reason": "drained"
+    }
+  ],
+  "buddy_states": [
+    "idle",
+    "speaking",
+    "idle"
+  ],
+  "elapsed_seconds": 4.68,
+  "speaking_cleared": true,
+  "app_exception": null,
+  "ownership_playback_started": true,
+  "terminal_ack_after_context_switch": true,
+  "state_after_context_switch_terminal": "speaking",
+  "other_voice_owner_preserved": true,
+  "state_after_other_owner_release": "idle",
+  "speaking_presentation_cleared_after_context_switch": true,
+  "normal_config_unchanged": true
+}

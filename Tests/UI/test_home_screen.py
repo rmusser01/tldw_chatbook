@@ -4,8 +4,13 @@ from unittest.mock import Mock
 import pytest
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Constants import (
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    MEDIA_BROWSE_SUBVIEW_READ_IT_LATER,
+    MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW,
     TAB_LIBRARY,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -406,7 +411,8 @@ async def test_home_recent_work_empty_state_sets_expectation():
 
         recent_text = str(home.query_one("#home-rail-empty-recent").renderable)
         assert (
-            "Runs, chatbooks, imports, and schedules will appear here." in recent_text
+            "Conversations, notes, media, runs, chatbooks, and imports will appear"
+            in recent_text
         )
 
 
@@ -1792,9 +1798,10 @@ async def test_home_recent_only_item_selection_gets_open_details_control():
 
 @pytest.mark.asyncio
 async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_console():
-    """AC1+AC2: with the provider verifiably ready over real content, the
-    idle canvas leads with a primary "Start a conversation" control that
-    routes to Console, above a compact real-content counts line."""
+    """AC1+AC2: with the provider verifiably ready over real content and a
+    recent conversation, the idle canvas leads with a primary
+    "Resume last conversation" control that deep-links that conversation
+    into Console (spec §4), above a compact real-content counts line."""
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -1816,18 +1823,19 @@ async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_conso
 
         canvas_title = str(home.query_one("#home-canvas-title").renderable)
         canvas_lines = str(home.query_one("#home-canvas-lines").renderable)
-        assert "Start a conversation" in canvas_title
+        assert "Resume last conversation" in canvas_title
         assert "Conversations: 5 · Notes: 3" in canvas_lines
         assert "Media" not in canvas_lines
 
         primary = home.query_one("#home-primary-action")
-        assert "Start a conversation" in str(primary.label)
+        assert "Resume last conversation" in str(primary.label)
         assert primary.has_class("console-action-primary")
 
         await pilot.click("#home-primary-action")
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
 
 
 @pytest.mark.asyncio
@@ -1888,6 +1896,35 @@ async def test_home_resume_latest_conversation_routes_to_console():
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
+
+
+def test_open_content_item_routes_by_prefix():
+    """Content deep-links route by prefixed id: conversations carry the
+    Console nav-context id, notes the Library note id, media the Library
+    open-source pair."""
+    app = _build_test_app()
+    home = HomeScreen(app)
+
+    posted = []
+    home.post_message = lambda message: posted.append(message)
+
+    home._open_content_item("local:conversation:42")
+    home._open_content_item("local:note:7")
+    home._open_content_item("local:media:9")
+    home._open_content_item("local:ingest:3")  # unknown prefix: no-op
+
+    assert [message.screen_name for message in posted] == [
+        "chat",
+        "library",
+        "library",
+    ]
+    assert posted[0].screen_context == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "42"}
+    assert posted[1].screen_context == {LIBRARY_NAV_CONTEXT_NOTE_ID: "7"}
+    assert posted[2].screen_context == {
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "9",
+    }
 
 
 @pytest.mark.asyncio
@@ -2042,3 +2079,209 @@ async def test_home_content_snapshot_uses_library_rail_seams():
     # Hermetic test config (no disk-load markers) -> readiness is honored
     # verbatim and reports not-ready rather than reading the real config.
     assert snapshot.console_ready is False
+
+
+# --- Task 3: open-task providers (eval runs / read-it-later) ---------------
+
+
+def test_local_eval_open_run_counts_never_queries_running():
+    """The provider must only ever query pending/failed -- 'running' rows are
+    orphaned forever by a crash and would permanently pin the suggestion."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    queried = []
+
+    class FakeEvalService:
+        def list_runs(self, *, status=None, limit=100, offset=0):
+            queried.append(status)
+            return [{"run_id": f"{status}-{i}"} for i in range(3)]
+
+    counts = TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=FakeEvalService())
+    )
+    assert counts == {"pending": 3, "failed": 3}
+    assert set(queried) == {"pending", "failed"}
+
+
+def test_local_eval_open_run_counts_degrade_quietly():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    class BrokenEvalService:
+        def list_runs(self, **kwargs):
+            raise RuntimeError("db unavailable")
+
+    assert TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=BrokenEvalService())
+    ) == {"pending": 0, "failed": 0}
+    assert TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=None)
+    ) == {"pending": 0, "failed": 0}
+
+
+def test_local_read_later_count_provider():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    fake = SimpleNamespace(
+        media_db=SimpleNamespace(count_read_it_later_media=lambda: 3)
+    )
+    assert TldwCli._local_read_later_count(fake) == 3
+    assert TldwCli._local_read_later_count(SimpleNamespace(media_db=None)) is None
+
+
+# --- Rebase reconciliation + review fixes ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_home_read_it_later_primary_lands_on_queue_subview():
+    """Qodo #1: the read-it-later primary action carries a Media nav context
+    selecting the saved-reading subview, not the generic list."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        read_later_count=2,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert "Read-it-later" in canvas_title
+
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "media"
+    assert host.seen_contexts[-1] == {
+        MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: MEDIA_BROWSE_SUBVIEW_READ_IT_LATER
+    }
+
+
+def test_media_screen_navigation_context_stashes_browse_subview():
+    """The Media nav-context contract stashes the subview pre-mount and
+    applies it after the restored state (explicit navigation wins)."""
+    from tldw_chatbook.Constants import MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW
+    from tldw_chatbook.UI.Screens.media_screen import MediaScreen
+
+    app = _build_test_app()
+    screen = MediaScreen(app)
+    assert screen._pending_nav_browse_subview is None
+
+    screen.apply_navigation_context(
+        {MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: "read-it-later"}
+    )
+    assert screen._pending_nav_browse_subview == "read-it-later"
+
+    # Invalid payloads are ignored, not stashed.
+    screen._pending_nav_browse_subview = None
+    screen.apply_navigation_context({})
+    screen.apply_navigation_context({MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: ""})
+    screen.apply_navigation_context(None)
+    assert screen._pending_nav_browse_subview is None
+
+
+def test_open_tasks_provider_wiring_flows_to_dashboard_input():
+    """Qodo #12: the production app-to-adapter wiring (constructor lambdas
+    closing over the real provider methods) actually feeds the counts
+    through refresh + build -- not just each side in isolation."""
+    from types import SimpleNamespace
+
+    app = _build_test_app()
+    adapter = getattr(app, "home_active_work_adapter", None)
+    assert adapter is not None, "production adapter must be wired"
+
+    app.local_evaluation_service = SimpleNamespace(
+        list_runs=lambda *, status=None, limit=100, offset=0, **kw: [
+            {"run_id": f"{status}-{i}"} for i in range(2 if status == "pending" else 1)
+        ]
+    )
+    app.media_db = SimpleNamespace(count_read_it_later_media=lambda: 7)
+
+    adapter.refresh_open_tasks_snapshot()
+    state = adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
+    assert state.pending_eval_run_count == 2
+    assert state.failed_eval_run_count == 1
+    assert state.read_later_count == 7
+
+
+# ---------------------------------------------------------------------------
+# TASK-31805: the "Model:" badge derives from the send-path readiness check,
+# not the mere presence of a provider catalog. A fresh profile with a
+# populated ``providers_models`` map but NO API key overstated availability
+# ("Model: Ready") while an actual send failed with "API Key is required but
+# not found." Paired arms: no-credential reports Blocked; a resolvable
+# credential still reports Ready (no over-correction).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_home_model_badge_reports_blocked_without_credential(monkeypatch):
+    """No valid credential for the selected provider -> 'Model: Blocked'.
+
+    The old weak check ``model_ready = bool(providers_models)`` reported ready
+    off a non-empty catalog alone, regardless of whether a send could
+    authenticate. This drives the badge from the SAME readiness Console's send
+    path enforces (``get_provider_readiness`` via
+    ``build_console_settings_readiness``).
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    # Non-empty catalog: the old check said "ready" off this alone.
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = ""
+    # Pin the async content-snapshot's fresh-config read to this same no-key
+    # config so the badge stays deterministic once that worker lands.
+    monkeypatch.setattr(
+        home_screen_module, "load_settings", lambda *args, **kwargs: app.app_config
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-details-body").renderable)
+        assert "Model: Blocked" in status_text
+        assert "Model: Ready" not in status_text
+        # The honest signal also drives the next-best action guidance.
+        assert home._current_dashboard.next_action.action_id == "fix_model_setup"
+
+
+@pytest.mark.asyncio
+async def test_home_model_badge_reports_ready_with_credential(monkeypatch):
+    """Paired arm: a resolvable API key still reports 'Model: Ready'.
+
+    Guards the TASK-31805 honesty fix against over-correcting a genuinely
+    send-ready provider into a permanent 'Blocked'.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = "sk-test-home-ready-0123456789"
+    monkeypatch.setattr(
+        home_screen_module, "load_settings", lambda *args, **kwargs: app.app_config
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        status_text = str(home.query_one("#home-details-body").renderable)
+        assert "Model: Ready" in status_text
+        assert "Model: Blocked" not in status_text
+        assert home._current_dashboard.next_action.action_id != "fix_model_setup"

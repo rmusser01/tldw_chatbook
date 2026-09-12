@@ -55,7 +55,10 @@ _BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 class _ComposerCSSApp(ConsolidatedCSSApp):
     """Mount the composer with the production stylesheet for visual assertions."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [
+        str(_BUNDLED_STYLESHEET),
+        str(_REPO_ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"),
+    ]
 
     def compose(self) -> ComposeResult:
         yield ConsoleComposerBar(id="console-native-composer")
@@ -363,6 +366,9 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
             console = await _mounted_console(host, pilot)
             composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
+            reason_was_visible = composer.query_one(
+                "#console-send-disabled-reason"
+            ).display
             await pilot.click("#console-dictation")
             deadline = time.monotonic() + 4
             while (
@@ -375,10 +381,10 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
 
             actions = composer.query_one("#console-composer-actions")
             mic = composer.query_one("#console-dictation", Button)
-            assert "Local transcription busy — dictation will run next." in _painted(
+            assert "Local transcription busy — queued." in _painted(
                 composer.query_one("#console-voice-status", Static)
             )
-            assert actions.region.width == 25
+            assert actions.region.width == 33
             assert actions.region.right <= composer.region.right <= host.size.width
             assert mic.region.right <= composer.region.right
             assert mic.visible
@@ -408,7 +414,10 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
             assert composer.query_one("#console-composer-collapse").display
             assert composer.query_one("#console-composer-menu").display
             assert composer.query_one("#console-command-visible-text").display
-            assert composer.query_one("#console-send-disabled-reason").display
+            assert (
+                composer.query_one("#console-send-disabled-reason").display
+                == reason_was_visible
+            )
     finally:
         service.start_gate.set()
 
@@ -444,7 +453,7 @@ async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
             assert "2 files" in _painted(indicator)
             assert clear_button.display
             assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
-            assert actions.region.width == 29
+            assert actions.region.width == 37
 
             mic = composer.query_one("#console-dictation", Button)
             mic.press()
@@ -460,12 +469,12 @@ async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
             console._sync_console_composer_action_state(can_save_chatbook=False)
             await pilot.pause()
 
-            assert "Local transcription busy — dictation will run next." in _painted(
+            assert "Local transcription busy — queued." in _painted(
                 composer.query_one("#console-voice-status", Static)
             )
             assert not indicator.display
             assert not clear_button.display
-            assert actions.region.width == 25
+            assert actions.region.width == 33
             assert actions.region.right <= composer.region.right <= host.size.width
             assert mic.region.right <= composer.region.right
             click_offset = (
@@ -488,7 +497,7 @@ async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
             assert indicator.display
             assert clear_button.display
             assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
-            assert actions.region.width == 29
+            assert actions.region.width == 37
     finally:
         service.start_gate.set()
 
@@ -3098,7 +3107,7 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
                 await pilot.pause(0.01)
             # Blocked mid-flight: nothing must have been spoken yet.
             assert not any(
-                call.args[0].__class__.__name__ == "TTSRequestEvent"
+                call.args[0].__class__.__name__ == "TTSMessageSpeechRequestEvent"
                 for call in app.post_message.call_args_list
             )
 
@@ -3112,13 +3121,14 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
                     (
                         call.args[0]
                         for call in app.post_message.call_args_list
-                        if call.args[0].__class__.__name__ == "TTSRequestEvent"
+                        if call.args[0].__class__.__name__
+                        == "TTSMessageSpeechRequestEvent"
                     ),
                     None,
                 )
 
             assert spoken_event is not None
-            assert spoken_event.text == "The answer is 42."
+            assert spoken_event.snapshot.raw_content == "The answer is 42."
             assert spoken_event.message_id == message.id
             assert console._console_speaking_message_id == message.id
     finally:
@@ -3927,7 +3937,11 @@ async def test_read_that_back_speech_is_unaffected_by_spoken_feedback_toggle_on(
         spoken: list[str] = []
         while time.monotonic() < deadline and not spoken:
             await pilot.pause(0.01)
-            spoken = _spoken_texts(app.post_message)
+            spoken = [
+                call.args[0].snapshot.raw_content
+                for call in app.post_message.call_args_list
+                if call.args[0].__class__.__name__ == "TTSMessageSpeechRequestEvent"
+            ]
 
         assert spoken == ["The answer is 42."]
         assert console._console_speaking_message_id == message.id

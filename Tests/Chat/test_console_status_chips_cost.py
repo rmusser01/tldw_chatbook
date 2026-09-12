@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
 
@@ -22,6 +23,7 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
 ROOT = Path(__file__).resolve().parents[2]
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+CONSOLE_SCREEN = ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"
 
 
 def _control_state(**overrides) -> ConsoleControlState:
@@ -76,6 +78,13 @@ class _ChipsApp(App):
         self.captured_pressed.append(event)
 
 
+class _ProductionChipsApp(_ChipsApp):
+    """Status-chip harness using the shipped stylesheet and hierarchy."""
+
+    CSS = ""
+    CSS_PATH = [str(BUNDLE), str(CONSOLE_SCREEN)]
+
+
 @pytest.mark.asyncio
 async def test_cost_chip_is_composed_last():
     app = _ChipsApp(_control_state(), cost_state=_cost_state())
@@ -86,16 +95,12 @@ async def test_cost_chip_is_composed_last():
             chip.id for chip in chips.query(".console-control-chip") if chip.display
         ]
         assert visible_ids[-1] == "console-cost-chip"
-        assert isinstance(
-            app.query_one("#console-cost-chip"), ConsoleCostChip
-        )
+        assert isinstance(app.query_one("#console-cost-chip"), ConsoleCostChip)
 
 
 @pytest.mark.asyncio
 async def test_cost_chip_renders_label_from_state():
-    app = _ChipsApp(
-        _control_state(), cost_state=_cost_state(label="$1.23 ● ~+$0.05")
-    )
+    app = _ChipsApp(_control_state(), cost_state=_cost_state(label="$1.23 ● ~+$0.05"))
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
         chip = app.query_one("#console-cost-chip", ConsoleCostChip)
@@ -195,9 +200,7 @@ async def test_sync_cost_state_toggles_cold_class():
 @pytest.mark.asyncio
 async def test_cold_state_at_compose_time():
     """The cold class must also apply on the very first frame (F1 precedent)."""
-    app = _ChipsApp(
-        _control_state(), cost_state=_cost_state(alert=False, cold=True)
-    )
+    app = _ChipsApp(_control_state(), cost_state=_cost_state(alert=False, cold=True))
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
         chip = app.query_one("#console-cost-chip", ConsoleCostChip)
@@ -274,6 +277,81 @@ async def test_sync_cost_state_uses_full_label_when_wide():
 
 
 @pytest.mark.asyncio
+async def test_context_cost_label_uses_compact_copy_on_initial_narrow_mount():
+    state = _cost_state(
+        label="Context 45% · Current $0.48 · On next send ~+$0.13",
+        compact_label="Ctx 45% · Now $0.48 · Next ~+$0.13",
+    )
+    app = _ChipsApp(_control_state(), cost_state=state)
+
+    async with app.run_test(size=(80, 6)) as pilot:
+        await pilot.pause()
+        rendered = str(app.query_one("#console-cost-chip", ConsoleCostChip).render())
+
+        assert "Ctx 45% · Now $0.48 · Next ~+$0.13" in rendered
+        assert "On next send" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_context_cost_label_tracks_live_resize_without_state_change():
+    state = _cost_state(
+        label="Context 45% · Current $0.48 · On next send ~+$0.13",
+        compact_label="Ctx 45% · Now $0.48 · Next ~+$0.13",
+    )
+    app = _ChipsApp(_control_state(), cost_state=state)
+
+    async with app.run_test(size=(200, 6)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        assert "On next send" in str(chip.render())
+
+        await pilot.resize_terminal(80, 6)
+        await pilot.pause()
+        assert "Ctx 45% · Now $0.48 · Next ~+$0.13" in str(chip.render())
+
+        await pilot.resize_terminal(200, 6)
+        await pilot.pause()
+        assert "Context 45% · Current $0.48 · On next send ~+$0.13" in str(
+            chip.render()
+        )
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "expected"),
+    (
+        (80, 24, "Ctx 100%+ · Now $12,345.67 · Next ~+$987.65"),
+        (
+            120,
+            35,
+            "Context 100%+ · Current $12,345.67 · On next send ~+$987.65",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_context_cost_label_fits_shipped_status_strip(
+    width: int, height: int, expected: str
+) -> None:
+    app = _ProductionChipsApp(
+        _control_state(),
+        cost_state=_cost_state(
+            label="Context 100%+ · Current $12,345.67 · On next send ~+$987.65",
+            compact_label="Ctx 100%+ · Now $12,345.67 · Next ~+$987.65",
+        ),
+    )
+    async with app.run_test(size=(width, height)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        scroll = app.query_one("#console-status-chip-scroll")
+
+        rendered = str(chip.render())
+        assert rendered == expected
+        assert "…" not in rendered and "..." not in rendered
+        assert chip.region.height == 1
+        assert chip.region.y == scroll.content_region.y
+        assert chip.content_region.width >= cell_len(expected)
+
+
+@pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.
 
@@ -330,11 +408,9 @@ def _chip_cold_body(css_text: str) -> str:
     return match.group(1) if match else ""
 
 
-def test_console_chip_cold_css_exists_in_both_source_and_bundle():
-    """Dossier §9c dual-file contract: the source module and the generated
-    bundle must both carry the new class (the bundle is regenerated from
-    source, never hand-edited -- this just proves the rebuild happened)."""
-    for css_path in (AGENTIC, BUNDLE):
+def test_console_chip_cold_css_exists_in_source_and_generated_screen_sheet():
+    """The source rule must be regenerated into dev's split Console sheet."""
+    for css_path in (AGENTIC, CONSOLE_SCREEN):
         body = _chip_cold_body(css_path.read_text(encoding="utf-8"))
         assert body, f"{css_path.name}: no .console-chip-cold rule"
         assert "$ds-status-info" in body or "color" in body

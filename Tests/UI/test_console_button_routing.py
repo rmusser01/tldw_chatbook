@@ -25,9 +25,18 @@ rows and already have coverage in their owning feature's test file.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
+
+from tldw_chatbook.Chat.console_conversation_actions import (
+    ACTION_FAVORITE,
+    ACTION_UNFAVORITE,
+    ConversationMenuTarget,
+)
+from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+    ConversationActionChosen,
+)
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
@@ -40,7 +49,10 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_prompt_queue import PromptQueuePauseReason
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
@@ -149,28 +161,56 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
     """
     app = _build_test_app()
     marks = _install_real_marks_service(app, tmp_path)
-    rows = (_browser_row("conv-star-1", "Planning notes"),)
+    rows = (
+        _browser_row(
+            "conv-star-1",
+            "Planning notes",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        ),
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
 
-        star = console.query_one("#console-conversation-star-0", Button)
-        assert star.disabled is False
-        assert star.conversation_id == "conv-star-1"
+        # TASK-23200: the per-row star button became an asterisk that opens
+        # the row action menu. The durable write this test guards is now
+        # reached through the menu's Favourite entry, which routes into the
+        # same `_toggle_console_conversation_star` branch.
+        opener = console.query_one("#console-conversation-actions-0", Button)
+        assert opener.disabled is False
+        assert opener.conversation_id == "conv-star-1"
 
-        star.press()
+        console.on_conversation_action_chosen(
+            ConversationActionChosen(
+                ACTION_FAVORITE,
+                ConversationMenuTarget(
+                    conversation_id="conv-star-1", title="Planning notes"
+                ),
+            )
+        )
         await pilot.pause()
         # task-15471: the durable write runs on a worker now -- wait for it
         # rather than racing the pool thread with the assertion.
         await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is True
 
-        # A second press unstars: the branch reads current truth from the
-        # service, not from the button's captured `starred` attribute.
+        # Choosing it again unstars: the branch reads current truth from the
+        # service, not from whatever the row was painted with.
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
-        console.query_one("#console-conversation-star-0", Button).press()
+        console.on_conversation_action_chosen(
+            ConversationActionChosen(
+                ACTION_UNFAVORITE,
+                ConversationMenuTarget(
+                    conversation_id="conv-star-1",
+                    title="Planning notes",
+                    starred=True,
+                ),
+            )
+        )
         await pilot.pause()
         await console.workers.wait_for_complete()
         assert marks.is_starred("conv-star-1") is False
@@ -181,17 +221,34 @@ async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
     """No service is a warning, not a crash and not a half-write."""
     app = _build_test_app()
     app.conversation_local_marks_service = None
-    rows = (_browser_row("conv-star-2", "Unbacked row"),)
+    rows = (
+        _browser_row(
+            "conv-star-2",
+            "Unbacked row",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        ),
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
 
-        console.query_one("#console-conversation-star-0", Button).press()
+        # TASK-23200: reached through the row action menu's Favourite entry
+        # rather than a dedicated star button.
+        console.on_conversation_action_chosen(
+            ConversationActionChosen(
+                ACTION_FAVORITE,
+                ConversationMenuTarget(
+                    conversation_id="conv-star-2", title="Unbacked row"
+                ),
+            )
+        )
         await pilot.pause()
 
-        # Survived the press with the branch's own guard, not an exception.
+        # Survived the choice with the branch's own guard, not an exception.
         assert app.conversation_local_marks_service is None
 
 
@@ -231,9 +288,7 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
         def _press_section_toggle() -> None:
             # By group_id, not by position: a rebuild is free to reorder.
             next(
-                button
-                for button in _section_toggles()
-                if button.group_id == group_id
+                button for button in _section_toggles() if button.group_id == group_id
             ).press()
 
         # The polarity is NOT a constant. The handler flips the section's
@@ -257,7 +312,7 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
 
 
 @pytest.mark.asyncio
-async def test_browser_group_toggle_persists_its_collapse_preference():
+async def test_flat_browser_has_no_retired_workspace_group_toggles():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -272,15 +327,28 @@ async def test_browser_group_toggle_persists_its_collapse_preference():
                 "console-conversation-browser-group-toggle-"
             )
         ]
-        assert toggles, "the grouped browser must render group toggles"
-        toggle = toggles[0]
-        group_id = toggle.group_id
-        assert group_id and not group_id.startswith("section:")
+        assert toggles == []
 
-        toggle.press()
-        await pilot.pause()
 
-        assert _browser_config(app).get(group_id) is True
+@pytest.mark.asyncio
+async def test_workspace_files_controls_carry_stable_workspace_ids() -> None:
+    """The tree menu target addresses a workspace without parsing its label."""
+    app = _build_test_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-a", name="Workspace [label only]"
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._workspace._workspace_files_availability_by_id = MappingProxyType(
+            {"ws-a": True}
+        )
+        target = console._workspace_menu_target("ws-a")
+
+        assert target.workspace_id == "ws-a"
+        assert target.name == "Workspace [label only]"
+        assert target.files_available is True
 
 
 # --------------------------------------------------------------------------
@@ -358,6 +426,9 @@ async def test_workspace_conversation_row_switches_to_its_already_open_session()
                 conversation_id=f"native:{second.id}",
                 native_session_id=second.id,
                 source_kind="native",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
             ),
         )
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
@@ -408,6 +479,90 @@ async def test_close_tab_button_drops_an_empty_session_without_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_close_tab_button_drops_an_idle_saved_session_without_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        saved = store.restore_persisted_session(
+            title="Saved chat",
+            workspace_id=None,
+            persisted_conversation_id="saved-conversation",
+            all_nodes=(
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="already durable",
+                    persisted_message_id="saved-message",
+                ),
+            ),
+        )
+        store.switch_session(keeper_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert saved.id not in {session.id for session in store.sessions()}
+        assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        root = ConsoleChatMessage(
+            id="saved-root",
+            role=ConsoleMessageRole.USER,
+            content="saved root",
+            persisted_message_id="saved-root",
+        )
+        saved_leaf = ConsoleChatMessage(
+            id="saved-leaf",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="saved branch",
+            persisted_message_id="saved-leaf",
+            parent_message_id="saved-root",
+        )
+        saved = store.restore_persisted_session(
+            title="Saved chat with hidden work",
+            workspace_id=None,
+            persisted_conversation_id="saved-conversation",
+            all_nodes=(root, saved_leaf),
+            active_leaf_persisted_id="saved-leaf",
+        )
+        hidden_unsaved = store.create_sibling(
+            saved_leaf.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="unsaved hidden branch",
+        )
+        store.set_active_leaf(saved.id, saved_leaf.id)
+        assert hidden_unsaved.id not in store.active_path_message_ids(saved.id)
+        assert all(
+            message.persisted_message_id is not None
+            for message in store.messages_for_session(saved.id)
+        )
+        store.switch_session(keeper_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+
+        assert "Temporary or unsaved messages: 1" in dialog.message
+        assert saved.id in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
 async def test_close_tab_button_confirms_before_dropping_a_session_with_messages():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -428,8 +583,8 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
         close.press()
         dialog = await _wait_for_confirmation(host)
 
-        assert dialog.message.startswith("Closing this session will discard or cancel:")
-        assert "Transcript messages: 1" in dialog.message
+        assert "Saved history stays in Library" in dialog.message
+        assert "Temporary or unsaved messages: 1" in dialog.message
         assert "Live agent turns: 0" in dialog.message
         assert "Unsent queued prompts: 0" in dialog.message
         # Still open: the confirmation is a gate, not a notification.
@@ -480,12 +635,10 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
 
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        console.query_one(
-            f"#console-close-session-tab-{doomed.id}", Button
-        ).press()
+        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
         dialog = await _wait_for_confirmation(host)
 
-        assert "Transcript messages: 0" in dialog.message
+        assert "Temporary or unsaved messages: 0" in dialog.message
         assert "Live agent turns: 0" in dialog.message
         assert "Unsent queued prompts: 1" in dialog.message
         assert "secret queued close text" not in dialog.message
@@ -511,17 +664,15 @@ async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        console.query_one(
-            f"#console-close-session-tab-{doomed.id}", Button
-        ).press()
+        console.query_one(f"#console-close-session-tab-{doomed.id}", Button).press()
         first = await _wait_for_confirmation(host)
-        assert "Transcript messages: 1" in first.message
+        assert "Temporary or unsaved messages: 1" in first.message
 
         store.append_message(doomed.id, role=ConsoleMessageRole.USER, content="two")
         first.query_one("#confirm-button", Button).press()
         second = await _wait_for_confirmation(host, previous=first)
 
-        assert "Transcript messages: 2" in second.message
+        assert "Temporary or unsaved messages: 2" in second.message
         assert doomed.id in {session.id for session in store.sessions()}
         second.query_one("#cancel-button", Button).press()
         await pilot.pause()
@@ -668,3 +819,87 @@ async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
         await pilot.pause()
 
         assert calls == [expected]
+
+
+@pytest.mark.asyncio
+async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(tmp_path):
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    app = _build_test_app()
+    db = CharactersRAGDB(tmp_path / "saved-close.db", client_id="close-review")
+    app.chachanotes_db = db
+    app.local_chat_conversation_service = ChatConversationService(db)
+    cid = db.add_conversation({"title": "Saved"})
+    mid = db.add_message(
+        {"conversation_id": cid, "sender": "user", "content": "saved text"}
+    )
+    saved_row = db.get_conversation_by_id(cid)
+    saved_message = db.get_message_by_id(mid)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper = store.active_session_id
+        saved = store.restore_persisted_session(
+            title="Saved",
+            workspace_id=None,
+            persisted_conversation_id=cid,
+            all_nodes=[
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="saved text",
+                    persisted_message_id=mid,
+                )
+            ],
+        )
+        store.set_session_draft(saved.id, "private draft")
+        store.switch_session(keeper)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+        assert "Saved history stays in Library" in dialog.message
+        assert "Temporary or unsaved messages: 0" in dialog.message
+        assert "Unsent draft: yes" in dialog.message
+        assert "private draft" not in dialog.message
+        dialog.query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        assert store.session_draft(saved.id) == "private draft"
+        console.query_one(f"#console-close-session-tab-{saved.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+        dialog.query_one("#confirm-button", Button).press()
+        for _ in range(200):
+            if saved.id not in {session.id for session in store.sessions()}:
+                break
+            await pilot.pause(0.01)
+        assert saved.id not in {session.id for session in store.sessions()}
+        retained = db.get_conversation_by_id(cid)
+        assert retained is not None
+        assert {key: retained[key] for key in ("id", "title", "deleted")} == {
+            key: saved_row[key] for key in ("id", "title", "deleted")
+        }
+        assert db.get_message_by_id(mid) == saved_message
+    db.close_connection()
+
+
+
+@pytest.mark.asyncio
+async def test_close_draft_only_session_requires_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper = store.active_session_id
+        draft = store.create_session()
+        store.set_session_draft(draft.id, "private draft")
+        store.switch_session(keeper)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        console.query_one(f"#console-close-session-tab-{draft.id}", Button).press()
+        dialog = await _wait_for_confirmation(host)
+        assert "Unsent draft: yes" in dialog.message
+        assert draft.id in {s.id for s in store.sessions()}
+        dialog.query_one("#cancel-button", Button).press()

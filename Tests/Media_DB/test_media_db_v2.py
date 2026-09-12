@@ -3,13 +3,17 @@
 # This version is self-contained and does not require a conftest.py file.
 #
 # Standard Library Imports:
+import io
 import json
+import logging
 import os
 import pytest
 import sys
 import time
 import sqlite3
 from pathlib import Path
+
+from loguru import logger
 
 #
 # --- Path Setup (Replaces conftest.py logic) ---
@@ -28,7 +32,9 @@ except (NameError, IndexError):
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError,
     MediaDatabase as Database,
+    permanently_delete_item,
 )
+from Tests.DB.historical_bootstrap_v6 import media_db_at_version
 #
 #######################################################################################################################
 #
@@ -69,6 +75,60 @@ def get_document_version_count(db: Database, media_id: int) -> int:
         "SELECT COUNT(*) FROM DocumentVersions WHERE media_id = ?", (media_id,)
     )
     return cursor.fetchone()[0]
+
+
+def _capture_permanent_delete_logs(caplog, operation):
+    """Capture both logging stacks for one already-initialized DB operation."""
+    caplog.clear()
+    caplog.set_level(logging.DEBUG)
+    loguru_output = io.StringIO()
+    sink_id = logger.add(loguru_output, format="{message}", level="DEBUG")
+    try:
+        operation()
+    finally:
+        logger.remove(sink_id)
+    return f"{loguru_output.getvalue()}\n{caplog.text}"
+
+
+def _assert_permanent_delete_log_privacy(
+    rendered_logs: str,
+    *,
+    target_id: int,
+    db_path: Path,
+    private_values: tuple[str, ...],
+) -> None:
+    identifier_fragments = (
+        f"Media ID {target_id}",
+        f"Media ID: {target_id}",
+        f"local:media:{target_id}",
+        f"Media {target_id}",
+        f"media {target_id}",
+        f"media_id={target_id}",
+        f"media_id: {target_id}",
+    )
+    path_fragments = (
+        str(db_path.resolve()),
+        str(Path(f"{db_path.resolve()}-wal")),
+        str(Path(f"{db_path.resolve()}-shm")),
+    )
+    assert "Traceback (most recent call last)" not in rendered_logs
+    for private_value in (*identifier_fragments, *path_fragments, *private_values):
+        assert private_value not in rendered_logs
+
+
+def test_permanent_delete_privacy_guard_rejects_former_fts_success_line(
+    tmp_path: Path,
+) -> None:
+    """Mutation proof: the former identifier-bearing FTS line is forbidden."""
+    target_id = 7
+    rendered_logs = f"Deleted FTS entry for Media ID {target_id}"
+    with pytest.raises(AssertionError):
+        _assert_permanent_delete_log_privacy(
+            rendered_logs,
+            target_id=target_id,
+            db_path=tmp_path / "private.sqlite",
+            private_values=(),
+        )
 
 
 def get_schema_version(db: Database) -> int:
@@ -155,6 +215,206 @@ def search_db(tmp_path_factory):
 
     yield db
     db.close_connection()
+
+
+def test_permanent_delete_success_logs_only_fixed_metadata(tmp_path, caplog):
+    db_path = tmp_path / "private-media-success.sqlite"
+    private_title = "PRIVATE PERMANENT DELETE TITLE"
+    private_url = "private-delete://success-url"
+    private_client = "private-delete-success-client"
+    db = Database(db_path, private_client)
+    try:
+        target_id, _uuid, _message = db.add_media_with_keywords(
+            url=private_url,
+            title=private_title,
+            media_type="article",
+            content="private delete content",
+            keywords=[],
+        )
+        assert db.mark_as_trash(target_id)
+
+        rendered_logs = _capture_permanent_delete_logs(
+            caplog,
+            lambda: permanently_delete_item(db, target_id),
+        )
+
+        assert db.get_media_by_id(target_id, include_trash=True) is None
+        _assert_permanent_delete_log_privacy(
+            rendered_logs,
+            target_id=target_id,
+            db_path=db_path,
+            private_values=(private_title, private_url, private_client),
+        )
+        permanent_lines = tuple(
+            line
+            for line in rendered_logs.splitlines()
+            if "operation=permanent_delete" in line
+        )
+        assert permanent_lines == (
+            "Media mutation operation=permanent_delete status=started count=1",
+            "Media mutation operation=permanent_delete status=committed count=1",
+        )
+        assert (
+            "Media FTS mutation operation=delete status=committed count=1"
+            in tuple(record.getMessage() for record in caplog.records)
+        )
+    finally:
+        db.close_connection()
+
+
+def test_permanent_delete_sqlite_failure_logs_category_without_private_values(
+    tmp_path, caplog
+):
+    db_path = tmp_path / "private-media-failure.sqlite"
+    private_title = "PRIVATE FAILED DELETE TITLE"
+    private_url = "private-delete://failure-url"
+    private_client = "private-delete-failure-client"
+    private_exception = "PRIVATE SQLITE DELETE FAILURE"
+    db = Database(db_path, private_client)
+    try:
+        target_id, _uuid, _message = db.add_media_with_keywords(
+            url=private_url,
+            title=private_title,
+            media_type="article",
+            content="private failed delete content",
+            keywords=[],
+        )
+        assert db.mark_as_trash(target_id)
+        with db.transaction() as conn:
+            conn.execute(
+                "CREATE TRIGGER block_private_media_delete "
+                "BEFORE DELETE ON Media BEGIN "
+                f"SELECT RAISE(ABORT, '{private_exception}'); END"
+            )
+
+        def fail_delete() -> None:
+            with pytest.raises(DatabaseError):
+                permanently_delete_item(db, target_id)
+
+        rendered_logs = _capture_permanent_delete_logs(caplog, fail_delete)
+
+        assert db.get_media_by_id(target_id, include_trash=True) is not None
+        _assert_permanent_delete_log_privacy(
+            rendered_logs,
+            target_id=target_id,
+            db_path=db_path,
+            private_values=(
+                private_title,
+                private_url,
+                private_client,
+                private_exception,
+            ),
+        )
+        permanent_lines = tuple(
+            line
+            for line in rendered_logs.splitlines()
+            if "operation=permanent_delete" in line
+        )
+        assert permanent_lines == (
+            "Media mutation operation=permanent_delete status=started count=1",
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category=IntegrityError",
+        )
+    finally:
+        db.close_connection()
+
+
+def test_permanent_delete_fts_failure_logs_categories_without_private_values(
+    tmp_path, caplog
+):
+    """Exercise the real FTS sink after Media deletion starts, then roll back."""
+    db_path = tmp_path / "private-media-fts-failure.sqlite"
+    private_title = "PRIVATE FTS FAILED DELETE TITLE"
+    private_url = "private-delete://fts-failure-url"
+    private_client = "private-delete-fts-failure-client"
+    private_exception = "PRIVATE FTS DELETE FAILURE"
+    private_sql = "DELETE FROM media_fts WHERE rowid = PRIVATE TARGET"
+    db = Database(db_path, private_client)
+    try:
+        target_id, _uuid, _message = db.add_media_with_keywords(
+            url=private_url,
+            title=private_title,
+            media_type="article",
+            content="private FTS failure content",
+            keywords=[],
+        )
+        assert db.mark_as_trash(target_id)
+        original_delete_fts = db._delete_fts_media
+        reached_fts_sink: list[int] = []
+
+        class _FailingFTSConnection:
+            def execute(self, sql, params):
+                assert sql == "DELETE FROM media_fts WHERE rowid = ?"
+                assert params == (target_id,)
+                reached_fts_sink.append(target_id)
+                raise sqlite3.OperationalError(
+                    f"{private_exception} | {private_sql}"
+                )
+
+        def fail_after_media_delete(conn, media_id):
+            assert conn.execute(
+                "SELECT 1 FROM Media WHERE id = ?", (media_id,)
+            ).fetchone() is None
+            return original_delete_fts(_FailingFTSConnection(), media_id)
+
+        db._delete_fts_media = fail_after_media_delete
+
+        def fail_delete() -> None:
+            with pytest.raises(DatabaseError):
+                permanently_delete_item(db, target_id)
+
+        rendered_logs = _capture_permanent_delete_logs(caplog, fail_delete)
+
+        assert reached_fts_sink == [target_id]
+        assert db.get_media_by_id(target_id, include_trash=True) is not None
+        _assert_permanent_delete_log_privacy(
+            rendered_logs,
+            target_id=target_id,
+            db_path=db_path,
+            private_values=(
+                private_title,
+                private_url,
+                private_client,
+                private_exception,
+                private_sql,
+            ),
+        )
+        assert (
+            "Media FTS mutation operation=delete status=failed count=0 "
+            "category=OperationalError"
+            in tuple(record.getMessage() for record in caplog.records)
+        )
+        permanent_lines = tuple(
+            line
+            for line in rendered_logs.splitlines()
+            if "operation=permanent_delete" in line
+        )
+        assert permanent_lines == (
+            "Media mutation operation=permanent_delete status=started count=1",
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category=DatabaseError",
+        )
+    finally:
+        db.close_connection()
+
+
+def test_permanent_delete_privacy_guard_rejects_raw_fts_failure_detail(
+    tmp_path: Path,
+) -> None:
+    """Mutation proof: category metadata may not carry raw FTS failure text."""
+    target_id = 9
+    private_exception = "PRIVATE RAW FTS FAILURE"
+    rendered_logs = (
+        "Media FTS mutation operation=delete status=failed count=0 "
+        f"category=OperationalError detail={private_exception}"
+    )
+    with pytest.raises(AssertionError):
+        _assert_permanent_delete_log_privacy(
+            rendered_logs,
+            target_id=target_id,
+            db_path=tmp_path / "private.sqlite",
+            private_values=(private_exception,),
+        )
 
 
 #######################################################################################################################
@@ -581,23 +841,53 @@ class TestDatabaseCRUDAndSync:
         )
 
     def test_reading_progress_reopens_through_versioned_migration(self, temp_db_path):
-        first_db = Database(db_path=temp_db_path, client_id="schema_client")
-        media_id, _, _ = first_db.add_media_with_keywords(
-            title="Reading Progress Migration",
-            media_type="article",
-            content="Migration content for reading progress.",
-            keywords=["reading", "migration"],
-        )
-        first_db.close_connection()
+        # A genuinely historical v2 database, built by the real migration chain
+        # (base v1 + v1->v2), NOT by stamping "2" onto a current one. The old
+        # hand-degraded fixture had to be taught about every artifact each new
+        # migration added, and broke on the first one it had not been told about
+        # (v5->v6's chunk_engine_version). See TASK-21594.
+        with media_db_at_version(temp_db_path, 2, client_id="schema_client") as old_db:
+            assert get_schema_version(old_db) == 2
+            # The historical preconditions the migration under test depends on:
+            # neither local-only store exists yet at v2.
+            for absent_table in ("ReadingProgress", "MediaReadItLaterState"):
+                assert (
+                    old_db.execute_query(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = ?",
+                        (absent_table,),
+                    ).fetchone()
+                    is None
+                ), f"{absent_table} already exists at v2"
 
-        conn = sqlite3.connect(temp_db_path)
-        try:
-            conn.execute("DROP TABLE IF EXISTS ReadingProgress")
-            conn.execute("ALTER TABLE Media DROP COLUMN transcription_provenance_json")
-            conn.execute("UPDATE schema_version SET version = 2")
-            conn.commit()
-        finally:
-            conn.close()
+            # Seeded with the historical v1/v2 Media column set. The shipped
+            # writer cannot be used here: add_media_with_keywords() targets the
+            # current schema and fails with "no such column:
+            # transcription_provenance_json" (added at v4->v5) against a real
+            # v2 database -- the same reason this fixture needs a bootstrap
+            # module rather than production code.
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            with old_db.transaction():
+                cursor = old_db.execute_query(
+                    """
+                    INSERT INTO Media (
+                        title, type, content, content_hash, uuid,
+                        ingestion_date, last_modified, client_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "Reading Progress Migration",
+                        "article",
+                        "Migration content for reading progress.",
+                        "hash-reading-progress-migration",
+                        "11111111-2222-3333-4444-555555555555",
+                        now,
+                        now,
+                        "schema_client",
+                    ),
+                )
+                media_id = cursor.lastrowid
+            assert media_id is not None
 
         reopened_db = Database(db_path=temp_db_path, client_id="schema_client")
         try:
@@ -735,7 +1025,13 @@ class TestDatabaseCRUDAndSync:
             assert (
                 conn.execute(
                     "SELECT COUNT(*) FROM ChunkingTemplates "
-                    "WHERE name = 'duplicate-seed'"
+                    # task-7 (v7 rebuild): the retry replays through the
+                    # ChunkingTemplates migration, and this seed's body
+                    # (name only — no chunk stage, no base_method) is
+                    # unconvertible, so it survives under its quarantined
+                    # name instead of the original.
+                    "WHERE name IN ('duplicate-seed', "
+                    "'duplicate-seed (needs review)')"
                 ).fetchone()[0]
                 == 1
             )

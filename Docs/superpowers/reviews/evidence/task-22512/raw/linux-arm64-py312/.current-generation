@@ -1,0 +1,31 @@
+{
+  "files": [
+    {
+      "name": "linux-arm64-py312-artifacts.json",
+      "sha256": "c386ceecc2f73444b4b32b8e64aa2f210c59044ff6c1ca350d31bc0bbe15ce3d"
+    },
+    {
+      "name": "linux-arm64-py312-environment-bash.json",
+      "sha256": "4f8e0080338ae25cc2a59d1d5f452897e3ab1131efd6b41f7afc5d6865d3ee51"
+    },
+    {
+      "name": "linux-arm64-py312-environment-default.json",
+      "sha256": "f4aab1916861e8fbc8a26f65af065f9faab40ab4383ff80b59305c00b170502c"
+    },
+    {
+      "name": "linux-arm64-py312-environment-zsh.json",
+      "sha256": "ad53dd237bb2baf90abf3fc947a6ad788b02ba1795784194693b5e5a210e0a41"
+    },
+    {
+      "name": "linux-arm64-py312-pyte.json",
+      "sha256": "e6a4d6bab2d85ef5de9a7aed84d3d9419f2ee41de6b03638b6f1d93c0041917d"
+    },
+    {
+      "name": "linux-arm64-py312-pywinpty.json",
+      "sha256": "c29d21e7341079be408984cf934326637e030cd2badfb4fe8e892b35473649b9"
+    }
+  ],
+  "generation_id": "3a382396e74f455892b1d887af84fb05",
+  "row_id": "linux-arm64-py312",
+  "schema_version": 1
+}

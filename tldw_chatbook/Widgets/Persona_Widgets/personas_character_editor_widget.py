@@ -378,6 +378,10 @@ class PersonasCharacterEditorWidget(Container):
         self._loading: bool = False
         self._loaded_snapshot: tuple | None = None
         self._dirty_posted: bool = False
+        self._loaded_attachment_snapshot: tuple[object | None, object | None] = (
+            None,
+            None,
+        )
         # Live validation (Roleplay P3b Task 4): the pending debounce timer
         # scheduled by _field_changed, cancelled and re-armed on every real
         # field change so only the last edit in a typing burst validates.
@@ -391,9 +395,14 @@ class PersonasCharacterEditorWidget(Container):
         self._pending_generation_field: str | None = None
         self._generation_context_mode: str = "whole_character"
         self._visual_identity_session_token: int = 0
+        self._actor_pack_mode: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Character Editor", classes="destination-section")
+        yield Static(
+            "Character Editor",
+            id="personas-char-editor-title",
+            classes="destination-section",
+        )
         with VerticalScroll(id="personas-char-editor-body"):
             with Horizontal(id="personas-char-editor-generate-toolbar"):
                 context_toggle = Button(
@@ -611,6 +620,14 @@ class PersonasCharacterEditorWidget(Container):
                     id="personas-char-editor-avatar-remove",
                     classes="console-action-subdued",
                 )
+            pack_status = Static(
+                "Portrait required: none",
+                id="personas-char-editor-pack-status",
+                classes="destination-purpose",
+                markup=False,
+            )
+            pack_status.display = False
+            yield pack_status
             yield Container(id="personas-char-editor-avatar-thumb")
             with Vertical(id="personas-char-editor-legacy-expressions"):
                 with Horizontal(classes="personas-char-editor-expr-set-row"):
@@ -728,6 +745,7 @@ class PersonasCharacterEditorWidget(Container):
     ) -> None:
         """Fill the form from ``data`` (tolerant of legacy key aliases)."""
         self._visual_identity_session_token += 1
+        self._actor_pack_mode = False
         self._loading = True
         try:
             self._populate_form(data)
@@ -742,8 +760,11 @@ class PersonasCharacterEditorWidget(Container):
         # returns, so the handler compares against this snapshot (taken from
         # the just-populated form) and ignores events that match it.
         self._loaded_snapshot = self._form_snapshot()
+        self._loaded_attachment_snapshot = self._attachment_snapshot()
         self._dirty_posted = False
         self._user_touched = False
+        if self.is_mounted:
+            self._sync_actor_pack_mode()
 
     def mark_saved(self, record: Dict[str, Any]) -> None:
         """Re-baseline dirty state to a just-persisted record (save-in-place).
@@ -763,6 +784,7 @@ class PersonasCharacterEditorWidget(Container):
             str(g) for g in (self._character_data.get("alternate_greetings") or [])
         ]
         self._loaded_snapshot = self._form_snapshot()
+        self._loaded_attachment_snapshot = self._attachment_snapshot()
         self._dirty_posted = False
         self.query_one("#personas-char-editor-validation", Static).update("")
         # A create-session's first Save assigns the brand-new character its
@@ -811,9 +833,37 @@ class PersonasCharacterEditorWidget(Container):
             self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
         self._set_advanced_open(False)
 
-    def new_character(self) -> None:
+    def new_character(self, *, actor_pack: bool = False) -> None:
         """Clear the form for a new (unsaved) character; version defaults 1.0."""
         self.load_character({})
+        self._actor_pack_mode = actor_pack
+        self._sync_actor_pack_mode()
+
+    def mark_actor_pack_created(self, portable_uuid: str) -> None:
+        """Show the durable portable identity without exposing local paths."""
+
+        self._actor_pack_mode = False
+        self.query_one("#personas-char-editor-title", Static).update(
+            "Character Actor Pack created"
+        )
+        status = self.query_one("#personas-char-editor-pack-status", Static)
+        status.update(f"Portable UUID: {portable_uuid}")
+        status.display = True
+
+    def _sync_actor_pack_mode(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#personas-char-editor-title", Static).update(
+            "New Character Actor Pack" if self._actor_pack_mode else "Character Editor"
+        )
+        status = self.query_one("#personas-char-editor-pack-status", Static)
+        status.display = self._actor_pack_mode
+        if self._actor_pack_mode:
+            status.update(
+                "Portrait required: ready"
+                if self.has_avatar_image()
+                else "Portrait required: none"
+            )
 
     @property
     def visual_identity_session_token(self) -> int:
@@ -927,6 +977,66 @@ class PersonasCharacterEditorWidget(Container):
         """
         data = self._character_data.get("image")
         return data if isinstance(data, (bytes, bytearray)) else None
+
+    def has_unsaved_attachment(self) -> bool:
+        """Return whether the real staged avatar differs from its saved baseline."""
+
+        return self._attachment_snapshot() != self._loaded_attachment_snapshot
+
+    def _attachment_snapshot(self) -> tuple[object | None, object | None]:
+        return (self._character_data.get("image"), self._character_data.get("avatar"))
+
+    def discard_unsaved_attachment(self) -> None:
+        """Restore only the avatar bytes owned by this editor session."""
+
+        image, avatar = self._loaded_attachment_snapshot
+        for key, value in (("image", image), ("avatar", avatar)):
+            if value is None:
+                self._character_data.pop(key, None)
+            else:
+                self._character_data[key] = value
+        self._set_avatar_status_from_record()
+
+    def discard_unsaved_form(self) -> None:
+        """Restore the raw baseline without restarting the visual identity session."""
+
+        if self._loaded_snapshot is None:
+            return
+        fields = (
+            ("name", Input, "value"),
+            ("first-message", TextArea, "text"),
+            ("description", TextArea, "text"),
+            ("personality", TextArea, "text"),
+            ("system-prompt", TextArea, "text"),
+            ("scenario", TextArea, "text"),
+            ("post-history", TextArea, "text"),
+            ("creator-notes", TextArea, "text"),
+            ("creator", Input, "value"),
+            ("version", Input, "value"),
+            ("tags", Input, "value"),
+        )
+        self._loading = True
+        try:
+            for (name, widget_type, attribute), value in zip(
+                fields, self._loaded_snapshot[:-1], strict=True
+            ):
+                setattr(
+                    self.query_one(f"#personas-char-editor-{name}", widget_type),
+                    attribute,
+                    value,
+                )
+            self._greetings = list(self._loaded_snapshot[-1])
+            self._selected_greeting_index = None
+            self._area("greeting-edit").text = ""
+            self._render_greetings_table()
+            self.discard_unsaved_attachment()
+        finally:
+            self._loading = False
+        self._dirty_posted = False
+        self._user_touched = False
+        self.query_one("#personas-char-editor-validation", Static).update("")
+        for fid in self._validated_field_ids():
+            self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
 
     # --- LLM-assisted generation -------------------------------------------------
 
@@ -1302,6 +1412,10 @@ class PersonasCharacterEditorWidget(Container):
         if not self._input("name").value.strip():
             findings.append(("personas-char-editor-name", "required", "error"))
         avatar_bytes = self.current_avatar_bytes()
+        if self._actor_pack_mode and avatar_bytes is None:
+            findings.append(
+                ("personas-char-editor-pack-status", "portrait required", "error")
+            )
         if avatar_bytes is not None:
             # Local import: this widget module is itself imported by
             # personas_screen at module-load time, so a top-level import of
@@ -1336,7 +1450,11 @@ class PersonasCharacterEditorWidget(Container):
         Only these are reconciled (marked/un-marked) by ``_run_validation``;
         greetings are warning-only and never toggle ``.is-invalid``.
         """
-        return {"personas-char-editor-name", "personas-char-editor-avatar-status"}
+        return {
+            "personas-char-editor-name",
+            "personas-char-editor-avatar-status",
+            "personas-char-editor-pack-status",
+        }
 
     def _run_validation(self) -> list[tuple[str, str, str]]:
         """Compute findings, mark/un-mark offending rows, render the footer.
@@ -1517,6 +1635,8 @@ class PersonasCharacterEditorWidget(Container):
         self.query_one("#personas-char-editor-avatar-status", Static).update(
             f"Avatar: {avatar}"
         )
+        if self.is_mounted:
+            self._sync_actor_pack_mode()
 
     def set_expression_generating(self, state: str, busy: bool) -> None:
         """Show/clear the in-slot "Generating…" affordance for one

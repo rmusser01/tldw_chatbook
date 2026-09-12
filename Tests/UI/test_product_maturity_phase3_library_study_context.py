@@ -273,7 +273,9 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
         assert "WIP:" not in visible
         assert purpose_copy in visible
         assert "Carries forward: Research Note, Transcript A, Planning Chat" in visible
-        assert "Generation and review run in Study." in visible
+        # task-32069: the ownership line now also carries the carry-over
+        # promise the rail rows used to repeat three times.
+        assert "generation and review run in Study." in visible
         assert "Source snapshot is ready." in visible
 
         open_button = screen.query_one(

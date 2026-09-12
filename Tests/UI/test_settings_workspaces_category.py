@@ -5,6 +5,14 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Workspaces import (
+    ChangeReviewCapability,
+    ChangeReviewConsent,
+    ChangeReviewState,
+    ChangeReviewStatus,
+    RootReadiness,
+    RootReadinessState,
+)
 from Tests.UI.test_settings_configuration_hub import (
     DestinationHarness,
     _active_destination_screen,
@@ -110,15 +118,18 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                 pilot,
                 "#settings-workspace-rename-input",
             )
-            screen.query_one(
-                "#settings-workspace-rename-input", Input
-            ).value = "Client Y"
+            rename_input = screen.query_one("#settings-workspace-rename-input", Input)
+            rename_input.value = "Client Y"
             screen.query_one("#settings-workspace-rename-apply", Button).press()
-            await _wait_for_selector(
-                screen,
-                pilot,
-                "#settings-workspace-set-active",
-            )
+            # Persistence can complete before the refreshed card remounts.
+            for _ in range(200):
+                candidates = list(screen.query("#settings-workspace-rename-input"))
+                if candidates and candidates[0] is not rename_input:
+                    break
+                await pilot.pause(0.01)
+            else:
+                pytest.fail("Renamed workspace card did not mount a replacement rename input")
+            assert candidates[0] is not rename_input
             assert registry.get_workspace(workspace_id).name == "Client Y"
 
             # Duplicate rename surfaces inline, not as a crash.
@@ -167,7 +178,12 @@ async def test_create_rename_archive_unarchive_flow() -> None:
                 pilot,
                 "#settings-workspaces-show-archived",
             )
-            assert not screen.query(f"#settings-workspace-row-{workspace_id}")
+            for _ in range(200):
+                if not screen.query(f"#settings-workspace-row-{workspace_id}"):
+                    break
+                await pilot.pause(0.01)
+            else:
+                pytest.fail("Archived workspace remained in the active workspace list")
             screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
             await _wait_for_selector(
                 screen,
@@ -295,7 +311,10 @@ async def test_default_workspace_card_is_protected() -> None:
 
         assert not screen.query("#settings-workspace-rename-apply")
         assert not screen.query("#settings-workspace-archive")
-        assert "stays tool-less" in _visible_text(screen)
+        visible = _visible_text(screen)
+        assert "use private scratch" in visible
+        assert "only to bind external folders" in visible
+        assert "tool-less" not in visible
 
 
 @pytest.mark.asyncio
@@ -319,9 +338,9 @@ async def test_archived_workspace_card_offers_only_unarchive() -> None:
         await _open_settings_category(pilot, "#settings-category-workspaces")
 
         screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
-        await pilot.pause(0.3)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-row-ws-archived")
         screen.query_one("#settings-workspace-row-ws-archived", Button).press()
-        await pilot.pause(0.2)
+        await _wait_for_selector(screen, pilot, "#settings-workspace-unarchive")
 
         assert not screen.query("#settings-workspace-rename-input")
         assert not screen.query("#settings-workspace-rename-apply")
@@ -330,8 +349,7 @@ async def test_archived_workspace_card_offers_only_unarchive() -> None:
         assert not screen.query("#settings-workspace-folder-add")
         assert screen.query_one("#settings-workspace-unarchive", Button)
         assert (
-            "Archived workspace. Unarchive it to rename, activate, "
-            "or edit folders." in _visible_text(screen)
+            "Archived workspace. Restore to list it again; your active workspace stays unchanged." in _visible_text(screen)
         )
 
 
@@ -481,7 +499,7 @@ async def test_overview_pins_workspaces_recovery_copy() -> None:
 
 @pytest.mark.asyncio
 async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
-    """TASK-1979: the per-workspace change-review toggle round-trips."""
+    """A new workspace is opt-in and discloses retained file contents."""
     from textual.widgets import Button
 
     app = _build_test_app()
@@ -495,6 +513,18 @@ async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
         screen.query_one("#settings-workspace-row-ws-cr", Button).press()
         await pilot.pause(0.2)
 
+        text = _visible_text(screen)
+        assert registry.change_review_enabled("ws-cr") is False
+        assert "Tracking disabled" in text
+        assert "shadow Git history" in text
+        assert "application data" in text
+        assert "file contents" in text
+        assert "30 days" in text
+        assert "does not erase existing history" in text
+        screen.query_one(
+            "#settings-workspace-change-review-toggle", Button
+        ).press()
+        await pilot.pause(0.3)
         assert registry.change_review_enabled("ws-cr") is True
         assert "Tracking enabled" in _visible_text(screen)
         screen.query_one(
@@ -502,12 +532,150 @@ async def test_change_review_toggle_flips_and_persists(tmp_path) -> None:
         ).press()
         await pilot.pause(0.3)
         assert registry.change_review_enabled("ws-cr") is False
-        assert "Tracking disabled" in _visible_text(screen)
-        screen.query_one(
+
+
+@pytest.mark.asyncio
+async def test_change_review_stale_toggle_reports_conflict_and_refreshes() -> None:
+    """A stale rendered intent never inverts a newer external decision."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-stale", name="Stale WS")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-stale", Button).press()
+        await pilot.pause(0.2)
+
+        stale_button = screen.query_one(
             "#settings-workspace-change-review-toggle", Button
-        ).press()
+        )
+        registry.set_change_review_enabled("ws-stale", True)
+        stale_button.press()
         await pilot.pause(0.3)
-        assert registry.change_review_enabled("ws-cr") is True
+
+        assert registry.change_review_enabled("ws-stale") is True
+        text = _visible_text(screen)
+        assert "changed elsewhere" in text
+        assert "Tracking enabled" in text
+
+
+@pytest.mark.asyncio
+async def test_change_review_unavailable_consent_has_no_toggle() -> None:
+    """An unreadable registry state fails off with honest copy."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-unavailable", name="Unavailable WS")
+
+    class UnavailableService:
+        def status(self, _workspace_id):
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.ENABLED),
+                ChangeReviewConsent(ChangeReviewState.UNAVAILABLE),
+            )
+
+    app.change_review_consent_service = UnavailableService()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one(
+            "#settings-workspace-row-ws-unavailable", Button
+        ).press()
+        await pilot.pause(0.2)
+
+        assert "state could not be read" in _visible_text(screen)
+        assert not screen.query("#settings-workspace-change-review-toggle")
+
+
+@pytest.mark.asyncio
+async def test_change_review_failed_root_offers_one_retry_without_paths() -> None:
+    """Failed preparation stays non-blocking and exposes a bounded retry."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-retry", name="Retry WS")
+    retries: list[str] = []
+
+    class FailedService:
+        def status(self, _workspace_id):
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.ENABLED),
+                ChangeReviewConsent(ChangeReviewState.ENABLED, "rev-1"),
+                (
+                    RootReadiness(
+                        alias="folder-safe-alias",
+                        state=RootReadinessState.FAILED,
+                        reason="preparation failed at /private/secret/root",
+                    ),
+                ),
+            )
+
+        def retry_failed_roots(self, workspace_id):
+            retries.append(workspace_id)
+            return 1
+
+    app.change_review_consent_service = FailedService()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-retry", Button).press()
+        await pilot.pause(0.2)
+
+        text = _visible_text(screen)
+        assert "chat and tools continue" in text
+        assert "/private/secret/root" not in text
+        screen.query_one("#settings-workspace-change-review-retry", Button).press()
+        await pilot.pause(0.2)
+
+        assert retries == ["ws-retry"]
+
+
+@pytest.mark.asyncio
+async def test_change_review_preparing_is_explicitly_non_blocking() -> None:
+    """Preparation copy never implies that chat is waiting for the scan."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-preparing", name="Preparing WS")
+
+    class PreparingService:
+        def status(self, _workspace_id):
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.ENABLED),
+                ChangeReviewConsent(ChangeReviewState.ENABLED, "rev-1"),
+                (
+                    RootReadiness(
+                        alias="folder-safe-alias",
+                        state=RootReadinessState.PREPARING,
+                        reason="preparing",
+                    ),
+                ),
+            )
+
+    app.change_review_consent_service = PreparingService()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-preparing", Button).press()
+        await pilot.pause(0.2)
+
+        text = _visible_text(screen)
+        assert "Preparing change history" in text
+        assert "background; chat and tools continue" in text
+        assert not screen.query("#settings-workspace-change-review-retry")
 
 
 @pytest.mark.asyncio
@@ -564,3 +732,81 @@ async def test_change_review_global_kill_disclosed_in_settings(
         assert "disabled globally" in text, text
         assert "Tracking enabled" not in text
         assert not screen.query("#settings-workspace-change-review-toggle")
+
+
+@pytest.mark.asyncio
+async def test_settings_archived_label_and_restore_name_preserve_active_workspace() -> (
+    None
+):
+    from textual.widgets import Button, Checkbox, Input
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="old", name="Repeated")
+    registry.archive_workspace("old")
+    registry.create_workspace(workspace_id="new", name="Repeated")
+    active_id = registry.get_active_workspace().workspace_id
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(160, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspaces-show-archived", Checkbox).value = True
+        await _wait_for_selector(screen, pilot, "#settings-workspace-row-old")
+        assert "(archived)" in host.export_screenshot()
+        screen.query_one("#settings-workspace-row-old", Button).press()
+        await _wait_for_selector(screen, pilot, "#settings-workspace-restore-name")
+        screen.query_one("#settings-workspace-restore-name", Input).value = "Recovered"
+        screen.query_one("#settings-workspace-unarchive", Button).press()
+        for _ in range(200):
+            restored = registry.get_workspace("old")
+            if (
+                restored is not None
+                and not restored.archived
+                and restored.name == "Recovered"
+                and "Restored Recovered" in _visible_text(screen)
+            ):
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail(
+                "Workspace Restore as did not finish persistence and visible feedback: "
+                f"record={restored!r}; visible={_visible_text(screen)}"
+            )
+        assert not registry.get_workspace("old").archived
+        assert registry.get_workspace("old").name == "Recovered"
+        assert registry.get_active_workspace().workspace_id == active_id
+        assert "Restored Recovered" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_archive_receipt_undo_without_switching() -> None:
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="receipt", name="Receipt")
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(160, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-receipt", Button).press()
+        await _wait_for_selector(screen, pilot, "#settings-workspace-archive")
+        screen.query_one("#settings-workspace-archive", Button).press()
+        for _ in range(200):
+            if host.screen is not screen and host.screen.query("#confirm-button"):
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail("Workspace archive confirmation did not mount")
+        host.screen.query_one("#confirm-button", Button).press()
+        await _wait_for_selector(screen, pilot, "#settings-workspace-archive-undo")
+        assert registry.get_workspace("receipt").archived
+        screen.query_one("#settings-workspace-archive-undo", Button).press()
+        for _ in range(200):
+            if not registry.get_workspace("receipt").archived:
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail("Workspace Undo did not restore the archived workspace")
+        assert not registry.get_workspace("receipt").archived
+        assert registry.get_active_workspace().workspace_id == "workspace-default"

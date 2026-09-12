@@ -212,12 +212,18 @@ class LocalMCPRuntimeDelegate:
         *,
         manifest_provider: Callable[[], dict[str, Any]] | None = None,
         library_service: Any | None = None,
+        policy_enforcer: Any | None = None,
     ) -> None:
         self._manifest_provider = manifest_provider or describe_local_mcp_capabilities
         # task-1337 (plan Task 9): shared synchronous LocalLibraryToolService
         # (duck-typed ``invoke``). Injected by tests/hosts; lazily composed
         # from the process-local databases on first Library dispatch.
         self._library_service = library_service
+        # chunking-agent-tools (Task 5, spec §6): threaded into the lazily
+        # composed shared Library service so the WRITING chunk tools are
+        # service-level gated on the local MCP surface (the Console
+        # construction site passes the same app handle).
+        self._policy_enforcer = policy_enforcer
         self._tools: Any | None = None
         self._resources: Any | None = None
         self._prompts: Any | None = None
@@ -716,6 +722,7 @@ class LocalMCPRuntimeDelegate:
             self._library_service = build_local_library_tool_service(
                 chachanotes_db=self._require_chachanotes_db(),
                 media_db=self._require_media_db(),
+                policy_enforcer=self._policy_enforcer,
             )
         return self._library_service
 

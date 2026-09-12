@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import warnings
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -13,7 +14,6 @@ from tldw_chatbook.DB.private_sqlite import (
     SQLiteOwnerPolicy,
     SQLiteTargetKind,
 )
-
 
 PROJECT_ROOT = Path(__file__).parents[2]
 PRODUCTION_ROOT = PROJECT_ROOT / "tldw_chatbook"
@@ -117,16 +117,6 @@ EXPECTED_PARENT_CREATORS = {
     (
         "tldw_chatbook/UI/Tools_Settings_Window",
         "ToolsSettingsWindow._backup_worker",
-        "backup_dir.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        "ToolsSettingsWindow._backup_single_worker",
-        "backup_dir.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        "ToolsSettingsWindow._restore_single_database",
         "backup_dir.mkdir(parents=True, exist_ok=True)",
     ),
     (
@@ -554,15 +544,58 @@ def _assert_raw_connection_census(
     seam_exists: bool,
 ) -> None:
     seam_site = ("tldw_chatbook/DB/private_sqlite", "_connect_registered_sqlite")
+    runtime_probe_site = (
+        "tldw_chatbook/TTS/profile_sqlite_policy",
+        "require_native_close_policy_support",
+    )
+    child_proof_site = ("tldw_chatbook/TTS/profile_sqlite_proof", "TTSProof.initialize")
     if not seam_exists:
         assert sum(current.values()) == 31
         assert current == documented_legacy
         return
 
-    # The seam owns one ordinary path connection and one descriptor-bound
-    # immutable connection; no raw SQLite open exists outside this function.
-    assert current[seam_site] == 2
-    assert current == Counter({seam_site: 2})
+    # The seam owns a prepared file open, a filesystem-free memory open, and
+    # the exclusive descriptor view. The ordinary file open keeps sqlite3's
+    # factory seam; only descriptor views use the captured original callable.
+    assert current[seam_site] == 3
+    # The TTS runtime probe is a separate, fixed, argument-free capability
+    # check. Its one raw call is admitted only by the strict source guard below.
+    assert current[runtime_probe_site] == 1
+    assert current == Counter(
+        {seam_site: 3, runtime_probe_site: 1, child_proof_site: 1}
+    )
+
+
+def _assert_runtime_probe_is_literal_memory_only(source_path: Path) -> None:
+    tree = _parse_source(source_path)
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "require_native_close_policy_support"
+    ]
+    assert len(functions) == 1
+    function = functions[0]
+    arguments = function.args
+    assert arguments.posonlyargs == []
+    assert arguments.args == []
+    assert arguments.kwonlyargs == []
+    assert arguments.vararg is None
+    assert arguments.kwarg is None
+
+    visitor = _QualifiedCallNodeVisitor(_is_sqlite3_connect)
+    visitor.visit(tree)
+    calls = [
+        call
+        for symbol, call in visitor.calls
+        if symbol == "require_native_close_policy_support"
+    ]
+    assert len(calls) == 1
+    call = calls[0]
+    assert len(call.args) == 1
+    assert isinstance(call.args[0], ast.Constant)
+    assert call.args[0].value == ":memory:"
+    assert call.keywords == []
 
 
 def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
@@ -590,18 +623,26 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # authority before any profile-store open. C45/C46 are descriptor-bound
         # publisher/recovery validation through the centralized SQLite seam;
         # C47 is the exact admitted restore source retained during canonical
-        # candidate preparation. C48 is the descriptor-bound exact-current
-        # proof retained through shared live-store use. C49 is the external
+        # candidate preparation. C48 is retired: exact-current proof now lives
+        # only in the isolated child, with a separately guarded raw seam. C49 is the external
         # Watchlists agent's non-mutating view of existing subscription data.
         # C50 is the device-private Notes import receipt and future lasting-sync
-        # state owner. (task-15481 retired
-        # the dead db.search_history owner, formerly C16; every id from C16
+        # state owner. C51 is the pre-boot "upgrading database..." notice's
+        # read-only schema-version probe (task-21100). (task-15481 retired
+        # the dead db.search_history owner, formerly C16; C52 is the encrypted
+        # Personal Context repository's private local database. C53 is the
+        # encrypted local-only Personal Context interview draft database.
+        # C54 is the dedicated profile-local Chunking Lab recovery owner.
+        # C55 is the existing private-file trace maintenance connection.
+        # C56 is schema-independent, read-only legacy Collections recovery.
+        # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 51)
+        for number in range(1, 57)
+        if number not in {10, 48}
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 18)
+        f"B{number:02d}" for number in range(1, 18) if number not in {10, 11, 12, 16}
     ]
 
 
@@ -630,6 +671,11 @@ def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
 def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
     legacy_site = ("tldw_chatbook/DB/legacy", "Owner.connect")
     seam_site = ("tldw_chatbook/DB/private_sqlite", "_connect_registered_sqlite")
+    runtime_probe_site = (
+        "tldw_chatbook/TTS/profile_sqlite_policy",
+        "require_native_close_policy_support",
+    )
+    child_proof_site = ("tldw_chatbook/TTS/profile_sqlite_proof", "TTSProof.initialize")
     documented = Counter({legacy_site: 31})
 
     _assert_raw_connection_census(
@@ -646,19 +692,26 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 2}),
+        Counter({seam_site: 3, runtime_probe_site: 1, child_proof_site: 1}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 2}),
+            Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({legacy_site: 7, seam_site: 3}),
+            Counter(
+                {
+                    legacy_site: 7,
+                    seam_site: 3,
+                    runtime_probe_site: 1,
+                    child_proof_site: 1,
+                }
+            ),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
@@ -668,11 +721,121 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
                 {
                     legacy_site: 7,
                     seam_site: 1,
+                    runtime_probe_site: 1,
+                    child_proof_site: 1,
                     ("tldw_chatbook/new_owner", "open_database"): 1,
                 }
             ),
             seam_exists=True,
         )
+    with pytest.raises(AssertionError):
+        _assert_raw_connection_census(
+            documented,
+            Counter({seam_site: 3, runtime_probe_site: 2, child_proof_site: 1}),
+            seam_exists=True,
+        )
+    for child_count in (0, 2):
+        with pytest.raises(AssertionError):
+            _assert_raw_connection_census(
+                documented,
+                Counter(
+                    {seam_site: 3, runtime_probe_site: 1, child_proof_site: child_count}
+                ),
+                seam_exists=True,
+            )
+
+
+def test_runtime_capability_probe_is_one_literal_memory_only_raw_call() -> None:
+    _assert_runtime_probe_is_literal_memory_only(
+        PROJECT_ROOT / "tldw_chatbook/TTS/profile_sqlite_policy.py"
+    )
+
+
+def _assert_child_proof_call_is_fixed(source: str) -> None:
+    tree = ast.parse(source)
+    visitor = _QualifiedCallNodeVisitor(_is_sqlite3_connect)
+    visitor.visit(tree)
+    assert len(visitor.calls) == 1
+    symbol, call = visitor.calls[0]
+    assert symbol == "TTSProof.initialize"
+    expected = ast.parse(
+        'sqlite3.connect(f"file:/dev/fd/{self.file_fd}?mode=ro&immutable=1", uri=True, isolation_level=None)',
+        mode="eval",
+    ).body
+    assert ast.dump(call, include_attributes=False) == ast.dump(
+        expected, include_attributes=False
+    )
+
+
+def test_child_proof_raw_call_is_exact_pinned_immutable_view() -> None:
+    source = (PROJECT_ROOT / "tldw_chatbook/TTS/profile_sqlite_proof.py").read_text()
+    _assert_child_proof_call_is_fixed(source)
+    for replacement in ("self.parent_fd", "self.selected", "caller_fd"):
+        with pytest.raises(AssertionError):
+            _assert_child_proof_call_is_fixed(
+                source.replace("{self.file_fd}", "{" + replacement + "}")
+            )
+    with pytest.raises(AssertionError):
+        _assert_child_proof_call_is_fixed(
+            source.replace("mode=ro&immutable=1", "mode=rw")
+        )
+    with pytest.raises(AssertionError):
+        _assert_child_proof_call_is_fixed(
+            source + '\ndef bypass():\n    return sqlite3.connect(":memory:")\n'
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        'return sqlite3.connect("profiles.sqlite3")',
+        'return sqlite3.connect("file:profiles.sqlite3", uri=True)',
+        "return sqlite3.connect(target)",
+        'first = sqlite3.connect(":memory:")\n    return sqlite3.connect(":memory:")',
+    ),
+    ids=("file", "uri", "variable-target", "duplicate-call"),
+)
+def test_runtime_capability_probe_guard_rejects_nonliteral_or_duplicate_calls(
+    tmp_path: Path,
+    body: str,
+) -> None:
+    source_path = tmp_path / "profile_sqlite_policy.py"
+    source_path.write_text(
+        f"import sqlite3\n\ndef require_native_close_policy_support():\n    {body}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_probe_is_literal_memory_only(source_path)
+
+
+def test_runtime_capability_probe_guard_accepts_argument_free_literal_memory(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "profile_sqlite_policy.py"
+    source_path.write_text(
+        "import sqlite3\n\n"
+        "def require_native_close_policy_support():\n"
+        '    return sqlite3.connect(":memory:")\n',
+        encoding="utf-8",
+    )
+
+    _assert_runtime_probe_is_literal_memory_only(source_path)
+
+
+def test_runtime_capability_probe_guard_rejects_forwarded_input(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "profile_sqlite_policy.py"
+    source_path.write_text(
+        "import sqlite3\n\n"
+        "def require_native_close_policy_support(target):\n"
+        '    return sqlite3.connect(":memory:")\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_probe_is_literal_memory_only(source_path)
 
 
 def test_private_sqlite_seam_calls_use_literal_module_owned_ids() -> None:
@@ -928,26 +1091,45 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
 
 
 def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
-    row = _inventory_rows("C")[-1]
+    # Selected by id, not by position: this row was the newest when the test
+    # was written, but the inventory keeps growing (C51, task-21100) and the
+    # subject here is C50's exact content, not its place in the table.
+    row = next(r for r in _inventory_rows("C") if r["id"] == "C50")
 
     assert row == {
         "id": "C50",
-        "module": "tldw_chatbook/Notes/note_import_receipts",
-        "symbol": "NoteImportReceiptRepository._connect",
+        "module": "tldw_chatbook/Notes/notes_device_state_store",
+        "symbol": "NotesDeviceStateStore._connect",
         "owner_id": "notes.sync_state",
-        "classification": "private_file",
-        "intent": "device-private import receipts and future lasting-sync state",
+        "classification": "private_file, read_only_uri",
+        "intent": "device-private import receipts and lasting-sync state",
         "disposition": (
-            "Migrated via `connect_private_sqlite`. The profile-local ledger stores "
-            "only opaque identifiers, private digests, bounded lifecycle state, and "
-            "reconciliation metadata; it is excluded from portable export and "
-            "centralized backup."
+            "Migrated via `connect_private_sqlite`. The profile-local owner stores "
+            "private import receipts plus bounded roots, bindings, cursors, journals, "
+            "recovery, migration, and settings; public projections omit paths, "
+            "content, hashes, recovery bytes, cursors, and exception text, read-only "
+            "planning cannot create or migrate the owner, and it is excluded from "
+            "portable export and centralized backup."
         ),
     }
-    assert SQLITE_OWNER_REGISTRY["notes.sync_state"].centralized_backup_allowed is False
+    policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
+    assert {kind.value for kind in policy.allowed_target_kinds} == {
+        "private_file",
+        "read_only_uri",
+    }
+    assert policy.centralized_backup_allowed is False
+    assert policy.preserve_read_only_source_mode is False
     assert "notes.sync_state" not in {
         backup_row["owner_id"] for backup_row in _inventory_rows("B")
     }
+
+
+def test_chunking_lab_recovery_is_a_private_non_backup_owner() -> None:
+    row = next(row for row in _inventory_rows("C") if row["id"] == "C54")
+    assert row["owner_id"] == "db.chunking_lab"
+    policy = SQLITE_OWNER_REGISTRY[row["owner_id"]]
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert policy.centralized_backup_allowed is False
 
 
 def test_connection_and_backup_rows_record_completed_helper_migrations() -> None:
@@ -967,7 +1149,7 @@ def test_connection_and_backup_rows_record_completed_helper_migrations() -> None
                 if row["id"] == "C42"
                 else (
                     "connect_private_sqlite_descriptor"
-                    if row["id"] in {"C45", "C46", "C48"}
+                    if row["id"] in {"C45", "C46"}
                     else "connect_private_sqlite"
                 )
             )
@@ -1023,9 +1205,7 @@ def test_subscriptions_agent_reader_is_read_only_and_preserves_source_mode() -> 
     policy = SQLITE_OWNER_REGISTRY["db.subscriptions.agent_read"]
 
     assert policy.production_module == "tldw_chatbook/DB/Subscriptions_DB"
-    assert policy.allowed_target_kinds == frozenset(
-        {SQLiteTargetKind.READ_ONLY_URI}
-    )
+    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.READ_ONLY_URI})
     assert policy.preserve_read_only_source_mode is True
 
 
@@ -1037,9 +1217,8 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 4,
             "backup_open_connections_to_private": 1,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 8,
+            "copy_private_sqlite": 6,
             "migrate_profile_store_to_candidate": 1,
-            "restore_private_sqlite": 2,
         }
     )
     assert all(
@@ -1048,20 +1227,81 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
     )
 
 
-def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> None:
-    direct_backup_modules: Counter[str] = Counter()
-    for source_path in PRODUCTION_ROOT.rglob("*.py"):
-        backup_count = sum(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "backup"
-            for node in ast.walk(_parse_source(source_path))
+def _assert_direct_backup_census(
+    sources: Iterable[tuple[str, ast.Module]],
+) -> None:
+    calls: Counter[tuple[str, str, str]] = Counter()
+    for module, tree in sources:
+        visitor = _QualifiedCallNodeVisitor(
+            lambda call: (
+                isinstance(call.func, ast.Attribute) and call.func.attr == "backup"
+            )
         )
-        if backup_count:
-            module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
-            direct_backup_modules[module] = backup_count
+        visitor.visit(tree)
+        calls.update(
+            (module, symbol, ast.unparse(call.func.value))
+            for symbol, call in visitor.calls
+        )
+    # The wrapper reserves the source for the existing seam operation; it does
+    # not create a destination or grant another owner backup authority.
+    assert calls == Counter(
+        {
+            ("tldw_chatbook/DB/private_sqlite", "_backup_pages", "source"): 1,
+            (
+                "tldw_chatbook/DB/base_db",
+                "_QuiescentSQLiteConnection.backup",
+                "super()",
+            ): 1,
+        }
+    )
 
-    assert direct_backup_modules == Counter({"tldw_chatbook/DB/private_sqlite": 1})
+
+@pytest.mark.parametrize(
+    "mutation", ["extra", "duplicate", "moved", "receiver", "other_module"]
+)
+def test_direct_backup_census_rejects_unreviewed_calls(mutation: str) -> None:
+    sources = {
+        "tldw_chatbook/DB/private_sqlite": (
+            "def _backup_pages(source, target):\n    source.backup(target)\n"
+        ),
+        "tldw_chatbook/DB/base_db": (
+            "class _QuiescentSQLiteConnection:\n"
+            "    def backup(self, target):\n"
+            "        super().backup(target)\n"
+        ),
+    }
+    _assert_direct_backup_census(
+        (module, ast.parse(code)) for module, code in sources.items()
+    )
+    module = "tldw_chatbook/DB/base_db"
+    if mutation == "extra":
+        sources[module] += (
+            "def unregistered(source, target):\n    source.backup(target)\n"
+        )
+    elif mutation == "duplicate":
+        sources[module] += "        super().backup(target)\n"
+    elif mutation == "moved":
+        sources[module] = sources[module].replace("def backup(", "def other(")
+    elif mutation == "receiver":
+        sources[module] = sources[module].replace(
+            "super().backup", "self.source.backup"
+        )
+    else:
+        sources["tldw_chatbook/DB/unregistered"] = sources.pop(module)
+    with pytest.raises(AssertionError):
+        _assert_direct_backup_census(
+            (module, ast.parse(code)) for module, code in sources.items()
+        )
+
+
+def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> None:
+    _assert_direct_backup_census(
+        (
+            source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix(),
+            _parse_source(source_path),
+        )
+        for source_path in PRODUCTION_ROOT.rglob("*.py")
+    )
 
     settings_path = PROJECT_ROOT / "tldw_chatbook/UI/Tools_Settings_Window.py"
     settings_copy_count = sum(
@@ -1110,21 +1350,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             (
                 "tldw_chatbook/UI/Tools_Settings_Window",
                 "ToolsSettingsWindow._backup_worker",
-                "copy_private_sqlite",
-            ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._backup_single_worker",
-                "copy_private_sqlite",
-            ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._restore_single_worker",
-                "restore_private_sqlite",
-            ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._restore_single_worker",
                 "copy_private_sqlite",
             ): 1,
         }

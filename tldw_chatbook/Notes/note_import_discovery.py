@@ -125,10 +125,18 @@ class ImportDiscovery:
     root_label: str | None
     total_bytes: int
     entry_count: int
+    skips: tuple[ImportDiscoveryFailure, ...] = ()
+    vault_detected: bool = False
 
     def __post_init__(self) -> None:
         candidates = tuple(self.candidates)
         failures = tuple(self.failures)
+        skips = tuple(self.skips)
+        if not all(isinstance(skip, ImportDiscoveryFailure) for skip in skips):
+            raise ValueError("skips must contain discovery skips.")
+        if type(self.vault_detected) is not bool:
+            raise TypeError("vault_detected must be a boolean.")
+        object.__setattr__(self, "skips", skips)
         if not all(
             isinstance(candidate, DiscoveredImportSource) for candidate in candidates
         ):
@@ -156,6 +164,9 @@ class _DiscoveryState:
     failures: list[ImportDiscoveryFailure] = field(default_factory=list)
     total_bytes: int = 0
     entry_count: int = 0
+    obsidian_mode: bool = False
+    vault_detected: bool = False
+    skips: list[ImportDiscoveryFailure] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +205,42 @@ _MESSAGES = {
     "nested_unsafe_name": "This entry has an unsafe name and will be skipped.",
     "nested_not_regular": "This entry is not a regular file and will be skipped.",
     "nested_unavailable": "This entry cannot be inspected safely and will be skipped.",
+    "obsidian_config": (
+        "Obsidian configuration — skipped. Nothing in it becomes a note."
+    ),
+    "obsidian_trash": (
+        "Obsidian trash — skipped. Restore these notes in Obsidian to import them."
+    ),
+    "obsidian_template": (
+        "Obsidian template — skipped. Turn off Obsidian vault to import templates."
+    ),
+    "git_metadata": (
+        "Git repository data — skipped. Nothing in it becomes a note."
+    ),
 }
+
+OBSIDIAN_MARKER_DIRECTORY = ".obsidian"
+"""The directory whose presence at the selected root marks an Obsidian vault.
+
+Matched casefolded, like the skip map below: Windows and macOS preserve a
+marker's casing but compare it case-insensitively.
+"""
+
+_OBSIDIAN_SKIPPED_ROOT_FOLDERS = {
+    OBSIDIAN_MARKER_DIRECTORY: "obsidian_config",
+    ".trash": "obsidian_trash",
+    "templates": "obsidian_template",
+}
+"""Vault-root folders Obsidian owns, keyed by casefolded name."""
+
+_ALWAYS_SKIPPED_FOLDERS = {".git": "git_metadata"}
+"""Folders that never hold a note, whatever the mode or the depth.
+
+Unlike the Obsidian set above these are not gated on vault detection or on the
+root: a git-backed vault reviewed 174 sources where 111 of them were
+`.git/objects/*`, and a submodule's nested `.git` is no more importable than
+the root one (task-32262 review, finding 4).
+"""
 
 
 def _platform_uses_windows_adapter() -> bool:
@@ -211,12 +257,18 @@ def _windows_filesystem() -> object:
 def discover_import_sources(
     paths: Iterable[Path],
     bounds: ImportBounds,
+    *,
+    obsidian_mode: bool = False,
 ) -> ImportDiscovery:
     """Dispatch source discovery to the platform's read-only strategy.
 
     Args:
         paths: User-selected files or one directory to discover.
         bounds: Resource and diagnostic limits for the discovery pass.
+        obsidian_mode: Whether a detected Obsidian vault's own folders
+            (``.obsidian/``, ``.trash/`` and ``Templates/``) are skipped with a
+            reason instead of walked. It has no effect on a folder that is not a
+            vault. Both platform strategies honour it (task-32178).
 
     Returns:
         An immutable description of admitted sources and safe failures.
@@ -225,6 +277,8 @@ def discover_import_sources(
         ImportSelectionError: The selection is invalid or cannot be inspected safely.
         TypeError: ``bounds`` or a selected path has an invalid type.
     """
+    if type(obsidian_mode) is not bool:
+        raise TypeError("obsidian_mode must be a boolean.")
     if _platform_uses_windows_adapter():
         from tldw_chatbook.Notes.note_import_windows_fs import (
             discover_import_sources as discover_windows_sources,
@@ -233,14 +287,17 @@ def discover_import_sources(
         return discover_windows_sources(
             paths,
             bounds,
+            obsidian_mode=obsidian_mode,
             filesystem=_windows_filesystem(),  # type: ignore[arg-type]
         )
-    return _discover_import_sources_posix(paths, bounds)
+    return _discover_import_sources_posix(paths, bounds, obsidian_mode=obsidian_mode)
 
 
 def _discover_import_sources_posix(
     paths: Iterable[Path],
     bounds: ImportBounds,
+    *,
+    obsidian_mode: bool = False,
 ) -> ImportDiscovery:
     """Validate a file-only or single-directory selection without reading content."""
     if not isinstance(bounds, ImportBounds):
@@ -264,7 +321,7 @@ def _discover_import_sources_posix(
         )
         _reject(bounds, reason_code)
 
-    state = _DiscoveryState(bounds=bounds)
+    state = _DiscoveryState(bounds=bounds, obsidian_mode=obsidian_mode)
     if directory_count == 1:
         selected_root = selected[0]
         root_label = selected_root.path.name
@@ -295,6 +352,10 @@ def _discover_import_sources_posix(
         root_label=root_label,
         total_bytes=state.total_bytes,
         entry_count=state.entry_count,
+        skips=tuple(
+            sorted(state.skips, key=lambda item: _display_sort_key(item.display_path))
+        ),
+        vault_detected=state.vault_detected,
     )
 
 
@@ -694,6 +755,8 @@ def _scan_directory_fd(
                 entries.append(entry)
             entries.sort(key=lambda entry: _display_sort_key(entry.name))
             scanned_entries = _snapshot_directory_entries(entries)
+            if not relative_parts:
+                state.vault_detected = _carries_obsidian_marker(scanned_entries)
             _validate_sibling_folder_namespace(scanned_entries, state.bounds)
             for scanned_entry in scanned_entries:
                 _scan_entry(
@@ -794,6 +857,10 @@ def _scan_entry(
             state,
         )
     else:
+        skip_reason = _obsidian_skip_reason(entry.name, relative_parts, state)
+        if skip_reason is not None:
+            _add_skip(state, entry_path, display_path, skip_reason)
+            return
         try:
             normalize_folder_name(entry.name)
         except FolderValidationError:
@@ -1073,6 +1140,60 @@ def _is_link_or_reparse(metadata: os.stat_result) -> bool:
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
     file_attributes = getattr(metadata, "st_file_attributes", 0)
     return stat.S_ISLNK(metadata.st_mode) or bool(file_attributes & reparse_flag)
+
+
+def _carries_obsidian_marker(
+    scanned_entries: Iterable[_ScannedDirectoryEntry],
+) -> bool:
+    """Return whether the selected root holds Obsidian's own config directory."""
+    return any(
+        scanned_entry.entry.name.casefold() == OBSIDIAN_MARKER_DIRECTORY
+        and scanned_entry.metadata is not None
+        and not _is_link_or_reparse(scanned_entry.metadata)
+        and stat.S_ISDIR(scanned_entry.metadata.st_mode)
+        for scanned_entry in scanned_entries
+    )
+
+
+def _obsidian_skip_reason(
+    name: str,
+    relative_parts: tuple[str, ...],
+    state: _DiscoveryState,
+) -> str | None:
+    """Return the skip reason for one folder the walk should not descend into.
+
+    Args:
+        name: The directory entry's own name.
+        relative_parts: Its parent path below the selected root; empty at the
+            root, which is where the Obsidian-owned folders live.
+        state: The walk's discovery state, carrying the mode and whether a
+            vault was detected.
+
+    Returns:
+        A reason code, or None to walk into the folder.
+    """
+    always = _ALWAYS_SKIPPED_FOLDERS.get(name.casefold())
+    if always is not None:
+        return always
+    if not state.obsidian_mode or not state.vault_detected or relative_parts:
+        return None
+    return _OBSIDIAN_SKIPPED_ROOT_FOLDERS.get(name.casefold())
+
+
+def _add_skip(
+    state: _DiscoveryState,
+    source_path: Path,
+    display_path: str,
+    reason_code: str,
+) -> None:
+    state.skips.append(
+        ImportDiscoveryFailure(
+            display_path=display_path,
+            reason_code=reason_code,
+            user_message=_bounded_message(state.bounds, reason_code),
+            source_path=source_path,
+        )
+    )
 
 
 def _add_failure(

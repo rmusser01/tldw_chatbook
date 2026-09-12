@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from ..config import load_settings
+from ..Utils.tls_trust import ssl_context_for_transport
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
     import aiohttp
@@ -136,7 +137,7 @@ class SwarmUIClient:
         """Initialize HTTP session."""
         if not self._http_session:
             aiohttp = _require_aiohttp()
-            connector = aiohttp.TCPConnector(limit=10)
+            connector = aiohttp.TCPConnector(limit=10, ssl=ssl_context_for_transport())
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             self._http_session = aiohttp.ClientSession(
                 connector=connector, timeout=timeout

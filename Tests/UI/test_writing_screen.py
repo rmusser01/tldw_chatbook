@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -481,6 +484,7 @@ async def _mounted_production_writing_window(scope=None):
     app = _build_test_app()
     app.writing_scope_service = scope or FakeWritingScopeService()
     screen = WritingScreen(app)
+
     def setting_without_splash(section, key=None, default=None):
         if section == "splash_screen" and key == "enabled":
             return False
@@ -1058,3 +1062,270 @@ async def test_mounted_outline_tree_renders_and_selects_nodes():
     assert "Opening Scene" in str(detail_title.render())
     assert detail_editor.text == "Draft A"
     assert detail_editor.read_only is False
+
+
+# --- TASK-21125: the controller never calls a sync backend on the loop -----
+
+
+@pytest.mark.asyncio
+async def test_controller_runs_sync_service_calls_off_the_event_loop():
+    loop_thread = threading.current_thread().name
+    observed: list[str] = []
+
+    class _SyncScopeService:
+        def list_projects(self, *, mode=None, **_kwargs):
+            observed.append(threading.current_thread().name)
+            return [{"id": "local-project", "title": "Novel"}]
+
+        def get_project(self, entity_id, *, mode=None, include_deleted=False):
+            observed.append(threading.current_thread().name)
+            return {"id": entity_id, "title": "Novel", "version": 1}
+
+        def update_project(self, entity_id, payload, expected_version, *, mode=None):
+            observed.append(threading.current_thread().name)
+            return {"id": entity_id, **dict(payload), "version": 2}
+
+    controller = WritingController(_SyncScopeService())
+
+    await controller.load_projects("local")
+    await controller.load_entity_detail("local", "project", "local-project")
+    await controller.autosave_current(
+        "local", "project", "local-project", {"title": "Novel"}, 1
+    )
+
+    assert len(observed) == 3
+    assert loop_thread not in observed
+
+
+@pytest.mark.asyncio
+async def test_controller_awaits_async_service_calls_without_a_thread_hop():
+    loop_thread = threading.current_thread().name
+    observed: list[str] = []
+
+    class _AsyncScopeService:
+        async def list_projects(self, *, mode=None, **_kwargs):
+            observed.append(threading.current_thread().name)
+            return []
+
+    controller = WritingController(_AsyncScopeService())
+
+    await controller.load_projects("local")
+
+    assert observed == [loop_thread]
+
+
+# --- TASK-21125: shutdown seam and first-use error surface -----------------
+
+
+@pytest.mark.asyncio
+async def test_app_unmount_closes_the_local_writing_service_by_peeking_the_slot():
+    """Shutdown releases held connections without constructing a service."""
+    import inspect
+    import types
+
+    from tldw_chatbook.app import TldwCli
+
+    unmount = inspect.getsource(TldwCli.on_unmount)
+    assert "await self._close_local_writing_service()" in unmount, unmount
+
+    closer = inspect.getsource(TldwCli._close_local_writing_service)
+    assert 'getattr(self, "local_writing_service", None)' in closer, closer
+
+    app = object.__new__(TldwCli)
+    logged = []
+    app.loguru_logger = types.SimpleNamespace(error=logged.append)
+
+    # Never wired: nothing to close, and nothing gets constructed.
+    await app._close_local_writing_service()
+    assert not hasattr(app, "local_writing_service")
+
+    # Wiring failed (the except branch in _wire_writing_services).
+    app.local_writing_service = None
+    await app._close_local_writing_service()
+
+    closed = []
+    app.local_writing_service = types.SimpleNamespace(
+        close=lambda: closed.append(threading.current_thread().name)
+    )
+    await app._close_local_writing_service()
+    assert closed and closed[0] != threading.current_thread().name, (
+        "close() ran on the event loop thread"
+    )
+    assert logged == []
+
+    def _boom():
+        raise RuntimeError("close failed")
+
+    app.local_writing_service = types.SimpleNamespace(close=_boom)
+    await app._close_local_writing_service()
+    assert len(logged) == 1
+    assert "RuntimeError" in logged[0]
+    assert "close failed" not in logged[0]
+
+
+@pytest.mark.asyncio
+async def test_unopenable_writing_database_degrades_to_a_status_message(tmp_path):
+    """A broken writing DB must not crash compose/mount (TASK-21105 caution).
+
+    Holding the connection changes only WHERE the connection is cached, not
+    when it is opened: the first failure still surfaces inside the operation
+    the user triggered, where WritingWindow already turns it into a status
+    message.
+    """
+    from tldw_chatbook.Writing_Interop.local_writing_service import (
+        LocalWritingService,
+    )
+    from tldw_chatbook.Writing_Interop.writing_scope_service import (
+        WritingScopeService,
+    )
+
+    db_path = tmp_path / "writing.db"
+    db_path.write_bytes(b"this is not a sqlite database" * 64)
+    db_path.chmod(0o600)
+
+    service = LocalWritingService(db_path)
+    scope = WritingScopeService(local_service=service, server_service=None)
+    screen = WritingScreen(SimpleNamespace(writing_scope_service=scope))
+
+    # Construction and compose must stay clean of the failure.
+    widgets = list(screen.compose_content())
+    window = widgets[1]
+
+    try:
+        projects = await window.load_projects("local")
+
+        assert projects == []
+        assert window.status_message
+        # Still degrading (not latched into a crash) on the second attempt.
+        assert await window.load_projects("local") == []
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_app_unmount_close_never_freezes_the_loop_or_breaks_an_autosave(
+    tmp_path,
+):
+    """MAJOR-3 regression: the settle wait must not run on the event loop.
+
+    Before the fix, ``on_unmount`` called ``close()`` inline: the loop froze for
+    the whole 5 s settle timeout (a 50 ms ticker fired zero times), and the
+    operation it was waiting for then hit a closed connection and surfaced as
+    ``Task exception was never retrieved``.
+    """
+    import types
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Writing_Interop.local_writing_service import (
+        LocalWritingService,
+    )
+
+    service = LocalWritingService(tmp_path / "writing.db")
+    project = service.create_project(title="Novel")
+
+    entered = threading.Event()
+    release = threading.Event()
+    failures: list[BaseException] = []
+
+    def _park_then_write():
+        try:
+            with service._transaction() as conn:
+                entered.set()
+                assert release.wait(10)
+                conn.execute(
+                    "UPDATE writing_projects SET synopsis = 'in flight' WHERE id = ?",
+                    (project["id"],),
+                )
+        except BaseException as exc:  # pragma: no cover - failure path
+            failures.append(exc)
+
+    worker = threading.Thread(target=_park_then_write)
+    worker.start()
+    assert entered.wait(10), "the parked transaction never started"
+
+    ticks = 0
+
+    async def _ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.05)
+            ticks += 1
+
+    unhandled: list[dict] = []
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+
+    app = object.__new__(TldwCli)
+    app.loguru_logger = types.SimpleNamespace(error=lambda *_a, **_k: None)
+    app.local_writing_service = service
+
+    ticker = asyncio.create_task(_ticker())
+    try:
+        releaser = threading.Timer(0.3, release.set)
+        releaser.start()
+        started = time.perf_counter()
+        await app._close_local_writing_service()
+        waited = time.perf_counter() - started
+        releaser.join(10)
+        worker.join(10)
+        await asyncio.sleep(0.05)
+    finally:
+        ticker.cancel()
+        loop.set_exception_handler(previous_handler)
+
+    assert not failures, f"the in-flight operation was broken by close(): {failures}"
+    assert waited >= 0.25, "close() did not wait for the in-flight operation"
+    # The loop kept running while close() waited.
+    assert ticks >= 3, f"the event loop was frozen during close() ({ticks} ticks)"
+    assert not unhandled, f"an exception escaped to the loop: {unhandled}"
+    assert service.get_project(project["id"])["synopsis"] == "in flight"
+    service.close()
+
+
+@pytest.mark.asyncio
+async def test_close_leaves_a_wedged_operations_connection_open(tmp_path, monkeypatch):
+    """A settle timeout must not hand a live operation a closed database.
+
+    Review finding: closing anyway produced the 21101 signature
+    (``ProgrammingError: Cannot operate on a closed database``) inside the
+    wedged operation. The busy thread now keeps its connection.
+    """
+    from tldw_chatbook.Writing_Interop import local_writing_service
+    from tldw_chatbook.Writing_Interop.local_writing_service import (
+        LocalWritingService,
+    )
+
+    monkeypatch.setattr(local_writing_service, "_LIFECYCLE_SETTLE_TIMEOUT", 0.2)
+
+    service = LocalWritingService(tmp_path / "writing.db")
+    project = service.create_project(title="Novel")
+
+    entered = threading.Event()
+    release = threading.Event()
+    failures: list[BaseException] = []
+
+    def _wedged():
+        try:
+            with service._transaction() as conn:
+                entered.set()
+                assert release.wait(10)
+                conn.execute(
+                    "UPDATE writing_projects SET synopsis = 'survived' WHERE id = ?",
+                    (project["id"],),
+                )
+        except BaseException as exc:  # pragma: no cover - failure path
+            failures.append(exc)
+
+    worker = threading.Thread(target=_wedged)
+    worker.start()
+    assert entered.wait(10)
+
+    # close() gives up waiting well before the operation finishes.
+    await asyncio.to_thread(service.close)
+    release.set()
+    worker.join(10)
+
+    assert not failures, f"the wedged operation hit a closed connection: {failures}"
+    assert service.get_project(project["id"])["synopsis"] == "survived"
+    service.close()

@@ -16,6 +16,7 @@ from textual.widget import Widget
 from textual.reactive import reactive
 from textual.timer import Timer
 from loguru import logger
+from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 # Configure logger
 logger = logger.bind(module="detailed_progress")
@@ -95,10 +96,10 @@ class DetailedProgressBar(Widget):
                 yield Static("", id="current-item", classes="current-item")
 
             # Main progress bar
-            yield ProgressBar(id="main-progress", show_eta=False, show_percentage=True)
+            yield PausableProgressBar(id="main-progress", show_eta=False, show_percentage=True)
 
             # Sub-progress for current stage
-            yield ProgressBar(
+            yield PausableProgressBar(
                 id="stage-progress",
                 show_eta=False,
                 show_percentage=True,

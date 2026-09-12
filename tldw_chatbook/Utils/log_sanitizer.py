@@ -5,13 +5,32 @@ This module provides functions to scrub API keys, passwords, and other
 sensitive information from log messages.
 """
 
+import hashlib
+import os
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List
 
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
 
 REDACTION_MARKER = "***REDACTED***"
+#: Hex characters kept from a content fingerprint. Twelve gives ~2e-8 collision
+#: probability across a thousand distinct values in one debugging session --
+#: far beyond what a maintainer reading a log needs -- while staying short
+#: enough to scan by eye when correlating two lines.
+CONTENT_FINGERPRINT_CHARS = 12
+#: What ``content_fingerprint`` returns for an empty or missing value. A
+#: fingerprint of "" is a valid digest, and printing it would make "the user
+#: searched for nothing" indistinguishable from a real query at a glance;
+#: an explicit token keeps that difference visible.
+EMPTY_FINGERPRINT = "empty"
+#: Labels that name a secret in a LOG LINE but are not config keys, so they
+#: are deliberately not added to ``sensitive_config_keys`` (that predicate
+#: also drives config encryption and the Privacy & Security protected-field
+#: count, and widening it would start encrypting fields for a
+#: logging-only reason).
 _LOG_ONLY_SENSITIVE_FIELDS = frozenset(
     {
         "authorization",
@@ -23,13 +42,46 @@ _LOG_ONLY_SENSITIVE_FIELDS = frozenset(
         "database_url",
         "connection_string",
         "dsn",
+        # TASK-19558. A bare ``key`` matches none of
+        # ``is_sensitive_config_key``'s rules (its ``_key`` rule is an
+        # underscore-SUFFIX match and ``api-key`` is a containment one), and
+        # bare ``key`` is exactly how Google's Custom Search credential
+        # travels: ``.../customsearch/v1?key=<API key>&cx=...``. Probed
+        # before the fix: that whole URL passed through ``sanitize_string``
+        # unchanged. The cost is stated rather than hidden -- a benign
+        # ``key=<value>`` label loses its value in diagnostics too (the
+        # measured population is small: ``config.py``'s "Failed to encrypt
+        # config value (key=...)" is the only shipped log line of that
+        # shape, and the name it prints is a secret-bearing config key
+        # anyway).
+        "key",
     }
 )
 
 
 def _is_sensitive_log_key(key: object) -> bool:
+    """Return whether a ``key=value`` label in a log line names a secret.
+
+    The hyphen normalization is applied to BOTH checks (TASK-19555; the defect
+    itself is filed as TASK-19558). It used to be computed and then passed
+    only to the ``_LOG_ONLY_SENSITIVE_FIELDS`` membership test, while
+    ``is_sensitive_config_key`` received the raw key -- and that predicate's
+    ``_key``/``_token``/``_secret``/``_password`` rules are suffix matches on
+    underscore forms. So every hyphenated HTTP header name whose sensitivity
+    comes from a suffix rather than the ``api-key`` containment rule --
+    ``x-auth-token``, ``x-session-key``, ``x-client-secret`` -- was classified
+    as harmless and its value was written out verbatim. Those are exactly the
+    names provider request logging produces.
+
+    Normalizing cannot create a false positive here: ``max-tokens`` normalizes
+    to ``max_tokens``, which still does not end in ``_token``.
+    """
     normalized = str(key).strip().lower().replace("-", "_")
-    return is_sensitive_config_key(key) or normalized in _LOG_ONLY_SENSITIVE_FIELDS
+    return (
+        is_sensitive_config_key(key)
+        or is_sensitive_config_key(normalized)
+        or normalized in _LOG_ONLY_SENSITIVE_FIELDS
+    )
 
 
 _ASSIGNMENT_PREFIX = re.compile(
@@ -52,8 +104,32 @@ _BEARER = re.compile(
 _STANDALONE_CREDENTIALS = (
     re.compile(r"(?<![A-Za-z0-9_-])sk-proj-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
     re.compile(r"(?<![A-Za-z0-9_-])sk-ant-api03-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    # TASK-26022: Claude subscription OAuth access/refresh tokens (borrowed
+    # read-only from Claude Code's credential file) — same envelope as API
+    # keys, different prefix family.
+    re.compile(r"(?<![A-Za-z0-9_-])sk-ant-o[ar]t\d{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    # TASK-19555 review: OpenRouter keys carry hyphens inside the body, so the
+    # generic `sk-[A-Za-z0-9]{20,}` rule below never matched one.
+    re.compile(r"(?<![A-Za-z0-9_-])sk-or-v1-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
     re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
     re.compile(r"(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),
+    # GitHub personal access / OAuth / server / refresh tokens, and the
+    # fine-grained `github_pat_` form.
+    re.compile(r"(?<![A-Za-z0-9_-])gh[pousr]_[A-Za-z0-9]{30,}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?<![A-Za-z0-9_-])github_pat_[A-Za-z0-9_]{30,}(?![A-Za-z0-9_-])"),
+    # Hugging Face user access tokens.
+    re.compile(r"(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{30,}(?![A-Za-z0-9_-])"),
+    # AWS access key ids (the id alone identifies an account and is paired
+    # with a secret often logged on the same line).
+    re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|AGPA|AIDA|AROA)[0-9A-Z]{16}(?![A-Za-z0-9_-])"),
+    # Slack bot/user/app tokens.
+    re.compile(r"(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9_-])"),
+    # JSON Web Tokens: three base64url segments, header first. Bearer-prefixed
+    # ones are already covered; these are the bare ones in bodies and errors.
+    re.compile(
+        r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
+        r"\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])"
+    ),
 )
 
 
@@ -110,13 +186,136 @@ def _apply_replacements(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(parts)
 
 
-def _redact_assignments(text: str) -> str:
+def _is_sensitive_diagnostic_key(key: object) -> bool:
+    """Recognize credential/PII labels without hiding every key or token."""
+    normalized = str(key).casefold().replace("-", "_")
+    if normalized.endswith(("_env_var", "_configured", "_present", "_source", "_name")):
+        return normalized in {"full_name", "first_name", "last_name", "user_name"}
+    return (
+        normalized
+        in {
+            "password",
+            "passwd",
+            "pwd",
+            "passphrase",
+            "secret",
+            "token",
+            "api_key",
+            "apikey",
+            "authorization",
+            "proxy_authorization",
+            "cookie",
+            "set_cookie",
+            "credential",
+            "credentials",
+            "private_key",
+            "access_token",
+            "refresh_token",
+            "auth_token",
+            "api_token",
+            "session_token",
+            "client_secret",
+            "email",
+            "email_address",
+            "phone",
+            "phone_number",
+            "ssn",
+            "user",
+            "username",
+            "postal_address",
+            "street_address",
+            "passport_number",
+            "credit_card",
+            "card_number",
+            "ocp_apim_subscription_key",
+            "aws_secret_access_key",
+            "secret_access_key",
+            "secret_key",
+            "bearer_token",
+        }
+        or normalized.endswith(
+            (
+                "_api_key",
+                "_api_key_fallback",
+                "_apikey",
+                "_password",
+                "_passphrase",
+                "_secret",
+                "_auth_token",
+                "_api_token",
+                "_access_token",
+                "_refresh_token",
+                "_session_token",
+            )
+        )
+        or normalized.startswith("x_")
+        and normalized.endswith(("_token", "_key"))
+    )
+
+
+def _protocol_value_end(text: str, start: int, end: int) -> int:
+    """Stop at a separate log field, never inside a header parameter or quote."""
+    index = start + 7 if text[start : start + 7].casefold() == "digest " else start
+    parameter_start = index
+    while index < end:
+        character = text[index]
+        if character in "\"'":
+            quoted_end, closed = _find_quoted_end(text, index + 1, character)
+            if not closed:
+                return end
+            index = quoted_end + 1
+            continue
+        if character in ",;":
+            parameter_start = index + 1
+        if character in " \t":
+            boundary = index
+            while index < end and text[index] in " \t":
+                index += 1
+            if text[index : index + 1] == "|":
+                index += 1
+                while index < end and text[index] in " \t":
+                    index += 1
+            # Cookie parameters follow semicolons; Digest parameters follow
+            # commas. A new assignment separated only by whitespace (or a log
+            # pipe) after a complete parameter belongs to the surrounding log.
+            if (
+                index < end
+                and not text[index].isdigit()
+                # An Expires timestamp such as 10:18:14 is header content.
+                and _ASSIGNMENT_PREFIX.match(text, index, end)
+                and text[parameter_start:boundary].strip()
+            ):
+                return boundary
+            continue
+        index += 1
+    return end
+
+
+def _redact_assignments(text: str, *, diagnostic: bool = False) -> str:
     """Classify label prefixes first, collect replacement spans, and always advance."""
     spans: list[tuple[int, int]] = []
     cursor = 0
+    cached_line_end = -1
+    authorities = iter(_DIAGNOSTIC_URL_USERINFO.finditer(text) if diagnostic else ())
+    authority = next(authorities, None)
     while match := _ASSIGNMENT_PREFIX.search(text, cursor):
+        while authority is not None and authority.end() <= match.start():
+            authority = next(authorities, None)
         key = match.group("quoted_key") or match.group("plain_key")
-        if not _is_sensitive_log_key(key):
+        sensitive = (
+            _is_sensitive_diagnostic_key(key)
+            if diagnostic
+            else _is_sensitive_log_key(key)
+        )
+        # A colon inside URI userinfo is not a User: label, even in a username
+        # such as alice+user. Quoted keys and key=value fields remain labels,
+        # so an adjacent JSON/password field cannot be consumed as userinfo.
+        if not sensitive or (
+            authority is not None
+            and authority.start() < match.start() < authority.end()
+            and match.group("plain_key") is not None
+            and match.group().rstrip().endswith(":")
+        ):
             cursor = match.end()
             continue
 
@@ -136,16 +335,42 @@ def _redact_assignments(text: str) -> str:
             cursor = value_end + 1 if closed else _after_line_break(text, value_end)
             continue
 
-        line_end = _line_end(text, value_start)
-        spans.append((value_start, line_end))
-        cursor = _after_line_break(text, line_end)
+        if not diagnostic or value_start > cached_line_end:
+            cached_line_end = _line_end(text, value_start)
+        line_end = cached_line_end
+        value_end = line_end
+        normalized = key.casefold().replace("-", "_")
+        protocol_value = diagnostic and (
+            normalized in {"cookie", "set_cookie"}
+            or normalized in {"authorization", "proxy_authorization"}
+            and text[value_start : value_start + 7].casefold() == "digest "
+        )
+        if protocol_value:
+            value_end = _protocol_value_end(text, value_start, line_end)
+        elif diagnostic:
+            for following in _ASSIGNMENT_PREFIX.finditer(text, value_start, line_end):
+                if (
+                    following.start() > value_start
+                    and text[following.start() - 1] in " \t,;&"
+                ):
+                    value_end = following.start()
+                    while value_end > value_start and text[value_end - 1] in " \t,;&":
+                        value_end -= 1
+                    break
+        spans.append((value_start, value_end))
+        cursor = (
+            value_end if value_end < line_end else _after_line_break(text, line_end)
+        )
 
     return _apply_replacements(text, spans)
 
 
-def sanitize_string(text: str) -> str:
-    """
-    Sanitize a string by removing sensitive data patterns.
+def sanitize_trace_credentials_v1(text: str) -> str:
+    """Preserve the original string projection used by credentials-v1 traces.
+
+    Stored artifacts are compared with this projection when extending a trace.
+    Changing it would make unchanged history appear modified. Application logs
+    use ``sanitize_string`` instead.
 
     Args:
         text: The string to sanitize
@@ -162,6 +387,291 @@ def sanitize_string(text: str) -> str:
     for pattern in _STANDALONE_CREDENTIALS:
         result = pattern.sub(REDACTION_MARKER, result)
     return result
+
+
+_DIAGNOSTIC_PII_PATTERNS = (
+    re.compile(r"(?i)(?<![\w.%+-])[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"),
+    re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
+    re.compile(
+        r"(?<!\w)(?:\+\d{1,3}[ -]?)?(?:\(\d{3}\)|\d{3})[ .-]\d{3}[ .-]\d{4}(?!\w)"
+    ),
+)
+_DIAGNOSTIC_URL_USERINFO = re.compile(
+    r"((?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://)[^/?#\s]*@", re.IGNORECASE
+)
+_DIAGNOSTIC_URL = re.compile(
+    r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^\s\"'<>]+", re.IGNORECASE
+)
+_URL_QUERY_KEY = re.compile(r"([?&]key=)[^&#\s]*", re.IGNORECASE)
+_CONNECTION_LABEL = re.compile(
+    r"\b(?:connection[-_]string|dsn)[\"']?\s*[:=]", re.IGNORECASE
+)
+_CONNECTION_PRIVATE_FIELD = re.compile(
+    r"(?<![\w.-])((?:uid|user[ _]id|user|username|pwd|password)\s*=\s*)"
+    r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\{(?:\}\}|[^}])*\}|[^;\s]+)""",
+    re.IGNORECASE,
+)
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?"
+    r"(?:-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|$)"
+)
+
+
+def _sanitize_diagnostic_text(text: str) -> str:
+    """Mask private spans while retaining surrounding application diagnostics.
+
+    The ``sanitize_trace_credentials_v1`` projection stays unchanged: stored trace
+    artifacts use its versioned credential policy during equality checks.
+    """
+    result = _PRIVATE_KEY_BLOCK.sub(REDACTION_MARKER, text)
+    result = "".join(
+        _CONNECTION_PRIVATE_FIELD.sub(r"\1" + REDACTION_MARKER, line)
+        if _CONNECTION_LABEL.search(line)
+        else line
+        for line in result.splitlines(keepends=True)
+    )
+    result = _redact_assignments(result, diagnostic=True)
+    result = _DIAGNOSTIC_URL.sub(
+        lambda match: _URL_QUERY_KEY.sub(r"\1" + REDACTION_MARKER, match.group()),
+        result,
+    )
+    result = _DIAGNOSTIC_URL_USERINFO.sub(r"\1" + REDACTION_MARKER + "@", result)
+    result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
+    for pattern in (*_STANDALONE_CREDENTIALS, *_DIAGNOSTIC_PII_PATTERNS):
+        result = pattern.sub(REDACTION_MARKER, result)
+    return result
+
+
+def sanitize_string(text: str) -> str:
+    """Mask recognized credentials and PII while retaining diagnostic text.
+
+    Args:
+        text: Log text; other values retain the historical string fallback.
+
+    Returns:
+        Text with private values masked and other fields preserved.
+    """
+    if not isinstance(text, str):
+        return str(text)
+    return redact_user_paths(_sanitize_diagnostic_text(text))
+
+
+#: POSIX home roots whose next path segment is an operating-system account
+#: name. Deliberately case-SENSITIVE: a case-insensitive ``/users/`` would also
+#: rewrite REST URLs such as ``https://api.example.com/users/alice``, which is
+#: not a home directory and whose shape a maintainer may need.
+_HOME_ROOTS_POSIX = re.compile(
+    r"(?:(?<=^)|(?<=[^A-Za-z0-9_.-]))(?:/Users/|/home/)[^/\\\s:'\"<>|]+"
+)
+
+#: Windows home roots -- a drive form (``C:\Users\name``) and a UNC form
+#: (``\\SERVER\Users\name``). Matched case-INSENSITIVELY in full: Windows paths
+#: are case-insensitive end to end, so ``c:\users\name`` and ``C:\Users\name``
+#: are the same path and both must redact. An earlier revision applied
+#: ``re.IGNORECASE`` to the drive letter only in intent but matched ``Users``
+#: as a literal, so the lowercase spelling -- and every UNC path -- kept the
+#: account name (caught in TASK-19555 review). There is no URL-collision risk
+#: here because these forms are backslash-delimited.
+_HOME_ROOTS_WINDOWS = re.compile(
+    r"(?:(?<=^)|(?<=[^A-Za-z0-9_.-]))"
+    r"(?:[A-Za-z]:\\Users\\|\\\\[^\\/\s:'\"<>|]+\\Users\\)"
+    r"[^/\\\s:'\"<>|]+",
+    re.IGNORECASE,
+)
+
+#: Cap applied to one line before redaction (TASK-19555 review). Two reasons,
+#: and neither is a bypass -- truncation keeps strictly LESS data than the
+#: uncapped line:
+#:
+#: * cost. Redaction is linear in line length, so an uncapped kv-dense line
+#:   costs proportionally: ~21 us at a normal ~140 chars, ~553 us at 3.4 KB,
+#:   ~7.9 ms at 100 KB -- paid on whichever thread emitted the record, the UI
+#:   thread included.
+#: * disclosure. The buffer bounds the number of lines but not their size, so
+#:   a single dumped provider response body used to be retained whole.
+#:
+#: 2000 chars is far past the point a log line is readable in a terminal, so
+#: nothing legible is lost, and it bounds the worst case at roughly 0.3 ms.
+MAX_REDACTED_LINE_CHARS = 2000
+
+#: Characters that may continue a path segment. Used as both lookbehind and
+#: lookahead when substituting a literal home directory, so the match has to
+#: cover a WHOLE segment.
+_PATH_SEGMENT_CHARS = r"A-Za-z0-9_.\-~"
+
+#: Whitespace treated as a token boundary when truncating (see
+#: ``redact_log_line``). Credentials never contain whitespace, so cutting on
+#: one cannot split a credential in half.
+_TOKEN_BOUNDARY_CHARS = " \t\n\r\v\f"
+
+
+@lru_cache(maxsize=8)
+def _home_literal_pattern(candidates: tuple[str, ...]) -> "re.Pattern | None":
+    """Compile a segment-anchored alternation over literal home directories.
+
+    TASK-19555 Qodo round. This used to be a bare ``str.replace(home, "~")``,
+    which is wrong in both directions when one home path is a prefix of
+    another:
+
+    * with ``$HOME=/Users/jan``, the line ``/Users/janedoe/Notes/x.pdf``
+      became ``~edoe/Notes/x.pdf`` -- half of a DIFFERENT account's name left
+      in place, still identifying, and with the ``/Users/`` prefix destroyed
+      so ``_HOME_ROOTS_POSIX`` could no longer clean up after it;
+    * with ``$HOME=/srv/appdata``, the unrelated ``/srv/appdata-backup/db``
+      became ``~-backup/db``.
+
+    Anchoring on ``_PATH_SEGMENT_CHARS`` at both ends makes a home match only
+    a complete final segment. Longest candidate first, so when ``$HOME`` and
+    ``Path.home()`` disagree by a prefix the more specific one wins.
+
+    Args:
+        candidates: Home-directory strings; empty entries are ignored.
+
+    Returns:
+        A compiled pattern, or None when no usable candidate was supplied.
+    """
+    usable = sorted(
+        {candidate for candidate in candidates if candidate and len(candidate) > 1},
+        key=len,
+        reverse=True,
+    )
+    if not usable:
+        return None
+    alternation = "|".join(re.escape(candidate) for candidate in usable)
+    return re.compile(
+        rf"(?<![{_PATH_SEGMENT_CHARS}])(?:{alternation})(?![{_PATH_SEGMENT_CHARS}])"
+    )
+
+
+def redact_user_paths(text: str) -> str:
+    """Replace home-directory prefixes with ``~`` so no account name survives.
+
+    ``/Users/alice/Notes/Q3.pdf`` becomes ``~/Notes/Q3.pdf``: the operating
+    system account name -- a real-name identifier on most desktops, and the
+    single most repeated identity token in this application's path logging --
+    is gone, while everything a maintainer reads the path for is intact.
+
+    The running user's own home is substituted first and literally, so the
+    rule still holds for accounts that live outside ``/Users`` or ``/home``
+    (``/root``, or any ``$HOME`` override). That substitution is anchored on
+    path-segment boundaries -- see ``_home_literal_pattern``.
+
+    Args:
+        text: One log line, or any free text that may embed filesystem paths.
+
+    Returns:
+        ``text`` with home-directory roots collapsed to ``~``.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    # os.environ first: Path.home() falls back to the password database, which
+    # would rewrite paths the user's own $HOME no longer points at.
+    try:
+        resolved_home = str(Path.home())
+    except (OSError, RuntimeError):  # pragma: no cover - no resolvable home
+        resolved_home = ""
+    pattern = _home_literal_pattern(
+        (
+            os.environ.get("HOME") or "",
+            os.environ.get("USERPROFILE") or "",
+            resolved_home,
+        )
+    )
+    result = pattern.sub("~", text) if pattern is not None else text
+    result = _HOME_ROOTS_POSIX.sub("~", result)
+    return _HOME_ROOTS_WINDOWS.sub("~", result)
+
+
+def content_fingerprint(
+    value: object, *, chars: int = CONTENT_FINGERPRINT_CHARS
+) -> str:
+    """Return a stable correlation handle when a caller needs content identity.
+
+    A fingerprint distinguishes different values that share a text prefix and
+    remains stable across process restarts. It does not replace diagnostic
+    text or credential/PII redaction. An unsalted digest of a short, guessable
+    value can be recovered by trying candidates, so this is not a secrecy
+    mechanism.
+
+    Args:
+        value: Any value; non-strings are rendered with ``str`` first.
+        chars: Hex characters to keep. Defaults to
+            ``CONTENT_FINGERPRINT_CHARS``.
+
+    Returns:
+        A lowercase hex digest prefix, or ``EMPTY_FINGERPRINT`` when the value
+        is ``None`` or renders empty.
+    """
+    if value is None:
+        return EMPTY_FINGERPRINT
+    text = value if isinstance(value, str) else str(value)
+    if not text:
+        return EMPTY_FINGERPRINT
+    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    return digest[: max(1, chars)]
+
+
+def redact_log_line(text: str, max_length: int = MAX_REDACTED_LINE_CHARS) -> str:
+    """Mask recognized credentials and PII in one formatted diagnostic line.
+
+    Credential labels, Bearer tokens, URL credentials and private key blocks
+    are masked, as are recognizable email addresses, phone numbers, SSNs,
+    labelled personal fields and account names in home paths. Ordinary fields
+    such as model names, versions, phases and non-secret keys stay readable.
+    This recognizes explicit formats; it cannot identify every opaque secret
+    or infer personal information from arbitrary prose.
+
+    Oversized lines are cut on a TOKEN boundary, and redaction then runs over
+    everything that survives the cut (TASK-19555 Qodo round). The first
+    revision truncated at a fixed offset and redacted afterwards, which
+    manufactured secrets: every pattern in ``_STANDALONE_CREDENTIALS`` carries
+    a minimum length, so a key straddling the cap was sliced into a fragment
+    too short to match and the fragment stayed in the Logs view and in "Copy
+    visible logs".
+
+    Cutting on whitespace fixes that without giving up the cost bound, because
+    a credential never contains whitespace: it is either wholly inside the cut
+    and redacted, or wholly outside it and discarded. Redaction over the full
+    line would also be correct, but it is linear in length -- 14-20 ms for a
+    100 KB line, on whichever thread emitted the record -- and that bound is
+    the reason the cap exists.
+
+    Args:
+        text: One fully formatted log line.
+        max_length: Characters kept before the token-aligned cut, or 0 to
+            redact the whole line however long it is. See
+            ``MAX_REDACTED_LINE_CHARS``.
+
+    Returns:
+        The line, cut on a token boundary if oversized, with recognised
+        credentials and home-directory account names redacted.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    original_length = len(text)
+    suffix = ""
+    if max_length > 0 and original_length > max_length:
+        head = text[:max_length]
+        boundary = max(
+            (head.rfind(character) for character in _TOKEN_BOUNDARY_CHARS),
+            default=-1,
+        )
+        if boundary <= 0:
+            # One unbroken token longer than the cap. There is no cut that
+            # cannot split it, and a 2,000-character prefix of an opaque token
+            # is most of a secret, so the body is withheld rather than sliced.
+            # Formatter output always has whitespace in its timestamp prefix,
+            # so this is reached only by raw, unformatted input.
+            return (
+                f"{REDACTION_MARKER} [oversized unbroken log line withheld, "
+                f"{original_length} chars]"
+            )
+        text = head[:boundary]
+        suffix = f"… [truncated, {original_length} chars]"
+    # The suffix is generated text, so it is appended after redaction rather
+    # than being fed through it.
+    return redact_user_paths(_sanitize_diagnostic_text(text)) + suffix
 
 
 def sanitize_dict(data: Dict[str, Any], deep: bool = True) -> Dict[str, Any]:
@@ -181,14 +691,16 @@ def sanitize_dict(data: Dict[str, Any], deep: bool = True) -> Dict[str, Any]:
     result = {}
     for key, value in data.items():
         # Check if key is sensitive
-        if _is_sensitive_log_key(key):
+        if _is_sensitive_diagnostic_key(key):
             result[key] = REDACTION_MARKER
         elif deep and isinstance(value, dict):
             result[key] = sanitize_dict(value, deep=True)
         elif deep and isinstance(value, list):
             result[key] = sanitize_list(value, deep=True)
         elif isinstance(value, str):
-            # Still sanitize string values for embedded secrets
+            # Preserve dictionary context for values containing ODBC fields.
+            if str(key).casefold().replace("-", "_") in {"dsn", "connection_string"}:
+                value = _CONNECTION_PRIVATE_FIELD.sub(r"\1" + REDACTION_MARKER, value)
             result[key] = sanitize_string(value)
         else:
             result[key] = value

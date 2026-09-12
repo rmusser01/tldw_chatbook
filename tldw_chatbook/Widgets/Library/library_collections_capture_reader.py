@@ -1,0 +1,1072 @@
+"""Render-only panes for the Collections capture reader.
+
+Direction contract:
+- Thesis: Collections is a calm capture-and-reading workbench, not a folder manager.
+- Story: choose a capture scope, traverse the reading list, then read or annotate.
+- Form: the established dense Library rail + Items + permanent Work topology.
+
+The widgets in this module own pixels only.  Authority, requests, mutations, and
+late-result fencing remain in ``LibraryCollectionsCaptureController``.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
+from textual.widgets import Button, Input, Static, TextArea
+
+from tldw_chatbook.Library.collections_capture_models import (
+    CAPTURE_PAGE_SIZE,
+    CapabilityState,
+    CaptureCapabilities,
+    CaptureHighlight,
+    CaptureIdentity,
+    CapturePageRequest,
+    CaptureSummary,
+    SavedCaptureSearch,
+)
+from tldw_chatbook.Library.library_collections_service import (
+    LegacyCollectionsReadOnlyError,
+)
+from tldw_chatbook.Library.library_pager_state import (
+    library_pager_layout,
+    simple_library_pager_display,
+)
+from tldw_chatbook.Library.library_shell_state import library_disabled_action_label
+from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
+    CollectionsCaptureControllerState,
+)
+
+#: task-32057 AC#4. The reason half is scoped to LEGACY Collections on
+#: purpose: the captures browser around it accepts writes (Quick Capture),
+#: so an unqualified "Collections are read-only" would be false here. The
+#: next-step half is the service's own ``recovery`` string, so the copy
+#: cannot drift from the error that produces it.
+LEGACY_COLLECTIONS_READ_ONLY_NOTICE = (
+    "Legacy Collections are read-only on this profile · "
+    f"{LegacyCollectionsReadOnlyError.recovery}"
+)
+CollectionsReaderMode = Literal["read", "highlights", "notes", "info"]
+CollectionsScope = Literal[
+    "all",
+    "saved",
+    "reading",
+    "read",
+    "archived",
+    "favorites",
+]
+
+_BUILT_IN_SCOPES: tuple[tuple[CollectionsScope, str], ...] = (
+    ("all", "All Captures"),
+    ("saved", "Saved"),
+    ("reading", "Reading"),
+    ("read", "Read"),
+    ("archived", "Archived"),
+    ("favorites", "Favorites"),
+)
+
+
+def _widget_id(value: str) -> str:
+    """Return a stable Textual-id fragment without leaking source data."""
+    fragment = re.sub(r"[^a-zA-Z0-9_-]+", "-", value).strip("-")
+    return fragment[:48] or "item"
+
+
+def _reason_copy(reason: str | None) -> str:
+    """Convert bounded service reasons into compact visible UI copy."""
+    return (reason or "availability_unknown").replace("_", " ")
+
+
+def _row_title(title: str, budget: int = 120) -> str:
+    """Return compact literal row text without pre-escaping ``Content``."""
+    readable = " ".join(str(title).split())
+    if len(readable) <= budget:
+        return readable
+    return f"{readable[: max(1, budget - 1)].rstrip()}…"
+
+
+class LibraryCollectionsItemButton(Button):
+    """Capture row button carrying its opaque authority-qualified identity."""
+
+    def __init__(
+        self,
+        label: Content,
+        *,
+        capture_identity: CaptureIdentity,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(label, **kwargs)
+        self.capture_identity = capture_identity
+
+
+class LibraryCollectionsArchiveUndoButton(Button):
+    """Undo action carrying the archived capture's stable identity."""
+
+    def __init__(
+        self,
+        *args: Any,
+        capture_identity: CaptureIdentity,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.capture_identity = capture_identity
+
+
+class LibraryCollectionsHighlightButton(Button):
+    """Highlight action carrying its source-owned identifier."""
+
+    def __init__(self, *args: Any, highlight_id: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.highlight_id = highlight_id
+
+
+class LibraryCollectionsNoteLinkButton(Button):
+    """Linked-Note action carrying its source-owned link identifier."""
+
+    def __init__(self, *args: Any, link_id: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.link_id = link_id
+
+
+@dataclass(frozen=True)
+class CollectionsCaptureReaderPresentation:
+    """Complete immutable render input for the three Collections panes."""
+
+    state: CollectionsCaptureControllerState
+    capabilities: CaptureCapabilities | None = None
+    saved_searches: tuple[SavedCaptureSearch, ...] = ()
+    saved_searches_total: int = 0
+    active_scope: str = "all"
+    authority_label: str = "Local"
+    mode: CollectionsReaderMode = "read"
+    highlights: tuple[CaptureHighlight, ...] = ()
+    quick_capture_open: bool = False
+    quick_capture_url: str = ""
+    quick_capture_title: str = ""
+    quick_capture_tags: str = ""
+    quick_capture_note: str = ""
+    save_outcome_unknown: bool = False
+    confirming_save_retry: bool = False
+    quick_capture_saving: bool = False
+    filters_open: bool = False
+    more_open: bool = False
+    confirming_hard_delete: bool = False
+    legacy_recovery_rows: int = 0
+    legacy_recovery_open: bool = False
+    legacy_recovery_lines: tuple[str, ...] = ()
+    action_status: str = ""
+    action_content: str = ""
+
+    def capability(self, action: str) -> tuple[bool, str]:
+        """Return enabled state and a truthful reason for one action."""
+        if self.capabilities is None:
+            return False, "Availability has not been checked."
+        capability = self.capabilities.for_action(action)
+        if capability.state is CapabilityState.SUPPORTED:
+            return True, ""
+        if capability.state is CapabilityState.UNKNOWN:
+            return False, "Availability has not been checked."
+        return False, _reason_copy(capability.reason)
+
+
+class LibraryCollectionsScopeRows(Vertical):
+    """Contextual capture scopes mounted directly beneath Collections."""
+
+    def __init__(
+        self,
+        presentation: CollectionsCaptureReaderPresentation,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.presentation = presentation
+        self.styles.height = "auto"
+
+    def compose(self) -> ComposeResult:
+        """Render bounded built-ins, saved searches, and continuation."""
+        active_total = self.presentation.state.exact_total
+        for key, title in _BUILT_IN_SCOPES:
+            selected = self.presentation.active_scope == key
+            total = f" ({active_total})" if selected and active_total is not None else ""
+            yield Button(
+                f"{'▸' if selected else ' '} {title}{total}",
+                id=f"library-collections-scope-{key}",
+                classes="library-collections-scope-row",
+                compact=True,
+            )
+        for search in self.presentation.saved_searches:
+            selected = self.presentation.active_scope == f"search:{search.search_id}"
+            total = f" ({active_total})" if selected and active_total is not None else ""
+            yield Button(
+                Content(
+                    f"{'▸' if selected else ' '} "
+                    f"{_row_title(search.name)}{total}"
+                ),
+                id=(
+                    "library-collections-saved-search-"
+                    f"{_widget_id(search.search_id)}"
+                ),
+                classes="library-collections-scope-row library-collections-saved-search-row",
+                compact=True,
+            )
+        if self.presentation.saved_searches_total > len(
+            self.presentation.saved_searches
+        ):
+            yield Button(
+                "More saved searches…",
+                id="library-collections-more-saved-searches",
+                compact=True,
+            )
+
+
+def collections_empty_state_copy(scope: CapturePageRequest) -> str:
+    """Name what narrowed an empty capture page, and the way back out of it.
+
+    task-32352 AC#2 (critique #10): one sentence covered both an empty
+    collection and a filtered-to-nothing one, so a profile that had never
+    saved anything was told to clear filters it had never set and pointed at
+    an action ("Quick Capture") as if it were elsewhere on the screen.
+
+    Three cases, narrowest first, because the two narrowings come from
+    different controls and have different ways out: the filter form and the
+    search box set ``search``/``tags``/``domain``/``date_from``/``date_to``
+    and are undone by **Clear**, while the rail's scope rows (and saved
+    searches) set ``statuses``/``favorite`` and are undone by choosing **All
+    Captures**. A filter set inside a scope takes the filter sentence -- it
+    is the narrowing this canvas can undo. Only when neither is set has the
+    profile really never saved anything.
+
+    Args:
+        scope: The request that produced the empty page -- ``page.applied``,
+            never the requested scope, which a retained stale page outlives.
+
+    Returns:
+        One sentence, already in "reason · next step" form.
+    """
+    if (
+        scope.search
+        or scope.tags
+        or scope.domain
+        or scope.date_from
+        or scope.date_to
+    ):
+        return "No captures match these filters · clear them to see everything saved."
+    # ``favorite`` is tri-state: ``False`` is the saved-search predicate "not
+    # a favourite", an active narrowing, so truthiness is the wrong test
+    # (Qodo review of PR #2599, item 4).
+    if scope.statuses or scope.favorite is not None:
+        return (
+            "Nothing in this scope yet · choose All Captures in the rail to see "
+            "everything saved."
+        )
+    return "No saved captures yet · press Quick Capture above to save a page by URL."
+
+
+def _capture_row_label(
+    item: CaptureSummary,
+    *,
+    selected: bool,
+    loaded: bool,
+    loading: bool,
+) -> Content:
+    """Build a query-free, two-line capture row label."""
+    title = _row_title(item.title or item.domain or "Untitled capture")
+    relationship = (
+        "Selected · loading  "
+        if selected and loading
+        else "Loaded in Reader  "
+        if loaded
+        else ""
+    )
+    date = (item.published_at or item.created_at or item.updated_at)[:10]
+    markers = [item.status.title()]
+    if item.favorite:
+        markers.append("Favorite")
+    if item.processing_state in {"failed", "interrupted"}:
+        markers.append(f"Extraction {item.processing_state}")
+    secondary = " · ".join(part for part in (item.domain, date, *markers) if part)
+    return Content(
+        f"{'▸' if selected else ' '} {relationship}{title}\n    {secondary}"
+    )
+
+
+class LibraryCollectionsItemsPane(Vertical):
+    """Compact capture list, scope controls, paging, and recoverable states."""
+
+    def __init__(
+        self,
+        presentation: CollectionsCaptureReaderPresentation,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.presentation = presentation
+        self.styles.width = "1fr"
+        self.styles.min_width = 0
+
+    def compose(self) -> ComposeResult:
+        """Render the reading-list surface without exposing URL queries."""
+        state = self.presentation.state
+        capture_enabled, capture_reason = self.presentation.capability("capture")
+        # task-32352 AC#1 / task-32057 (critique #10): the rail row says
+        # "Collections (N)" and this canvas had no heading at all, so its
+        # first painted line -- the Quick Capture button -- read as the
+        # title and the feature appeared to have two names. One name
+        # everywhere; "Quick Capture" survives only on the button below,
+        # because it is a verb (save this URL) and not a place.
+        yield Static(
+            "Collections",
+            id="library-collections-header",
+            classes="destination-section",
+            markup=False,
+        )
+        with Horizontal(classes="ds-toolbar", id="library-collections-items-toolbar"):
+            yield Button(
+                library_disabled_action_label("Quick Capture", not capture_enabled),
+                id="library-collections-quick-capture",
+                compact=True,
+                disabled=not capture_enabled,
+                tooltip=capture_reason or "Save a URL to this reading list.",
+            )
+            yield Button(
+                "Filters",
+                id="library-collections-filters",
+                compact=True,
+            )
+        with Horizontal(classes="ds-toolbar", id="library-collections-sort-toolbar"):
+            sort = state.requested_scope.sort if state.requested_scope else "saved_desc"
+            yield Button(
+                f"Sort: {sort.replace('_', ' ')}",
+                id="library-collections-sort",
+                compact=True,
+            )
+        if self.presentation.quick_capture_open:
+            with Vertical(id="library-collections-quick-capture-form"):
+                yield Input(
+                    value=self.presentation.quick_capture_url,
+                    placeholder="https://example.com/article",
+                    id="library-collections-capture-url",
+                )
+                yield Input(
+                    value=self.presentation.quick_capture_title,
+                    placeholder="Title (optional)",
+                    id="library-collections-capture-title",
+                )
+                yield Input(
+                    value=self.presentation.quick_capture_tags,
+                    placeholder="Tags, comma separated (optional)",
+                    id="library-collections-capture-tags",
+                )
+                yield TextArea(
+                    self.presentation.quick_capture_note,
+                    id="library-collections-capture-note",
+                )
+                if self.presentation.save_outcome_unknown:
+                    yield Static(
+                        "Save outcome unknown. Refresh before retrying.",
+                        id="library-collections-capture-unknown",
+                        markup=False,
+                    )
+                    yield Button(
+                        "Refresh capture list",
+                        id="library-collections-capture-refresh",
+                        compact=True,
+                        disabled=self.presentation.quick_capture_saving,
+                    )
+                if self.presentation.confirming_save_retry:
+                    yield Static(
+                        "Retrying against the current Server may reapply Saved status "
+                        "and clear Favorite on an existing canonical URL.",
+                        id="library-collections-capture-retry-warning",
+                        markup=False,
+                    )
+                with Horizontal(classes="ds-toolbar"):
+                    yield Button(
+                        (
+                            "Saving…"
+                            if self.presentation.quick_capture_saving
+                            else "Retry anyway"
+                            if self.presentation.confirming_save_retry
+                            else "Retry save…"
+                            if self.presentation.save_outcome_unknown
+                            else "Save capture"
+                        ),
+                        id=(
+                            "library-collections-capture-retry-confirm"
+                            if self.presentation.confirming_save_retry
+                            else "library-collections-capture-save"
+                        ),
+                        compact=True,
+                        disabled=self.presentation.quick_capture_saving,
+                    )
+                    yield Button(
+                        "Back" if self.presentation.confirming_save_retry else "Cancel",
+                        id=(
+                            "library-collections-capture-retry-back"
+                            if self.presentation.confirming_save_retry
+                            else "library-collections-capture-cancel"
+                        ),
+                        compact=True,
+                        disabled=self.presentation.quick_capture_saving,
+                    )
+        if self.presentation.filters_open:
+            request = state.requested_scope
+            with Vertical(id="library-collections-filters-form"):
+                yield Input(
+                    value=(request.domain or "") if request is not None else "",
+                    placeholder="Domain",
+                    id="library-collections-filter-domain",
+                )
+                yield Input(
+                    value=", ".join(request.tags) if request is not None else "",
+                    placeholder="Tags, comma separated",
+                    id="library-collections-filter-tags",
+                )
+                yield Input(
+                    value=(request.date_from or "") if request is not None else "",
+                    placeholder="From date (YYYY-MM-DD)",
+                    id="library-collections-filter-date-from",
+                )
+                yield Input(
+                    value=(request.date_to or "") if request is not None else "",
+                    placeholder="To date (YYYY-MM-DD)",
+                    id="library-collections-filter-date-to",
+                )
+                with Horizontal(classes="ds-toolbar"):
+                    yield Button(
+                        "Apply filters",
+                        id="library-collections-filters-apply",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Clear",
+                        id="library-collections-filters-clear",
+                        compact=True,
+                    )
+        yield Input(
+            value=state.requested_scope.search if state.requested_scope else "",
+            placeholder="Filter captures",
+            id="library-collections-filter",
+        )
+
+        if state.page_stale:
+            yield Static(
+                "Showing the last good page. Refresh failed; totals and page actions are paused.",
+                id="library-collections-page-stale",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button("Retry", id="library-collections-page-retry", compact=True)
+        elif state.page_error:
+            yield Static(
+                f"Captures could not be loaded: {_reason_copy(state.page_error)}.",
+                id="library-collections-page-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button("Retry", id="library-collections-page-retry", compact=True)
+        elif state.page_loading and state.page is None:
+            yield Static(
+                "Loading captures…",
+                id="library-collections-page-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
+
+        page = state.page
+        if page is not None and not page.items:
+            # task-32352 AC#2 (critique #10) + Qodo review of PR #2599 (item
+            # 1): "no captures" is a claim about a page that actually came
+            # back. An absent page means loading, an initial failure, or a
+            # scope never requested -- the callout above is the only honest
+            # message then. And the copy describes ``page.applied``, the scope
+            # that produced THIS page, never ``requested_scope``: a retained
+            # stale page outlives the request that replaced it.
+            yield Static(
+                collections_empty_state_copy(page.applied),
+                id="library-collections-items-empty",
+                classes="destination-purpose",
+                markup=False,
+            )
+        elif page is not None:
+            loaded_identity = (
+                state.loaded_detail.capture.identity
+                if state.loaded_detail is not None
+                else None
+            )
+            rows = VerticalScroll(id="library-collections-items-scroll")
+            rows.styles.height = "1fr"
+            with rows:
+                for index, item in enumerate(page.items):
+                    selected = item.identity == state.selected_identity
+                    loaded = item.identity == loaded_identity
+                    button = LibraryCollectionsItemButton(
+                        _capture_row_label(
+                            item,
+                            selected=selected,
+                            loaded=loaded,
+                            loading=selected and state.detail_loading,
+                        ),
+                        id=f"library-collections-row-{index}",
+                        classes="library-collections-item-row",
+                        compact=True,
+                        capture_identity=item.identity,
+                    )
+                    button.styles.height = 2
+                    button.styles.min_height = 2
+                    yield button
+
+        current_page = (
+            page.applied.page
+            if page is not None
+            else state.requested_scope.page
+            if state.requested_scope is not None
+            else 1
+        )
+        if state.exact_total is None:
+            range_copy = f"Page {current_page} · total unavailable"
+            total_pages = 0
+        else:
+            start = (
+                0
+                if state.exact_total == 0
+                else (current_page - 1) * CAPTURE_PAGE_SIZE + 1
+            )
+            stop = min(current_page * CAPTURE_PAGE_SIZE, state.exact_total)
+            range_copy = f"{start}–{stop} of {state.exact_total}"
+            total_pages = max(
+                1,
+                (state.exact_total + CAPTURE_PAGE_SIZE - 1) // CAPTURE_PAGE_SIZE,
+            )
+        has_previous = state.paging_enabled and current_page > 1
+        has_next = (
+            state.paging_enabled
+            and state.exact_total is not None
+            and current_page * CAPTURE_PAGE_SIZE < state.exact_total
+        )
+        # task-32352 AC#3 / task-32354 (critique #10): this pager was hand
+        # rolled -- enabled-looking Previous/Next at "0–0 of 0", and no "○"
+        # marker on a disabled one, unlike every other Library pager. It now
+        # goes through the same rule, via a display the shared builder can't
+        # produce (its row-count invariants assume a source that owns its
+        # paging end to end; this one's service can return a short page).
+        #
+        # ``bounded`` is the rule's precondition: neither direction moving
+        # because this IS the only page is the case the rule suppresses;
+        # neither direction moving because paging is PAUSED (a stale or
+        # loading page, totals withheld) is not -- the controls stay, still
+        # disabled, with the reason the old pager gave.
+        bounded = state.paging_enabled and state.exact_total is not None
+        pager = simple_library_pager_display(
+            range_copy=range_copy,
+            page=current_page,
+            total_pages=total_pages,
+            has_previous=has_previous,
+            has_next=has_next,
+        )
+        layout = library_pager_layout(pager)
+        controls_hidden = bounded and layout.controls_hidden
+        yield Static(
+            " · ".join(layout.status_parts),
+            id="library-collections-page-range",
+            markup=False,
+        )
+        if layout.boundary_reasons:
+            yield Static(
+                " · ".join(layout.boundary_reasons),
+                id="library-collections-page-reason",
+                classes="destination-purpose",
+                markup=False,
+            )
+        if not controls_hidden:
+            previous_reason = (
+                pager.previous_reason
+                if bounded
+                else "No current previous page is available."
+            )
+            next_reason = (
+                pager.next_reason
+                if bounded
+                else "No current next page is available."
+            )
+            with Horizontal(
+                classes="ds-toolbar", id="library-collections-page-toolbar"
+            ):
+                yield Button(
+                    library_disabled_action_label("Previous", not has_previous),
+                    id="library-collections-page-previous",
+                    compact=True,
+                    disabled=not has_previous,
+                    tooltip=previous_reason or "Load the previous page.",
+                )
+                yield Button(
+                    library_disabled_action_label("Next", not has_next),
+                    id="library-collections-page-next",
+                    compact=True,
+                    disabled=not has_next,
+                    tooltip=next_reason or "Load the next page.",
+                )
+
+
+def _action_button(
+    presentation: CollectionsCaptureReaderPresentation,
+    action: str,
+    label: str,
+    *,
+    identity_required: bool = True,
+    button_id: str,
+) -> Button:
+    """Build a capability- and identity-gated action with visible reason."""
+    supported, reason = presentation.capability(action)
+    if (
+        supported
+        and identity_required
+        and not presentation.state.identity_actions_enabled
+    ):
+        supported = False
+        reason = "Wait until the selected capture is loaded and current."
+    return Button(
+        library_disabled_action_label(label, not supported),
+        id=button_id,
+        compact=True,
+        disabled=not supported,
+        tooltip=reason or label,
+    )
+
+
+def _open_original_button(
+    presentation: CollectionsCaptureReaderPresentation,
+) -> Button:
+    """Build the identity-gated Open Original action in either toolbar."""
+    enabled = presentation.state.identity_actions_enabled
+    return Button(
+        "Open Original",
+        id="library-collections-open-original",
+        compact=True,
+        disabled=not enabled,
+        tooltip=(
+            "Open the capture's original URL."
+            if enabled
+            else "Wait until the selected capture is loaded and current."
+        ),
+    )
+
+
+class LibraryCollectionsWorkPane(VerticalScroll):
+    """Permanent reading-first Work region for one loaded capture."""
+
+    def __init__(
+        self,
+        presentation: CollectionsCaptureReaderPresentation,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.presentation = presentation
+        self.styles.width = "1fr"
+        self.styles.min_width = 0
+
+    def compose(self) -> ComposeResult:
+        """Render truthful identity, actions, one active mode, and recovery."""
+        state = self.presentation.state
+        retained_copy = state.retained_reader_copy
+        if retained_copy:
+            yield Static(
+                retained_copy,
+                id="library-collections-reader-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
+        if state.detail_error:
+            yield Static(
+                f"Capture could not be loaded: {_reason_copy(state.detail_error)}.",
+                id="library-collections-reader-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button("Retry", id="library-collections-reader-retry", compact=True)
+        if self.presentation.action_status:
+            yield Static(
+                self.presentation.action_status,
+                id="library-collections-action-status",
+                classes="destination-purpose",
+                markup=False,
+            )
+        if self.presentation.action_content:
+            yield Static(
+                self.presentation.action_content,
+                id="library-collections-action-content",
+                markup=False,
+            )
+        if state.visible_archive_receipts:
+            receipt = state.visible_archive_receipts[0]
+            with Horizontal(
+                classes="ds-toolbar",
+                id="library-collections-archive-receipt",
+            ):
+                yield Static(
+                    f"Moved to Archive · was {receipt.previous_status.title()}.",
+                    markup=False,
+                )
+                yield LibraryCollectionsArchiveUndoButton(
+                    "Undo",
+                    capture_identity=receipt.identity,
+                    id="library-collections-archive-undo",
+                    compact=True,
+                )
+
+        resolved = state.loaded_detail
+        if resolved is None:
+            yield Static(
+                "Select a capture to read it here.",
+                id="library-collections-reader-empty",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield from self._compose_legacy_recovery_disclosure()
+            return
+        capture = resolved.capture
+        yield Static(
+            f"{self.presentation.authority_label} Collections · {capture.domain or 'Saved capture'}",
+            id="library-collections-reader-identity",
+            markup=False,
+        )
+        yield Static(
+            capture.title or capture.domain or "Untitled capture",
+            id="library-collections-reader-title",
+            markup=False,
+        )
+        byline_parts = [capture.byline or capture.published_at or ""]
+        if capture.word_count is not None:
+            minutes = max(1, round(capture.word_count / 220))
+            byline_parts.append(f"{minutes} min read")
+        byline_parts.extend((capture.status.title(), self.presentation.authority_label))
+        yield Static(
+            " · ".join(part for part in byline_parts if part),
+            id="library-collections-reader-byline",
+            markup=False,
+        )
+
+        with Horizontal(classes="ds-toolbar", id="library-collections-primary-toolbar"):
+            yield _action_button(
+                self.presentation,
+                "update",
+                "Mark Read",
+                button_id="library-collections-mark-read",
+            )
+            yield _action_button(
+                self.presentation,
+                "update",
+                "Favorite",
+                button_id="library-collections-favorite",
+            )
+            yield _action_button(
+                self.presentation,
+                "archive",
+                "Move to Archive",
+                button_id="library-collections-archive",
+            )
+        with Horizontal(
+            classes="ds-toolbar",
+            id="library-collections-secondary-toolbar",
+        ):
+            yield _open_original_button(self.presentation)
+            yield Button(
+                "More",
+                id="library-collections-more",
+                compact=True,
+            )
+
+        with Horizontal(classes="ds-toolbar", id="library-collections-mode-toolbar"):
+            for mode in ("read", "highlights", "notes", "info"):
+                label = f"✓ {mode.title()}" if self.presentation.mode == mode else mode.title()
+                yield Button(
+                    label,
+                    id=f"library-collections-mode-{mode}",
+                    compact=True,
+                )
+
+        if self.presentation.more_open:
+            yield from self._compose_more()
+        if self.presentation.confirming_hard_delete:
+            yield Static(
+                f"Permanently delete “{capture.title or capture.domain or 'this capture'}”, "
+                "its highlights, and its managed offline copy? This cannot be undone.",
+                id="library-collections-hard-delete-copy",
+                markup=False,
+            )
+            with Horizontal(classes="ds-toolbar"):
+                yield _action_button(
+                    self.presentation,
+                    "hard_delete",
+                    "Delete permanently",
+                    button_id="library-collections-hard-delete-confirm",
+                )
+                yield Button(
+                    "Cancel",
+                    id="library-collections-hard-delete-cancel",
+                    compact=True,
+                )
+
+        if self.presentation.mode == "read":
+            yield Static(
+                capture.text_content or "No readable content is stored for this capture.",
+                id="library-collections-read-body",
+                markup=False,
+            )
+        elif self.presentation.mode == "highlights":
+            yield from self._compose_highlights()
+        elif self.presentation.mode == "notes":
+            yield from self._compose_notes()
+        else:
+            yield from self._compose_info()
+
+    def _compose_more(self) -> ComposeResult:
+        """Render lower-frequency actions without hiding capability reasons."""
+        yield _action_button(
+            self.presentation,
+            "summarize",
+            "Summarize",
+            button_id="library-collections-summarize",
+        )
+        yield _action_button(
+            self.presentation,
+            "listen",
+            "Listen",
+            button_id="library-collections-listen",
+        )
+        yield _action_button(
+            self.presentation,
+            "offline_copy",
+            "Save Offline Copy",
+            button_id="library-collections-save-offline",
+        )
+        yield _action_button(
+            self.presentation,
+            "retry_extraction",
+            "Retry Extraction",
+            button_id="library-collections-retry-extraction",
+        )
+        yield _action_button(
+            self.presentation,
+            "hard_delete",
+            "Delete Permanently…",
+            button_id="library-collections-hard-delete",
+        )
+        yield from self._compose_legacy_recovery_disclosure()
+
+    def _compose_legacy_recovery_disclosure(self) -> ComposeResult:
+        """Render the legacy-data entry point with its read-only reason.
+
+        task-32057 AC#4: ``LocalLibraryCollectionsService`` refuses every
+        create/rename/delete/restore/add-item with
+        ``LegacyCollectionsReadOnlyError``, and the canvas used to offer
+        the "Legacy Collections data…" button with no statement that the
+        records behind it can only be read and exported. The reason and
+        the next step ride one line, and the next step is the service's
+        own ``recovery`` string rather than a second copy of it.
+        """
+        if self.presentation.legacy_recovery_rows:
+            supported, reason = self.presentation.capability("legacy_recovery")
+            yield Static(
+                LEGACY_COLLECTIONS_READ_ONLY_NOTICE,
+                id="library-collections-legacy-read-only",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button(
+                f"Legacy Collections data… ({self.presentation.legacy_recovery_rows})",
+                id="library-collections-legacy-recovery",
+                compact=True,
+                disabled=not supported,
+                tooltip=reason or "Inspect and export preserved legacy data.",
+            )
+        if self.presentation.legacy_recovery_open:
+            yield from self._compose_legacy_recovery()
+
+    def _compose_legacy_recovery(self) -> ComposeResult:
+        """Render the bounded inspector and complete-export action."""
+        yield Static(
+            "Legacy Collections · read-only recovery",
+            id="library-collections-legacy-recovery-heading",
+            markup=False,
+        )
+        yield Static(
+            "\n".join(self.presentation.legacy_recovery_lines)
+            or "No legacy records are available.",
+            id="library-collections-legacy-recovery-content",
+            markup=False,
+        )
+        with Horizontal(classes="ds-toolbar"):
+            yield Button(
+                "Export complete JSON…",
+                id="library-collections-legacy-recovery-export",
+                compact=True,
+            )
+            yield Button(
+                "Close inspector",
+                id="library-collections-legacy-recovery-close",
+                compact=True,
+            )
+
+    def _compose_highlights(self) -> ComposeResult:
+        """Render active and detached capture-owned highlights."""
+        supported, reason = self.presentation.capability("highlights")
+        enabled = supported and self.presentation.state.identity_actions_enabled
+        yield TextArea(
+            "",
+            id="library-collections-highlight-quote",
+            disabled=not enabled,
+            tooltip=reason or "Quote to keep with this capture.",
+        )
+        yield Input(
+            placeholder="Highlight note (optional)",
+            id="library-collections-highlight-note",
+            disabled=not enabled,
+        )
+        yield Button(
+            library_disabled_action_label("Add highlight", not enabled),
+            id="library-collections-highlight-save",
+            compact=True,
+            disabled=not enabled,
+            tooltip=reason or "Save this highlight.",
+        )
+        if not self.presentation.highlights:
+            yield Static(
+                "No highlights for this capture.",
+                id="library-collections-highlights-empty",
+                markup=False,
+            )
+            return
+        for highlight in self.presentation.highlights:
+            state = "Detached · reattach needed" if highlight.detached else "Active"
+            yield Static(
+                f"{state}\n{highlight.quote}"
+                + (f"\nNote: {highlight.note}" if highlight.note else ""),
+                id=f"library-collections-highlight-{_widget_id(highlight.highlight_id)}",
+                markup=False,
+            )
+            yield LibraryCollectionsHighlightButton(
+                "Delete highlight",
+                id=f"library-collections-highlight-delete-{_widget_id(highlight.highlight_id)}",
+                classes="library-collections-highlight-delete",
+                compact=True,
+                disabled=not enabled,
+                highlight_id=highlight.highlight_id,
+            )
+
+    def _compose_notes(self) -> ComposeResult:
+        """Keep the capture note and Linked Notes visibly distinct."""
+        resolved = self.presentation.state.loaded_detail
+        assert resolved is not None
+        linked_enabled, linked_reason = self.presentation.capability("linked_notes")
+        linked_enabled = (
+            linked_enabled and self.presentation.state.identity_actions_enabled
+        )
+        if not self.presentation.state.identity_actions_enabled:
+            linked_reason = "Wait until the selected capture is loaded and current."
+        yield Static("Capture note", id="library-collections-freeform-note-heading", markup=False)
+        yield TextArea(
+            resolved.capture.freeform_note or "",
+            id="library-collections-freeform-note",
+            disabled=(
+                not self.presentation.capability("update")[0]
+                or not self.presentation.state.identity_actions_enabled
+            ),
+        )
+        yield _action_button(
+            self.presentation,
+            "update",
+            "Save capture note",
+            button_id="library-collections-freeform-note-save",
+        )
+        yield Static(
+            "Linked Notes",
+            id="library-collections-linked-notes-heading",
+            markup=False,
+        )
+        if not resolved.note_links:
+            yield Static(
+                "No Notes are linked to this capture.",
+                id="library-collections-linked-notes-empty",
+                markup=False,
+            )
+        for link, availability in resolved.note_links:
+            status = (
+                "Available"
+                if availability.state == "available"
+                else f"Unavailable: {_reason_copy(availability.reason)}"
+            )
+            yield Static(
+                f"Note {link.note_reference.note_id} · {status}",
+                id=f"library-collections-linked-note-{_widget_id(link.link_id)}",
+                markup=False,
+            )
+            yield LibraryCollectionsNoteLinkButton(
+                "Unlink",
+                id=f"library-collections-linked-note-unlink-{_widget_id(link.link_id)}",
+                classes="library-collections-linked-note-unlink",
+                compact=True,
+                disabled=not linked_enabled,
+                link_id=link.link_id,
+            )
+        yield Input(
+            placeholder="Note ID",
+            id="library-collections-linked-note-id",
+            disabled=not linked_enabled,
+            tooltip=linked_reason or "Link a Note by its exact ID.",
+        )
+        yield Button(
+            library_disabled_action_label("Link Note", not linked_enabled),
+            id="library-collections-linked-note-save",
+            compact=True,
+            disabled=not linked_enabled,
+            tooltip=linked_reason or "Link this capture to the Note.",
+        )
+
+    def _compose_info(self) -> ComposeResult:
+        """Render capture metadata and external-reference provenance."""
+        resolved = self.presentation.state.loaded_detail
+        assert resolved is not None
+        capture = resolved.capture
+        yield Static(
+            "\n".join(
+                (
+                    f"Canonical URL: {capture.canonical_url}",
+                    f"Submitted URL: {capture.submitted_url}",
+                    f"Tags: {', '.join(capture.tags) or 'None'}",
+                    f"Status: {capture.status}",
+                    f"Extraction: {capture.processing_state}",
+                    f"Words: {capture.word_count if capture.word_count is not None else 'Unknown'}",
+                    f"Authority: {self.presentation.authority_label}",
+                )
+            ),
+            id="library-collections-info-body",
+            markup=False,
+        )
+        if capture.media_reference is not None:
+            availability = resolved.media
+            status = (
+                "Available"
+                if availability is not None and availability.state == "available"
+                else f"Unavailable: {_reason_copy(availability.reason if availability else None)}"
+            )
+            yield Static(
+                f"Backing Media {capture.media_reference.item_id} · {status}",
+                id="library-collections-media-provenance",
+                markup=False,
+            )
+
+
+__all__ = [
+    "collections_empty_state_copy",
+    "CollectionsCaptureReaderPresentation",
+    "CollectionsReaderMode",
+    "LibraryCollectionsHighlightButton",
+    "LibraryCollectionsItemsPane",
+    "LibraryCollectionsScopeRows",
+    "LibraryCollectionsNoteLinkButton",
+    "LibraryCollectionsWorkPane",
+]

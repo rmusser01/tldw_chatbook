@@ -2582,9 +2582,7 @@ def test_faster_whisper_cache_probe_resolves_without_network(monkeypatch):
 
     assert callable(probe)
     assert probe("base") is True
-    assert dependency_requests == [
-        ("faster_whisper", "transcription_faster_whisper")
-    ]
+    assert dependency_requests == [("faster_whisper", "transcription_faster_whisper")]
     assert calls == [("base", {"local_files_only": True})]
 
 

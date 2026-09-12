@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT_LEASE_TEST_TARGETS = (
     "Tests/Model_Artifacts/test_operation_leases.py",
@@ -15,10 +14,14 @@ def _workflow_text() -> str:
     return (PROJECT_ROOT / ".github" / "workflows" / "test.yml").read_text()
 
 
+def _nightly_workflow_text() -> str:
+    return (PROJECT_ROOT / ".github" / "workflows" / "nightly-deep.yml").read_text()
+
+
 def _all_tests_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  all-tests:")
-    end = workflow.index("  nightly-deep:", start)
+    end = workflow.index("  test-summary:", start)
     return workflow[start:end]
 
 
@@ -30,10 +33,9 @@ def _core_tests_job_block() -> str:
 
 
 def _nightly_deep_job_block() -> str:
-    workflow = _workflow_text()
+    workflow = _nightly_workflow_text()
     start = workflow.index("  nightly-deep:")
-    end = workflow.index("  test-summary:", start)
-    return workflow[start:end]
+    return workflow[start:]
 
 
 def _textual_minimum_job_block() -> str:
@@ -124,6 +126,19 @@ def test_ci_installs_distribution_build_dependencies() -> None:
     assert "setuptools>=77" in requirements.splitlines()
 
 
+def test_core_browser_collection_installs_required_chromium_before_pytest() -> None:
+    """The broad non-UI shard includes mandatory Canvas browser tests."""
+    block = _core_tests_job_block()
+    commands = _pytest_invocations(block)
+    assert any(
+        "Tests" in command and "--ignore=Tests/UI" in command for command in commands
+    )
+    install = "python -m playwright install --with-deps chromium"
+    assert install in block
+    assert block.index(install) < block.index("pytest Tests")
+    assert "continue-on-error" not in block
+
+
 def test_pytest_ui_marker_is_registered_for_ci_marker_selection() -> None:
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
 
@@ -151,8 +166,8 @@ def test_jobs_running_architecture_tests_fetch_pinned_history() -> None:
         _all_tests_job_block(),
         _nightly_deep_job_block(),
     ):
-        checkout_start = block.index("    - uses: actions/checkout@v4")
-        checkout_end = block.index("\n    - name:", checkout_start)
+        checkout_start = block.index("uses: actions/checkout@v4")
+        checkout_end = block.index("Set up Python", checkout_start)
         assert "fetch-depth: 0" in block[checkout_start:checkout_end]
 
 
@@ -172,13 +187,13 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     )
 
 
-def test_artifact_lease_spike_runs_natively_on_three_operating_systems() -> None:
+def test_artifact_lease_spike_runs_three_os_on_main_and_manual_events() -> None:
+    """The comprehensive workflow retains cross-platform lease evidence."""
     block = _artifact_lease_job_block()
 
-    assert "ubuntu-latest" in block
-    assert "macos-latest" in block
-    assert "windows-latest" in block
-    assert 'python-version: ["3.11"]' in block
+    assert "os: [ubuntu-latest, macos-latest, windows-latest]" in block
+    assert "pull_request" not in block
+    assert 'python-version: ["3.12"]' in block
     assert "pip install -e ." in block
     assert "pip install -r requirements-test.txt" in block
     assert (
@@ -202,7 +217,8 @@ def test_artifact_lease_target_check_rejects_unrelated_explicit_test() -> None:
         _assert_artifact_lease_test_targets(mutated)
 
 
-def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
+def test_ci_shape_regression_runs_in_dedicated_comprehensive_job() -> None:
+    """Keep the CI shape regression in its dedicated comprehensive job."""
     workflow = _workflow_text()
 
     assert "  artifact-lease-shape:" in workflow
@@ -214,7 +230,7 @@ def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
     ]
 
     assert "runs-on: ubuntu-latest" in shape
-    assert "if:" not in shape
+    assert "github.event_name" not in shape
     assert "uses: actions/checkout@v4" in shape
     assert "uses: actions/setup-python@v5" in shape
     assert 'python-version: "3.11"' in shape
@@ -235,7 +251,7 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "name: Artifact Lease Gate" in gate
     assert "runs-on: ubuntu-latest" in gate
     assert "needs: [artifact-lease-spike, artifact-lease-shape]" in gate
-    assert "if: always()" in gate
+    assert "if: ${{ always() }}" in gate
     assert (
         'if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || '
         '[ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then' in gate
@@ -244,10 +260,9 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     assert "artifact-lease-gate" in test_summary
 
 
-def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
+def test_comprehensive_shards_cover_the_whole_tree_in_parallel() -> None:
     """task-1465: core+ui shards replace the 27-file `-m unit` selection."""
     workflow = _workflow_text()
-    ui_job = _ui_tests_job_block()
 
     assert "  core-tests:" in workflow
     assert "pytest Tests --ignore=Tests/UI" in workflow
@@ -269,19 +284,21 @@ def test_ui_job_is_sharded_to_fit_its_time_budget() -> None:
     which is per-job randomness), covers every test exactly once across the
     matrix, and each slice still parallelizes internally with xdist.
     """
-    workflow = _workflow_text()
     ui_job = _ui_tests_job_block()
 
-    assert "pytest-shard" in (
-        PROJECT_ROOT / "requirements-test.txt"
-    ).read_text()
+    assert "pytest-shard" in (PROJECT_ROOT / "requirements-test.txt").read_text()
     assert "--shard-id=${{ matrix.shard }}" in ui_job
     # The ids and the divisor must describe the same complete partition:
     # 12 shards numbered 0..11. A mismatch (e.g. ids 1..12 against
     # num-shards 12, or a stale id list after resizing) would silently
     # duplicate or drop a slice of the suite.
-    ids = workflow[workflow.index("shard: [") :].splitlines()[0]
-    id_values = [int(part.strip()) for part in ids[ids.index("[") + 1 : ids.rindex("]")].split(",")]
+    # Read the ids from the UI JOB, not the whole workflow. This used to
+    # search `workflow` for the first "shard: [" -- which was the UI job only
+    # because it was then the only sharded job. TASK-21411 sharded core-tests
+    # too, and core's ids were suddenly being checked against the UI job's
+    # divisor. A partition assertion that can silently start describing a
+    # different job is worse than no assertion.
+    id_values = _shard_ids(ui_job)
     divisor = int(ui_job.split("--num-shards=")[1].split()[0].rstrip("'\""))
     assert id_values == list(range(divisor)), "shard ids must be 0..N-1"
     assert divisor >= 10, (
@@ -296,6 +313,58 @@ def test_ui_job_is_sharded_to_fit_its_time_budget() -> None:
     assert "name: ui-test-results-${{ matrix.shard }}" in ui_job
 
 
+def _shard_ids(job_block: str) -> list[int]:
+    """The `shard: [...]` id list declared inside one job block."""
+    line = job_block[job_block.index("shard: [") :].splitlines()[0]
+    return [
+        int(part.strip())
+        for part in line[line.index("[") + 1 : line.rindex("]")].split(",")
+    ]
+
+
+def test_core_tests_job_is_sharded_to_fit_its_time_budget() -> None:
+    """TASK-21411: one job could not finish the core suite either.
+
+    Diagnosed from a killed run's own log rather than from the outcome: the
+    ubuntu leg started pytest at 15:44:55 and was still emitting progress
+    steadily when the 120-minute cap killed it at 17:39, having reached 60%.
+    Steady progress at the kill is what separates "too slow" from "hung" --
+    the suite needs ~190 minutes on a 4-vCPU runner, so no timeout below
+    GitHub's 6-hour ceiling makes one job the right container.
+
+    The contract mirrors the UI job's: a deterministic pytest-shard split
+    covering every test exactly once, xdist still parallelizing within each
+    slice, and per-shard artifact names so matrix siblings cannot overwrite
+    each other's report.
+    """
+    core = _core_tests_job_block()
+
+    assert "--shard-id=${{ matrix.shard }}" in core
+    divisor = int(core.split("--num-shards=")[1].split()[0].rstrip("'\""))
+    assert _shard_ids(core) == list(range(divisor)), "shard ids must be 0..N-1"
+    assert divisor >= 4, (
+        "the core suite needs ~190 minutes on a standard runner; fewer than "
+        "~4 shards puts a slice back within reach of the 120-minute cap"
+    )
+    assert "-n auto --dist loadscope" in core
+    assert "core-test-results-${{ matrix.shard }}.json" in core
+    assert "name: core-test-results-${{ matrix.shard }}" in core
+
+
+def test_core_tests_job_does_not_multiply_the_scarcest_runner_pool() -> None:
+    """macOS breadth belongs to nightly-deep, not to the core shard matrix.
+
+    macOS runners are the constrained pool here -- queue waits of 42 to 90
+    minutes were observed while ubuntu jobs started promptly -- so sharding
+    core across them would spend more in queueing than it buys. This pins the
+    intent, and pins that the coverage it gives up still exists elsewhere.
+    """
+    core = _core_tests_job_block()
+    assert "runs-on: ubuntu-latest" in core
+    assert "macos" not in core
+    assert "macos-latest" in _nightly_deep_job_block()
+
+
 def test_core_tests_job_budget_covers_the_suite() -> None:
     """TASK-18608: 60 minutes stopped being enough for the core suite.
 
@@ -306,24 +375,21 @@ def test_core_tests_job_budget_covers_the_suite() -> None:
     core = _core_tests_job_block()
 
     line = next(
-        l.strip()
-        for l in core.splitlines()
-        if l.strip().startswith("timeout-minutes:")
+        candidate.strip()
+        for candidate in core.splitlines()
+        if candidate.strip().startswith("timeout-minutes:")
     )
     assert int(line.split(":")[1]) >= 120
 
 
-def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:
+def test_nightly_deep_runs_the_tiers_the_fast_pr_lane_does_not() -> None:
     """task-1465: serial + thorough + --run-slow + cache-off + breadth, on dev."""
-    workflow = _workflow_text()
+    workflow = _nightly_workflow_text()
     nightly = _nightly_deep_job_block()
 
-    assert "- cron:" in workflow
-    assert (
-        "if: github.event_name == 'schedule' || "
-        "github.event_name == 'workflow_dispatch'" in nightly
-    )
-    assert "ref: dev" in nightly
+    assert "- cron: '30 8 * * *'" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "ref: ${{ needs.resolve-dev-sha.outputs.sha }}" in nightly
     assert "--run-slow" in nightly
     assert "TLDW_HYPOTHESIS_PROFILE: thorough" in nightly
     assert 'TLDW_TEST_CSS_CACHE: "0"' in nightly
@@ -354,7 +420,7 @@ def test_every_json_report_invocation_omits_log_capture() -> None:
     # activation flag and its omit argument may legally sit on different
     # physical lines; then accept every valid spelling of the omit
     # ("--json-report-omit log", "--json-report-omit=log", comma lists).
-    logical = _workflow_text().replace("\\\n", " ")
+    logical = (_workflow_text() + _nightly_workflow_text()).replace("\\\n", " ")
     activations = 0
     for command in logical.splitlines():
         tokens = command.split()
@@ -375,4 +441,33 @@ def test_every_json_report_invocation_omits_log_capture() -> None:
     assert activations >= 4, (
         f"expected at least 4 json-report activations (core, UI, full, "
         f"nightly); found {activations} — the pin may have gone inert"
+    )
+
+
+def test_the_test_summary_job_can_actually_fail() -> None:
+    """TASK-21411: `needs:` + `if: always()` schedules a job; it does not judge one.
+
+    On run 32647831275 the Test Summary check reported success while all
+    twelve UI shards were red -- it ran after them, read their artifacts, and
+    never looked at their conclusions. Since this is the check most likely to
+    be marked required, a summary that cannot go red is worse than no summary.
+
+    The verdict must also be the last step, after summary generation.
+    """
+    summary = _test_summary_job_block()
+
+    for job in ("core-tests", "ui-tests", "textual-minimum", "artifact-lease-gate"):
+        assert f"needs.{job}.result != 'success'" in summary, (
+            f"the summary does not fail when {job} fails"
+        )
+    assert "exit 1" in summary
+
+    step_names = [
+        line.split("- name:", 1)[1].strip()
+        for line in summary.splitlines()
+        if line.strip().startswith("- name:")
+    ]
+    assert step_names[-1] == "Require every gated job to have succeeded", (
+        "the verdict must be the final step, after the summary is generated; "
+        f"steps end with {step_names[-2:]}"
     )

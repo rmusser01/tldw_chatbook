@@ -46,6 +46,9 @@
         padding: 0 1;
     }
 
+
+
+
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
 
@@ -68,32 +71,32 @@
         height: 100%;
         width: 100%;
     }
-    
+
     LLMManagementWindow .llm-view.-active {
         display: block;
     }
-    
+
     LLMManagementWindow .section-title {
         text-style: bold;
         margin: 1 0;
         color: $primary;
     }
-    
+
     LLMManagementWindow .section_label {
         text-style: bold;
         margin: 1 0;
         color: $secondary;
     }
-    
+
     LLMManagementWindow .description {
         margin: 0 0 1 0;
         color: $text-muted;
     }
-    
+
     LLMManagementWindow .label {
         margin: 1 0 0 0;
     }
-    
+
     LLMManagementWindow .input_container {
         layout: horizontal;
         height: 3;
@@ -109,120 +112,121 @@
         padding-right: 1;
         color: $text;
     }
-    
+
     LLMManagementWindow .input_container Input {
         width: 1fr;
         min-width: 16;
     }
-    
+
     LLMManagementWindow .input_container Button {
         width: auto;
         margin: 0 0 0 1;
     }
-    
+
     LLMManagementWindow .button_container {
         layout: horizontal;
         margin: 1 0;
         height: 3;
     }
-    
+
     LLMManagementWindow .button_container Button {
         margin: 0 1 0 0;
     }
-    
+
     LLMManagementWindow .log_output {
         height: 15;
         border: solid $primary;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .help-text-display {
         height: 10;
         border: solid $secondary;
         padding: 1;
     }
-    
+
     LLMManagementWindow .additional_args_textarea {
         height: 5;
         margin: 0 0 1 0;
     }
-    
+
     LLMManagementWindow .separator {
         height: 1;
         margin: 1 0;
         color: $primary;
     }
-    
+
     LLMManagementWindow .ollama-button-bar {
         layout: horizontal;
         height: 3;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .ollama-button-bar Button {
         margin: 0 1 0 0;
     }
-    
+
     LLMManagementWindow .ollama-actions-grid {
         layout: horizontal;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .ollama-actions-column {
         width: 50%;
         padding: 0 1;
     }
-    
+
     LLMManagementWindow .column-title {
         text-style: bold;
         margin: 0 0 1 0;
         color: $secondary;
     }
-    
+
     LLMManagementWindow .input_field_short {
         width: 40%;
     }
-    
+
     LLMManagementWindow .input_field_long {
         width: 100%;
     }
-    
+
     LLMManagementWindow .action_button_short {
         width: auto;
     }
-    
+
     LLMManagementWindow .full_width_button {
         width: 100%;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .delete_button {
         background: $error;
     }
-    
+
     LLMManagementWindow .embeddings_container {
         layout: horizontal;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .embeddings_inputs {
         width: 70%;
     }
-    
+
     LLMManagementWindow .action_button_tall {
         width: 30%;
         margin: 0 0 0 1;
     }
-    
+
     LLMManagementWindow .output_textarea_medium {
         height: 10;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .log_output_large {
         height: 20;
         margin: 1 0;
     }
+
 
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
@@ -233,6 +237,7 @@
     LogsWindow #logs-empty-state {
         display: none;
     }
+
 
 /* ===== WIDGET: MCPAuditMode (UI/MCP_Modules/mcp_audit_mode.py) ===== */
 
@@ -341,6 +346,7 @@
         height: auto;
         min-height: 0;
     }
+
 
 /* ===== WIDGET: MCPInspector (UI/MCP_Modules/mcp_inspector.py) ===== */
 
@@ -540,6 +546,7 @@
         min-height: 6;
     }
 
+
 /* ===== WIDGET: MCPPermissionsMode (UI/MCP_Modules/mcp_permissions_mode.py) ===== */
 
 
@@ -607,6 +614,7 @@
         min-height: 0;
     }
 
+
 /* ===== WIDGET: MCPRail (UI/MCP_Modules/mcp_rail.py) ===== */
 
 
@@ -637,6 +645,7 @@
         color: $text-muted;
         padding: 0 1;
     }
+
 
 /* ===== WIDGET: MCPServersMode (UI/MCP_Modules/mcp_servers_mode.py) ===== */
 
@@ -702,6 +711,7 @@
         color: $text-muted;
     }
 
+
 /* ===== WIDGET: MCPToolsMode (UI/MCP_Modules/mcp_tools_mode.py) ===== */
 
 
@@ -715,23 +725,9 @@
         padding: 0 1 1 1;
         background: $surface;
     }
-    MCPToolsMode #mcp-tools-local-config-title-row,
     MCPToolsMode #mcp-tools-workspace-row {
         height: auto;
         min-height: 0;
-    }
-    MCPToolsMode #mcp-tools-local-config-title {
-        width: 1fr;
-        text-style: bold;
-        content-align: left middle;
-    }
-    MCPToolsMode #mcp-tools-local-enabled {
-        width: 8;
-    }
-    MCPToolsMode #mcp-tools-local-enabled-state {
-        width: 10;
-        content-align: right middle;
-        text-style: bold;
     }
     MCPToolsMode #mcp-tools-local-config-help,
     MCPToolsMode #mcp-tools-local-config-status {
@@ -772,6 +768,7 @@
         min-height: 0;
     }
 
+
 /* ===== WIDGET: MCPWorkbench (UI/MCP_Modules/mcp_workbench.py) ===== */
 
 
@@ -808,6 +805,7 @@
         min-width: 20;
     }
 
+
 /* ===== WIDGET: BaseAppScreen (UI/Navigation/base_app_screen.py) ===== */
 
 
@@ -818,6 +816,7 @@
         min-height: 0;
         padding-top: 0;
     }
+
 
 /* ===== WIDGET: MainNavigationBar (UI/Navigation/main_navigation.py) ===== */
 
@@ -1001,7 +1000,10 @@
         text-style: bold underline;
     }
 
+
 /* ===== WIDGET: LibraryScreen (UI/Screens/library_screen.py) ===== */
+
+
 
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
@@ -1154,7 +1156,12 @@
         min-height: 1;
         content-align: center middle;
     }
-
+    LibraryScreen #library-notes-authority {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
+    }
     /* Presentation-only row wrappers keep the established wide stacked
        workbench. Compact rules below switch only these wrappers to rows. */
     LibraryScreen #library-notes-filter-row,
@@ -1162,29 +1169,31 @@
     LibraryScreen #library-note-heading,
     LibraryScreen #library-note-title-row,
     LibraryScreen #library-note-context-keywords-row,
-    LibraryScreen #library-notes-create-heading,
-    LibraryScreen #library-notes-sync-heading,
-    LibraryScreen #library-notes-sync-folder-row,
-    LibraryScreen #library-notes-sync-direction-row,
-    LibraryScreen #library-notes-sync-conflict-row,
-    LibraryScreen #library-notes-sync-actions {
+    LibraryScreen #library-notes-create-heading {
         layout: vertical;
         height: auto;
         min-height: 0;
     }
 
-    LibraryScreen #library-notes-create-viewport,
-    LibraryScreen #library-notes-sync-viewport {
+    LibraryScreen #library-notes-create-viewport {
         height: 1fr;
         min-height: 0;
         overflow-y: auto;
         overflow-x: hidden;
     }
 
+    /* task-32217 (Qodo #2590 comment 3): NO sizing here. The build scopes this
+       block to `LibraryScreen #library-note-preview-region`, one type selector
+       more specific than the app sheet's bare id, so the old
+       `height: auto / min-height: 12 / max-height: 20` silently outranked the
+       density rule and Preview stayed capped at 20 rows in a 40-row pane while
+       Edit expanded. `#library-note-body` never had a copy here, which is why
+       only Preview was affected. Deleting the three sizing declarations rather
+       than restating them keeps ONE home for the rule: with the app sheet the
+       bare id applies, and without it (harness tests) `VerticalScroll`'s own
+       `height: 1fr` gives the same shape. Chrome stays -- it is the fallback
+       this block exists for. */
     LibraryScreen #library-note-preview-region {
-        height: auto;
-        min-height: 12;
-        max-height: 20;
         margin: 0 0 1 0;
         border: solid $surface-lighten-1;
         overflow-y: auto;
@@ -1225,7 +1234,7 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-canvas {
         padding: 0;
         margin: 0;
         border: none;
@@ -1233,8 +1242,10 @@
         overflow-y: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-canvas {
-        width: 100%;
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-canvas,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-pane {
+        width: 1fr;
+        max-width: 100%;
         height: 100%;
         min-height: 0;
         padding: 0;
@@ -1242,8 +1253,17 @@
         overflow-x: hidden;
         overflow-y: hidden;
     }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-header {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-authority,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-work-authority {
+        height: 2;
+        min-height: 2;
+        max-height: 2;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: wrap;
+        overflow: hidden hidden;
+    }
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-header {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1253,7 +1273,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1261,13 +1281,13 @@
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter-label {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-label {
         width: 8;
         height: 1;
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1276,13 +1296,13 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-browse-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sort-choices,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-transfer-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-selection-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-primary-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-conflict-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-delete-actions {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-browse-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-sort-choices,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-transfer-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-primary-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-actions,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-actions {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1290,7 +1310,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact .library-canvas-action {
+    LibraryScreen #library-shell-grid.library-notes-compact .library-canvas-action {
         width: auto;
         min-width: 0;
         height: 1;
@@ -1301,7 +1321,7 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-status-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1310,7 +1330,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-status {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1320,11 +1340,11 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-filter-clear {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-filter-clear {
         width: auto;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-selection-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-selection-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1332,7 +1352,9 @@
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-list {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-list {
+        width: 1fr;
+        max-width: 100%;
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1341,7 +1363,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-empty {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-empty {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1350,7 +1372,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-heading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-heading {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1359,12 +1381,11 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-editor-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-preview-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-loading-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-create-header,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-header {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-header {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1375,7 +1396,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-editor-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-editor-region {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1383,7 +1404,7 @@
         overflow-y: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-title-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1391,16 +1412,15 @@
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-title-label,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords-label {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title-label,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-title,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-title,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords {
         width: 1fr;
         height: 1;
         min-height: 1;
@@ -1409,7 +1429,7 @@
         border: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-body-label {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-body-label {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1417,7 +1437,7 @@
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-body {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-body {
         height: 1fr;
         min-height: 0;
         max-height: 100%;
@@ -1425,7 +1445,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-preview-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-region {
         height: 1fr;
         min-height: 0;
         max-height: 100%;
@@ -1434,7 +1454,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-preview-body {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-preview-body {
         height: auto;
         min-height: 0;
         margin: 0;
@@ -1444,17 +1464,7 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1463,22 +1473,22 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-region .destination-section,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-meta,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-region > .library-canvas-action {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-meta,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords-row {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-keywords-row {
         layout: horizontal;
         height: 1;
         min-height: 1;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-status {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1488,7 +1498,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status {
+    LibraryScreen #library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -1496,22 +1506,22 @@
         text-overflow: clip;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-transfer-status,
-    LibraryScreen #library-canvas.library-notes-compact #library-note-context-transfer-status {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-transfer-status,
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-transfer-status {
         display: none;
         height: 0;
         min-height: 0;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-conflict-region {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-region {
         height: 3;
         min-height: 3;
         max-height: 3;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-conflict-copy {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-conflict-copy {
         height: 2;
         min-height: 2;
         max-height: 2;
@@ -1519,14 +1529,14 @@
         padding: 0 1;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-delete-confirmation {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirmation {
         height: 2;
         min-height: 2;
         max-height: 2;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-delete-confirm-copy {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1536,7 +1546,7 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-create-heading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-heading {
         layout: horizontal;
         height: 1;
         min-height: 1;
@@ -1544,7 +1554,7 @@
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-create-viewport {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-notes-create-viewport {
         height: 1fr;
         min-height: 0;
         margin: 0;
@@ -1553,40 +1563,23 @@
         overflow-x: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-heading {
-        layout: horizontal;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-viewport {
-        height: 1fr;
-        min-height: 0;
-        margin: 0;
-        padding: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-note-load-state {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-state {
         width: 100%;
-        height: 100%;
+        height: 1fr;
         min-height: 0;
         margin: 0;
         padding: 0;
         overflow: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-load-heading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-load-heading {
         height: 1;
         min-height: 1;
         max-height: 1;
         margin: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-loading {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading {
         height: 1;
         min-height: 1;
         max-height: 1;
@@ -1596,56 +1589,11 @@
         text-overflow: ellipsis;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-note-loading-viewport {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-note-loading-viewport {
         height: 1fr;
         min-height: 0;
         margin: 0;
         overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-purpose,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-actions,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-status {
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-activity {
-        height: auto;
-        min-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-actions {
-        layout: horizontal;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder-label,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-label,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-label {
-        width: 11;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-    }
-
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-choices,
-    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-choices {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
         overflow-x: hidden;
     }
 
@@ -1685,23 +1633,40 @@
         display: none;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-workbench {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-workbench {
         layout: vertical;
-        height: auto;
+        height: 1fr;
+        min-height: 0;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-list,
-    LibraryScreen #library-canvas.library-notes-compact #library-media-preview {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-list {
         width: 100%;
-        height: auto;
+        height: 100%;
+        min-height: 0;
         margin: 0;
         padding: 0;
         overflow-y: hidden;
     }
 
-    LibraryScreen #library-canvas.library-notes-compact #library-media-detail-empty {
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-row-scroll {
+        height: 1fr;
+        min-height: 0;
+    }
+
+    LibraryScreen #library-shell-grid.library-notes-compact .library-media-row {
+        height: 1;
+        min-height: 1;
+        margin: 0;
+    }
+
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-preview {
         display: none;
     }
+
+    LibraryScreen #library-shell-grid.library-notes-compact #library-media-detail-empty {
+        display: none;
+    }
+
 
 /* ===== WIDGET: MCPScreen (UI/Screens/mcp_screen.py) ===== */
 
@@ -1750,6 +1715,42 @@
         text-style: bold underline;
         outline: none;
     }
+
+
+/* ===== WIDGET: ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py) ===== */
+
+
+
+    ModelCatalogConsentModal #model-catalog-consent-dialog {
+        width: 72;
+        height: auto;
+        background: $panel;
+        border: round $accent;
+        padding: 1 2;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-copy {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-actions {
+        height: 3;
+        align-horizontal: right;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-actions Button {
+        min-width: 16;
+        height: 3;
+        border: none;
+        margin-left: 1;
+    }
+
 
 /* ===== WIDGET: PersonasScreen (UI/Screens/personas_screen.py) ===== */
 
@@ -1876,16 +1877,26 @@
     }
 
     PersonasScreen #personas-conversation-actions {
-        height: 3;
-        min-height: 3;
+        height: 9;
+        min-height: 9;
         width: 100%;
     }
 
     PersonasScreen #personas-conversation-actions Button {
-        width: auto;
         min-width: 0;
         height: 3;
-        margin-right: 1;
+        margin: 0;
+    }
+
+    PersonasScreen #personas-conversation-resume,
+    PersonasScreen #personas-conversation-continue-console,
+    PersonasScreen #personas-conversation-navigation-actions {
+        width: 100%;
+        height: 3;
+    }
+
+    PersonasScreen #personas-conversation-navigation-actions Button {
+        width: 1fr;
     }
 
     /* The character dictionaries + world-books sections sit alongside the
@@ -1906,11 +1917,19 @@
         width: 100%;
     }
 
+
 /* ===== WIDGET: ConflictsTab (UI/Screens/scheduling/conflicts_tab.py) ===== */
 
 
     ConflictsTab #scheduling-conflicts-table {
-        height: 1fr;
+        /* 31713 AC#4: a `height: 1fr` table left a handful of conflict
+           rows sitting atop a wall of blank DataTable background in a
+           full-height pushed pane. Bounded to a reasonable row count
+           (independently scrollable beyond it, nothing lost) and the
+           freed space goes to the detail pane below, which is the
+           actually content-rich half of this screen. */
+        height: auto;
+        max-height: 15;
     }
     ConflictsTab #scheduling-conflicts-empty {
         color: $text-muted;
@@ -1921,8 +1940,10 @@
         height: auto;
     }
     ConflictsTab #scheduling-conflict-detail {
-        height: auto;
-        max-height: 9;
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping a version comparison to 9 rows
+           regardless of how much screen is free. */
+        height: 1fr;
         padding: 0 1;
         color: $text;
         border-top: solid $surface-lighten-2;
@@ -1931,11 +1952,56 @@
         color: $text-muted;
     }
 
+
+/* ===== WIDGET: DefinitionAuditView (UI/Screens/scheduling/definition_audit_view.py) ===== */
+
+
+    DefinitionAuditView #scheduling-audit-view-table {
+        height: 1fr;
+    }
+
+
+/* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
+
+
+    ResultsTab #scheduling-results-table {
+        /* 31713 AC#4: same fix as `ConflictsTab`'s table -- a `height:
+           1fr` table left a handful of result rows sitting atop a wall
+           of blank DataTable background in a full-height pushed pane.
+           Bounded to a reasonable row count (independently scrollable
+           beyond it, nothing lost) and the freed space goes to the
+           detail pane below. */
+        height: auto;
+        max-height: 15;
+    }
+    ResultsTab #scheduling-results-empty {
+        color: $text-muted;
+        padding: 2 1;
+        display: none;
+    }
+    ResultsTab #scheduling-results-detail {
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping an answer/evidence/review-metadata
+           readout to 14 rows regardless of how much screen is free. */
+        height: 1fr;
+        padding: 0 1;
+        color: $text;
+        border-top: solid $surface-lighten-2;
+    }
+    ResultsTab .results-detail-muted {
+        color: $text-muted;
+    }
+
+
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
 
     SyncStatusWidget #scheduling-owner-local, SyncStatusWidget #scheduling-owner-server {
         width: auto;
+    }
+    SyncStatusWidget #scheduling-sync-local-note {
+        width: auto;
+        color: $text-muted;
     }
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
@@ -1953,6 +2019,7 @@
     SyncStatusWidget #scheduling-clear-error {
         width: auto;
     }
+
 
 /* ===== WIDGET: TaskDetail (UI/Screens/scheduling/task_detail.py) ===== */
 
@@ -1973,6 +2040,15 @@
         width: 10;
     }
 
+    /* 31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
+       line, value on the next), not paired with a value in a Horizontal --
+       the shared class's fixed 10-column width above wraps them instead of
+       aligning anything. */
+    TaskDetail .scheduling-detail-label-stacked {
+        width: auto;
+        min-width: 0;
+    }
+
     TaskDetail .scheduling-detail-value {
         color: $text;
     }
@@ -1983,192 +2059,928 @@
         height: auto;
     }
 
-/* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */
 
 
-
-
-
-
-
-
-
-    /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
-       that never load the app stylesheet. */
-
-/* ===== WIDGET: PersonasCharacterEditorWidget (Widgets/Persona_Widgets/personas_character_editor_widget.py) ===== */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /* The generation toolbar and preview are `height: auto` so their children
-       are inside the parent's clip region. A fixed-height container leaves the
-       buttons laid out below the clip: they compute a region, render, and are
-       simply not hittable by the mouse. */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /* A compact editor thumbnail box - smaller than the 80x40 chat
-       transcript image box, since this is a single always-visible avatar
-       preview rather than a scrolling message history. No horizontal
-       padding: the mosaic renderable is baked at exactly AVATAR_THUMB_COLS
-       columns, and padding used to shrink the content box below that,
-       folding every line into a black continuation stripe (task-3793). */
-
-
-    /* Import/export set buttons (Roleplay P3d-2 Task 4) - the "Expressions"
-       section header plus its two whole-set actions on one line. Task-563
-       AC1: at narrow terminal widths (120 cols: Import/Export overflow;
-       80 cols: Generate all overflows too) a plain Horizontal hard-clips
-       past its right edge with no way to reach the clipped buttons -
-       Textual has no flex-wrap for a horizontal layout. overflow-x: auto
-       makes the row horizontally scrollable instead (mouse wheel/shift-
-       wheel, or Tab, which auto-scrolls the focused button into view) -
-       the same idiom MainNavigationBar's .main-nav uses for its own
-       button row (UI/Navigation/main_navigation.py). The hidden scrollbar
-       keeps the row's height at 1 line rather than reserving a visible
-       scrollbar track. */
-
-
-    /* Static defaults to 1fr with no width set, which would otherwise let
-       this header claim the whole row and push every action button in it
-       (Style readout/pick, Generate all, Import/Export set) past the row's
-       right edge - permanently unreachable since Horizontal doesn't wrap. */
-
-
-
-
-    /* Image-gen P3 Task 4: the current style-template readout, between the
-       "Expressions" header and its action buttons. */
-
-
-    /* Expression authoring slots (Roleplay P3d-1 Task 4) - one row per
-       state, structurally mirroring the avatar-row + avatar-thumb pair
-       above (label/hint/buttons on one line, the thumbnail box below). */
-
-
-
-
-
-
-
-
-
-
-    /* Same box as #personas-char-editor-avatar-thumb above - Task 4 reuses
-       PersonasScreen._fit_avatar_cell_size/_build_avatar_pixels unchanged
-       for the expression thumbnails, so the box must match (padding-free
-       for the same fold-into-stripes reason, task-3793). */
-
-
-
-
-
-
-
-
-
-
-    /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
-       that never load the app stylesheet. */
-
-/* ===== WIDGET: PersonasInspectorPane (Widgets/Persona_Widgets/personas_inspector_pane.py) ===== */
-
-    /* Portrait box for the selected character. Sized like the editor's
-       thumbnail rather than the 80x40 transcript image box: this is a single
-       always-visible preview, and the rail is narrow. `height: auto` keeps the
-       box from reserving space for selections that have no portrait. No
-       horizontal padding: the mosaic renderable is baked at exactly
-       AVATAR_THUMB_COLS columns, and padding used to shrink the content box
-       below that, folding every line into a black continuation stripe
-       (task-3793). */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /* F-041: a disabled checkbox must still READ as a checkbox. Textual's
-       base *:disabled:can-focus rule dims it to 0.7 and the stock toggle
-       glyph box is panel-on-panel (a dark gap in the rail). Keep the label
-       dimmed per the ds disabled idiom, restore full opacity, and give the
-       glyph box a visible surface. ($text-disabled/$surface are the theme
-       variables the ds-text-disabled/ds-surface-raised tokens alias; widget
-       DEFAULT_CSS cannot see bundle-scoped ds-* names.) */
-
-/* ===== WIDGET: PersonasLibraryPane (Widgets/Persona_Widgets/personas_library_pane.py) ===== */
-
-
-
-
-
-
-
-
-
-    /* The generic Button min-width:16 default would push "next" past the
-       pane's narrow width (2fr of the workbench split); pin the prev/next
-       buttons to a compact width and let the page-info Static fill the rest
-       so the bar never overflows its container. */
-
-
-
-
-    /* F-030: toolbar buttons size to their labels. The Textual Button
-       default min-width:16 let "New" alone fill a narrow pane and clipped
-       Import/Duplicate/Tag off the right edge at supported widths. */
-
-
-    /* F-030 narrow panes: stack each bar vertically so every action wraps
-       onto its own full-width row (a Textual Horizontal never wraps, so one
-       over-wide row would clip instead). */
+/* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
+
+
+    TrajectoryScreen #trajectory-screen {
+        width: 100%;
+        height: 100%;
+        layout: vertical;
+        padding: 0 1;
+    }
+    TrajectoryScreen #trajectory-title {
+        height: auto;
+        max-height: 3;
+        color: $text;
+        background: $panel;
+    }
+    TrajectoryScreen #trajectory-state {
+        height: auto;
+        min-height: 1;
+        max-height: 4;
+        color: $text-muted;
+    }
+    TrajectoryScreen #trajectory-search {
+        height: 3;
+    }
+    TrajectoryScreen #trajectory-table {
+        height: 1fr;
+        min-height: 3;
+    }
+    TrajectoryScreen #trajectory-inspector {
+        height: 40%;
+        max-height: 40%;
+        border-top: solid $primary;
+        padding: 0 1;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+    TrajectoryScreen #trajectory-inspector:focus {
+        border-top: heavy $accent;
+    }
+    TrajectoryScreen #trajectory-inspector-content {
+        width: 100%;
+        height: auto;
+    }
+    TrajectoryScreen #trajectory-inspector-overflow {
+        height: 1;
+        color: $text-muted;
+    }
+
+
+
+    TrajectoryScreen #trajectory-hints {
+        height: 1;
+        color: $text-disabled;
+    }
+
+
+/* ===== WIDGET: TraceFilterBar (UI/Widgets/trace_filter_bar.py) ===== */
+
+
+    TraceFilterBar #trace-filter-wide { width: 1fr; height: 3; }
+    TraceFilterBar #trace-filter-counts { width: 20; height: 3; content-align: left middle; color: $text-muted; }
+
+    TraceFilterBar #trace-filter-compact { width: 1fr; height: 1; color: $text-muted; }
+
+
+
+/* ===== WIDGET: ConsoleActivityOutcomeNotice (Widgets/Console/console_activity_outcome_notice.py) ===== */
+
+
+    ConsoleActivityOutcomeNotice #console-activity-outcome-copy {
+        width: 1fr;
+        height: 1;
+    }
+    ConsoleActivityOutcomeNotice #console-activity-outcome-mark-seen {
+        width: 11;
+        min-width: 11;
+        height: 1;
+        min-height: 1;
+        border: none;
+    }
+    ConsoleActivityOutcomeNotice #console-activity-outcome-dismiss {
+        width: 3;
+        min-width: 3;
+        height: 1;
+        min-height: 1;
+        border: none;
+    }
+
+
+/* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
+
+
+
+    AutoSpeakConsentModal #console-auto-speak-consent-modal {
+        width: 68;
+        max-width: 95%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    AutoSpeakConsentModal #console-auto-speak-consent-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: GlobalFullCaptureConfirmation (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+
+    GlobalFullCaptureConfirmation #global-full-confirmation {
+        width: 72; max-width: 96%; height: 18; max-height: 96%;
+        border: thick $error; background: $surface; padding: 1 2;
+    }
+    GlobalFullCaptureConfirmation #global-full-title { text-style: bold; text-align: center; }
+    GlobalFullCaptureConfirmation #global-full-body { height: 1fr; scrollbar-gutter: stable; }
+    GlobalFullCaptureConfirmation #global-full-message, GlobalFullCaptureConfirmation #global-full-ack { height: auto; margin-top: 1; }
+    GlobalFullCaptureConfirmation #global-full-actions { height: 3; min-height: 3; align-horizontal: right; }
+    GlobalFullCaptureConfirmation #global-full-actions Button { min-width: 14; margin-left: 1; }
+
+
+/* ===== WIDGET: ConsoleTracePrivacyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+
+    ConsoleTracePrivacyDialog #trace-privacy-dialog {
+        width: 76; max-width: 96%; height: 24; max-height: 96%;
+        border: tall $primary; background: $surface; padding: 1 2;
+    }
+    ConsoleTracePrivacyDialog #trace-privacy-title { height: 1; text-style: bold; }
+    ConsoleTracePrivacyDialog #trace-privacy-help, ConsoleTracePrivacyDialog #trace-privacy-effective, ConsoleTracePrivacyDialog #trace-privacy-status {
+        height: auto;
+    }
+    ConsoleTracePrivacyDialog #trace-privacy-body { height: 1fr; scrollbar-gutter: stable; }
+    ConsoleTracePrivacyDialog #trace-privacy-actions { height: 3; min-height: 3; align-horizontal: right; }
+    ConsoleTracePrivacyDialog #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
+    ConsoleTracePrivacyDialog #trace-privacy-status.-error { color: $error; }
+
+
+/* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
+
+
+    ConsoleConversationInspector #console-inspector-modal {
+        width: 110; max-width: 95%; height: 42; max-height: 90%;
+        border: tall gray; padding: 1 2;
+    }
+    ConsoleConversationInspector #console-inspector-header { height: auto; }
+    ConsoleConversationInspector #console-inspector-policy-status { height: auto; color: $text-muted; }
+    ConsoleConversationInspector #console-inspector-tabs { height: 1fr; margin-top: 1; }
+    ConsoleConversationInspector #console-inspector-costs-rows { height: 1fr; }
+    ConsoleConversationInspector .console-inspector-cost-row { height: auto; }
+    ConsoleConversationInspector #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
+    ConsoleConversationInspector #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
+    ConsoleConversationInspector #console-inspector-capture-status { height: auto; color: yellow; }
+    ConsoleConversationInspector #console-inspector-exchange-turns { height: 1fr; }
+    ConsoleConversationInspector .console-inspector-exchange-turn { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-call { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-section { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-message { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-call-actions { height: auto; margin-bottom: 1; }
+    ConsoleConversationInspector #console-inspector-actions { height: auto; margin-top: 1; }
+    /* Next Send tab (task-10, ported from the retired context modal).
+       LY-13 (TASK-2154.23) compacted the OLD modal's own top-level frame
+       to content when there was nothing to show yet; DROPPED here (task-10
+       review finding 1) -- the outer modal frame is now shared with the
+       Costs/Exchange tabs and stays a fixed height regardless of this
+       pane's state, so there was nothing left for a pane-scoped "auto"
+       height to compact (measured identically empty vs. populated). */
+    ConsoleConversationInspector #console-inspector-next-send-pane { height: 1fr; }
+    ConsoleConversationInspector #console-inspector-next-send-header { height: auto; }
+    ConsoleConversationInspector #console-inspector-next-send-warning { height: auto; color: yellow; }
+    ConsoleConversationInspector #console-inspector-next-send-loading { display: none; }
+    ConsoleConversationInspector #console-inspector-next-send-loading.loading { display: block; }
+    ConsoleConversationInspector #console-inspector-next-send-tabs { height: 1fr; }
+    ConsoleConversationInspector #console-inspector-next-send-actions { height: auto; }
+
+
+/* ===== WIDGET: ConsoleFeedbackCommentModal (Widgets/Console/console_feedback_comment_modal.py) ===== */
+
+
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-modal {
+        width: 56;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-quote {
+        height: 5;
+        border: round gray;
+        padding: 0 1;
+        margin: 1 0;
+        color: $text-muted;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-input {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-cancel,
+    ConsoleFeedbackCommentModal #console-feedback-comment-submit {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
+
+/* ===== WIDGET: ConsoleForkChatModal (Widgets/Console/console_fork_chat_modal.py) ===== */
+
+
+
+    ConsoleForkChatModal #console-fork-chat-modal {
+        width: 74;
+        max-width: 96%;
+        height: 28;
+        max-height: 96%;
+        border: round $primary;
+        background: $panel;
+        padding: 1 2;
+        overflow-y: hidden;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-content {
+        height: 1fr;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        scrollbar-gutter: stable;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-heading {
+        text-style: bold;
+        color: $text;
+        height: 1;
+    }
+
+    ConsoleForkChatModal .console-fork-chat-summary {
+        height: auto;
+        color: $text-muted;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-boundary {
+        color: $text;
+        margin-top: 1;
+        max-height: 2;
+        text-overflow: ellipsis;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-destination {
+        color: $accent;
+        margin-top: 1;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-warning {
+        color: $warning;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-disclosure {
+        width: auto;
+        min-width: 20;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        margin-top: 1;
+        border: none;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-exclusions {
+        display: none;
+        height: auto;
+        color: $text-muted;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-name-label {
+        margin-top: 1;
+        height: 1;
+        text-style: bold;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-title {
+        width: 100%;
+        height: 3;
+        border: round $surface-lighten-1;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-title:focus {
+        border: round $accent;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-status {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-status:focus {
+        background: $accent 10%;
+        color: $text;
+        text-style: bold;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-actions {
+        width: 100%;
+        height: 3;
+        align-horizontal: right;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-actions Button {
+        width: auto;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
+    ConsoleForkChatModal #console-fork-chat-open {
+        display: none;
+    }
+
+
+
+/* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
+
+
+
+    ConsoleLibraryAccessModal #console-library-access {
+        width: 76;
+        max-width: 96%;
+        height: 34;
+        max-height: 96%;
+        border: tall $border;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    ConsoleLibraryAccessModal #console-library-access-body {
+        height: 1fr;
+        min-height: 0;
+        max-height: 24;
+        scrollbar-gutter: stable;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-axis {
+        height: auto;
+        margin: 1 0;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-local,
+    ConsoleLibraryAccessModal .console-library-access-axis-copy {
+        height: auto;
+        color: $text-muted;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-local {
+        margin-bottom: 1;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-axis-title {
+        height: auto;
+        text-style: bold;
+    }
+
+    ConsoleLibraryAccessModal .console-library-access-actions {
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        margin-top: 1;
+    }
+
+    ConsoleLibraryAccessModal #console-library-access .console-library-access-actions Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        border: none;
+        padding: 0;
+        margin-right: 1;
+    }
+
+    ConsoleLibraryAccessModal #library-access-feedback {
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+
+/* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ConsoleProjectInstructionStatusRow #console-project-instruction-status-button {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+    }
+    ConsoleProjectInstructionStatusRow #console-project-instruction-status-button:focus {
+        outline: heavy $accent;
+    }
+
+
+/* ===== WIDGET: ConsoleProjectInstructionContextPanel (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ConsoleProjectInstructionContextPanel .console-project-instruction-meta { height: auto; color: $text-muted; }
+    ConsoleProjectInstructionContextPanel #console-project-instruction-recovery-actions { height: 1; margin-top: 1; }
+    ConsoleProjectInstructionContextPanel .console-project-instruction-recovery-action {
+        width: auto;
+        min-width: 10;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+    }
+
+
+/* ===== WIDGET: ProjectInstructionSetupModal (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ProjectInstructionSetupModal #console-project-setup-modal {
+        width: 90%;
+        max-width: 76;
+        height: auto;
+        max-height: 80%;
+        border: tall $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+    ProjectInstructionSetupModal #console-project-binding-list { height: auto; max-height: 14; }
+    ProjectInstructionSetupModal .console-project-binding-option { width: 100%; height: 1; min-height: 1; }
+    ProjectInstructionSetupModal .console-project-binding-recovery { height: auto; color: $text-muted; }
+    ProjectInstructionSetupModal #console-project-setup-actions { height: 1; margin-top: 1; }
+
+
+/* ===== WIDGET: ProjectInstructionNoticeModal (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ProjectInstructionNoticeModal #console-project-notice-modal {
+        width: 90%;
+        max-width: 76;
+        height: auto;
+        max-height: 80%;
+        border: tall $warning;
+        background: $panel;
+        padding: 1 2;
+    }
+    ProjectInstructionNoticeModal .console-project-notice-copy { height: auto; }
+    ProjectInstructionNoticeModal #console-project-notice-actions { height: 1; margin-top: 1; }
+
+
+/* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
+
+
+
+    ConsoleReactionPickerModal #console-reaction-picker-modal {
+        width: 76;
+        max-width: 100%;
+        height: 30;
+        max-height: 100%;
+        border: tall $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-filter {
+        width: 100%;
+        height: 3;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-count {
+        width: 100%;
+        height: 1;
+        color: $text-muted;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-body {
+        width: 100%;
+        height: 1fr;
+        min-height: 4;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-results {
+        width: 2fr;
+        height: 100%;
+        min-width: 0;
+        background: $surface-darken-1;
+    }
+
+    ConsoleReactionPickerModal .console-reaction-picker-row {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+        margin: 0;
+        background: $surface;
+        color: $text;
+        content-align: left middle;
+        text-align: left;
+    }
+
+    ConsoleReactionPickerModal .console-reaction-picker-row-highlighted {
+        background: $accent 25%;
+        color: $text;
+        text-style: bold;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview {
+        width: 1fr;
+        height: 100%;
+        min-width: 0;
+        margin-left: 1;
+        padding: 1;
+        background: $surface;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview-label {
+        width: 100%;
+        height: auto;
+        text-style: bold;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview-meta {
+        width: 100%;
+        height: auto;
+        color: $text-muted;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview-image {
+        width: 100%;
+        height: 1fr;
+        content-align: center middle;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-actions {
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-actions Button {
+        width: 1fr;
+        height: 3;
+        border: none;
+        margin: 0 1 0 0;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-select {
+        background: $primary;
+        color: $text;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-clear,
+    ConsoleReactionPickerModal #console-reaction-picker-cancel {
+        background: $surface;
+        color: $text;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-actions Button:focus {
+        outline: heavy $accent;
+    }
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleReviewNotesModal (Widgets/Console/console_review_notes_modal.py) ===== */
+
+
+
+    ConsoleReviewNotesModal #console-review-notes-modal {
+        width: 76;
+        max-height: 90%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-header {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-list {
+        height: auto;
+        max-height: 26;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-row {
+        height: auto;
+        border: round gray;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-comment {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-edit {
+        height: 5;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-meta {
+        color: $text-muted;
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-actions {
+        height: 3;
+        min-height: 3;
+        align-horizontal: right;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-actions Button {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+        margin-left: 1;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-close-bar {
+        height: 3;
+        min-height: 3;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-close {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
+
+/* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
+
+
+
+    ConsoleSideChatModal #console-side-chat-modal {
+        width: 92;
+        height: 30;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleSideChatModal #console-side-chat-identity {
+        height: auto;
+        color: gray;
+    }
+
+    ConsoleSideChatModal #console-side-chat-quote {
+        height: 5;
+        border: round gray;
+        padding: 0 1;
+        margin: 1 0;
+        color: $text-muted;
+    }
+
+    ConsoleSideChatModal #console-side-chat-prompt {
+        height: 3;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleSideChatModal #console-side-chat-reply-scroll {
+        height: 1fr;
+        min-height: 3;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleSideChatModal #console-side-chat-status {
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
+    }
+
+    ConsoleSideChatModal #console-side-chat-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    ConsoleSideChatModal #console-side-chat-close,
+    ConsoleSideChatModal #console-side-chat-retry,
+    ConsoleSideChatModal #console-side-chat-send,
+    ConsoleSideChatModal #console-side-chat-stop {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
+
+/* ===== WIDGET: ConsoleSummarizePreviewModal (Widgets/Console/console_summarize_preview_modal.py) ===== */
+
+
+
+    ConsoleSummarizePreviewModal #console-summarize-preview-modal {
+        width: 64;
+        max-width: 95%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleSummarizePreviewModal #console-summarize-preview-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: LibraryMediaCanvas (Widgets/Library/library_media_canvas.py) ===== */
+
+    /* task-30043: the multi-row action grammar needs CONTENT-width buttons.
+     * Textual Button's 16-cell min-width floor alone would overflow the
+     * pane's 40-col floor (six floors = 96 cells); each row's label budget
+     * is what keeps task-28025's fit contract true. Baseline geometry lives
+     * here so harnesses without the app bundle lay out like the app. */
+    LibraryMediaCanvas .ds-toolbar > .library-canvas-action,
+    LibraryMediaCanvas .ds-toolbar > .library-toolbar-count {
+        width: auto;
+        min-width: 0;
+    }
+    /* task-31224: Textual Input defaults to width 100%, which consumed the
+     * whole filter row and pushed "Clear filter" off-screen -- the one
+     * honest recovery for a filter miss was invisible (live: it never
+     * rendered at any width). Share the row instead. */
+    LibraryMediaCanvas #library-media-filter {
+        width: 1fr;
+    }
+    LibraryMediaCanvas #library-media-filter-clear {
+        width: auto;
+        min-width: 0;
+    }
+    /* task-31270: receipts are two rows, full width; the copy wraps and the
+     * action row keeps content-width buttons so Undo/Dismiss always paint. */
+    LibraryMediaCanvas .library-media-receipt {
+        width: 100%;
+        height: auto;
+    }
+    LibraryMediaCanvas .library-media-receipt > .library-media-receipt-copy {
+        width: 100%;
+        height: auto;
+    }
+    LibraryMediaCanvas .library-media-receipt > .library-media-receipt-actions {
+        width: 100%;
+        height: auto;
+    }
+    /* Task 8: same trap as #library-media-filter above -- Input defaults to
+     * width 100%, which inside a row Horizontal would blow the label off
+     * to the side. */
+    LibraryMediaCanvas .library-media-speaker-row {
+        width: 100%;
+        height: auto;
+    }
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
+    LibraryMediaCanvas Static.library-media-speaker-label {
+        width: auto;
+        min-width: 0;
+    }
+    LibraryMediaCanvas Input.library-media-speaker-input {
+        width: 1fr;
+    }
+
+
+/* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
+
+
+
+    LibraryNoteFolderNameDialog #library-note-folder-dialog-actions { height: auto; align-horizontal: right; }
+
+
+/* ===== WIDGET: LibraryNoteFolderTargetDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
+
+
+
+    LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
+
+
+/* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
+
+
+    /* ID subject, not `... > Vertical`: an ancestor-scoped bare-type rule
+     * would trip the CSS fast-path ratchet (275 > 274, UI latency CI). */
+    LibraryReviewSetPickerDialog #library-review-set-picker-dialog {
+        width: 72; max-height: 80%; height: auto; padding: 1 2;
+        border: tall $accent; background: $surface;
+    }
+    LibraryReviewSetPickerDialog #library-review-set-picker-rows { height: auto; max-height: 20; }
+    LibraryReviewSetPickerDialog .library-review-set-row { height: auto; }
+    LibraryReviewSetPickerDialog .library-review-set-open { width: 1fr; }
+    LibraryReviewSetPickerDialog #library-review-set-picker-actions { height: auto; align-horizontal: right; }
+
+
+/* ===== WIDGET: ProjectSkillsImportModal (Widgets/project_skills_import_modal.py) ===== */
+
+
+
+    ProjectSkillsImportModal #project-skills-modal {
+        width: 76;
+        height: auto;
+        max-height: 34;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ProjectSkillsImportModal #project-skills-provenance {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-trust-line {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-post-trust-line {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-rows {
+        height: auto;
+        max-height: 18;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-results {
+        height: auto;
+        max-height: 18;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-footer {
+        color: $text-muted;
+        height: auto;
+    }
+
+    ProjectSkillsImportModal #project-skills-actions {
+        height: auto;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: WorkspaceCreateModal (Widgets/workspace_create_modal.py) ===== */
+
+
+
+    WorkspaceCreateModal #workspace-create-modal {
+        width: 72;
+        height: auto;
+        max-height: 32;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    WorkspaceCreateModal #workspace-create-explainer {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    WorkspaceCreateModal #workspace-create-error {
+        color: $error;
+        height: auto;
+    }
+
+    WorkspaceCreateModal #workspace-create-folder-row {
+        height: auto;
+    }
+
+    WorkspaceCreateModal #workspace-create-folder-path {
+        width: 1fr;
+    }
+
+    WorkspaceCreateModal #workspace-create-actions {
+        height: auto;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    WorkspaceCreateModal #workspace-create-folder-list {
+        height: auto;
+    }
+
+    WorkspaceCreateModal .workspace-create-folder-item {
+        height: auto;
+    }
+
+    WorkspaceCreateModal .workspace-create-folder-locator {
+        width: 1fr;
+        content-align: left middle;
+    }

@@ -28,6 +28,10 @@ ALLOWED_SERVER_CREATE_SOURCE_TYPES = (
     "git_repository",
 )
 
+#: Fields the Library Media browse filter searches (TASK-31274). The empty
+#: state and the input placeholder name exactly these, so keep them in step.
+LIBRARY_BROWSE_SEARCH_FIELDS = ("title", "content", "keywords")
+
 _LOCAL_UNSUPPORTED_CAPABILITIES = [
     {
         "operation_id": "media.web_content_ingest.local",
@@ -499,6 +503,13 @@ class MediaReadingScopeService:
 
     @staticmethod
     def _normalize_local_library_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+        """Project one local row onto the exact seven-key browse contract.
+
+        ``has_analysis`` arrives from SQLite's ``EXISTS`` as 1/0 and is
+        narrowed to a real bool the row validator accepts. ``reviewed`` is
+        not a media-DB fact -- it stays ``None`` here and the Library screen
+        decorates it from the active review set (task-28008).
+        """
         backing_media_id = record.get("id")
         return {
             "id": f"local:media:{backing_media_id}",
@@ -506,6 +517,21 @@ class MediaReadingScopeService:
             "title": record.get("title"),
             "media_type": record.get("type"),
             "updated_at": record.get("last_modified"),
+            "has_analysis": bool(record.get("has_analysis")),
+            "reviewed": None,
+        }
+
+    @staticmethod
+    def _normalize_local_library_trash_summary(
+        item: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        backing_id = item["id"]
+        return {
+            "id": f"local:media:{backing_id}",
+            "backing_media_id": backing_id,
+            "title": str(item.get("title") or "").strip() or "Untitled",
+            "media_type": str(item["type"]).strip() if item.get("type") else None,
+            "trash_date": str(item["trash_date"]) if item.get("trash_date") else None,
         }
 
     def _resolve_backing_media_id(
@@ -702,6 +728,7 @@ class MediaReadingScopeService:
         offset: int = 0,
         id_allowlist: Optional[Sequence[Any]] = None,
         library_summary: bool = False,
+        match_reasons: bool = False,
         **filters: Any,
     ) -> dict[str, Any]:
         """Search media, optionally restricted to a caller-provided id allowlist.
@@ -712,6 +739,12 @@ class MediaReadingScopeService:
                 backend's existing ``media_ids_filter`` filter kwarg; only
                 added to ``filters`` when provided, so unscoped callers keep
                 the exact legacy call shape.
+            match_reasons: Whether this caller wants task-28008's
+                keyword-only reason side channel. Forwarded only with
+                ``library_summary`` (the channel's only shape) and only when
+                asked, so the "Review these" enumeration loop -- which pages
+                the same scope and discards them -- stops paying one extra
+                SELECT per page (Qodo on #2475).
         """
         normalized_mode = self._normalize_mode(mode)
         if library_summary:
@@ -740,6 +773,15 @@ class MediaReadingScopeService:
         if library_summary:
             filters = dict(filters)
             filters["library_summary"] = True
+            if match_reasons:
+                filters["match_reasons"] = True
+            if query and "fields" not in filters:
+                # TASK-31274: the Library Media filter searches keywords too --
+                # set here rather than at either call site so the list and
+                # "Review these" (which pages the same scope) can never search
+                # different fields. Only with a query, so the unfiltered browse
+                # keeps its exact legacy SQL.
+                filters["fields"] = list(LIBRARY_BROWSE_SEARCH_FIELDS)
         payload = await self._call_local_leaf(
             normalized_mode,
             service,
@@ -765,6 +807,16 @@ class MediaReadingScopeService:
                     else item
                     for item in raw_items
                 ]
+            raw_reasons = payload.get("match_reasons")
+            if isinstance(raw_reasons, Mapping):
+                # task-28008: why a keyword-only row is on this page, re-keyed
+                # onto the same canonical stable ids the rows carry. A
+                # per-QUERY fact, so it travels BESIDE the rows -- the summary
+                # contract is per-row identity and stays exactly seven keys.
+                result["match_reasons"] = {
+                    f"local:media:{backing_id}": str(keyword)
+                    for backing_id, keyword in raw_reasons.items()
+                }
             return result
         raw_items = (
             list(payload.get("items", []))
@@ -2416,6 +2468,49 @@ class MediaReadingScopeService:
                 )
             )
         )
+
+    async def list_library_media_trash(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        query: str = "",
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List local trashed media using the canonical library envelope."""
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != MediaReadingBackend.LOCAL:
+            raise ValueError("Library Media Trash requires local mode.")
+        self._enforce_policy(
+            self._media_item_subresource_action_id(normalized_mode, "trash", "list")
+        )
+        service = self._service_for_mode(normalized_mode)
+        payload = await self._call_local_leaf(
+            normalized_mode,
+            service,
+            "list_library_media_trash",
+            query=query,
+            media_type=media_type,
+            limit=limit,
+            offset=offset,
+        )
+        if not isinstance(payload, Mapping):
+            return payload
+        result = {
+            key: payload[key]
+            for key in ("items", "total", "limit", "offset", "types")
+            if key in payload
+        }
+        raw_items = result.get("items")
+        if isinstance(raw_items, list):
+            result["items"] = [
+                self._normalize_local_library_trash_summary(item)
+                if isinstance(item, Mapping)
+                else item
+                for item in raw_items
+            ]
+        return result
 
     async def empty_media_trash(
         self, *, mode: MediaReadingBackend | str | None = None

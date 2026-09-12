@@ -1,0 +1,600 @@
+"""Subprocess worker: PCM -> speaker id. torch/SpeechBrain live ONLY here.
+
+Fix round 2 (re-review 1, Minor 3): this module's own scope is import-cheap
+(stdlib only -- json/math/os/sys/typing); the app process already reads
+`MODEL_ID`/`ENGINES` from it directly (`diarizer_local.py`, task 4: 31827).
+torch (or sherpa-onnx, for the ONNX engine) is never imported at this
+module's own scope -- `main()` and the engine modules it imports by name
+(`ENGINES[engine]`) are the only places either ever loads. `main()` is run
+as ``python -m tldw_chatbook.Audio.diarizer_worker`` by
+`diarizer_local.SpeechBrainDiarizer`, which owns the wire protocol:
+
+    argv  :  ``--start-id N`` (optional) -- start cluster numbering past ``N``.
+             Set only on a RESTART, so the replacement worker cannot re-mint
+             an id the dead one already handed out (31749). ``--engine NAME``
+             (optional, default ``speechbrain``) -- which `ENGINES` entry's
+             module to `load()` (task 1: 31827).
+    stdin :  one JSON control line per command; an "assign" or "enroll_from_pcm"
+             line is followed by exactly ``n`` bytes of raw PCM16 (16 kHz mono).
+             ``export_centroid``/``enroll_from_pcm`` also carry an ``op_id``,
+             echoed back on the reply (31826 fix round 1, Critical 1 -- lets
+             the app drop a late reply for a call it already gave up on).
+    stdout:  one ``{"id": ..., "seq": ..., "self": ...}`` line per assign (the
+             ``seq`` is echoed so the app can discard a reply whose window
+             already gave up); ``{"segments": [...], "self": ...}`` for a
+             diarize; ``{"centroid": [...] | null, "seconds": ..., "op_id":
+             ...}`` for ``export_centroid`` / ``enroll_from_pcm`` (``op_id``
+             echoed on every reply, including the framed-error fallback).
+             ``enroll`` and ``pin`` send no reply.
+    stderr:  ``READY`` once the ECAPA model is warm; ``ERROR <op> <type>`` on a
+             per-command failure. Never PCM, text, names, or paths -- and
+             never the voiceprint vector (spec §3.2/§6).
+
+The worker holds the live `OnlineClusterer` for the whole meeting. On a
+``diarize`` command it clusters the whole file (batch), computes final
+centroids, reconciles them against the live centroids, and returns segments
+whose ``speaker`` is already the live cluster id -- so reconciliation lives
+here, never in the session (spec §3.3).
+
+Self-voiceprint matching (spec §3.2, 31826 task 2): ``enroll`` holds a
+voiceprint vector plus its own (stricter) match threshold and a minimum
+accumulated-seconds gate in memory for this process only -- never persisted,
+never logged. ``assign`` and ``diarize`` replies then carry a ``self`` field
+matched against that voiceprint; ``export_centroid`` and ``enroll_from_pcm``
+hand the app process a centroid to persist itself (`Audio/voiceprint.py`).
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import sys
+from typing import Callable, NamedTuple
+
+# Import-free alias of the SpeechBrain model id (task 1: 31827) -- kept here
+# because `meeting_owner.py` still reads `diarizer_worker.MODEL_ID` until
+# Task 5 moves callers onto `diarizer_local.model_id_for()`. The SpeechBrain
+# engine module owns the real `MODEL` constant it loads from.
+MODEL_ID = "speechbrain/spkrec-ecapa-voxceleb@unpinned"
+#: Largest PCM payload any command may declare: 10 minutes of 16 kHz mono
+#: PCM16 (16000 * 2 bytes * 600 s). The app sends at most one `assign`
+#: window (a few seconds) or one enrollment sample (30 s), so this is a
+#: sanity ceiling, not a working limit.
+MAX_PCM_BYTES = 19_200_000
+MIN_SAMPLE_RATE = 8000
+MAX_SAMPLE_RATE = 192000
+
+#: Engine name -> the module `main()` imports to load it (task 1: 31827).
+#: `diarizer_engine_onnx` does not exist yet (a later task); naming it here
+#: is harmless -- it is only imported when `--engine onnx` actually runs.
+ENGINES = {
+    "speechbrain": "tldw_chatbook.Audio.diarizer_engine_speechbrain",
+    "onnx": "tldw_chatbook.Audio.diarizer_engine_onnx",
+}
+
+
+class LoadedEngine(NamedTuple):
+    """What an engine module's `load(live, max_speakers)` hands back to `main()`.
+
+    `serve()` never learns which engine is running -- it only ever calls
+    `embed`/`batch` (spec §2).
+    """
+    embed: Callable[[bytes, int], list]
+    batch: Callable[[str, float, float], tuple]
+    model_id: str
+    #: The cosine distance the LIVE clusterer should treat as "same voice"
+    #: for this engine (task 8: 31827). Was a single constant tuned for
+    #: ECAPA; measured on a titanet_small stream it minted S1..S8 inside the
+    #: first 30 s, so each engine now carries its own. The default is the
+    #: pre-existing value, so an engine that does not set one (SpeechBrain)
+    #: behaves exactly as before.
+    live_threshold: float = 0.25
+
+
+def _read_exactly(stream, n: int) -> bytes:
+    """Read exactly ``n`` bytes (PCM is length-prefixed by the control line)."""
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = stream.read(n - len(buf))
+        if not chunk:
+            break
+        buf.extend(chunk)
+    return bytes(buf)
+
+
+def _framing(cmd) -> tuple[int, int]:
+    """Validate a PCM command's ``n``/``sr`` BEFORE a byte is read (Qodo 2).
+
+    Args:
+        cmd: The parsed control line of an ``assign``/``enroll_from_pcm``.
+
+    Returns:
+        ``(n, sr)`` -- the payload length in bytes and the sample rate.
+
+    Raises:
+        ValueError: ``n`` is not an even integer in ``[0, MAX_PCM_BYTES]``, or
+            ``sr`` is not an integer in ``[MIN_SAMPLE_RATE, MAX_SAMPLE_RATE]``
+            (``int()`` raises the same type for a non-numeric field). The
+            caller's framed-error path answers the command and moves on
+            WITHOUT reading the payload: an over-long ``n`` parked
+            `_read_exactly` on bytes that never arrive, and every later
+            command -- the Stop-pass `diarize` included -- queued behind it.
+    """
+    n = int(cmd.get("n", 0))
+    sr = int(cmd.get("sr", 16000))
+    if not (MIN_SAMPLE_RATE <= sr <= MAX_SAMPLE_RATE):
+        raise ValueError("sample rate out of range")
+    if not (0 <= n <= MAX_PCM_BYTES) or n % 2:
+        raise ValueError("payload length out of range")
+    return n, sr
+
+
+def _unit(v) -> list[float] | None:
+    """Unit-normalise a float-iterable (list or numpy array); ``None`` for a
+    zero-magnitude vector (review round 1, Minor 9 -- never hand the app a
+    dead voiceprint it would happily persist).
+
+    Pure Python (``math`` only): `serve()` must not import
+    `Audio/voiceprint.py` (drags the encryption stack into the diarizer
+    subprocess) or use numpy at its own scope (review round 1, Minor 6/7).
+    """
+    values = [float(x) for x in v]
+    magnitude = math.sqrt(sum(x * x for x in values))
+    if magnitude == 0.0:
+        return None
+    return [x / magnitude for x in values]
+
+
+def _cos_dist(a, b) -> float:
+    """1 - cosine similarity between two float-iterables; ``1.0`` (max
+    distance) if either is a zero vector. Pure Python, on lists -- mirrors
+    `diarizer_cluster._cos`'s zero-safety without importing a private name
+    across modules (review round 1, Minor 5/10)."""
+    a = [float(x) for x in a]; b = [float(x) for x in b]
+    if len(a) != len(b):
+        # Strict on purpose (final re-review): `zip` would silently compare
+        # the first k dims of a wrong-dimension voiceprint and could "match"
+        # a stranger on the Stop pass. The caller frames this as a
+        # matching-off condition, exactly like `assign`'s guard.
+        raise ValueError("dimension mismatch")
+    na = math.sqrt(sum(x * x for x in a)); nb = math.sqrt(sum(x * x for x in b))
+    if na == 0.0 or nb == 0.0:
+        return 1.0
+    return 1.0 - sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+
+def _seconds_by_speaker(segs) -> dict[str, float]:
+    """Sum each segment's duration into its speaker id (review round 1,
+    Important 3: `export_centroid`'s batch-sourced ``seconds`` is computed
+    from `diarize`'s own segments, not the live clusterer, which never saw a
+    Stop-pass-only id and would otherwise report a silent ``0.0``)."""
+    out: dict[str, float] = {}
+    for s in segs:
+        out[s["speaker"]] = out.get(s["speaker"], 0.0) + (s["end_s"] - s["start_s"])
+    return out
+
+
+def _parse_args(argv) -> tuple[int, str]:
+    """``--start-id N`` / ``--engine NAME`` -> ``(start_id, engine)``.
+
+    Replaces `_parse_start_id` (task 1: 31827). ``--start-id`` keeps its old
+    behavior verbatim: 0 when absent or garbled. Written by
+    `diarizer_local.SpeechBrainDiarizer._command` when it restarts a dead
+    worker, so this one continues the first worker's numbering (31749).
+
+    ``--engine`` defaults to ``"speechbrain"`` (so an old spawn command
+    without the flag still works, spec §2). Unlike ``--start-id``, a name not
+    in `ENGINES` is a hard `ValueError` -- `main()`'s existing load-failure
+    handling frames it as ``ERROR load ValueError`` and exits 1; a wrong
+    engine must never silently fall back to a different one.
+    """
+    argv = list(argv)
+    try:
+        start_id = max(0, int(argv[argv.index("--start-id") + 1]))
+    except (ValueError, IndexError, TypeError):
+        start_id = 0
+    engine = "speechbrain"
+    if "--engine" in argv:
+        try:
+            engine = argv[argv.index("--engine") + 1]
+        except IndexError:
+            raise ValueError("--engine requires a value")
+    if engine not in ENGINES:
+        raise ValueError(f"unknown engine: {engine}")
+    return start_id, engine
+
+
+def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=0.25, start_id=0,
+                        out_centroids=None):
+    """Pure (no torch): cluster window embeddings, reconcile to live ids.
+
+    The authoritative Stop pass. ``cluster_fn(embeddings, num_speakers)`` is the
+    project's batch agglomerative pass -- its labels can differ from (and so
+    correct) the greedy live labels, which is the whole point of reconciliation.
+
+    The batch speaker count is decided by ``cluster_fn`` ITSELF (called with
+    ``None``), which runs the service's single-speaker check and silhouette
+    estimate bounded by its configured ``min_speakers``/``max_speakers``.
+    Deriving it from ``len(live_centroids)`` instead (Qodo Q11) capped the
+    authoritative pass at the best-effort live count, so a backpressured live
+    pass that found one speaker forced the whole recording into one cluster --
+    the exact gap this pass exists to fill (spec §6.3).
+
+    Args:
+        spans: One ``(start_s, end_s)`` per window, in file order.
+        embeddings: One embedding per window (same order/length as ``spans``).
+        live_centroids: The live cluster centroids held during the meeting;
+            used ONLY to map final clusters back to live ids, never to bound
+            the count.
+        cluster_fn: ``(np.ndarray[n,d], int | None) -> labels[n]``; skipped
+            when there are fewer than two windows to cluster.
+        threshold: The live clusterer's own cosine-distance threshold, passed
+            to `reconcile` so a surplus final cluster that is plainly the same
+            voice keeps that speaker's live id (and name) instead of being
+            minted a new one.
+        start_id: The live clusterer's `max_id` -- the highest cluster number
+            in use, INCLUDING ids a pre-crash worker minted and this one only
+            inherited (31749). A minted id always continues past it, so a Stop
+            pass run on a restarted (centroid-less) worker cannot hand out an
+            id the user already named.
+        out_centroids: Optional dict the caller supplies to receive
+            ``{live_id: final_centroid}`` (unit-normalised, as a plain
+            ``list[float]`` -- never a numpy array, so `serve()` can treat
+            every batch centroid as pure-Python data) for every reconciled
+            final cluster (mint included) -- an out-param rather than a
+            return-value change so the four `_reconcile_windows`-level tests
+            above, which only look at the returned segment list, stay
+            untouched. When two or more final clusters reconcile to the SAME
+            live id -- `reconcile`'s surplus rule, the designed common case
+            for a batch pass that over-split one person -- the stored
+            centroid is the seconds-weighted mean of all of them (weight =
+            each final cluster's total segment duration), not last-write-wins
+            (review round 1, Important 2).
+
+    Returns:
+        Segment dicts (``start_s``/``end_s``/``speaker``), speaker = reconciled
+        live id (falls back to the final label when nothing lives to match).
+    """
+    import numpy as np
+
+    if not embeddings:
+        return []
+    if len(embeddings) < 2:
+        labels = [0] * len(embeddings)
+    else:
+        labels = [int(x) for x in cluster_fn(np.asarray(embeddings, dtype=np.float32), None)]
+
+    grouped: dict[str, list] = {}
+    seconds_by_fid: dict[str, float] = {}
+    for (s0, s1), label, emb in zip(spans, labels, embeddings):
+        fid = f"F{label}"
+        grouped.setdefault(fid, []).append(emb)
+        seconds_by_fid[fid] = seconds_by_fid.get(fid, 0.0) + (s1 - s0)
+    final_clusters = [(key, np.mean(vecs, axis=0), seconds_by_fid[key]) for key, vecs in grouped.items()]
+
+    mapping = _map_final_clusters(final_clusters, live_centroids, threshold, start_id, out_centroids)
+
+    return [
+        {"start_s": s0, "end_s": s1, "speaker": mapping.get(f"F{label}", f"F{label}")}
+        for (s0, s1), label in zip(spans, labels)
+    ]
+
+
+def _map_final_clusters(final_clusters, live_centroids, threshold=0.25, start_id=0, out_centroids=None):
+    """Map/mint a batch pass's final clusters onto live ids (task 1: 31827).
+
+    The map / mint / seconds-weighted fold half of the original
+    `_reconcile_windows`, extracted verbatim so every engine's Stop pass --
+    SpeechBrain's window clustering today, sherpa-onnx's offline diarization
+    later -- shares one reconciliation step instead of re-implementing it
+    (spec §2). Never re-tuned: same `reconcile()` call, same surplus-mint
+    rule, same seconds-weighted centroid fold as before the split.
+
+    Args:
+        final_clusters: ``[(final_label, centroid, seconds), ...]`` for one
+            batch pass -- e.g. ``[("F0", np.array([...]), 4.0), ...]``.
+        live_centroids: The live cluster centroids held during the meeting;
+            used ONLY to map final clusters back to live ids, never to bound
+            their count.
+        threshold: The live clusterer's own cosine-distance threshold, passed
+            to `reconcile` so a surplus final cluster that is plainly the same
+            voice keeps that speaker's live id (and name) instead of being
+            minted a new one.
+        start_id: The live clusterer's `max_id` -- the highest cluster number
+            in use, INCLUDING ids a pre-crash worker minted and this one only
+            inherited (31749). A minted id always continues past it, so a Stop
+            pass run on a restarted (centroid-less) worker cannot hand out an
+            id the user already named.
+        out_centroids: Optional dict the caller supplies to receive
+            ``{live_id: final_centroid}`` (unit-normalised, as a plain
+            ``list[float]`` -- never a numpy array) for every reconciled final
+            cluster (mint included). When two or more final clusters reconcile
+            to the SAME live id -- `reconcile`'s surplus rule, the designed
+            common case for a batch pass that over-split one person -- the
+            stored centroid is the seconds-weighted mean of all of them
+            (weight = each final cluster's total seconds), not last-write-wins
+            (review round 1, Important 2).
+
+    Returns:
+        Dict mapping each final label to its live (or newly minted) id.
+    """
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_cluster import reconcile
+
+    final_centroids = [(fid, cen) for fid, cen, _secs in final_clusters]
+    seconds_by_fid = {fid: secs for fid, _cen, secs in final_clusters}
+    mapping = reconcile(live_centroids, final_centroids, threshold)  # final label -> live id
+    # An unmatched final cluster (no live centroid to match -- e.g. near-live
+    # labelling was backpressured the whole meeting, so live_centroids is
+    # empty) must NOT surface as "Speaker F0" (final whole-branch review I2):
+    # mint it a fresh live-style id continuing past the highest live number.
+    # ... past the highest live id AND past `start_id`: after a crash the
+    # restarted worker has no live centroids at all, so counting from them
+    # alone would mint "S1" straight onto a pre-crash speaker's name (31749).
+    next_n = max((int(k[1:]) for k in live_centroids if k[1:].isdigit()), default=0)
+    next_n = max(next_n, int(start_id)) + 1
+    for fid, _cen in final_centroids:
+        if fid not in mapping:
+            mapping[fid] = f"S{next_n}"
+            next_n += 1
+    if out_centroids is not None:
+        cen_by_fid = dict(final_centroids)
+        fids_by_live: dict[str, list[str]] = {}
+        for fid, _cen in final_centroids:
+            fids_by_live.setdefault(mapping[fid], []).append(fid)
+        for lid, fids in fids_by_live.items():
+            total_w = sum(seconds_by_fid[f] for f in fids)
+            if total_w > 0:
+                mean = sum(cen_by_fid[f] * seconds_by_fid[f] for f in fids) / total_w
+            else:  # every fid folding here had 0 s of windows (degenerate) -- plain mean
+                mean = np.mean([cen_by_fid[f] for f in fids], axis=0)
+            norm = float(np.linalg.norm(mean))
+            out_centroids[lid] = (mean / norm if norm > 0.0 else mean).tolist()
+    return mapping
+
+
+def read_pcm16_span(path: str, start_s: float, end_s: float):
+    """Read ``[start_s, end_s)`` of a meeting WAV as float32 samples in ``[-1, 1]``.
+
+    Shared by BOTH engines' Stop passes (task 9: 31827). It used to be the
+    ONNX engine's own `_read_wav_span`, while the SpeechBrain engine read its
+    audio through `torchaudio.load`: torchaudio >= 2.9 routes `load` through
+    the SEPARATE `torchcodec` package, and without it the call raises, so the
+    SpeechBrain Stop pass silently returned no segments at all (measured in
+    the bake-off, whose first baseline run scored DER 1.000 for exactly this).
+    The `diarization` extra pins neither `torchaudio < 2.9` nor `torchcodec`,
+    so the fix is to stop needing either: stdlib `wave` reads what the meeting
+    recorder writes, and torch stays only for the embedding itself.
+
+    `wave` + numpy only -- both imported INSIDE, so this module's scope stays
+    stdlib-cheap (module docstring). Only the requested span is read off disk.
+
+    Args:
+        path: A WAV written by the meeting recorder (always mono 16 kHz PCM16).
+        start_s: Span start, seconds from the beginning of the file.
+        end_s: Span end; falsy means "to the end of the file".
+
+    Returns:
+        ``(samples, sr)`` -- a 1-D float32 numpy array and the sample rate.
+
+    Raises:
+        ValueError: ``"unsupported wav"`` -- anything but mono 16 kHz 16-bit
+            PCM, or a `start_s` at or past end-of-file. No resampling and no
+            channel mixing happen here: the meeting pipeline is 16 kHz mono
+            end to end, and `main()`'s framed-error path turns this into a
+            skipped Stop pass (the near-live labels are kept) rather than a
+            silently mis-scaled one.
+    """
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(path), "rb") as wf:
+        sr = wf.getframerate()
+        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or sr != 16000:
+            raise ValueError("unsupported wav")
+        total = wf.getnframes()
+        a = max(0, int(round(start_s * sr)))
+        if a >= total:
+            raise ValueError("unsupported wav")
+        b = min(total, int(round(end_s * sr))) if end_s else total
+        b = max(a, b)
+        wf.setpos(a)
+        raw = wf.readframes(b - a)
+    samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    return samples, sr
+
+
+def _write(stdout, obj) -> None:
+    stdout.write((json.dumps(obj) + "\n").encode())
+    stdout.flush()
+
+
+def serve(stdin, stdout, live, embed, batch) -> int:
+    """Run the wire protocol until stdin closes or a ``close`` arrives.
+
+    Split out of `main()` (Qodo Q2) so the command loop is reachable without
+    torch: `main()` is the only place the encoder is loaded, and the loop
+    used to sit behind that load, so nothing but a hand-written fake process
+    on the app side could exercise command dispatch. A serialization or
+    dispatch regression -- the ``pin`` forwarding in particular, which sends
+    no reply and so shows up nowhere else -- could not fail a test. `main()`
+    passes the real encoder-bound callables; a test passes its own.
+
+    Args:
+        stdin: Binary input stream: one JSON control line per command, an
+            "assign"/"enroll_from_pcm" line followed by exactly its ``n``
+            bytes of PCM.
+        stdout: Binary output stream for the one-line JSON replies.
+        live: The `OnlineClusterer` held for the whole meeting.
+        embed: ``(pcm: bytes, sr: int) -> embedding`` for an assign or
+            enroll_from_pcm (task 1: 31827 -- `sr` makes the 16 kHz
+            assumption explicit instead of implicit in the caller).
+        batch: ``(wav, start_s, end_s) -> (segment dicts, {live_id: centroid})``
+            for a diarize.
+
+    Returns:
+        0 -- the process exit code, so `main()` can return it directly.
+    """
+    enrolled = None  # (voiceprint_vector: list[float], threshold, min_seconds), or None
+    last_batch_centroids: dict = {}  # live_id -> centroid (list[float]), from the last diarize
+    last_batch_seconds: dict = {}    # live_id -> seconds, summed from that diarize's own segments
+
+    while True:
+        line = stdin.readline()
+        if not line:
+            break
+        try:
+            cmd = json.loads(line)
+        except Exception:  # noqa: BLE001 - ignore a garbled control line
+            continue
+        op = cmd.get("cmd")
+        # Review round 1, Important 4: one framed error path for every op --
+        # a malformed `enroll`/`export_centroid` used to raise straight out of
+        # `serve()` (unhandled, a traceback on stderr, the worker dead for the
+        # rest of the meeting). `assign`/`enroll_from_pcm` validate their
+        # framing FIRST (`_framing`, Qodo 2) and answer a bad `n`/`sr` through
+        # that same path without reading a payload whose declared length is
+        # exactly the thing not to be trusted.
+        try:
+            if op == "assign":
+                n, sr = _framing(cmd)
+                pcm = _read_exactly(stdin, n)
+                seconds = len(pcm) / (2 * sr)  # Minor 2: bytes actually read, not the declared n
+                sid = live.assign(embed(pcm, sr), seconds=seconds)
+                is_self = False
+                if enrolled is not None and sid is not None:
+                    # Scoped to the SELF comparison (final review I2): an
+                    # enrolled vector of the wrong dimension makes
+                    # `distance_to` raise, and out here that framed the whole
+                    # assign as failed -- `{"id": null}` for every window, so
+                    # a voiceprint problem silently killed live speaker
+                    # labels. A bad vector turns MATCHING off for this
+                    # process (spec §6) and assignment carries on.
+                    try:
+                        evec, ethresh, emin_s = enrolled
+                        dist = live.distance_to(sid, evec)
+                        if dist is not None:
+                            is_self = dist <= ethresh and live.seconds(sid) >= emin_s
+                    except Exception as exc:  # noqa: BLE001 - type only, once
+                        sys.stderr.write(f"ERROR enroll {type(exc).__name__}\n")
+                        sys.stderr.flush()
+                        enrolled = None
+                _write(stdout, {"id": sid, "seq": cmd.get("seq"), "self": is_self})
+            elif op == "diarize":
+                segs, final_centroids = batch(cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)))
+                # M3 (ruling): a successful batch -- even an empty one -- always
+                # replaces the stored state; only a raised exception (below)
+                # leaves it untouched, since a failed diarize produced nothing.
+                last_batch_centroids = final_centroids
+                last_batch_seconds = _seconds_by_speaker(segs)
+                self_id = None
+                # M4: judged against THIS batch's own centroids, not whatever
+                # a previous successful diarize left behind.
+                if enrolled is not None and final_centroids:
+                    # Same scoping as `assign`'s guard (final re-review): a
+                    # wrong-dimension voiceprint turns MATCHING off for this
+                    # process; the segments themselves are never affected.
+                    try:
+                        evec, ethresh, emin_s = enrolled
+                        dists = [(cid, _cos_dist(cen, evec)) for cid, cen in final_centroids.items()]
+                        best_id, best_dist = min(dists, key=lambda t: t[1])
+                        # BOTH gates, exactly as `assign` applies them (Qodo 8):
+                        # `MeetingSession.stop()` takes this verdict as its
+                        # fallback and NAMES that cluster, so a one-second noisy
+                        # cluster that happens to sit inside the threshold would
+                        # be auto-named as the user -- and carry a learning offer
+                        # that then merges a stranger into their voiceprint.
+                        if best_dist <= ethresh and last_batch_seconds.get(best_id, 0.0) >= emin_s:
+                            self_id = best_id
+                    except Exception as exc:  # noqa: BLE001 - type only, once
+                        sys.stderr.write(f"ERROR enroll {type(exc).__name__}\n")
+                        sys.stderr.flush()
+                        enrolled = None
+                        self_id = None
+                _write(stdout, {"segments": segs, "self": self_id})
+            elif op == "pin":
+                live.pin(str(cmd.get("id", "")))
+            elif op == "enroll":
+                # No reply: held in memory only, for this process's lifetime.
+                enrolled = (
+                    [float(x) for x in cmd.get("vector", [])],
+                    float(cmd.get("threshold", 0.2)),
+                    float(cmd.get("min_seconds", 4.0)),  # M1: the config default, not 0
+                )
+            elif op == "export_centroid":
+                op_id = cmd.get("op_id")
+                cid = str(cmd.get("id", ""))
+                if cid in last_batch_centroids:
+                    # Important 3: the BATCH centroid pairs with BATCH seconds
+                    # (summed from its own segments) -- live.seconds() reads
+                    # 0.0 for a Stop-pass-only id and silently zeroes out the
+                    # §3.4 learning merge's weight.
+                    cen, secs = last_batch_centroids[cid], last_batch_seconds.get(cid, 0.0)
+                else:
+                    cen, secs = live.centroids().get(cid), live.seconds(cid)
+                unit = None if cen is None else _unit(cen)
+                reply = {"centroid": None} if unit is None else {"centroid": unit, "seconds": secs}
+                reply["op_id"] = op_id  # C1: lets the app drop a late reply for a call it gave up on
+                _write(stdout, reply)
+            elif op == "enroll_from_pcm":
+                op_id = cmd.get("op_id")
+                n, sr = _framing(cmd)
+                pcm = _read_exactly(stdin, n)
+                unit = _unit(embed(pcm, sr))
+                seconds = len(pcm) / (2 * sr)  # Minor 2
+                reply = {"centroid": None} if unit is None else {"centroid": unit, "seconds": seconds}
+                reply["op_id"] = op_id
+                _write(stdout, reply)
+            elif op == "close":
+                break
+        except Exception as exc:  # noqa: BLE001 - framed, never a traceback (paths) on stderr
+            sys.stderr.write(f"ERROR {op} {type(exc).__name__}\n")
+            sys.stderr.flush()
+            if op == "assign":
+                _write(stdout, {"id": None, "seq": cmd.get("seq"), "self": False})
+            elif op == "diarize":
+                _write(stdout, {"segments": [], "self": None})
+            elif op in ("export_centroid", "enroll_from_pcm"):
+                _write(stdout, {"centroid": None, "op_id": cmd.get("op_id")})
+            # enroll/pin: no reply either way; `enrolled`/`live` are untouched
+            # by a raise partway through, so the previous state stands.
+    return 0
+
+
+def main() -> int:
+    stdin = sys.stdin.buffer
+    stdout = sys.stdout.buffer
+    max_speakers = int(os.environ.get("TLDW_DIARIZER_MAX_SPEAKERS", "8"))
+
+    try:
+        import importlib
+
+        from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+        start_id, engine = _parse_args(sys.argv[1:])
+        live = OnlineClusterer(max_speakers=max_speakers, start_id=start_id)
+        engine_mod = importlib.import_module(ENGINES[engine])
+        loaded = engine_mod.load(live, max_speakers)
+        # Set here rather than passed to the constructor above (task 8: 31827):
+        # `load()` binds THIS clusterer into its `batch` closure, so the object
+        # has to exist before the engine can say what threshold it wants. One
+        # assignment, immediately after load, before a single command is served.
+        live.threshold = loaded.live_threshold
+    except Exception as exc:  # noqa: BLE001 - type only, never the message content
+        sys.stderr.write(f"ERROR load {type(exc).__name__}\n")
+        sys.stderr.flush()
+        return 1
+
+    sys.stderr.write("READY\n")
+    sys.stderr.flush()
+
+    return serve(stdin, stdout, live, loaded.embed, loaded.batch)
+
+
+if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()  # ponytail: harmless dev no-op; a real frozen-app spawn seam is TODO in diarizer_local._command
+    sys.exit(main())

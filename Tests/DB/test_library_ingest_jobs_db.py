@@ -3,8 +3,66 @@ from dataclasses import replace
 
 import pytest
 
-from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
-from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry, _job_from_row
+from tldw_chatbook.DB.Library_Ingest_Jobs_DB import (
+    LibraryIngestJobLinkConflictError,
+    LibraryIngestJobsDB,
+)
+from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
+    LibraryIngestJobRegistry,
+    _job_from_row,
+    plan_restore,
+)
+from tldw_chatbook.Research_Workspace.source_operations import (
+    SourceOperationValidationError,
+)
+
+
+_GENUINE_V5_SCHEMA = """
+CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL);
+INSERT INTO schema_version (version) VALUES (5);
+
+CREATE TABLE ingest_jobs (
+    seq INTEGER PRIMARY KEY,
+    job_id TEXT UNIQUE NOT NULL,
+    source_path TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    keywords TEXT NOT NULL DEFAULT '[]',
+    perform_analysis INTEGER NOT NULL DEFAULT 0,
+    chunk_enabled INTEGER NOT NULL DEFAULT 0,
+    chunk_size INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed','cancelled')),
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    detected_type TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    finished_at_wall TEXT NOT NULL DEFAULT '',
+    media_id INTEGER,
+    superseded INTEGER NOT NULL DEFAULT 0,
+    dismissed INTEGER NOT NULL DEFAULT 0,
+    permanent INTEGER NOT NULL DEFAULT 0,
+    ingest_options TEXT DEFAULT '{}',
+    error_detail TEXT DEFAULT NULL,
+    progress TEXT DEFAULT NULL,
+    content_hash TEXT DEFAULT NULL,
+    origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),
+    remote_job_id TEXT DEFAULT NULL,
+    batch_id TEXT DEFAULT NULL,
+    remote_media_id TEXT DEFAULT NULL,
+    retry_of_job_id TEXT DEFAULT NULL,
+    stt_failure_provenance_json TEXT DEFAULT NULL,
+    retry_source_failure_provenance_json TEXT DEFAULT NULL
+);
+"""
+
+_GENUINE_V6_SCHEMA = _GENUINE_V5_SCHEMA.replace(
+    "INSERT INTO schema_version (version) VALUES (5);",
+    "INSERT INTO schema_version (version) VALUES (6);",
+).replace(
+    "    retry_source_failure_provenance_json TEXT DEFAULT NULL\n);",
+    "    retry_source_failure_provenance_json TEXT DEFAULT NULL,\n"
+    "    research_source_operation_id TEXT DEFAULT NULL\n);",
+)
 
 
 def _db(tmp_path):
@@ -157,13 +215,19 @@ def test_job_round_trip_with_json_columns(tmp_path):
     row = rows[0]
     assert row["ingest_options"] == '{"pdf": {"engine": "pymupdf"}}'
     assert row["progress"] == '{"message": "50%"}'
-    assert row["error_detail"] == '{"category": "unsupported_file_type", "message": "nope"}'
+    assert (
+        row["error_detail"]
+        == '{"category": "unsupported_file_type", "message": "nope"}'
+    )
     assert row["content_hash"] == "abc123"
 
     restored = _job_from_row(row)
     assert restored.ingest_options == {"pdf": {"engine": "pymupdf"}}
     assert restored.progress == {"message": "50%"}
-    assert restored.error_detail == {"category": "unsupported_file_type", "message": "nope"}
+    assert restored.error_detail == {
+        "category": "unsupported_file_type",
+        "message": "nope",
+    }
     assert restored.content_hash == "abc123"
     db.close()
 
@@ -223,9 +287,7 @@ def test_v3_persists_origin_and_remote_ids(tmp_path):
     blocked routing a server submission at all (task-684.2).
     """
     reg = LibraryIngestJobRegistry()
-    job = reg.submit(
-        source_path="/a.mp3", detected_type="audio", origin="server"
-    )
+    job = reg.submit(source_path="/a.mp3", detected_type="audio", origin="server")
     job = reg.attach_remote(job.job_id, remote_job_id="4171", batch_id="batch-9")
 
     db = _db(tmp_path)
@@ -322,7 +384,7 @@ def test_db_migration_v2_to_v3_preserves_existing_rows(tmp_path):
         " (seq, job_id, source_path, title, state, media_id, detected_type,"
         "  ingest_options, retry_count, permanent)"
         " VALUES (7, 'ingest-job-7', '/kept.pdf', 'Kept', 'done', 42, 'pdf',"
-        "         '{\"pdf\": {\"ocr\": true}}', 2, 1)"
+        '         \'{"pdf": {"ocr": true}}\', 2, 1)'
     )
     conn.commit()
     conn.close()
@@ -342,3 +404,430 @@ def test_db_migration_v2_to_v3_preserves_existing_rows(tmp_path):
     assert row["origin"] == "local"
     assert row["remote_job_id"] is None and row["batch_id"] is None
     db.close()
+
+
+def test_fresh_v6_schema_has_nullable_research_operation_link(tmp_path):
+    db = _db(tmp_path)
+    columns = {
+        row["name"]: row
+        for row in db._get_connection().execute("PRAGMA table_info(ingest_jobs)")
+    }
+    assert columns["research_source_operation_id"]["notnull"] == 0
+    assert (
+        db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
+        == db._CURRENT_SCHEMA_VERSION
+    )
+    db.close()
+
+
+def test_fresh_v7_schema_has_validated_dispatch_hold(tmp_path):
+    """Durable eligibility cannot be represented by a permissive/free-text flag."""
+
+    db = _db(tmp_path)
+    columns = {
+        row["name"]: row
+        for row in db._get_connection().execute("PRAGMA table_info(ingest_jobs)")
+    }
+
+    assert columns["dispatch_held"]["notnull"] == 1
+    assert columns["dispatch_held"]["dflt_value"] == "0"
+    assert (
+        db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
+        == 7
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db._get_connection().execute(
+            "INSERT INTO ingest_jobs (seq, job_id, source_path, state, dispatch_held) "
+            "VALUES (99, 'ingest-job-99', '/private/source', 'queued', 2)"
+        )
+    db.close()
+
+
+def test_genuine_v6_migration_preserves_full_row_and_defaults_unheld(tmp_path):
+    """A complete historical v6 row survives the v7 eligibility migration."""
+
+    path = tmp_path / "historical-v6.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(_GENUINE_V6_SCHEMA)
+    connection.execute(
+        """
+        INSERT INTO ingest_jobs
+          (seq, job_id, source_path, title, state, origin,
+           research_source_operation_id, ingest_options, progress)
+        VALUES (7, 'ingest-job-7', '/kept.pdf', 'Kept', 'queued', 'server',
+                'operation-kept', '{"pdf": {"ocr": true}}',
+                '{"message": "waiting"}')
+        """
+    )
+    connection.commit()
+    connection.row_factory = sqlite3.Row
+    before = dict(connection.execute("SELECT * FROM ingest_jobs").fetchone())
+    connection.close()
+
+    db = LibraryIngestJobsDB(path)
+    row = db.all_jobs()[0]
+
+    assert set(row) == {*before, "dispatch_held"}
+    assert {key: row[key] for key in before} == before
+    assert row["dispatch_held"] == 0
+    assert (
+        db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
+        == 7
+    )
+    db.close()
+
+
+def test_v6_to_v7_migration_rolls_back_column_when_version_write_fails(tmp_path):
+    """The schema column and version advance are one transaction."""
+
+    path = tmp_path / "blocked-v6.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(_GENUINE_V6_SCHEMA)
+    connection.executescript(
+        """
+        CREATE TRIGGER block_schema_version_delete
+        BEFORE DELETE ON schema_version
+        BEGIN
+            SELECT RAISE(ABORT, 'blocked version write');
+        END;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(sqlite3.IntegrityError, match="blocked version write"):
+        LibraryIngestJobsDB(path)
+
+    inspected = sqlite3.connect(path)
+    try:
+        assert (
+            inspected.execute("SELECT version FROM schema_version").fetchone()[0] == 6
+        )
+        assert "dispatch_held" not in {
+            row[1] for row in inspected.execute("PRAGMA table_info(ingest_jobs)")
+        }
+    finally:
+        inspected.close()
+
+
+def test_held_round_trip_bounded_listing_and_restart_restore(tmp_path):
+    """Only held jobs enter bounded recovery and held QUEUED survives restart."""
+
+    db = _db(tmp_path)
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(db)
+    ordinary = registry.submit(source_path="/ordinary.txt", require_persisted=True)
+    held = tuple(
+        registry.submit(
+            source_path=f"/managed/{index}.txt",
+            research_source_operation_id=f"operation-held-{index}",
+            dispatch_held=True,
+            require_persisted=True,
+        )
+        for index in range(3)
+    )
+
+    rows = db.list_dispatch_held(limit=2)
+    assert [row["job_id"] for row in rows] == [held[0].job_id, held[1].job_id]
+    assert ordinary.job_id not in {row["job_id"] for row in rows}
+    assert all(row["dispatch_held"] == 1 for row in rows)
+
+    plan = plan_restore(
+        db.all_jobs(), max_persisted=100, now_iso="2026-08-24T10:30:00+00:00"
+    )
+    restored = {job.job_id: job for job in plan.jobs}
+    assert restored[ordinary.job_id].state is IngestJobState.FAILED
+    assert restored[held[0].job_id].state is IngestJobState.QUEUED
+    assert restored[held[0].job_id].dispatch_held is True
+    assert held[0].job_id not in {job.job_id for job in plan.upsert}
+    db.close()
+
+
+def test_genuine_v5_migration_preserves_row_and_adds_nullable_operation_link(
+    tmp_path,
+):
+    path = tmp_path / "historical-v5.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(_GENUINE_V5_SCHEMA)
+    connection.execute(
+        """
+        INSERT INTO ingest_jobs
+          (seq, job_id, source_path, title, author, keywords, perform_analysis,
+           chunk_enabled, chunk_size, state, retry_count, detected_type, error,
+           finished_at_wall, media_id, superseded, dismissed, permanent,
+           ingest_options, error_detail, progress, content_hash, origin,
+           remote_job_id, batch_id, remote_media_id, retry_of_job_id,
+           stt_failure_provenance_json, retry_source_failure_provenance_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            7,
+            "ingest-job-7",
+            "/kept.pdf",
+            "Kept",
+            "Author",
+            '["one"]',
+            1,
+            1,
+            900,
+            "done",
+            2,
+            "pdf",
+            "",
+            "2026-08-20T00:00:00Z",
+            42,
+            0,
+            0,
+            0,
+            '{"pdf": {"ocr": true}}',
+            None,
+            '{"message": "done"}',
+            "sha256-kept",
+            "local",
+            None,
+            "batch-kept",
+            None,
+            "ingest-job-6",
+            None,
+            None,
+        ),
+    )
+    connection.commit()
+    connection.row_factory = sqlite3.Row
+    before = dict(connection.execute("SELECT * FROM ingest_jobs").fetchone())
+    assert "research_source_operation_id" not in {
+        row[1] for row in connection.execute("PRAGMA table_info(ingest_jobs)")
+    }
+    connection.close()
+
+    db = LibraryIngestJobsDB(path)
+    row = db.all_jobs()[0]
+
+    assert (
+        db._get_connection().execute("SELECT version FROM schema_version").fetchone()[0]
+        == db._CURRENT_SCHEMA_VERSION
+    )
+    assert set(row) == {*before, "research_source_operation_id", "dispatch_held"}
+    assert {key: row[key] for key in before} == before
+    assert row["research_source_operation_id"] is None
+    assert row["dispatch_held"] == 0
+    db.close()
+
+    reopened = LibraryIngestJobsDB(path)
+    reopened_row = reopened.all_jobs()[0]
+    assert reopened_row["research_source_operation_id"] is None
+    assert reopened_row["dispatch_held"] == 0
+    assert reopened_row["job_id"] == "ingest-job-7"
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    "operation_id",
+    [
+        "x" * 257,
+        "x" * 10_000,
+        "../../private/source.txt",
+        "OPENAI_API_KEY=top-secret",
+    ],
+)
+def test_operation_link_is_validated_at_submit_persist_and_reload_seams(
+    tmp_path, operation_id
+):
+    registry = LibraryIngestJobRegistry()
+    with pytest.raises(SourceOperationValidationError, match="operation_id"):
+        registry.submit(
+            source_path="/local.txt",
+            research_source_operation_id=operation_id,
+        )
+
+    job = registry.submit(source_path="/local.txt")
+    db = _db(tmp_path)
+    with pytest.raises(SourceOperationValidationError, match="operation_id"):
+        db.upsert_job(replace(job, research_source_operation_id=operation_id))
+    assert db.all_jobs() == []
+
+    db.upsert_job(job)
+    db._get_connection().execute(
+        "UPDATE ingest_jobs SET research_source_operation_id = ? WHERE job_id = ?",
+        (operation_id, job.job_id),
+    )
+    db._get_connection().commit()
+    with pytest.raises(SourceOperationValidationError, match="operation_id"):
+        _job_from_row(db.all_jobs()[0])
+    db.close()
+
+
+@pytest.mark.parametrize("replacement", [None, "operation-retargeted"])
+def test_non_null_operation_link_is_immutable_on_upsert(tmp_path, replacement):
+    registry = LibraryIngestJobRegistry()
+    linked = registry.submit(
+        source_path="/local.txt",
+        title="Original",
+        research_source_operation_id="operation-original",
+    )
+    db = _db(tmp_path)
+    db.upsert_job(linked)
+
+    with pytest.raises(LibraryIngestJobLinkConflictError, match="immutable"):
+        db.upsert_job(
+            replace(
+                linked,
+                title="Stale overwrite",
+                research_source_operation_id=replacement,
+            )
+        )
+
+    row = db.all_jobs()[0]
+    assert row["title"] == "Original"
+    assert row["research_source_operation_id"] == "operation-original"
+    db.close()
+
+
+def test_null_operation_link_cannot_be_retargeted_by_later_upsert(tmp_path):
+    registry = LibraryIngestJobRegistry()
+    plain = registry.submit(source_path="/local.txt")
+    db = _db(tmp_path)
+    db.upsert_job(plain)
+
+    with pytest.raises(LibraryIngestJobLinkConflictError, match="immutable"):
+        db.upsert_job(replace(plain, research_source_operation_id="operation-late"))
+
+    assert db.all_jobs()[0]["research_source_operation_id"] is None
+    db.close()
+
+
+def test_operation_link_survives_local_and_server_completion_and_reload(tmp_path):
+    db = _db(tmp_path)
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(db)
+
+    local = registry.submit(
+        source_path="/local.txt",
+        research_source_operation_id="operation-local",
+    )
+    assert registry.mark_parsing(local.job_id) is not None
+    assert registry.mark_writing(local.job_id) is not None
+    local_done = registry.mark_done(local.job_id, media_id=41)
+    assert local_done is not None
+    assert local_done.research_source_operation_id == "operation-local"
+    assert local_done.media_id == 41
+    assert local_done.remote_media_id is None
+
+    server = registry.submit(
+        source_path="https://example.test/source",
+        origin="server",
+        research_source_operation_id="operation-server",
+    )
+    server = registry.attach_remote(
+        server.job_id,
+        remote_job_id="remote-job",
+        batch_id="remote-batch",
+    )
+    assert server is not None
+    assert server.research_source_operation_id == "operation-server"
+    server_done = registry.mark_remote_done(server.job_id, remote_media_id="900")
+    assert server_done is not None
+    assert server_done.research_source_operation_id == "operation-server"
+    assert server_done.media_id is None
+    assert server_done.remote_media_id == "900"
+
+    restored = {row["job_id"]: _job_from_row(row) for row in db.all_jobs()}
+    assert restored[local.job_id].research_source_operation_id == "operation-local"
+    assert restored[server.job_id].research_source_operation_id == "operation-server"
+    db.close()
+
+
+@pytest.mark.parametrize(
+    (
+        "origin",
+        "transition",
+        "expected_state",
+        "expected_media_id",
+        "expected_remote_id",
+    ),
+    [
+        ("local", "done", IngestJobState.DONE, 41, None),
+        ("server", "remote_done", IngestJobState.DONE, None, "900"),
+        ("local", "failed", IngestJobState.FAILED, None, None),
+        ("local", "cancelled", IngestJobState.CANCELLED, None, None),
+    ],
+)
+def test_terminal_listener_observes_durable_terminal_row(
+    tmp_path,
+    origin,
+    transition,
+    expected_state,
+    expected_media_id,
+    expected_remote_id,
+):
+    """A lifecycle listener may schedule recovery only after durable settlement."""
+
+    db = _db(tmp_path)
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(db)
+    job = registry.submit(
+        source_path="https://example.test/source"
+        if origin == "server"
+        else "/source.txt",
+        origin=origin,
+        research_source_operation_id=f"operation-{transition}",
+    )
+    observations = []
+
+    def observe_terminal_row() -> None:
+        row = next(item for item in db.all_jobs() if item["job_id"] == job.job_id)
+        if row["state"] in {"done", "failed", "cancelled"}:
+            observations.append((row["state"], row["media_id"], row["remote_media_id"]))
+
+    registry.add_listener(observe_terminal_row)
+    if transition == "done":
+        registry.mark_done(job.job_id, media_id=41)
+    elif transition == "remote_done":
+        registry.mark_remote_done(job.job_id, remote_media_id="900")
+    elif transition == "failed":
+        registry.mark_failed(job.job_id, error="safe failure")
+    else:
+        registry.mark_cancelled(job.job_id, reason="cancelled")
+
+    assert observations == [
+        (expected_state.value, expected_media_id, expected_remote_id)
+    ]
+    db.close()
+
+
+def test_retry_preserves_operation_link_in_memory_and_persisted_rows(tmp_path):
+    db = _db(tmp_path)
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(db)
+    source = registry.submit(
+        source_path="https://example.test/retry",
+        origin="server",
+        research_source_operation_id="operation-retry",
+    )
+    assert registry.mark_failed(source.job_id, error="retryable") is not None
+
+    retry = registry.requeue(source.job_id)
+
+    assert retry is not None
+    assert retry.origin == "server"
+    assert retry.research_source_operation_id == "operation-retry"
+    rows = {row["job_id"]: row for row in db.all_jobs()}
+    assert rows[source.job_id]["research_source_operation_id"] == "operation-retry"
+    assert rows[retry.job_id]["research_source_operation_id"] == "operation-retry"
+    assert _job_from_row(rows[retry.job_id]).research_source_operation_id == (
+        "operation-retry"
+    )
+    db.close()
+
+
+def test_local_and_server_completion_id_spaces_remain_disjoint():
+    registry = LibraryIngestJobRegistry()
+    local = registry.submit(source_path="/local.txt")
+    server = registry.submit(
+        source_path="https://example.test/source",
+        origin="server",
+    )
+
+    assert registry.mark_remote_done(local.job_id, remote_media_id="900") is None
+    assert registry.mark_done(server.job_id, media_id=900) is None

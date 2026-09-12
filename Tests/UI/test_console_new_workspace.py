@@ -3,13 +3,82 @@
 from __future__ import annotations
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
+from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.Widgets.Console import ConsoleBoundedSection
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
+
+
+async def _wait_for_create_modal(host: ConsoleHarness, pilot) -> WorkspaceCreateModal:
+    """Wait for the async screen push instead of assuming one pause is enough."""
+    for _ in range(100):
+        candidate = host.screen_stack[-1]
+        if isinstance(candidate, WorkspaceCreateModal) and candidate.query(
+            "#workspace-create-confirm"
+        ):
+            return candidate
+        await pilot.pause(0.01)
+    raise AssertionError("Workspace create modal did not open")
+
+
+async def _reveal_new_workspace_button(console, pilot) -> Button:
+    """Drive the bounded Workspace viewport before pressing its New button."""
+    # TASK-23193 ships Workspaces closed, so this now actually toggles. The
+    # state flip is synchronous but the DOM sync that un-hides the body is
+    # not; pressing before it lands leaves the button in a hidden subtree.
+    if not console._current_console_rail_state().workspace_open:
+        console._toggle_console_rail_section("workspace")
+        for _ in range(200):
+            body = console.query_one("#console-rail-section-body-workspace")
+            if body.display and body.styles.display != "none":
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError("Workspace section never opened")
+    rail = console.query_one("#console-left-rail", ConsoleLeftRail)
+    section = console.query_one(
+        "#console-bounded-section-workspace", ConsoleBoundedSection
+    )
+    rail.activate_section("workspace")
+    # Wait on the BUTTON, re-querying every pass, not on the section's
+    # allocation. Two things changed under TASK-23193: a rail that now fits
+    # leaves ``allocation is None`` (meaning "shown in full", not "not laid
+    # out"), and opening the section makes ConsoleWorkspaceContextTray
+    # re-mount its children -- so a reference taken any earlier is detached,
+    # reports ``display`` False, and ``Button.press()`` silently no-ops on
+    # it, which reads at the test level as "the handler is broken".
+    button: Button | None = None
+    for _ in range(300):
+        try:
+            candidate = console.query_one("#console-new-workspace", Button)
+        except NoMatches:
+            candidate = None
+        if candidate is not None and candidate.display and candidate.region.height:
+            button = candidate
+            break
+        await pilot.pause(0.01)
+    if button is None:
+        raise AssertionError("Workspace section never became usable")
+    console.query_one("#console-left-rail-body").scroll_to_widget(
+        section, animate=False, immediate=True
+    )
+    section.viewport.scroll_to_widget(button, animate=False, immediate=True)
+    await pilot.pause(0.1)
+    # Scrolling can itself trigger another tray reconciliation, so take the
+    # reference the caller will press AFTER the last await, not before it.
+    for _ in range(200):
+        button = console.query_one("#console-new-workspace", Button)
+        if button.display and button.region.height:
+            return button
+        await pilot.pause(0.01)
+    raise AssertionError("New workspace button never settled visible")
 
 
 @pytest.mark.asyncio
@@ -24,19 +93,16 @@ async def test_console_new_workspace_creates_and_activates() -> None:
     """
     app = _build_test_app()
     registry_service = app.workspace_registry_service
-    host = ConsoleHarness(app)
+    host = StyledConsoleHarness(app)
 
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
         before = len(registry_service.list_workspaces())
-        new_button = console.query_one("#console-new-workspace", Button)
+        new_button = await _reveal_new_workspace_button(console, pilot)
         assert new_button.disabled is False
         new_button.press()
-        await pilot.pause()
-
-        modal = host.screen_stack[-1]
-        assert isinstance(modal, WorkspaceCreateModal)
+        modal = await _wait_for_create_modal(host, pilot)
 
         modal.query_one("#workspace-create-confirm", Button).press()
 
@@ -61,7 +127,7 @@ async def test_console_new_workspace_announces_creation() -> None:
     see test_console_new_workspace_creates_and_activates's docstring.
     """
     app = _build_test_app()
-    host = ConsoleHarness(app)
+    host = StyledConsoleHarness(app)
 
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
@@ -70,11 +136,8 @@ async def test_console_new_workspace_announces_creation() -> None:
         app.notify = lambda message, **kwargs: notifications.append(
             (str(message), kwargs)
         )
-        console.query_one("#console-new-workspace", Button).press()
-        await pilot.pause()
-
-        modal = host.screen_stack[-1]
-        assert isinstance(modal, WorkspaceCreateModal)
+        (await _reveal_new_workspace_button(console, pilot)).press()
+        modal = await _wait_for_create_modal(host, pilot)
 
         modal.query_one("#workspace-create-confirm", Button).press()
 

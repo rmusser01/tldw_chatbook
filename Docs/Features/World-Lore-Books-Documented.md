@@ -507,7 +507,18 @@ Enable debug logging to see world book processing:
 log_level = "DEBUG"
 ```
 
-Check logs at: `~/.share/tldw_cli/logs/`
+Read the output in the **Logs** screen (`F8`). The rotating file under
+`~/.share/tldw_cli/logs/` is metadata-only by design (ADR-029) and does not
+carry the lines below.
+
+> **What `DEBUG` exposes.** It widens the in-app log well past the default:
+> matched keywords, world-book entry content, file paths and SQL parameter
+> previews all become visible. Recognised API-key formats and your account
+> name are stripped before anything is buffered — a denylist, so not a
+> guarantee for every secret — and **Copy all (redacted)** exports only
+> timings, loggers and error types — but **Copy visible logs** copies the log
+> text as shown, so read it before sharing. Turn `DEBUG` back off when you are
+> done. See [Sharing logs safely](../User_Guide/logs.md#sharing-logs-safely).
 
 Look for:
 - "World info keyword found"

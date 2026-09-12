@@ -33,6 +33,17 @@ sort_keys=True)``) and then atomically renamed onto the real path via
 ``Path.replace()``; ``updated_at`` is stamped with an ISO-UTC timestamp on
 every save.
 
+Named permission profiles (workspace assistant defaults): the ``profiles``
+dict carries any number of additional profiles alongside ``default``.
+Every mutator and resolver takes a keyword ``profile_id`` (default
+``"default"`` -- byte-identical to the single-profile behavior). Resolvers
+walk the named profile's precedence levels first and fall through to the
+default profile only for levels the named profile leaves unset, so a fresh
+empty named profile (``{"servers": {}}``, no ``global_default`` key)
+resolves exactly like the default profile alone. Kill switch and
+``schema_version`` stay global; the shape change is additive, so
+``SCHEMA_VERSION`` stays 1.
+
 Corruption policy — deliberate divergence from ``LocalMCPStore``: local_store
 raises ``LocalMCPStoreLoadError`` on an unreadable/corrupt file, forcing the
 caller to handle it. Per spec §9 ("unknown schema version -> back up file and
@@ -52,12 +63,20 @@ here should need to change to accommodate them.
 
 from __future__ import annotations
 
+import errno
 import hashlib
+import fnmatch
 import json
+import os
+import re
+import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from types import MappingProxyType
+from typing import Any, Callable, Iterator, Literal, Mapping
 
 from loguru import logger
 
@@ -86,6 +105,118 @@ HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads", "network"})
 
 _DEFAULT_PROFILE_ID = "default"
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_RECEIPT_ID_RE = re.compile(r"tp-[0-9a-f]{32}\Z")
+_UTC_TIMESTAMP_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\Z"
+)
+_LIFECYCLE_SCHEMA = "tldw.tool-pack-lifecycle/v1"
+
+ProfileLifecycleDisposition = Literal["legacy", "imported", "tombstone", "invalid"]
+
+_PATH_LOCKS_GUARD = threading.Lock()
+_PATH_LOCKS: dict[Path, threading.RLock] = {}
+_UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = frozenset(
+    {
+        errno.EINVAL,
+        errno.ENOSYS,
+        getattr(errno, "ENOTSUP", errno.EINVAL),
+        getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+    }
+)
+
+
+@dataclass(frozen=True)
+class ProfileMutationResult:
+    """Identity returned after one complete profile authority mutation."""
+
+    profile_id: str
+    revision: int
+    policy_digest: str
+    store_generation: str
+
+
+class ProfileMutationError(ValueError):
+    """A complete or profile-scoped policy mutation was rejected."""
+
+    def __init__(self, category: str) -> None:
+        super().__init__(category)
+        self.category = category
+
+
+def _canonical_json_value(value: Any) -> Any:
+    """Copy frozen or ordinary JSON containers into canonicalizable values."""
+    if isinstance(value, Mapping):
+        return {key: _canonical_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_json_value(item) for item in value]
+    return value
+
+
+def profile_policy_digest(profile: Mapping[str, Any]) -> str:
+    """Hash canonical policy fields while excluding lifecycle metadata.
+
+    The profile kind remains covered because it changes the runtime meaning of
+    otherwise identical policy. Lifecycle revision/provenance and the store's
+    top-level timestamp are deliberately outside this identity.
+    """
+    policy: dict[str, Any] = {
+        "servers": _canonical_json_value(profile.get("servers", {})),
+    }
+    if "global_default" in profile:
+        policy["global_default"] = _canonical_json_value(profile["global_default"])
+    if "profile_kind" in profile:
+        policy["profile_kind"] = _canonical_json_value(profile["profile_kind"])
+    canonical = json.dumps(
+        policy,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _resolved_path_lock(path: Path) -> threading.RLock:
+    """Return the one process-wide reentrant lock for ``path``."""
+    resolved = path.expanduser().resolve(strict=False)
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.setdefault(resolved, threading.RLock())
+
+
+def _fsync_parent_directory(path: Path) -> None:
+    """Fsync ``path`` or tolerate only an explicitly unsupported operation."""
+    try:
+        parent_fd = os.open(path, os.O_RDONLY)
+    except OSError as exc:
+        if exc.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            return
+        raise
+    try:
+        try:
+            os.fsync(parent_fd)
+        except OSError as exc:
+            if exc.errno not in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+                raise
+    finally:
+        os.close(parent_fd)
+
+
+@dataclass(frozen=True)
+class PermissionStoreSnapshot:
+    """Immutable permission-store bytes admitted by strict schema validation."""
+
+    payload: Mapping[str, Any]
+    generation: str
+    file_exists: bool
+
+
+class PermissionStoreSnapshotError(ValueError):
+    """A strict permission-store snapshot could not be read safely."""
+
+    def __init__(self, category: str) -> None:
+        super().__init__(category)
+        self.category = category
 
 
 def _iso_utc_now() -> str:
@@ -103,6 +234,316 @@ def _fresh_payload() -> dict[str, Any]:
             }
         },
     }
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _is_nonnegative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_utc_timestamp(value: Any) -> bool:
+    """Return whether ``value`` is a valid UTC ISO-8601 timestamp."""
+    if not isinstance(value, str) or _UTC_TIMESTAMP_RE.fullmatch(value) is None:
+        return False
+    try:
+        datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError:
+        return False
+    return True
+
+
+def _has_exact_keys(value: Mapping[str, Any], keys: frozenset[str]) -> bool:
+    return set(value) == keys
+
+
+def profile_lifecycle_disposition(
+    profile: Mapping[str, Any],
+) -> ProfileLifecycleDisposition:
+    """Classify the authoritative lifecycle pair carried by ``profile``.
+
+    Legacy profiles carry neither ``profile_kind`` nor ``tool_pack_lifecycle``.
+    Either field alone, an unknown discriminator, or a malformed exact lifecycle
+    variant is invalid rather than silently inheriting as a local profile.
+    """
+    has_kind = "profile_kind" in profile
+    has_lifecycle = "tool_pack_lifecycle" in profile
+    if not has_kind and not has_lifecycle:
+        return "legacy"
+    if not has_kind or not has_lifecycle:
+        return "invalid"
+
+    kind = profile.get("profile_kind")
+    lifecycle = profile.get("tool_pack_lifecycle")
+    if not isinstance(lifecycle, Mapping):
+        return "invalid"
+
+    common_keys = frozenset(
+        {
+            "schema",
+            "origin",
+            "pack_digest",
+            "imported_at",
+            "first_bind_confirmation_required",
+            "receipt_id",
+            "receipt_digest",
+            "policy_digest",
+            "revision",
+        }
+    )
+    if kind == "tool_pack_imported":
+        expected_keys = common_keys | {"counts"}
+        if (
+            not _has_exact_keys(lifecycle, expected_keys)
+            or lifecycle.get("schema") != _LIFECYCLE_SCHEMA
+            or lifecycle.get("origin") != "imported"
+            or not _is_sha256(lifecycle.get("pack_digest"))
+            or not _is_utc_timestamp(lifecycle.get("imported_at"))
+            or not isinstance(lifecycle.get("first_bind_confirmation_required"), bool)
+            or not isinstance(lifecycle.get("receipt_id"), str)
+            or _RECEIPT_ID_RE.fullmatch(lifecycle["receipt_id"]) is None
+            or not _is_sha256(lifecycle.get("receipt_digest"))
+            or not _is_sha256(lifecycle.get("policy_digest"))
+            or not _is_positive_int(lifecycle.get("revision"))
+        ):
+            return "invalid"
+        counts = lifecycle.get("counts")
+        if not isinstance(counts, Mapping) or not _has_exact_keys(
+            counts, frozenset({"matched", "omitted", "pending_deny"})
+        ):
+            return "invalid"
+        if not all(_is_nonnegative_int(counts[key]) for key in counts):
+            return "invalid"
+        return "imported"
+
+    if kind == "tool_pack_tombstone":
+        if (
+            not _has_exact_keys(lifecycle, common_keys | {"removed_at"})
+            or lifecycle.get("schema") != _LIFECYCLE_SCHEMA
+            or lifecycle.get("origin") != "tombstone"
+            or not _is_sha256(lifecycle.get("pack_digest"))
+            or not _is_utc_timestamp(lifecycle.get("imported_at"))
+            or not _is_utc_timestamp(lifecycle.get("removed_at"))
+            or lifecycle.get("first_bind_confirmation_required") is not False
+            or not isinstance(lifecycle.get("receipt_id"), str)
+            or _RECEIPT_ID_RE.fullmatch(lifecycle["receipt_id"]) is None
+            or not _is_sha256(lifecycle.get("receipt_digest"))
+            or not _is_sha256(lifecycle.get("policy_digest"))
+            or not _is_positive_int(lifecycle.get("revision"))
+        ):
+            return "invalid"
+        return "tombstone"
+
+    return "invalid"
+
+
+def _freeze_snapshot(value: Any) -> Any:
+    """Recursively freeze a JSON value without sharing mutable containers."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_snapshot(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_snapshot(item) for item in value)
+    return value
+
+
+def _thaw_snapshot(value: Any) -> Any:
+    """Recursively copy a frozen snapshot into ordinary JSON containers."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_snapshot(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_snapshot(item) for item in value]
+    return value
+
+
+def _projected_store_size(payload: Mapping[str, Any]) -> int:
+    """Return the bytes written by the canonical permission-store writer."""
+    projected = _thaw_snapshot(payload)
+    projected["updated_at"] = _iso_utc_now()
+    return len(json.dumps(projected, indent=2, sort_keys=True).encode("utf-8"))
+
+
+def _profile_has_permissive_policy(profile: Mapping[str, Any]) -> bool:
+    """Return whether a tombstone candidate carries any Allow/Ask posture."""
+    if profile.get("global_default") in {"allow", "ask"}:
+        return True
+    for server in _as_mapping(profile.get("servers")).values():
+        if not isinstance(server, Mapping):
+            continue
+        if server.get("default") in {"allow", "ask"}:
+            return True
+        for tool in _as_mapping(server.get("tools")).values():
+            if isinstance(tool, Mapping) and tool.get("state") in {"allow", "ask"}:
+                return True
+    return False
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object, failing closed when a key appears twice."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise PermissionStoreSnapshotError("duplicate_key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise PermissionStoreSnapshotError("invalid_json")
+
+
+def _validate_strict_profile(profile: Mapping[str, Any], *, is_default: bool) -> bool:
+    allowed_keys = {"global_default", "servers", "profile_kind", "tool_pack_lifecycle"}
+    if not set(profile).issubset(allowed_keys) or not isinstance(profile.get("servers"), Mapping):
+        return False
+    if is_default and "global_default" not in profile:
+        return False
+    if "global_default" in profile and profile["global_default"] not in STORE_STATES:
+        return False
+    if profile_lifecycle_disposition(profile) == "invalid":
+        return False
+
+    for server_key, server_entry in profile["servers"].items():
+        if not isinstance(server_key, str) or not server_key or not isinstance(server_entry, Mapping):
+            return False
+        if not set(server_entry).issubset({"default", "tools"}):
+            return False
+        if "default" in server_entry and server_entry["default"] not in STORE_STATES:
+            return False
+        if "tools" not in server_entry:
+            continue
+        tools = server_entry["tools"]
+        if not isinstance(tools, Mapping):
+            return False
+        for tool_name, tool_entry in tools.items():
+            if not isinstance(tool_name, str) or not tool_name or not isinstance(tool_entry, Mapping):
+                return False
+            # task-32281: `arg_rules` (task-26012's `add_tool_arg_rule()`
+            # writer) is a legitimate tool-entry key that carries no
+            # `state` at all -- an exact-input allow rule with no
+            # whole-tool override. Previously ANY such entry (every one
+            # `add_tool_arg_rule()` has ever written on its own) failed
+            # this check outright, since `"state"` used to be mandatory --
+            # that silently invalidated the WHOLE profile for
+            # `read_snapshot_strict()`/`read_profile_inventory_snapshot()`
+            # callers (e.g. the Permissions-mode profile selector) the
+            # moment a user ever used the "Always allow this exact input"
+            # card option without also setting a whole-tool Allow/Ask/Off.
+            if not set(tool_entry).issubset(
+                {"state", "definition_hash", "config_changed", "arg_rules"}
+            ):
+                return False
+            has_state = "state" in tool_entry
+            if has_state and tool_entry["state"] not in STORE_STATES:
+                return False
+            if "arg_rules" in tool_entry and (
+                not isinstance(tool_entry["arg_rules"], list)
+                or not tool_entry["arg_rules"]
+            ):
+                return False
+            if not has_state and "arg_rules" not in tool_entry:
+                return False
+            if "definition_hash" in tool_entry:
+                if not has_state:
+                    return False
+                stored_hash = tool_entry["definition_hash"]
+                legacy_hash_free_null = (
+                    server_key in HASH_FREE_SERVER_KEYS
+                    and tool_entry["state"] == "allow"
+                    and stored_hash is None
+                )
+                if not legacy_hash_free_null and not _is_sha256(stored_hash):
+                    return False
+            if "config_changed" in tool_entry and (
+                not has_state or not isinstance(tool_entry["config_changed"], bool)
+            ):
+                return False
+            if (
+                has_state
+                and tool_entry["state"] == "allow"
+                and server_key not in HASH_FREE_SERVER_KEYS
+                and "definition_hash" not in tool_entry
+            ):
+                return False
+    return True
+
+
+def _validate_strict_payload(payload: Any) -> bool:
+    if not isinstance(payload, Mapping) or set(payload) - {
+        "schema_version", "kill_switch", "profiles", "updated_at"
+    }:
+        return False
+    if type(payload.get("schema_version")) is not int or payload.get(
+        "schema_version"
+    ) != SCHEMA_VERSION:
+        return False
+    if not isinstance(payload.get("kill_switch"), bool) or not isinstance(payload.get("profiles"), Mapping):
+        return False
+    if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+    profiles = payload["profiles"]
+    if _DEFAULT_PROFILE_ID not in profiles:
+        return False
+    return all(
+        isinstance(profile_id, str)
+        and bool(profile_id)
+        and isinstance(profile, Mapping)
+        and _validate_strict_profile(profile, is_default=profile_id == _DEFAULT_PROFILE_ID)
+        for profile_id, profile in profiles.items()
+    )
+
+
+def _validate_profile_inventory_payload(payload: Any) -> bool:
+    """Accept a strict store or one whose only invalidity is lifecycle data."""
+    if not isinstance(payload, Mapping) or set(payload) - {
+        "schema_version",
+        "kill_switch",
+        "profiles",
+        "updated_at",
+    }:
+        return False
+    if (
+        type(payload.get("schema_version")) is not int
+        or payload.get("schema_version") != SCHEMA_VERSION
+    ):
+        return False
+    if not isinstance(payload.get("kill_switch"), bool) or not isinstance(
+        payload.get("profiles"), Mapping
+    ):
+        return False
+    if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+
+    profiles = payload["profiles"]
+    default = profiles.get(_DEFAULT_PROFILE_ID)
+    if not isinstance(default, Mapping) or not _validate_strict_profile(
+        default, is_default=True
+    ):
+        return False
+    for profile_id, profile in profiles.items():
+        if (
+            not isinstance(profile_id, str)
+            or not profile_id
+            or not isinstance(profile, Mapping)
+        ):
+            return False
+        if profile_id == _DEFAULT_PROFILE_ID or _validate_strict_profile(
+            profile, is_default=False
+        ):
+            continue
+        if profile_lifecycle_disposition(profile) != "invalid":
+            return False
+        policy_only = dict(profile)
+        policy_only.pop("profile_kind", None)
+        policy_only.pop("tool_pack_lifecycle", None)
+        if not _validate_strict_profile(policy_only, is_default=False):
+            return False
+    return True
 
 
 def _validate_state(state: str) -> None:
@@ -137,7 +578,7 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 
 
 def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
-    """Coerce ``profiles`` / the default profile / its ``servers`` to dicts.
+    """Coerce ``profiles`` / every profile / every profile's ``servers`` to dicts.
 
     A payload can pass ``load()``'s dict + ``schema_version`` check yet
     still carry ``null`` (or another non-mapping value) for one of these
@@ -147,32 +588,123 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
     normalizing once here means no store method has to guard against it
     separately. Mutates ``payload`` in place.
 
+    Since named permission profiles (workspace assistant defaults), the
+    every-profile ``servers`` coercion covers the named profiles too: the
+    default profile keeps its exact legacy treatment (coerced as a whole,
+    then its ``servers`` coerced), and each additional profile under
+    ``profiles`` that is itself a mapping has its ``servers`` coerced the
+    same way. A profile VALUE that is not a mapping is left untouched
+    (junk stays junk; the resolvers' ``_as_mapping()`` traversal already
+    tolerates it, and no store method reaches it without ``_profile()``'s
+    own coercion).
+
     Args:
         payload: A payload dict that has already passed the dict +
             ``schema_version`` check in ``load()``.
 
     Returns:
-        ``payload``, with ``profiles``, the default profile, and that
-        profile's ``servers`` coerced to dicts in place.
+        ``payload``, with ``profiles``, the default profile, and every
+        mapping profile's ``servers`` coerced to dicts in place.
     """
     profiles = _as_mapping(payload.get("profiles"))
     payload["profiles"] = profiles
     profile = _as_mapping(profiles.get(_DEFAULT_PROFILE_ID))
     profiles[_DEFAULT_PROFILE_ID] = profile
     profile["servers"] = _as_mapping(profile.get("servers"))
+    for named in profiles.values():
+        if isinstance(named, Mapping):
+            named["servers"] = _as_mapping(named.get("servers"))
     return payload
+
+
+def _profile_chain_ids(payload: dict[str, Any], profile_id: str) -> list[str]:
+    """The profile IDS ``_profile_chain`` resolves, most specific first.
+
+    The chain's own membership rule, factored out (task-32281, Qodo #2597
+    #1) so a reader that must REPORT which profile a resolved entry came
+    from -- ``MCPPermissionStore.list_tool_arg_rules`` -- walks exactly
+    the same profiles authorization does instead of a second, drifting
+    copy of the rule.
+
+    Args:
+        payload: A permission-store payload dict (raw is fine).
+        profile_id: The profile being resolved.
+
+    Returns:
+        Non-empty list of profile ids, most specific first; the default
+        profile is always last.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    ids: list[str] = []
+    if profile_id != _DEFAULT_PROFILE_ID and _as_mapping(profiles.get(profile_id)):
+        ids.append(profile_id)
+    ids.append(_DEFAULT_PROFILE_ID)
+    return ids
+
+
+def _profile_chain(payload: dict[str, Any], profile_id: str) -> list[dict[str, Any]]:
+    """Return the profile-resolution chain for ``profile_id``.
+
+    The chain is ``[named, default]`` when ``profile_id`` names a profile
+    other than ``"default"`` and that profile exists (a non-mapping or
+    absent named profile contributes nothing -- an unknown ``profile_id``
+    resolves exactly like the default profile alone, which is what a
+    deleted-but-still-referenced workspace profile must degrade to), and
+    ``[default]`` otherwise. The default profile is always last: it is
+    the inheritance fallback every named profile falls through to.
+
+    Args:
+        payload: A permission-store payload dict (raw is fine; every step
+            is ``_as_mapping()``-coerced).
+        profile_id: The profile being resolved.
+
+    Returns:
+        Non-empty list of profile dicts, most specific first.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    return [
+        _as_mapping(profiles.get(chain_id))
+        for chain_id in _profile_chain_ids(payload, profile_id)
+    ]
+
+
+def _lifecycle_resolution_block(
+    payload: Mapping[str, Any], profile_id: str
+) -> str | None:
+    """Return a fail-closed resolver origin before profile inheritance.
+
+    The selected named profile is authoritative: an invalid discriminator pair
+    cannot fall through to ``default``, and a validated tombstone permanently
+    denies. The inherited default profile is checked too whenever it may take
+    part in the subsequent chain.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    profile_ids = [profile_id]
+    if profile_id != _DEFAULT_PROFILE_ID:
+        profile_ids.append(_DEFAULT_PROFILE_ID)
+    for candidate_id in profile_ids:
+        profile = profiles.get(candidate_id)
+        if not isinstance(profile, Mapping):
+            continue
+        disposition = profile_lifecycle_disposition(profile)
+        if disposition == "invalid":
+            return "lifecycle_invalid"
+        if disposition == "tombstone":
+            return "tombstone"
+    return None
 
 
 class MCPPermissionStore:
     """Read-modify-write accessor over the on-disk permission-store JSON file.
 
-    Single-instance usage is assumed (the Hub UI); across concurrent
-    instances, last write wins — every mutator reloads the full payload,
-    applies its change, and saves the full payload back.
+    Every instance for the same resolved path shares one process-wide reentrant
+    mutation fence. Mutators reload and durably replace the full payload while
+    holding that fence, preventing in-process lost updates.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        self._path_lock = _resolved_path_lock(self.path)
 
     # -- raw load/save -----------------------------------------------------
 
@@ -192,6 +724,11 @@ class MCPPermissionStore:
             The payload dict, always shaped so ``profiles["default"]`` and
             its ``servers`` key are dicts. Never raises.
         """
+        with self.mutation_fence():
+            return self._load_locked()
+
+    def _load_locked(self) -> dict[str, Any]:
+        """Load with legacy recovery while the resolved-path fence is held."""
         if not self.path.exists():
             return _fresh_payload()
 
@@ -219,21 +756,188 @@ class MCPPermissionStore:
 
         return _normalize_payload_shape(payload)
 
-    def save(self, payload: dict[str, Any]) -> None:
+    def read_snapshot_strict(self) -> PermissionStoreSnapshot:
+        """Read schema 1 once without creating, renaming, normalizing, or saving.
+
+        Unlike :meth:`load`, this authority seam never invokes legacy recovery.
+        Callers can therefore use its immutable payload and generation token for
+        review or concurrency checks without an inspection changing disk state.
+
+        Raises:
+            PermissionStoreSnapshotError: If the store cannot be read as an
+                exact, schema-1 permission payload.
+        """
+        try:
+            raw_bytes = self.path.read_bytes()
+        except FileNotFoundError:
+            fresh = _fresh_payload()
+            frozen = _freeze_snapshot(fresh)
+            digest = hashlib.sha256(
+                json.dumps(fresh, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            return PermissionStoreSnapshot(
+                payload=frozen,
+                generation=f"missing:{digest}",
+                file_exists=False,
+            )
+        except OSError as exc:
+            raise PermissionStoreSnapshotError("io_error") from exc
+
+        try:
+            payload = json.loads(
+                raw_bytes.decode("utf-8"),
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
+        except PermissionStoreSnapshotError:
+            raise
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
+            raise PermissionStoreSnapshotError("invalid_json") from exc
+
+        if not _validate_strict_payload(payload):
+            raise PermissionStoreSnapshotError("invalid_shape")
+
+        return PermissionStoreSnapshot(
+            payload=_freeze_snapshot(payload),
+            generation=f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}",
+            file_exists=True,
+        )
+
+    def read_profile_inventory_snapshot(self) -> PermissionStoreSnapshot:
+        """Read profile rows without recovering globally corrupt authority.
+
+        A named profile whose policy fields are valid but whose Tool Pack
+        lifecycle metadata is invalid remains visible to callers so it can be
+        rendered unavailable. Invalid JSON, duplicate keys, unknown schemas,
+        malformed default policy, and unrelated shape errors remain hard
+        failures and never synthesize an actionable default profile.
+
+        Returns:
+            An immutable snapshot suitable for profile-selector inventory.
+
+        Raises:
+            PermissionStoreSnapshotError: If corruption extends beyond one or
+                more named profiles' lifecycle metadata.
+        """
+        try:
+            return self.read_snapshot_strict()
+        except PermissionStoreSnapshotError as exc:
+            if exc.category != "invalid_shape":
+                raise
+
+        try:
+            raw_bytes = self.path.read_bytes()
+            payload = json.loads(
+                raw_bytes.decode("utf-8"),
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
+        except FileNotFoundError:
+            return self.read_snapshot_strict()
+        except PermissionStoreSnapshotError:
+            raise
+        except OSError as exc:
+            raise PermissionStoreSnapshotError("io_error") from exc
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            RecursionError,
+            ValueError,
+        ) as exc:
+            raise PermissionStoreSnapshotError("invalid_json") from exc
+
+        if not _validate_profile_inventory_payload(payload):
+            raise PermissionStoreSnapshotError("invalid_shape")
+        return PermissionStoreSnapshot(
+            payload=_freeze_snapshot(payload),
+            generation=f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}",
+            file_exists=True,
+        )
+
+    def _load_for_raw_getter(self) -> dict[str, Any]:
+        """Load a legacy-compatible payload without recovery side effects.
+
+        Raw getters expose a best-effort view for UI inspection. They retain
+        ``load()``'s permissive in-memory fallback but must never back up,
+        create, normalize on disk, or otherwise alter a policy file.
+        """
+        try:
+            raw_text = self.path.read_text(encoding="utf-8")
+            payload = json.loads(raw_text)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
+            return _fresh_payload()
+
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != SCHEMA_VERSION
+        ):
+            return _fresh_payload()
+        return _normalize_payload_shape(payload)
+
+    @contextmanager
+    def mutation_fence(self) -> Iterator[None]:
+        """Hold the process-wide reentrant lock for this resolved store path."""
+        with self._path_lock:
+            yield
+
+    def save(
+        self,
+        payload: dict[str, Any],
+        *,
+        expected_generation: str | None = None,
+    ) -> None:
         """Atomically write ``payload`` to disk, stamping ``updated_at``.
 
         Args:
             payload: Full store payload to persist. Mutated in place to
                 add/overwrite ``updated_at`` before it is written.
+            expected_generation: Optional generation captured before deriving
+                ``payload``. A changed store is rejected rather than replaced.
         """
+        with self.mutation_fence():
+            if expected_generation is not None:
+                current = self.read_snapshot_strict()
+                if current.generation != expected_generation:
+                    raise ProfileMutationError("stale_store")
+            self._save_locked(payload)
+
+    def _save_locked(self, payload: dict[str, Any]) -> None:
+        """Durably replace the store while the caller holds the path fence."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         payload["updated_at"] = _iso_utc_now()
+        temp_fd, raw_temp_path = tempfile.mkstemp(
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+            dir=self.path.parent,
+        )
+        temp_path = Path(raw_temp_path)
+        try:
+            handle = os.fdopen(temp_fd, "w", encoding="utf-8")
+            temp_fd = -1
+            with handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, self.path)
+        except BaseException:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
 
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+        _fsync_parent_directory(self.path.parent)
 
-        temp_path.replace(self.path)
+    def _mutate_locked(self, change: Callable[[dict[str, Any]], bool]) -> bool:
+        """Load, mutate, and durably save once under the shared path fence."""
+        with self.mutation_fence():
+            payload = self.load()
+            changed = change(payload)
+            if changed:
+                self._save_locked(payload)
+            return changed
 
     def _backup_corrupt_file(self) -> None:
         backup_path = self.path.with_suffix(f"{self.path.suffix}.bak")
@@ -247,12 +951,318 @@ class MCPPermissionStore:
     # -- profile helpers -----------------------------------------------------
 
     @staticmethod
-    def _profile(payload: dict[str, Any]) -> dict[str, Any]:
+    def _profile(
+        payload: dict[str, Any], profile_id: str = _DEFAULT_PROFILE_ID
+    ) -> dict[str, Any]:
+        """Return (seeding as needed) the writable dict for one profile.
+
+        For ``"default"`` the seeding is exactly the legacy behavior:
+        ``global_default`` and ``servers`` are ``.setdefault()``ed. For a
+        named profile only ``servers`` is seeded -- the named profile
+        deliberately carries no ``global_default`` key, because at that
+        precedence level *absence means inherit* from the default profile
+        (see the resolvers' chain walk).
+
+        Args:
+            payload: A loaded (hence normalized) payload to mutate.
+            profile_id: Profile to fetch; seeded as above when absent.
+
+        Returns:
+            The profile's dict, coerced to a dict even when a hand-edited
+            payload carried junk at that key.
+        """
         profiles = payload.setdefault("profiles", {})
-        profile = profiles.setdefault(_DEFAULT_PROFILE_ID, {})
-        profile.setdefault("global_default", DEFAULT_GLOBAL)
+        profile = profiles.setdefault(profile_id, {})
+        if not isinstance(profile, dict):
+            profile = {}
+            profiles[profile_id] = profile
+        if profile_id == _DEFAULT_PROFILE_ID:
+            profile.setdefault("global_default", DEFAULT_GLOBAL)
         profile.setdefault("servers", {})
         return profile
+
+    @staticmethod
+    def _validate_profile_semantics(
+        profile: Mapping[str, Any],
+        *,
+        expected_disposition: ProfileLifecycleDisposition | None = None,
+    ) -> ProfileLifecycleDisposition:
+        """Validate exact profile shape and its lifecycle policy identity."""
+        disposition = profile_lifecycle_disposition(profile)
+        if disposition == "invalid":
+            raise ProfileMutationError("lifecycle_invalid")
+        if expected_disposition is not None and disposition != expected_disposition:
+            raise ProfileMutationError("lifecycle_invalid")
+        if disposition in {"imported", "tombstone"}:
+            if not _validate_strict_profile(profile, is_default=False):
+                raise ProfileMutationError("lifecycle_invalid")
+            lifecycle = profile["tool_pack_lifecycle"]
+            if lifecycle["policy_digest"] != profile_policy_digest(profile):
+                raise ProfileMutationError("policy_digest_mismatch")
+        return disposition
+
+    def _mutate_profile_locked(
+        self,
+        profile_id: str,
+        change: Callable[[dict[str, Any]], bool],
+        *,
+        expected_profile_digest: str | None,
+        expected_revision: int | None,
+    ) -> bool:
+        """Apply one field edit with profile-scoped CAS and lifecycle upkeep."""
+        with self.mutation_fence():
+            payload = self.load()
+            profiles = payload.setdefault("profiles", {})
+            existing = profiles.get(profile_id)
+            if isinstance(existing, Mapping):
+                disposition = self._validate_profile_semantics(existing)
+                if disposition == "tombstone":
+                    raise ProfileMutationError("profile_tombstone")
+                current_digest = profile_policy_digest(existing)
+                if (
+                    expected_profile_digest is not None
+                    and current_digest != expected_profile_digest
+                ):
+                    raise ProfileMutationError("stale_profile")
+                if expected_revision is not None:
+                    current_revision = (
+                        existing["tool_pack_lifecycle"]["revision"]
+                        if disposition == "imported"
+                        else None
+                    )
+                    if current_revision != expected_revision:
+                        raise ProfileMutationError("stale_revision")
+            else:
+                if expected_profile_digest is not None:
+                    raise ProfileMutationError("stale_profile")
+                if expected_revision is not None:
+                    raise ProfileMutationError("stale_revision")
+                disposition = "legacy"
+
+            profile = self._profile(payload, profile_id)
+            changed = change(profile)
+            if not changed:
+                return False
+            if disposition == "imported":
+                lifecycle = profile["tool_pack_lifecycle"]
+                lifecycle["revision"] += 1
+                lifecycle["policy_digest"] = profile_policy_digest(profile)
+                self._validate_profile_semantics(
+                    profile, expected_disposition="imported"
+                )
+            self._save_locked(payload)
+            return True
+
+    def install_profile_if_absent(
+        self,
+        profile_id: str,
+        imported_profile: Mapping[str, Any],
+        *,
+        expected_generation: str,
+        max_profiles: int,
+        max_store_bytes: int,
+    ) -> ProfileMutationResult:
+        """Atomically install one reviewed imported profile if its id is free."""
+        candidate = _thaw_snapshot(imported_profile)
+
+        with self.mutation_fence():
+            self._validate_profile_semantics(candidate, expected_disposition="imported")
+            if candidate["tool_pack_lifecycle"]["revision"] != 1:
+                raise ProfileMutationError("invalid_revision")
+            if (
+                candidate["tool_pack_lifecycle"][
+                    "first_bind_confirmation_required"
+                ]
+                is not True
+            ):
+                raise ProfileMutationError("first_bind_required")
+            snapshot = self.read_snapshot_strict()
+            if snapshot.generation != expected_generation:
+                raise ProfileMutationError("stale_store")
+            payload = _thaw_snapshot(snapshot.payload)
+            profiles = payload["profiles"]
+            if profile_id in profiles:
+                raise ProfileMutationError("profile_exists")
+            folded = profile_id.casefold()
+            if any(existing_id.casefold() == folded for existing_id in profiles):
+                raise ProfileMutationError("profile_id_collision")
+            if len(profiles) + 1 > max_profiles:
+                raise ProfileMutationError("profile_limit")
+
+            profiles[profile_id] = candidate
+            if _projected_store_size(payload) > max_store_bytes:
+                raise ProfileMutationError("store_bytes_limit")
+            self._save_locked(payload)
+            generation = self.read_snapshot_strict().generation
+
+        lifecycle = candidate["tool_pack_lifecycle"]
+        return ProfileMutationResult(
+            profile_id=profile_id,
+            revision=lifecycle["revision"],
+            policy_digest=lifecycle["policy_digest"],
+            store_generation=generation,
+        )
+
+    def update_imported_profile(
+        self,
+        profile_id: str,
+        replacement_profile: Mapping[str, Any],
+        *,
+        expected_revision: int,
+        max_store_bytes: int,
+        expected_generation: str | None = None,
+        expected_profile_digest: str | None = None,
+    ) -> ProfileMutationResult:
+        """Atomically replace an imported profile's complete policy fields."""
+        replacement = _thaw_snapshot(replacement_profile)
+
+        with self.mutation_fence():
+            self._validate_profile_semantics(
+                replacement, expected_disposition="imported"
+            )
+            snapshot = self.read_snapshot_strict()
+            if (
+                expected_generation is not None
+                and snapshot.generation != expected_generation
+            ):
+                raise ProfileMutationError("stale_store")
+            payload = _thaw_snapshot(snapshot.payload)
+            current = payload["profiles"].get(profile_id)
+            if not isinstance(current, Mapping):
+                raise ProfileMutationError("profile_missing")
+            self._validate_profile_semantics(current, expected_disposition="imported")
+            current_lifecycle = current["tool_pack_lifecycle"]
+            if current_lifecycle["revision"] != expected_revision:
+                raise ProfileMutationError("stale_revision")
+            current_digest = profile_policy_digest(current)
+            if (
+                expected_profile_digest is not None
+                and current_digest != expected_profile_digest
+            ):
+                raise ProfileMutationError("stale_profile")
+
+            lifecycle = _thaw_snapshot(current_lifecycle)
+            lifecycle["revision"] += 1
+            replacement["tool_pack_lifecycle"] = lifecycle
+            lifecycle["policy_digest"] = profile_policy_digest(replacement)
+            self._validate_profile_semantics(
+                replacement, expected_disposition="imported"
+            )
+            payload["profiles"][profile_id] = replacement
+            if _projected_store_size(payload) > max_store_bytes:
+                raise ProfileMutationError("store_bytes_limit")
+            self._save_locked(payload)
+            generation = self.read_snapshot_strict().generation
+
+        return ProfileMutationResult(
+            profile_id=profile_id,
+            revision=lifecycle["revision"],
+            policy_digest=lifecycle["policy_digest"],
+            store_generation=generation,
+        )
+
+    def replace_profile_with_tombstone(
+        self,
+        profile_id: str,
+        tombstone_profile: Mapping[str, Any],
+        *,
+        expected_revision: int,
+        max_store_bytes: int,
+        expected_generation: str | None = None,
+        expected_profile_digest: str | None = None,
+    ) -> ProfileMutationResult:
+        """Atomically replace a valid imported profile with a deny tombstone."""
+        tombstone = _thaw_snapshot(tombstone_profile)
+
+        with self.mutation_fence():
+            self._validate_profile_semantics(
+                tombstone, expected_disposition="tombstone"
+            )
+            builtin = _as_mapping(
+                _as_mapping(tombstone.get("servers")).get(BUILTIN_TOOL_SERVER_KEY)
+            )
+            if (
+                tombstone.get("global_default") != "deny"
+                or builtin.get("default") != "deny"
+                or _profile_has_permissive_policy(tombstone)
+            ):
+                raise ProfileMutationError("tombstone_permissive")
+            snapshot = self.read_snapshot_strict()
+            if (
+                expected_generation is not None
+                and snapshot.generation != expected_generation
+            ):
+                raise ProfileMutationError("stale_store")
+            payload = _thaw_snapshot(snapshot.payload)
+            current = payload["profiles"].get(profile_id)
+            if not isinstance(current, Mapping):
+                raise ProfileMutationError("profile_missing")
+            self._validate_profile_semantics(current, expected_disposition="imported")
+            current_lifecycle = current["tool_pack_lifecycle"]
+            if current_lifecycle["revision"] != expected_revision:
+                raise ProfileMutationError("stale_revision")
+            current_digest = profile_policy_digest(current)
+            if (
+                expected_profile_digest is not None
+                and current_digest != expected_profile_digest
+            ):
+                raise ProfileMutationError("stale_profile")
+            lifecycle = tombstone["tool_pack_lifecycle"]
+            if (
+                lifecycle["pack_digest"] != current_lifecycle["pack_digest"]
+                or lifecycle["imported_at"] != current_lifecycle["imported_at"]
+            ):
+                raise ProfileMutationError("lifecycle_provenance_mismatch")
+            lifecycle["revision"] = current_lifecycle["revision"] + 1
+            lifecycle["policy_digest"] = profile_policy_digest(tombstone)
+            self._validate_profile_semantics(
+                tombstone, expected_disposition="tombstone"
+            )
+            payload["profiles"][profile_id] = tombstone
+            if _projected_store_size(payload) > max_store_bytes:
+                raise ProfileMutationError("store_bytes_limit")
+            self._save_locked(payload)
+            generation = self.read_snapshot_strict().generation
+
+        return ProfileMutationResult(
+            profile_id=profile_id,
+            revision=lifecycle["revision"],
+            policy_digest=lifecycle["policy_digest"],
+            store_generation=generation,
+        )
+
+    def ensure_profile(self, profile_id: str) -> None:
+        """Create the named profile if it does not exist.
+
+        Seeded ``{"servers": {}}`` only -- no ``global_default`` key, so
+        every unset level inherits from the ``default`` profile. A no-op
+        for the default profile (it always exists) and for empty ids
+        (not a valid profile reference).
+
+        Args:
+            profile_id: Profile to create; existing profiles are left
+                untouched.
+        """
+        if profile_id == _DEFAULT_PROFILE_ID or not profile_id:
+            return
+
+        def change(payload: dict[str, Any]) -> bool:
+            profiles = payload.setdefault("profiles", {})
+            if profile_id in profiles:
+                return False
+            profiles[profile_id] = {"servers": {}}
+            return True
+
+        self._mutate_locked(change)
+
+    def list_profiles(self) -> list[str]:
+        """Return every stored profile id, sorted.
+
+        Returns:
+            Sorted list of the keys under ``profiles`` (always includes
+            ``"default"`` after any ``load()``).
+        """
+        return sorted(_as_mapping(self.load().get("profiles")).keys())
 
     # -- kill switch -----------------------------------------------------
 
@@ -273,52 +1283,96 @@ class MCPPermissionStore:
             value: True to block all tool execution; False to re-enable
                 normal precedence-based resolution.
         """
-        payload = self.load()
-        payload["kill_switch"] = bool(value)
-        self.save(payload)
+
+        def change(payload: dict[str, Any]) -> bool:
+            normalized = bool(value)
+            if payload.get("kill_switch") is normalized:
+                return False
+            payload["kill_switch"] = normalized
+            return True
+
+        self._mutate_locked(change)
 
     # -- global default -----------------------------------------------------
 
-    def get_global_default(self) -> str:
+    def get_global_default(self, *, profile_id: str = _DEFAULT_PROFILE_ID) -> str:
         """Return the profile's global default permission state.
+
+        Args:
+            profile_id: Profile to inspect without creating or normalizing it.
 
         Returns:
             One of ``STORE_STATES``, or ``DEFAULT_GLOBAL`` when unset.
         """
-        return self._profile(self.load()).get("global_default", DEFAULT_GLOBAL)
+        payload = self._load_for_raw_getter()
+        profiles = _as_mapping(payload.get("profiles"))
+        profile = _as_mapping(profiles.get(profile_id))
+        return profile.get("global_default", DEFAULT_GLOBAL)
 
-    def set_global_default(self, state: str) -> None:
-        """Persist the profile's global default permission state.
+    def set_global_default(
+        self,
+        state: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> None:
+        """Persist a profile's global default permission state.
 
         Args:
             state: One of ``STORE_STATES``.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Raises:
             ValueError: If ``state`` is not one of ``STORE_STATES``.
         """
         _validate_state(state)
-        payload = self.load()
-        profile = self._profile(payload)
-        profile["global_default"] = state
-        self.save(payload)
+
+        def change(profile: dict[str, Any]) -> bool:
+            if profile.get("global_default") == state:
+                return False
+            profile["global_default"] = state
+            return True
+
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
     # -- server default -----------------------------------------------------
 
-    def get_server_entry(self, server_key: str) -> dict[str, Any] | None:
+    def get_server_entry(
+        self, server_key: str, *, profile_id: str = _DEFAULT_PROFILE_ID
+    ) -> dict[str, Any] | None:
         """Return the raw stored entry for a server, if any.
 
         Args:
             server_key: Server's stable key (``<source>:<server_id>``).
+            profile_id: Profile to inspect without creating or normalizing it.
 
         Returns:
             The server's entry dict (an optional ``"default"`` and/or
             ``"tools"`` key), or None when the server has no entry at all
             (fully "Inherit").
         """
-        servers = self._profile(self.load()).get("servers", {})
+        payload = self._load_for_raw_getter()
+        profiles = _as_mapping(payload.get("profiles"))
+        profile = _as_mapping(profiles.get(profile_id))
+        servers = _as_mapping(profile.get("servers"))
         return servers.get(server_key)
 
-    def set_server_default(self, server_key: str, state: str | None) -> None:
+    def set_server_default(
+        self,
+        server_key: str,
+        state: str | None,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> None:
         """Set or clear a server-level default permission state.
 
         Args:
@@ -327,6 +1381,8 @@ class MCPPermissionStore:
                 None to clear it (inherit from the global default). The
                 server's entry is pruned entirely once it has neither a
                 default nor any tool overrides left.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Raises:
             ValueError: If ``state`` is not None and not one of
@@ -335,39 +1391,57 @@ class MCPPermissionStore:
         if state is not None:
             _validate_state(state)
 
-        payload = self.load()
-        profile = self._profile(payload)
-        servers = profile.setdefault("servers", {})
-
-        if state is None:
-            entry = servers.get(server_key)
-            if entry is not None:
-                entry.pop("default", None)
+        def change(profile: dict[str, Any]) -> bool:
+            servers = profile.setdefault("servers", {})
+            if state is None:
+                entry = servers.get(server_key)
+                if entry is None or "default" not in entry:
+                    return False
+                entry.pop("default")
                 if _entry_is_empty(entry):
                     servers.pop(server_key, None)
-        else:
-            entry = servers.setdefault(server_key, {})
-            entry["default"] = state
+                return True
 
-        self.save(payload)
+            entry = servers.setdefault(server_key, {})
+            if entry.get("default") == state:
+                return False
+            entry["default"] = state
+            return True
+
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
     # -- tool state -----------------------------------------------------
 
-    def get_tool_entry(self, server_key: str, tool_name: str) -> dict[str, Any] | None:
+    def get_tool_entry(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> dict[str, Any] | None:
         """Return the raw stored entry for one tool, if any.
 
         Args:
             server_key: Owning server's stable key.
             tool_name: Tool name within that server.
+            profile_id: Profile to inspect without creating or normalizing it.
 
         Returns:
             The tool's entry dict (``"state"`` guaranteed; ``"definition_hash"``
             and ``"config_changed"`` optional), or None when the tool has
             no explicit entry (inherits from the server/global default).
         """
-        servers = self._profile(self.load()).get("servers", {})
-        entry = servers.get(server_key, {})
-        tools = entry.get("tools", {})
+        payload = self._load_for_raw_getter()
+        profiles = _as_mapping(payload.get("profiles"))
+        profile = _as_mapping(profiles.get(profile_id))
+        servers = _as_mapping(profile.get("servers"))
+        entry = _as_mapping(servers.get(server_key))
+        tools = _as_mapping(entry.get("tools"))
         return tools.get(tool_name)
 
     def set_tool_state(
@@ -377,6 +1451,9 @@ class MCPPermissionStore:
         state: str | None,
         *,
         definition_hash: str | None = None,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """Set or clear a tool-level permission override.
 
@@ -390,55 +1467,308 @@ class MCPPermissionStore:
             definition_hash: Required when ``state`` is ``"allow"`` -- the
                 tool's current fingerprint (see ``definition_hash()``),
                 stored alongside the allow for the rug-pull guard to
-                compare against later. Not required for ``server_key``
-                values in ``HASH_FREE_SERVER_KEYS``.
+                compare against later. Must be a SHA-256 digest. Not
+                required or stored for ``server_key`` values in
+                ``HASH_FREE_SERVER_KEYS``.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Raises:
             ValueError: If ``state`` is not None and not one of
                 ``STORE_STATES``, or if ``state`` is ``"allow"`` without a
-                ``definition_hash`` and ``server_key`` is not in
+                SHA-256 ``definition_hash`` and ``server_key`` is not in
                 ``HASH_FREE_SERVER_KEYS``.
         """
         if state is not None:
             _validate_state(state)
             if (
                 state == "allow"
-                and not definition_hash
                 and server_key not in HASH_FREE_SERVER_KEYS
+                and not _is_sha256(definition_hash)
             ):
-                raise ValueError("definition_hash is required when state is 'allow'")
+                raise ValueError(
+                    "a SHA-256 definition_hash is required when state is 'allow'"
+                )
 
-        payload = self.load()
-        profile = self._profile(payload)
-        servers = profile.setdefault("servers", {})
-
-        if state is None:
-            entry = servers.get(server_key)
-            if entry is not None:
+        def change(profile: dict[str, Any]) -> bool:
+            servers = profile.setdefault("servers", {})
+            if state is None:
+                entry = servers.get(server_key)
+                if entry is None:
+                    return False
                 tools = entry.get("tools", {})
-                tools.pop(tool_name, None)
+                if tool_name not in tools:
+                    return False
+                tools.pop(tool_name)
                 if not tools:
                     entry.pop("tools", None)
                 if _entry_is_empty(entry):
                     servers.pop(server_key, None)
-        else:
+                return True
+
             entry = servers.setdefault(server_key, {})
             tools = entry.setdefault("tools", {})
-            # Replacing the entry wholesale (rather than mutating in place)
-            # is what clears any persisted `config_changed` marker.
             tool_entry: dict[str, Any] = {"state": state}
-            if state == "allow":
+            if (
+                state == "allow"
+                and server_key not in HASH_FREE_SERVER_KEYS
+                and definition_hash is not None
+            ):
                 tool_entry["definition_hash"] = definition_hash
+            if tools.get(tool_name) == tool_entry:
+                return False
             tools[tool_name] = tool_entry
+            return True
 
-        self.save(payload)
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
-    def mark_config_changed(self, server_key: str, tool_name: str) -> bool:
+
+    def add_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        args: Mapping[str, Any],
+        definition_hash: str | None,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> None:
+        """Persist one exact-arguments allow rule for a tool (TASK-26012).
+
+        The rule stores the canonical JSON of the EXACT arguments the user
+        was shown on the approval card (AC#3: no rule is created from text
+        the user did not read); ``arg_rule_allows`` later matches a call
+        only when its canonical arguments are identical. Hand-written
+        ``{"field": ..., "pattern": ...}`` glob rules are also honored by
+        the matcher, but this writer never creates them.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            args: The exact arguments to allow, as displayed to the user.
+            definition_hash: The tool's current fingerprint -- the rug-pull
+                guard invalidates the rule when the definition changes
+                (AC#4). May be None only for ``HASH_FREE_SERVER_KEYS``.
+            profile_id: Profile to write into.
+        """
+        if definition_hash is None and server_key not in HASH_FREE_SERVER_KEYS:
+            raise ValueError("definition_hash is required for an arg rule")
+
+        def change(profile: dict[str, Any]) -> bool:
+            entry = (
+                profile.setdefault("servers", {})
+                .setdefault(server_key, {})
+                .setdefault("tools", {})
+                .setdefault(tool_name, {})
+            )
+            rules = entry.setdefault("arg_rules", [])
+            rule = {
+                "args_json": _canonical_args_json(args),
+                "definition_hash": definition_hash,
+                "created_at": _iso_utc_now(),
+            }
+            if rule["args_json"] in {
+                existing.get("args_json")
+                for existing in rules
+                if isinstance(existing, Mapping)
+            }:
+                return False
+            rules.append(rule)
+            return True
+
+        # Qodo #2600 #13: fenced like `set_tool_state`, not a bare
+        # load/mutate/save -- the old shape let a concurrent permission
+        # write land between this method's own load and save and be
+        # discarded by it. `_mutate_profile_locked` also seeds the profile
+        # (what the removed `ensure_profile()` call did) INSIDE the fence.
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=None,
+            expected_revision=None,
+        )
+
+    def list_tool_arg_rules(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> list[dict[str, Any]]:
+        """List the exact-input allow rules in force for one tool (task-32281).
+
+        Walks the SAME ``_profile_chain`` ``arg_rule_allows`` authorizes
+        against, and stops at the first profile carrying rules for this
+        tool -- exactly that resolver's shadowing rule. Qodo #2597 #1: this
+        used to read the selected profile ONLY, so a child profile
+        inheriting a rule from ``default`` showed no rule and no Remove
+        control while the rule kept quieting real calls. Every returned
+        rule therefore names its OWNING profile, which is the profile
+        ``remove_tool_arg_rule`` must be pointed at to actually delete it.
+
+        Hand-written ``{"field": ..., "pattern": ...}`` glob rules are
+        never returned: this surface is scoped to the exact-input rules
+        the approval card creates (``args_json`` present).
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            profile_id: Profile being reviewed; its inheritance chain is
+                walked, not just the profile itself.
+
+        Returns:
+            One dict per rule, oldest first, each carrying ``rule_id``
+            (the rule's canonical ``args_json`` -- unique per tool by
+            construction, see ``add_tool_arg_rule``'s own dedup, and the
+            same string ``remove_tool_arg_rule`` matches against),
+            ``args_json``, ``created_at``, and ``profile_id`` (the OWNING
+            profile, which is ``profile_id`` for a rule stored here and an
+            ancestor's id for an inherited one).
+        """
+        payload = self.load()
+        profiles = payload.get("profiles", {})
+        for owner_id in _profile_chain_ids(payload, profile_id):
+            tool_entry = self._tool_entry(
+                profiles.get(owner_id), server_key, tool_name
+            )
+            if tool_entry is None:
+                continue
+            rules = tool_entry.get("arg_rules")
+            if not isinstance(rules, list) or not rules:
+                continue
+            # A profile carrying ANY rules for this tool ends the walk,
+            # shadowing its ancestors -- `arg_rule_allows`'s own `return
+            # False` after the first such profile. Listing an ancestor's
+            # inert rules below it would advertise a rule that cannot fire.
+            return [
+                {
+                    "rule_id": rule["args_json"],
+                    "args_json": rule["args_json"],
+                    "created_at": rule.get("created_at"),
+                    "profile_id": owner_id,
+                }
+                for rule in rules
+                if isinstance(rule, Mapping)
+                and isinstance(rule.get("args_json"), str)
+                and rule.get("args_json")
+            ]
+        return []
+
+    def remove_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        rule_id: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> bool:
+        """Delete one exact-input allow rule (task-32281).
+
+        Qodo #2600 #13: runs load -> remove -> validate -> save under
+        ``_mutate_profile_locked``, the same guarded mutation fence
+        ``set_tool_state`` uses (``add_tool_arg_rule`` now does too). The
+        previous bare load/mutate/save could save a stale payload over a
+        permission write that landed in between and silently discard it.
+
+        ``rule_id`` is the rule's canonical ``args_json``, the same string
+        ``list_tool_arg_rules`` returns as ``rule_id``. ``profile_id`` must
+        be the rule's OWNING profile -- the ``profile_id`` that listing
+        reports, which for an inherited rule is an ANCESTOR of the profile
+        being reviewed, not the reviewed profile itself.
+
+        Returns:
+            True only when a rule was actually removed -- a stale or
+            unknown ``rule_id`` is a no-op, not an error.
+        """
+
+        def change(profile: dict[str, Any]) -> bool:
+            server_entry = _as_mapping(profile.get("servers")).get(server_key)
+            if not isinstance(server_entry, Mapping):
+                return False
+            tools = server_entry.get("tools")
+            if not isinstance(tools, Mapping):
+                return False
+            tool_entry = tools.get(tool_name)
+            if not isinstance(tool_entry, Mapping):
+                return False
+            rules = tool_entry.get("arg_rules")
+            if not isinstance(rules, list):
+                return False
+            remaining = [
+                rule
+                for rule in rules
+                if not (isinstance(rule, Mapping) and rule.get("args_json") == rule_id)
+            ]
+            if len(remaining) == len(rules):
+                return False
+            if remaining:
+                tool_entry["arg_rules"] = remaining
+            else:
+                tool_entry.pop("arg_rules", None)
+                if not tool_entry:
+                    # Review round 1 (Critical): a state-less tool entry
+                    # (only ever had arg_rules, e.g. an "always allow this
+                    # exact input" with no whole-tool override) left an
+                    # empty `{}` behind, which `_validate_strict_profile()`
+                    # rejects (it requires "state" OR "arg_rules") -- that
+                    # invalidated the WHOLE profile for `read_snapshot_
+                    # strict()`/`read_profile_inventory_snapshot()` callers
+                    # the moment the LAST rule was removed. Drop only the
+                    # empty tool entry itself -- never cascades to
+                    # `tools`/`server_entry`, which may still carry sibling
+                    # tools or a server-level default.
+                    tools.pop(tool_name, None)
+            return True
+
+        return self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=None,
+            expected_revision=None,
+        )
+
+    @staticmethod
+    def _tool_entry(
+        profile: Any, server_key: str, tool_name: str
+    ) -> dict[str, Any] | None:
+        """One tool's raw stored entry within ``profile``, or None --
+        ``list_tool_arg_rules``' traversal (task-32281).
+
+        Deliberately NOT shared with ``remove_tool_arg_rule``, which walks
+        the same path inline because it also needs the parent ``tools``
+        mapping in hand to drop a tool entry its last rule emptied.
+        """
+        if not isinstance(profile, Mapping):
+            return None
+        server_entry = _as_mapping(profile.get("servers")).get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return None
+        tools = server_entry.get("tools")
+        if not isinstance(tools, Mapping):
+            return None
+        tool_entry = tools.get(tool_name)
+        return tool_entry if isinstance(tool_entry, Mapping) else None
+
+    def mark_config_changed(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+    ) -> bool:
         """Set ``config_changed: true`` on a tool entry.
 
         Args:
             server_key: Owning server's stable key.
             tool_name: Tool name within that server.
+            profile_id: Profile to write; defaults to the ``default``
+                profile (byte-identical to the pre-profiles behavior).
 
         Returns:
             True only on the not-already-set -> set transition (the
@@ -448,22 +1778,28 @@ class MCPPermissionStore:
             over a tool that is already downgraded does not rewrite the
             store file on every call.
         """
-        payload = self.load()
-        profile = self._profile(payload)
-        servers = profile.get("servers", {})
-        entry = servers.get(server_key, {})
-        tools = entry.get("tools", {})
-        tool_entry = tools.get(tool_name, {})
-        if bool(tool_entry.get("config_changed")):
-            return False
 
-        servers = profile.setdefault("servers", {})
-        entry = servers.setdefault(server_key, {})
-        tools = entry.setdefault("tools", {})
-        tool_entry = tools.setdefault(tool_name, {})
-        tool_entry["config_changed"] = True
-        self.save(payload)
-        return True
+        def change(profile: dict[str, Any]) -> bool:
+            servers = profile.get("servers", {})
+            entry = servers.get(server_key, {})
+            tools = entry.get("tools", {})
+            tool_entry = tools.get(tool_name, {})
+            if bool(tool_entry.get("config_changed")):
+                return False
+
+            servers = profile.setdefault("servers", {})
+            entry = servers.setdefault(server_key, {})
+            tools = entry.setdefault("tools", {})
+            tool_entry = tools.setdefault(tool_name, {})
+            tool_entry["config_changed"] = True
+            return True
+
+        return self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
 
 # -- effective-state resolution (pure; no store I/O) -------------------------
@@ -661,7 +1997,10 @@ class EffectiveToolState:
 
 
 def resolve_effective_state(
-    payload: dict[str, Any], tool: HubTool
+    payload: dict[str, Any],
+    tool: HubTool,
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
 ) -> EffectiveToolState:
     """Resolve ``tool``'s effective permission state from ``payload``.
 
@@ -669,6 +2008,17 @@ def resolve_effective_state(
     owning server's ``default`` (``server_default``), which beats the
     profile's ``global_default`` (``global_default``); absence at each level
     means "inherit from the next level down".
+
+    Named profiles: with ``profile_id`` other than ``"default"``, that
+    full precedence walk runs against the named profile FIRST, and the
+    default profile is consulted only for levels the named profile leaves
+    unset -- i.e. the chain is per-level across ``[named, default]``:
+    tool override in named, then server default in named, then
+    global_default in named, then the same three levels in default, then
+    ``DEFAULT_GLOBAL``. A named profile that sets a server default
+    therefore shadows a default-profile tool override for that server,
+    and a fresh empty named profile (seeded with no ``global_default``)
+    resolves exactly like the default profile alone.
 
     Two downgrades apply on top of precedence, in order:
 
@@ -690,9 +2040,12 @@ def resolve_effective_state(
        ``HIGH_RISK_TAGS``. Explicit tool-level ``allow`` is never floored --
        the operator opted in with full knowledge of the specific tool.
 
-    Every nested container this walks (``profiles``, the default profile,
-    ``servers``, a server entry, its ``tools``, a tool entry) is coerced
-    via ``_as_mapping()`` before being read, so a hand-edited
+    Both downgrades run after the profile walk, regardless of which
+    profile supplied the verdict.
+
+    Every nested container this walks (``profiles``, each profile in the
+    chain, ``servers``, a server entry, its ``tools``, a tool entry) is
+    coerced via ``_as_mapping()`` before being read, so a hand-edited
     ``mcp_permissions.json`` with ``null`` (or other non-mapping junk) at
     any of those levels resolves the same as an absent one instead of
     raising ``AttributeError`` -- this function takes a raw payload and
@@ -706,50 +2059,63 @@ def resolve_effective_state(
         tool: The live tool to resolve, used for its ``server_key``,
             ``name``, ``description``/``input_schema`` (hash comparison),
             and ``tags`` (high-risk floor).
+        profile_id: Profile to resolve against; ``"default"`` (the
+            default) is byte-identical to the pre-profiles behavior.
 
     Returns:
         The resolved ``EffectiveToolState``.
     """
-    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
-    servers = _as_mapping(profile.get("servers"))
-    server_entry = _as_mapping(servers.get(tool.server_key))
-    tools = _as_mapping(server_entry.get("tools"))
-    tool_entry = tools.get(tool.name)
-    if not isinstance(tool_entry, Mapping):
-        tool_entry = None
+    lifecycle_block = _lifecycle_resolution_block(payload, profile_id)
+    if lifecycle_block is not None:
+        return EffectiveToolState(state="deny", origin=lifecycle_block)
 
     config_changed = False
+    state: str | None = None
+    origin = ""
 
-    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
-        origin = "tool_override"
-        state = tool_entry["state"]
-        if state == "allow" and tool.server_key not in HASH_FREE_SERVER_KEYS:
-            current_hash = definition_hash(tool.description, tool.input_schema)
-            stale_hash = tool_entry.get("definition_hash") != current_hash
-            marked_changed = bool(tool_entry.get("config_changed"))
-            if stale_hash or marked_changed:
-                state = "ask"
-                config_changed = True
-    else:
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(tool.server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool.name)
+        if not isinstance(tool_entry, Mapping):
+            tool_entry = None
+
+        if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+            origin = "tool_override"
+            state = tool_entry["state"]
+            if state == "allow" and tool.server_key not in HASH_FREE_SERVER_KEYS:
+                current_hash = definition_hash(tool.description, tool.input_schema)
+                stale_hash = tool_entry.get("definition_hash") != current_hash
+                marked_changed = bool(tool_entry.get("config_changed"))
+                if stale_hash or marked_changed:
+                    state = "ask"
+                    config_changed = True
+            break
+
         server_default = server_entry.get("default")
         if server_default in STORE_STATES:
             origin = "server_default"
             state = server_default
-        else:
+            break
+
+        global_default = profile.get("global_default")
+        if global_default in STORE_STATES:
             origin = "global_default"
-            state = profile.get("global_default", DEFAULT_GLOBAL)
-            if state not in STORE_STATES:
-                # I2: a hand-edited `mcp_permissions.json` can carry a
-                # `schema_version` that still passes `load()`'s corruption
-                # check (so the file is never backed up/reset) yet an
-                # invalid `global_default` value (e.g. "banana"). Passing
-                # that straight through used to reach `ui_label`/
-                # `format_tool_state_label` as an unrecognized dict key,
-                # `KeyError`-ing out of `_sync_children` and panicking the
-                # app. Fail safe to the same default a missing key already
-                # gets, exactly like the server-level `server_default in
-                # STORE_STATES` check just above.
-                state = DEFAULT_GLOBAL
+            state = global_default
+            break
+        # Nothing at any precedence level in this profile: inherit from
+        # the next profile in the chain (named -> default).
+
+    if state is None:
+        # Chain exhausted with no valid verdict anywhere -- including the
+        # I2 case of a hand-edited `mcp_permissions.json` carrying an
+        # invalid `global_default` (e.g. "banana") in every profile that
+        # passes `load()`'s corruption check. Fail safe to the same
+        # default a missing key already gets, never the raw junk value
+        # (which used to `KeyError` out of `ui_label` and panic the app).
+        origin = "global_default"
+        state = DEFAULT_GLOBAL
 
     risk_floored = False
     if (
@@ -768,19 +2134,105 @@ def resolve_effective_state(
     )
 
 
+def _canonical_args_json(args: Mapping[str, Any]) -> str:
+    """One canonical rendering of a call's arguments for exact-match rules."""
+    try:
+        # default=str is effectively dead: tool args arrive as JSON from the
+        # model and are always serializable. It exists only so a freak
+        # unserializable value canonicalizes to *something* rather than
+        # raising; two such values could collide, but neither reaches here
+        # in practice and a collision only ever WIDENS to a re-prompt (the
+        # rule is compared for equality, and the tool still executes).
+        return json.dumps(dict(args), sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001 -- unserializable args never match a rule
+        return ""
+
+
+def arg_rule_allows(
+    payload: dict[str, Any],
+    tool: HubTool,
+    args: Mapping[str, Any],
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
+) -> bool:
+    """Whether a stored argument-scoped rule allows this exact call.
+
+    TASK-26012. Two rule shapes:
+
+    * ``{"args_json": ...}`` -- exact canonical-arguments match, the only
+      shape the approval card ever writes.
+    * ``{"field": ..., "pattern": ...}`` -- an fnmatch glob against ONE
+      string argument, for hand-written rules.
+
+    Hard limits, in order: a tool whose tags intersect ``HIGH_RISK_TAGS``
+    is NEVER quieted by an argument rule (AC#5 -- the floor beats the
+    rule), and a rule whose ``definition_hash`` no longer matches the live
+    tool is inert (AC#4 -- same rug-pull guard as tool-level allow;
+    ``HASH_FREE_SERVER_KEYS`` namespaces skip the comparison).
+
+    The profile chain walks like ``resolve_effective_state``: the first
+    profile carrying rules for this tool decides.
+    """
+    if set(tool.tags) & HIGH_RISK_TAGS:
+        return False
+    current_hash = (
+        None
+        if tool.server_key in HASH_FREE_SERVER_KEYS
+        else definition_hash(tool.description, tool.input_schema)
+    )
+    call_json = _canonical_args_json(args)
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(tool.server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool.name)
+        if not isinstance(tool_entry, Mapping):
+            continue
+        rules = tool_entry.get("arg_rules")
+        if not isinstance(rules, list) or not rules:
+            continue
+        for rule in rules:
+            if not isinstance(rule, Mapping):
+                continue
+            if (
+                current_hash is not None
+                and rule.get("definition_hash") != current_hash
+            ):
+                continue
+            args_json = rule.get("args_json")
+            if isinstance(args_json, str) and args_json and args_json == call_json:
+                return True
+            field = rule.get("field")
+            pattern = rule.get("pattern")
+            if (
+                isinstance(field, str)
+                and isinstance(pattern, str)
+                and isinstance(args.get(field), str)
+                and fnmatch.fnmatchcase(args[field], pattern)
+            ):
+                return True
+        return False
+    return False
+
+
 def resolve_builtin_state(
-    payload: dict[str, Any], tool: GatedToolRef
+    payload: dict[str, Any],
+    tool: GatedToolRef,
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
 ) -> EffectiveToolState:
     """Resolve a built-in tool's effective permission state.
 
-    Mirrors ``resolve_effective_state``'s precedence walk with two
-    deliberate differences:
+    Mirrors ``resolve_effective_state``'s precedence walk (including its
+    named-profile chain: the named profile's tool/server levels shadow the
+    default profile's, level by level) with two deliberate differences:
 
-    * The final fallback is ``BUILTIN_DEFAULT_STATE`` (``allow``), not the
-      MCP ``global_default``. Built-ins are in-process code the user
-      already installed; inheriting MCP's ``ask`` would prompt on every
-      calculator call, and changing MCP's global posture must not silently
-      change built-in behavior.
+    * The final fallback is ``BUILTIN_DEFAULT_STATE`` (``allow``), not any
+      profile's ``global_default`` -- the global level is skipped entirely
+      in every profile. Built-ins are in-process code the user already
+      installed; inheriting MCP's ``ask`` would prompt on every calculator
+      call, and changing MCP's global posture (in any profile) must not
+      silently change built-in behavior.
     * No ``definition_hash`` comparison. That guard exists for a REMOTE
       server mutating a tool after you trusted it; for in-process code an
       attacker who can change the tool already has code execution, so it
@@ -798,29 +2250,44 @@ def resolve_builtin_state(
         payload: A loaded permission-store payload (``{}`` is valid and
             resolves everything to the floor).
         tool: The built-in tool reference to resolve.
+        profile_id: Profile to resolve against; ``"default"`` (the
+            default) is byte-identical to the pre-profiles behavior.
 
     Returns:
         The resolved ``EffectiveToolState``.
     """
-    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
-    servers = _as_mapping(profile.get("servers"))
-    server_entry = _as_mapping(servers.get(tool.server_key))
-    tools = _as_mapping(server_entry.get("tools"))
-    tool_entry = tools.get(tool.name)
-    if not isinstance(tool_entry, Mapping):
-        tool_entry = None
+    lifecycle_block = _lifecycle_resolution_block(payload, profile_id)
+    if lifecycle_block is not None:
+        return EffectiveToolState(state="deny", origin=lifecycle_block)
 
-    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
-        origin = "tool_override"
-        state = tool_entry["state"]
-    else:
+    state: str | None = None
+    origin = ""
+
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(tool.server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool.name)
+        if not isinstance(tool_entry, Mapping):
+            tool_entry = None
+
+        if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+            origin = "tool_override"
+            state = tool_entry["state"]
+            break
+
         server_default = server_entry.get("default")
         if server_default in STORE_STATES:
             origin = "server_default"
             state = server_default
-        else:
-            origin = "builtin_default"
-            state = BUILTIN_DEFAULT_STATE
+            break
+        # Built-ins never read any profile's global_default (see the
+        # docstring): this profile contributes nothing, inherit from the
+        # next profile in the chain (named -> default).
+
+    if state is None:
+        origin = "builtin_default"
+        state = BUILTIN_DEFAULT_STATE
 
     risk_floored = False
     if (
@@ -840,7 +2307,11 @@ def resolve_builtin_state(
 
 
 def resolve_effective_state_by_key(
-    payload: dict[str, Any], server_key: str, tool_name: str
+    payload: dict[str, Any],
+    server_key: str,
+    tool_name: str,
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
 ) -> EffectiveToolState:
     """Resolve ``(server_key, tool_name)``'s effective permission state
     from ``payload`` alone -- no live ``HubTool`` to fingerprint.
@@ -856,8 +2327,10 @@ def resolve_effective_state_by_key(
     through ungated in that gap would let a DENIED tool run just because
     it briefly vanished from the snapshot. This resolves the same
     precedence walk as ``resolve_effective_state`` (tool override -> server
-    default -> global default, with the same global-default validation)
-    but skips the hash comparison entirely:
+    default -> global default, with the same global-default validation
+    and the same named-profile chain: the named profile's levels shadow
+    the default profile's, level by level) but skips the hash comparison
+    entirely:
 
     - ``deny``/``ask`` verdicts (explicit or inherited) are trustworthy
       without a hash check -- there is nothing to downgrade a deny or ask
@@ -881,7 +2354,7 @@ def resolve_effective_state_by_key(
       so there is no staleness to guard against -- and the rationale for
       THIS collapse ("cannot be confirmed fresh without a hash to compare")
       is void when there was never going to be a hash comparison in the
-      first place. An explicit or inherited ``allow`` for one of those keys
+      first place. An explicit or inherited ``Allow`` for one of those keys
       resolves at full fidelity, same as ``resolve_effective_state()``
       would with a live ``HubTool``. Without this exemption, the SAME
       hash-free tool set to Allow would record ``decision="approved"``
@@ -911,8 +2384,8 @@ def resolve_effective_state_by_key(
     genuinely is redundant to check separately: the "any allow downgrades
     to ask" rule above already collapses every such inherited allow before
     a tag comparison would ever matter, which is the strictly-more-
-    conservative relationship the phrase originally described here -- it
-    just no longer describes ALL server keys.
+    conservative relationship the phrase originally described here --
+    it just no longer describes ALL server keys.
 
     Like ``resolve_effective_state()``, every nested container this walks
     is coerced via ``_as_mapping()`` before being read, so a hand-edited
@@ -926,31 +2399,51 @@ def resolve_effective_state_by_key(
             has already been normalized).
         server_key: Owning server's stable key.
         tool_name: Tool name within that server.
+        profile_id: Profile to resolve against; ``"default"`` (the
+            default) is byte-identical to the pre-profiles behavior.
 
     Returns:
         The resolved ``EffectiveToolState``.
     """
-    profile = _as_mapping(_as_mapping(payload.get("profiles")).get(_DEFAULT_PROFILE_ID))
-    servers = _as_mapping(profile.get("servers"))
-    server_entry = _as_mapping(servers.get(server_key))
-    tools = _as_mapping(server_entry.get("tools"))
-    tool_entry = tools.get(tool_name)
-    if not isinstance(tool_entry, Mapping):
-        tool_entry = None
+    lifecycle_block = _lifecycle_resolution_block(payload, profile_id)
+    if lifecycle_block is not None:
+        return EffectiveToolState(state="deny", origin=lifecycle_block)
 
-    if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
-        origin = "tool_override"
-        state = tool_entry["state"]
-    else:
+    state: str | None = None
+    origin = ""
+
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
+            tool_entry = None
+
+        if tool_entry is not None and tool_entry.get("state") in STORE_STATES:
+            origin = "tool_override"
+            state = tool_entry["state"]
+            break
+
         server_default = server_entry.get("default")
         if server_default in STORE_STATES:
             origin = "server_default"
             state = server_default
-        else:
+            break
+
+        global_default = profile.get("global_default")
+        if global_default in STORE_STATES:
             origin = "global_default"
-            state = profile.get("global_default", DEFAULT_GLOBAL)
-            if state not in STORE_STATES:
-                state = DEFAULT_GLOBAL
+            state = global_default
+            break
+        # Nothing at any precedence level in this profile: inherit from
+        # the next profile in the chain (named -> default).
+
+    if state is None:
+        # Chain exhausted with no valid verdict anywhere -- same I2
+        # hand-edited-junk fallback as resolve_effective_state().
+        origin = "global_default"
+        state = DEFAULT_GLOBAL
 
     if state == "allow" and server_key not in BY_KEY_HASH_FREE_SERVER_KEYS:
         return EffectiveToolState(state="ask", origin=origin, config_changed=True)

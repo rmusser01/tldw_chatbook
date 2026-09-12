@@ -12,8 +12,15 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
+from tldw_chatbook.Chat.assistant_generation_state import (
+    AssistantGenerationState,
+    normalize_assistant_generation_state,
+)
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
-from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Sync_Interop.hashing import (
+    canonical_payload_hash,
+    canonical_thinking_blocks_json,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -38,6 +45,62 @@ class SyncEnvelopeBuilder:
         self.notes_mirror = notes_mirror
 
     # ------------------------------------------------------------------ M1 dotted-domain builders
+
+    @staticmethod
+    def build_personal_context_whole_object(
+        *,
+        client_envelope_id: str,
+        dataset_id: str,
+        device_id: str,
+        domain: str,
+        object_id: str,
+        parent_id: str | None,
+        operation: Literal["upsert", "tombstone"],
+        payload: Mapping[str, Any],
+        payload_hash: str,
+        payload_size_bytes: int,
+        integrity_key_id: str,
+        profile_id: str,
+        purge_generation: int | None,
+        base_version: str | int | None,
+        entity_version: str | int | None,
+        object_revision: int | None,
+        base_server_cursor: int | None = None,
+        base_object_revision: int | None = None,
+        base_object_hash: str | None = None,
+    ) -> SyncV2Envelope:
+        """Build one clear, integrity-tagged Personal Context whole object."""
+
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
+        return SyncV2Envelope(
+            client_envelope_id=client_envelope_id,
+            dataset_id=dataset_id,
+            domain=domain,
+            object_id=object_id,
+            parent_id=parent_id,
+            operation=operation,
+            adapter_version=1,
+            schema_version=1,
+            device_id=device_id,
+            base_version=base_version,
+            entity_version=entity_version,
+            object_revision=object_revision,
+            base_server_cursor=base_server_cursor,
+            base_object_revision=base_object_revision,
+            base_object_hash=base_object_hash,
+            deleted=operation == "tombstone",
+            routing_metadata={
+                "integrity_key_id": integrity_key_id,
+                "profile_id": profile_id,
+                "purge_generation": purge_generation,
+            },
+            payload=dict(payload),
+            payload_hash=payload_hash,
+            payload_size_bytes=payload_size_bytes,
+            encryption_policy="server_trusted_v1",
+            encryption_metadata={"policy": "server_trusted_v1"},
+        )
 
     def build_notes_note_upsert(
         self, *, note_id: str, title: str, content: str
@@ -178,6 +241,8 @@ class SyncEnvelopeBuilder:
         variant_count: int | None = None,
         selected_variant_id: str | None = None,
         provider_continuation_json: str | None = None,
+        thinking_blocks_json: str | None = None,
+        assistant_generation_state: str | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> SyncV2Envelope:
@@ -195,6 +260,8 @@ class SyncEnvelopeBuilder:
             variant_count: Optional number of available variants for the message.
             selected_variant_id: Optional selected variant identifier.
             provider_continuation_json: Optional canonical private continuation.
+            thinking_blocks_json: Optional canonical displayable/proprietary evidence.
+            assistant_generation_state: Portable assistant generation lifecycle state.
             base_version: Optional previous payload hash for versioned updates.
             entity_version: Optional explicit entity version after this mutation.
 
@@ -218,15 +285,45 @@ class SyncEnvelopeBuilder:
             routing_metadata["variant_count"] = variant_count
         if selected_variant_id is not None:
             routing_metadata["selected_variant_id"] = selected_variant_id
-        payload = {"content": content, "role": role}
+        checkpoint = None
         if provider_continuation_json is not None and provider_continuation_json != "":
             if role != "assistant":
                 raise ContinuationValidationError(
                     "Invalid provider continuation data."
                 ) from None
             checkpoint = parse_provider_continuation_json(provider_continuation_json)
+        if assistant_generation_state is not None and role != "assistant":
+            raise ValueError("Invalid assistant generation state.")
+        if thinking_blocks_json is not None and role != "assistant":
+            raise ValueError("Invalid thinking data.")
+        try:
+            normalized_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=assistant_generation_state,
+                has_valid_active_continuation=(
+                    checkpoint is not None and checkpoint.state == "active"
+                ),
+            )
+        except ValueError:
+            raise ValueError("Invalid assistant generation state.") from None
+        if normalized_state is AssistantGenerationState.CONTINUATION_ACTIVE and (
+            checkpoint is None or checkpoint.state != "active"
+        ):
+            raise ValueError("Invalid assistant generation state.")
+        payload = {
+            "assistant_generation_state": normalized_state.value
+            if normalized_state is not None
+            else None,
+            "content": content,
+            "role": role,
+        }
+        if checkpoint is not None:
             payload["provider_continuation_json"] = dump_provider_continuation_json(
                 checkpoint
+            )
+        if thinking_blocks_json is not None:
+            payload["thinking_blocks_json"] = canonical_thinking_blocks_json(
+                thinking_blocks_json
             )
         return self._encrypted_envelope(
             domain="chat",

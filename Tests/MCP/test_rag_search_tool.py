@@ -25,6 +25,21 @@ class _StubRAGSearchService:
     def __init__(self):
         self.calls = []
 
+    async def profile_search(self, query, limit=10, media_types=None):
+        self.calls.append(("profile", query, limit, media_types))
+        return [
+            {
+                "id": "media-1",
+                "title": "Semantic Result",
+                "content": "semantic content",
+                "media_type": "video",
+                "url": "https://example.com/v1",
+                "file_path": None,
+                "score": 0.9,
+                "metadata": {"title": "Semantic Result"},
+            }
+        ]
+
     async def semantic_search(self, query, limit=10, media_types=None):
         self.calls.append(("semantic", query, limit, media_types))
         return [
@@ -64,7 +79,7 @@ def _make_tools() -> tuple[MCPTools, _StubRAGSearchService]:
 
 
 @pytest.mark.asyncio
-async def test_perform_rag_search_semantic_returns_formatted_results():
+async def test_perform_rag_search_default_uses_profile_search():
     tools, stub = _make_tools()
 
     results = await tools.perform_rag_search("test query", limit=3)
@@ -80,11 +95,11 @@ async def test_perform_rag_search_semantic_returns_formatted_results():
             "metadata": {"title": "Semantic Result"},
         }
     ]
-    assert stub.calls == [("semantic", "test query", 3, None)]
+    assert stub.calls == [("profile", "test query", 3, None)]
 
 
 @pytest.mark.asyncio
-async def test_perform_rag_search_keyword_returns_formatted_results():
+async def test_perform_rag_search_false_forces_keyword_search():
     tools, stub = _make_tools()
 
     results = await tools.perform_rag_search(
@@ -181,7 +196,15 @@ class TestKeywordScoreIsHonest:
             )
 
             class _StubEnhancedRAGService:
-                async def search(self, *, query, top_k, search_type, filter_metadata=None):
+                async def search(
+                    self,
+                    *,
+                    query,
+                    top_k,
+                    search_type,
+                    filter_metadata=None,
+                    metadata_allowlist=None,
+                ):
                     return [real_result]
 
             service = SimplifiedRAGSearchService.__new__(SimplifiedRAGSearchService)

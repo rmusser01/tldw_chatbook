@@ -41,6 +41,16 @@ def open_connection(db_path: str | Path) -> sqlite3.Connection:
     # operation (`LocalKanbanService.connect`/`transaction`), so synchronous
     # must be re-applied on every open, not just the first (task-15465).
     conn.execute("PRAGMA synchronous = NORMAL")
+    # task-22224: true autocommit (see Library_Ingest_Jobs_DB.py's module
+    # docstring, the store template). The explicit BEGIN in `transaction()`
+    # below is the only transaction owner; without this, one bare DML before
+    # it would auto-BEGIN a DEFERRED transaction and make that BEGIN raise
+    # "cannot start a transaction within a transaction". `initialize_schema`
+    # is unaffected: `executescript` commits as it goes in both isolation
+    # modes, its two single-statement meta upserts self-commit, and a retry
+    # (`_ensure_schema` leaves `_schema_ready` False on failure) repairs any
+    # partially-written pair.
+    conn.isolation_level = None
     return conn
 
 
@@ -240,7 +250,8 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         """,
         ("1" if fts_available else "0",),
     )
-    conn.commit()
+    # No commit(): the connection is autocommit (task-22224); both upserts
+    # above are durable at execute() and the script committed as it went.
 
 
 def _ensure_fts(conn: sqlite3.Connection) -> bool:

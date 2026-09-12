@@ -1,5 +1,5 @@
 ---
-target: TASK-18913 Console exact-100-column containment design
+target: TASK-19639 Console exact-100-column containment design
 total_score: 29
 max_score: 40
 na_heuristics: ""
@@ -60,7 +60,7 @@ The proposed UX outcome is right, but the written design is not implementation-r
 
 - The four-state matrix is valuable; only Context-open/Inspector-closed fails at 100 in current production geometry.
 - Manual-collapse focus loss is a known, separately protected contract and should remain outside this geometry task.
-- Inspector overflow guidance remains correctly separated into TASK-18915.
+- Rail-section overflow guidance remains correctly separated into TASK-19428.
 - No new ADR is required if this remains within ADR-043.
 
 ## Questions to consider

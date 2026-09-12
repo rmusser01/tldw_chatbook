@@ -21,6 +21,7 @@ from typing import Any, Callable, Iterator
 import pytest
 from loguru import logger as loguru_logger
 
+from Tests.ast_shape import stable_dump
 from scripts import check_persistent_diagnostic_inventory as diagnostic_inventory
 from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_summarization
 from tldw_chatbook.LLM_Calls import (
@@ -146,6 +147,18 @@ class _FakeSession:
     def post(self, *args: object, **kwargs: object) -> _FakeResponse:
         del args, kwargs
         return self.response
+
+    # task-19830: `summarize_with_local_llm` now opens its session with
+    # `with create_default_session() as session:` -- this fake stands in for
+    # that factory's return value, so it needs the context-manager protocol
+    # too. `requests.Session.__exit__` just calls `self.close()`; nothing
+    # here needs cleanup, so both dunders are no-ops.
+    def __enter__(self) -> "_FakeSession":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        del exc_info
+        return None
 
 
 def _local_settings(*, llama_endpoint: str = "http://llama.invalid") -> dict[str, Any]:
@@ -459,8 +472,11 @@ def _invoke_local_input(monkeypatch: pytest.MonkeyPatch) -> object:
     response = _FakeResponse(
         json_data={"choices": [{"message": {"content": "  fixed summary  "}}]}
     )
+    # task-19830: `summarize_with_local_llm` gets its session from
+    # `create_default_session()` now, not a bare `requests.post` call -- the
+    # factory (imported into this module's namespace) is the seam to fake.
     monkeypatch.setattr(
-        local_summarization.requests, "post", lambda *args, **kwargs: response
+        local_summarization, "create_default_session", lambda: _FakeSession(response)
     )
     return local_summarization.summarize_with_local_llm(
         LOCAL_INPUT_CANARY,
@@ -473,8 +489,8 @@ def _invoke_local_prompt(monkeypatch: pytest.MonkeyPatch) -> object:
     response = _FakeResponse(json_data={"content": "  fixed llama summary  "})
     monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         lambda: _FakeSession(response),
     )
     return local_summarization.summarize_with_llama(
@@ -513,7 +529,7 @@ def _invoke_local_response(monkeypatch: pytest.MonkeyPatch) -> object:
         lines=(f"data: {{{LOCAL_RESPONSE_CANARY}".encode(), b"data: [DONE]")
     )
     monkeypatch.setattr(
-        local_summarization.requests, "post", lambda *args, **kwargs: response
+        local_summarization, "create_default_session", lambda: _FakeSession(response)
     )
     generator = local_summarization.summarize_with_local_llm(
         "fixed input",
@@ -529,7 +545,14 @@ def _invoke_local_exception(monkeypatch: pytest.MonkeyPatch) -> object:
         del args, kwargs
         raise RuntimeError(LOCAL_EXCEPTION_CANARY)
 
-    monkeypatch.setattr(local_summarization.requests, "post", raise_private_exception)
+    # `summarize_with_local_llm` wraps its ENTIRE body (session creation
+    # included) in one `try/except Exception`, so raising here -- at
+    # `create_default_session()` -- reaches the exact same handler a raise
+    # from `.post()` would, with the same observable (hidden-exception)
+    # outcome.
+    monkeypatch.setattr(
+        local_summarization, "create_default_session", raise_private_exception
+    )
     return local_summarization.summarize_with_local_llm(
         "fixed input",
         "fixed prompt",
@@ -966,7 +989,7 @@ def _message_shape(expression: str) -> str:
     node = ast.parse(f"logger.info({expression})").body[0]
     assert isinstance(node, ast.Expr)
     assert isinstance(node.value, ast.Call)
-    return ast.dump(node.value.args[0], include_attributes=False)
+    return stable_dump(node.value.args[0], include_attributes=False)
 
 
 def _single_call(source: str):
@@ -2664,8 +2687,8 @@ def test_local_core_llama_malformed_stream_logs_only_safe_length(
     )
     monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         lambda: _FakeSession(response),
     )
 
@@ -2706,8 +2729,8 @@ def test_local_core_llama_success_hides_prompt_and_endpoint_canaries(
         lambda: _local_settings(llama_endpoint=LOCAL_PATH_CANARY),
     )
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         lambda: _FakeSession(response),
     )
 
@@ -2730,8 +2753,8 @@ def test_local_core_llama_accepts_non_string_system_message_as_before(
     response = _FakeResponse(json_data={"content": "  fixed llama summary  "})
     monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         lambda: _FakeSession(response),
     )
 
@@ -2758,8 +2781,8 @@ def test_local_core_kobold_missing_key_error_contract_is_unchanged(
     settings["kobold_api"]["api_key"] = None
     monkeypatch.setattr(local_summarization, "load_settings", lambda: settings)
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         transport_must_not_run,
     )
 
@@ -2786,8 +2809,8 @@ def test_local_core_kobold_stream_fully_consumed_without_private_diagnostics(
     )
     monkeypatch.setattr(local_summarization, "load_settings", _local_settings)
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         lambda: _FakeSession(response),
     )
 
@@ -3002,8 +3025,8 @@ def test_tabby_missing_credential_error_contract_is_unchanged(
         raise AssertionError("transport invoked before missing-key failure")
 
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         transport_must_not_run,
     )
 
@@ -3706,8 +3729,8 @@ def test_local_custom_openai_missing_config_credential_contract_is_unchanged(
         raise AssertionError("transport invoked before missing-key return")
 
     monkeypatch.setattr(
-        local_summarization.requests,
-        "Session",
+        local_summarization,
+        "create_default_session",
         transport_must_not_run,
     )
 

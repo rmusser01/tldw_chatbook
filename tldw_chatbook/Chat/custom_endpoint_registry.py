@@ -17,6 +17,8 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, field_validator
+
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
 from tldw_chatbook.Utils.input_validation import validate_url
 
@@ -66,8 +68,52 @@ class CustomEndpointEntry:
     created_from: str | None = None
 
 
+class _EndpointEntryConfig(BaseModel):
+    """Validated raw shape of one ``[custom_endpoints.<slug>]`` table.
+
+    The boundary model for ``load_custom_endpoints`` (ADR-146): every raw
+    mapping is validated through it before any downstream construction, so
+    malformed optional credentials and model collections surface as
+    structured field errors instead of silent normalization. Business rules
+    that need family context (URL normalization, family membership) stay in
+    ``validate_entry`` -- the model carries only shape constraints.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    display_name: str
+    family: str
+    base_url: str
+    api_key_env: str | None = None
+    api_key: str | None = None
+    models: tuple[str, ...] = ()
+    created_from: str | None = None
+
+    @field_validator("api_key_env", "api_key", "created_from")
+    @classmethod
+    def _optional_blank_is_none(cls, value: str | None) -> str | None:
+        return value or None
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def _models_reject_non_sequences(cls, value: object) -> object:
+        if isinstance(value, (list, tuple)):
+            return value
+        raise ValueError("models must be a list of model ids")
+
+    @field_validator("models")
+    @classmethod
+    def _models_keep_non_blank(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(item for item in value if item and item.strip())
+
+
 def split_custom_endpoint_id(provider: str | None) -> str | None:
     """Return the slug when ``provider`` is ``custom-ep:<slug>``, else None.
+
+    Accepts the canonicalized spelling ``custom_ep:<slug>`` as well:
+    ``provider_config_key`` (the readiness id canonicalizer) rewrites dashes
+    to underscores, so an id round-tripped through it reaches the registry in
+    that form (ADR-146; the defaults-mutation path is the first such caller).
 
     Args:
         provider: Candidate provider id (may be None or any string).
@@ -76,12 +122,16 @@ def split_custom_endpoint_id(provider: str | None) -> str | None:
         The slug after the prefix, or None when ``provider`` is not a
         registry id (including the bare prefix with an empty slug).
     """
-    if not isinstance(provider, str) or not provider.startswith(
-        CUSTOM_ENDPOINT_ID_PREFIX
-    ):
+    if not isinstance(provider, str):
         return None
-    slug = provider[len(CUSTOM_ENDPOINT_ID_PREFIX) :]
-    return slug or None
+    for prefix in (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        CUSTOM_ENDPOINT_ID_PREFIX.replace("-", "_"),
+    ):
+        if provider.startswith(prefix):
+            slug = provider[len(prefix) :]
+            return slug or None
+    return None
 
 
 def _custom_endpoints_section(
@@ -129,33 +179,47 @@ def load_custom_endpoints(
     entries: dict[str, CustomEndpointEntry] = {}
     for slug, raw_entry in raw_section.items():
         if not isinstance(raw_entry, Mapping):
+            logger.warning("custom endpoint '%s' ignored: malformed section", slug)
+            continue
+        try:
+            config = _EndpointEntryConfig.model_validate(dict(raw_entry))
+        except ValueError as exc:
+            # Pydantic messages embed rejected INPUT VALUES, which for a
+            # malformed credential field would write the secret itself into
+            # the persistent log -- log only the field/type taxonomy.
+            details = "; ".join(
+                f"{'.'.join(str(part) for part in error.get('loc', ()))}:"
+                f"{error.get('type', 'invalid')}"
+                for error in (
+                    exc.errors() if hasattr(exc, "errors") else []
+                )
+            )
             logger.warning(
-                "custom endpoint '%s' ignored: malformed section", slug
+                "custom endpoint '%s' ignored: malformed entry (%s)",
+                slug,
+                details or "invalid entry",
             )
             continue
-        display_name = _string_value(raw_entry.get("display_name"))
-        family = _string_value(raw_entry.get("family"))
-        base_url = _string_value(raw_entry.get("base_url"))
+        display_name = config.display_name
+        family = config.family
+        base_url = config.base_url
         reasons = validate_entry(display_name, family, base_url)
         if not isinstance(slug, str) or not SLUG_PATTERN.fullmatch(slug):
             reasons.append(
-                "slug must be lowercase letters, digits, and hyphens "
-                "(1-64 chars)"
+                "slug must be lowercase letters, digits, and hyphens (1-64 chars)"
             )
         if reasons:
-            logger.warning(
-                "custom endpoint '%s' ignored: %s", slug, "; ".join(reasons)
-            )
+            logger.warning("custom endpoint '%s' ignored: %s", slug, "; ".join(reasons))
             continue
         entries[slug] = CustomEndpointEntry(
             slug=slug,
             display_name=display_name.strip(),
             family=family,
             base_url=_normalize_base_url(family, base_url),
-            api_key_env=_optional_string(raw_entry.get("api_key_env")),
-            api_key=_optional_string(raw_entry.get("api_key")),
-            models=_parse_models(raw_entry.get("models")),
-            created_from=_optional_string(raw_entry.get("created_from")),
+            api_key_env=config.api_key_env,
+            api_key=config.api_key,
+            models=config.models,
+            created_from=config.created_from,
         )
     return entries
 
@@ -195,11 +259,19 @@ def derive_slug(display_name: str, existing_slugs: Collection[str]) -> str:
         ``-2`` .. ``-99`` is taken).
     """
     base = re.sub(r"[^a-z0-9]+", "-", display_name.lower()).strip("-")
-    if base not in existing_slugs:
+    # SLUG_PATTERN contract: 1..64 chars of [a-z0-9-]. A punctuation-only
+    # name derives the empty string and a long name overflows 64 chars --
+    # both would be persisted by the creation path and then silently
+    # discarded by ``load_custom_endpoints`` on the next reload, so clamp
+    # here with a stable fallback instead.
+    if not base:
+        base = "endpoint"
+    base = base[:64].rstrip("-") or "endpoint"
+    if SLUG_PATTERN.fullmatch(base) and base not in existing_slugs:
         return base
     for suffix in range(2, _MAX_SLUG_COLLISION_SUFFIX + 1):
-        candidate = f"{base}-{suffix}"
-        if candidate not in existing_slugs:
+        candidate = f"{base}-{suffix}"[:64].rstrip("-")
+        if SLUG_PATTERN.fullmatch(candidate) and candidate not in existing_slugs:
             return candidate
     return base
 
@@ -210,7 +282,7 @@ def build_entry_mutation(
     """Build the config mutation section for persisting ``entry``.
 
     Feed the result to ``save_settings_to_cli_config``; delete an entry with
-    ``delete_settings_from_cli_config("custom_endpoints", [entry.slug])``.
+    ``delete_settings_from_cli_config("custom_endpoints", [slug])``.
 
     Args:
         entry: The entry to persist.
@@ -335,25 +407,3 @@ def _normalize_base_url(family: str, base_url: str) -> str:
     if family_normalizes_like_llama(family):
         return normalize_llamacpp_base_url(raw)
     return raw.rstrip("/")
-
-
-def _string_value(value: object) -> str:
-    """Coerce a config value to ``str`` (blank-safe)."""
-    return value if isinstance(value, str) else ""
-
-
-def _optional_string(value: object) -> str | None:
-    """Return a non-blank ``str`` or None for missing/blank values."""
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    return text or None
-
-
-def _parse_models(value: object) -> tuple[str, ...]:
-    """Keep the non-blank string items of a list/tuple ``models`` value."""
-    if not isinstance(value, (list, tuple)):
-        return ()
-    return tuple(
-        item.strip() for item in value if isinstance(item, str) and item.strip()
-    )

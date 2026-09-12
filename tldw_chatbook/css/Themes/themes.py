@@ -1,4 +1,24 @@
 # themes.py
+#
+# How theme variables reach the app's CSS (task-31264/task-31282):
+#
+# - A `variables` dict entry ONLY has runtime effect for names that no loaded
+#   tcss source defines: a `$name: value;` line in any stylesheet shadows the
+#   app-supplied table for that source (file tokens are appended after the
+#   app's and last-token-wins). Every `ds-*` token is defined in
+#   `css/core/_variables.tcss`, so per-theme `ds-*` dict entries are INERT --
+#   do not add them. `agentic_terminal` keeps its set only as the design
+#   system's documented reference values (pinned by
+#   test_master_shell_design_system_contract.py).
+# - ds-* tokens are themed through the polarity-aware references in
+#   `_variables.tcss` ($text-error, $text-muted,
+#   $block-cursor-blurred-background, ...), which Textual generates per theme.
+# - Entries for GENERATED names the tcss never defines (text-muted,
+#   text-error, block-cursor-blurred-background, input-selection-background,
+#   footer-key-foreground, ...) DO override, and are gated for readability by
+#   Tests/UI/test_theme_contrast.py.
+from pathlib import Path
+
 from textual.theme import Theme
 from textual.color import Color
 
@@ -33,7 +53,116 @@ def create_theme_from_dict(name: str, theme_dict: dict) -> Theme:
                 # For example, Color.parse("red") or continue
         else:  # For any other variables Textual's Theme constructor might support (e.g., 'variables' dict)
             theme_args[key] = value
-    return Theme(**theme_args)
+    return ensure_readable_text_hues(Theme(**theme_args))
+
+
+#: Generated text tints the Console rail paints ordinary text with
+#: (TASK-31429: `$ds-active-fg` -> text-primary, `$ds-value-fg` -> text-accent).
+_READABLE_TEXT_HUES = ("text-primary", "text-accent")
+_AA_RATIO = 4.5
+
+
+def _relative_luminance(color: Color) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.r)
+        + 0.7152 * channel(color.g)
+        + 0.0722 * channel(color.b)
+    )
+
+
+def _contrast_ratio(a: Color, b: Color) -> float:
+    la, lb = _relative_luminance(a), _relative_luminance(b)
+    lo, hi = min(la, lb), max(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def ensure_readable_text_hues(theme: Theme) -> Theme:
+    """Pin ``text-primary`` / ``text-accent`` to AA-readable values in place.
+
+    Textual derives both as a 66% tint of the theme's contrast text toward
+    the hue; on mid-tone palettes (20 of the 70 shipped themes, and any
+    pastel a user saves from Settings ▸ Theme) that lands below 4.5:1 on the
+    theme's own surfaces. Where it does, blend further toward the text pole
+    (white on dark surfaces, black on light) until both ``surface`` and
+    ``panel`` clear AA. These are GENERATED names no tcss defines, so the
+    ``variables`` entry is honoured (mechanism note atop this module); an
+    explicit per-theme entry is left alone. Themes whose colours cannot be
+    resolved (ANSI palettes) are returned untouched.
+
+    Args:
+        theme: The theme to adjust; mutated and returned for chaining.
+
+    Returns:
+        The same theme, with readable entries added to ``variables`` as needed.
+    """
+    try:
+        generated = theme.to_color_system().generate()
+        surfaces = [Color.parse(generated[key]) for key in ("surface", "panel")]
+    except Exception:  # noqa: BLE001 - ANSI/transparent palettes have no hex to measure
+        return theme
+    if any(surface.a < 1 for surface in surfaces):
+        return theme
+    dark_surface = sum(s.brightness for s in surfaces) / len(surfaces) < 0.5
+    pole = Color(255, 255, 255) if dark_surface else Color(0, 0, 0)
+    variables = dict(theme.variables or {})
+    for token in _READABLE_TEXT_HUES:
+        if token in variables:
+            continue
+        color = Color.parse(generated[token])
+        if all(_contrast_ratio(color, s) >= _AA_RATIO for s in surfaces):
+            continue
+        for step in range(1, 21):
+            candidate = color.blend(pole, step / 20)
+            if all(_contrast_ratio(candidate, s) >= _AA_RATIO for s in surfaces):
+                variables[token] = candidate.hex
+                break
+        else:
+            variables[token] = pole.hex
+    theme.variables = variables
+    return theme
+
+
+def load_user_themes(themes_dir: str | Path) -> list[Theme]:
+    """Read every ``*.toml`` under ``themes_dir`` into Theme objects.
+
+    The Settings theme editor writes ``[theme] name/dark`` + ``[colors]``.
+    Unreadable files, and files without the primary colour Textual requires,
+    are skipped with a warning so one bad file cannot block startup
+    (TASK-31250).
+
+    Args:
+        themes_dir: Directory holding the saved theme files (normally the
+            active profile's ``themes/`` folder, see
+            ``config.get_user_themes_dir``). A missing directory yields no
+            themes.
+
+    Returns:
+        The successfully parsed themes, in file-name order.
+    """
+    import toml
+    from loguru import logger
+
+    themes: list[Theme] = []
+    root = Path(themes_dir)
+    if not root.is_dir():
+        return themes
+    for path in sorted(root.glob("*.toml")):
+        try:
+            data = toml.load(path)
+            meta = data.get("theme", {}) or {}
+            name = str(meta.get("name") or path.stem).strip() or path.stem
+            colors = dict(data.get("colors", {}) or {})
+            colors["dark"] = bool(meta.get("dark", True))
+            themes.append(create_theme_from_dict(name, colors))
+        except Exception as exc:  # noqa: BLE001 - one bad file must not block startup
+            # Only the file name: the themes directory is a user path and this
+            # warning reaches the persistent log (path-privacy policy).
+            logger.warning(f"Skipping unreadable user theme {path.name}: {exc}")
+    return themes
 
 
 RAW_THEMES_DATA = {
@@ -123,7 +252,8 @@ modern_dark_dracula_theme = Theme(
     variables={
         "footer-key-foreground": "#8be9fd",  # Cyan
         "input-selection-background": "#bd93f9 40%",  # Purple with 40% alpha
-        "text-muted": "#6272a4",  # Lighter purple/gray for comments/dimmed text
+        "text-muted": "#afb8d1",  # Lighter purple/gray for comments/dimmed text
+        "text-error": "#ff9d9d",
     },
 )
 
@@ -144,7 +274,7 @@ paper_light_theme = Theme(
     variables={
         "footer-key-foreground": "#5B4636",  # Sepia
         "input-selection-background": "#AACCFF 50%",  # Soft blue with 50% alpha
-        "text-muted": "#777777",  # Lighter gray for subtle text
+        "text-muted": "#636363",  # Lighter gray for subtle text
     },
 )
 
@@ -165,6 +295,8 @@ high_contrast_yellow_black_theme = Theme(
     variables={
         "footer-key-foreground": "#FFFFFF",  # White
         "input-selection-background": "#FFFFFF 30%",  # White with 30% alpha
+        "text-error": "#ff6d6d",
+        "block-cursor-blurred-background": "#dedede4c",
     },
 )
 
@@ -188,6 +320,7 @@ ocean_depths_theme = Theme(
         "text-muted": "#ADD8E6",  # Light blue
         "statusbar-background": "#F0E68C",  # Sandy beige (for specific components like status bar)
         "statusbar-foreground": "#0A2342",  # Deep dark blue (text on status bar)
+        "text-error": "#ffa392",
     },
 )
 
@@ -208,7 +341,7 @@ solarized_dark_theme = Theme(
     variables={
         "footer-key-foreground": "#2aa198",  # cyan
         "input-selection-background": "#268bd2 40%",  # blue with 40% alpha
-        "text-muted": "#586e75",  # base01 (dimmed text)
+        "text-muted": "#879da5",  # base01 (dimmed text)
         "text-highlight": "#93a1a1",  # base1 (more important text)
     },
 )
@@ -230,7 +363,7 @@ solarized_light_theme = Theme(
     variables={
         "footer-key-foreground": "#2aa198",  # cyan
         "input-selection-background": "#268bd2 40%",  # blue with 40% alpha
-        "text-muted": "#93a1a1",  # base1 (dimmed text for light theme)
+        "text-muted": "#5c6a6a",  # base1 (dimmed text for light theme)
         "text-highlight": "#586e75",  # base01 (more important text for light theme)
     },
 )
@@ -252,9 +385,10 @@ monokai_pro_theme = Theme(
     variables={
         "footer-key-foreground": "#66D9EF",  # Blue
         "input-selection-background": "#AE81FF 40%",  # Purple with 40% alpha
-        "text-muted": "#75715E",  # Gray (comments)
+        "text-muted": "#b9b6a8",  # Gray (comments)
         "log-view-background": "#272822",  # Custom for specific widget example
         "log-view-foreground": "#E6DB74",  # Custom for specific widget example
+        "block-cursor-blurred-background": "#91cb1c4c",
     },
 )
 
@@ -275,7 +409,7 @@ gruvbox_dark_theme = Theme(
     variables={
         "footer-key-foreground": "#83a598",  # Bright Blue
         "input-selection-background": "#fabd2f 40%",  # Bright Yellow with 40% alpha
-        "text-muted": "#a89984",  # Gray
+        "text-muted": "#afa28e",  # Gray
     },
 )
 
@@ -296,7 +430,7 @@ gruvbox_light_theme = Theme(
     variables={
         "footer-key-foreground": "#458588",  # Dark Blue
         "input-selection-background": "#d65d0e 40%",  # Dark Orange with 40% alpha
-        "text-muted": "#7c6f64",  # Gray for light background
+        "text-muted": "#685d54",  # Gray for light background
     },
 )
 
@@ -338,8 +472,10 @@ earthy_nature_theme = Theme(
     variables={
         "footer-key-foreground": "#E2725B",  # Terracotta
         "input-selection-background": "#CD853F 40%",  # Peru with 40% alpha
-        "text-muted": "#BDB76B",  # Dark Khaki
+        "text-muted": "#e5e3c5",  # Dark Khaki
         "tree-control-background": "#3A322A",  # Darker Brown for tree view specific (example)
+        "text-error": "#f3dddd",
+        "block-cursor-blurred-background": "#3f27104c",
     },
 )
 
@@ -362,6 +498,9 @@ pastel_dreams_theme = Theme(
         "input-border-default": "#C9EBFB",  # Light Sky Blue for input border
         "button-default-foreground": "#BF8A7E",  # Muted Rose for default button text
         "button-confirm-foreground": "#7BAA8F",  # Muted Mint for confirm button text
+        "text-error": "#87575e",
+        "text-muted": "#636363",
+        "block-cursor-blurred-background": "#ff84564c",
     },
 )
 
@@ -385,6 +524,8 @@ sweet_sorbet_theme = Theme(
         "button-special-foreground": "#996570",  # Muted Dark Pink for special button text
         "progressbar-background": "#FFE0CC",  # Light peach track for progress bar
         "progressbar-color": "#FFB6C1",  # Raspberry fill for progress bar
+        "text-error": "#935f67",
+        "block-cursor-blurred-background": "#b6a4004c",
     },
 )
 
@@ -403,12 +544,14 @@ cloudy_day_theme = Theme(
     error="#DEB0B0",  # Soft Red
     dark=False,
     variables={
-        "text-muted": "#778899",  # Light Slate Gray for info text
+        "text-muted": "#607080",  # Light Slate Gray for info text
         "input-background": "#FFFFFF",  # White for input backgrounds
         "input-border-default": "#D0D8E0",  # Default input border
         "button-default-background": "#FAFAFA",  # Soft white for default buttons
         "button-default-foreground": "#5A6470",  # Cool dark gray for default button text
         "button-navigation-foreground": "#42505E",  # Text for navigation buttons
+        "text-error": "#836767",
+        "block-cursor-blurred-background": "#7c9dc84c",
     },
 )
 
@@ -432,6 +575,7 @@ kawaii_candy_theme = Theme(
         "markdown-h1-color": "#FF69B4",
         "markdown-h2-color": "#754C59",
         "markdown-link-color": "#7FFFD4",
+        "block-cursor-blurred-background": "#9595ea4c",
     },
 )
 
@@ -454,6 +598,8 @@ bunny_fluff_theme = Theme(
         "button-default-foreground": "#7A736E",  # Default button text color
         "footer-background": "#F0EBE8",
         "footer-foreground": "#8D8580",
+        "text-error": "#756666",
+        "block-cursor-blurred-background": "#a3a32f4c",
     },
 )
 
@@ -476,6 +622,7 @@ neon_sunset_drive_theme = Theme(
         "input-border-default": "#00FFFF",  # Cyan for input border
         "button-default-foreground": "#FFD700",  # Golden Yellow for default button text
         "button-action-foreground": "#FFFFFF",  # White for action button text
+        "block-cursor-blurred-background": "#00bdbd4c",
     },
 )
 
@@ -500,6 +647,7 @@ palm_mall_theme = Theme(
         "header-foreground": "#4B0082",
         "statusbar-background": "#4B0082",
         "statusbar-foreground": "#B0E0E6",  # Soft Cyan for status bar text
+        "text-error": "#9a4d60",
     },
 )
 
@@ -543,6 +691,8 @@ paradise_virtua_theme = Theme(
         "button-select-foreground": "#002030",  # Dark text for select buttons
         "titlebar-background": "#FF007F",  # Magenta Rose for title bar
         "titlebar-foreground": "#FFFFFF",  # White text for title bar
+        "text-error": "#ffe0e0",
+        "text-muted": "#dce9eb",
     },
 )
 
@@ -561,7 +711,7 @@ lost_artifacts_atari_theme = Theme(
     error="#B07070",  # Dusty Rose
     dark=True,
     variables={
-        "text-muted": "#70A0A0",  # Muted Cyan for descriptions
+        "text-muted": "#82acac",  # Muted Cyan for descriptions
         "button-critical-background": "#B07070",  # Dusty Rose for critical buttons
         "button-critical-foreground": "#FFFFFF",  # White text for critical buttons
     },
@@ -669,7 +819,7 @@ ghost_in_the_shell_theme = Theme(
     error="#907070",  # Very subtle desaturated red
     dark=True,
     variables={
-        "text-muted": "#888888",
+        "text-muted": "#9c9c9c",
         "input-border-default": "#555555",
         "statusbar-background": "#111111",
         "statusbar-foreground": "#A0A0A0",
@@ -695,10 +845,11 @@ retro_mint_chip_theme = Theme(
     error="#D2691E",  # Chocolate Brown/Sienna (error messages)
     dark=False,
     variables={
-        "text-muted": "#8C7853",  # Muted brown for less important text
+        "text-muted": "#716143",  # Muted brown for less important text
         "input-placeholder": "#BEB2A7",  # Lighter placeholder text
         "border-subtle": "#D1C7B7",  # Subtle border color
         "scrollbar-color": "#68B0AB",  # Primary color for scrollbar
+        "block-cursor-blurred-background": "#5098934c",
     },
 )
 
@@ -722,6 +873,7 @@ blueprint_tech_theme = Theme(
         "grid-line-major": "#3030A0",  # For schematic-like grids
         "grid-line-minor": "#181860",  # Fainter grid lines
         "code-background": "#000060",  # Background for code blocks
+        "text-muted": "#9f9fec",
     },
 )
 
@@ -764,10 +916,11 @@ twilight_lavender_fields_theme = Theme(
     error="#DB7093",  # PaleVioletRed (Dusky Rose/Muted Magenta)
     dark=True,
     variables={
-        "text-muted": "#B0A4C4",  # Muted light purple for less important text
+        "text-muted": "#bfb5cf",  # Muted light purple for less important text
         "focus-border": "#FFB6C1",  # Accent color for focus borders
         "progress-bar-color": "#9370DB",  # Primary color for progress bars
         "tooltip-background": "#483D8B",  # Surface color for tooltips
+        "text-error": "#e9a6bc",
     },
 )
 
@@ -787,7 +940,7 @@ golden_hour_desert_theme = Theme(
     error="#B22222",  # Rusty Red (Firebrick)
     dark=False,
     variables={
-        "text-muted": "#8B7D6B",  # Muted sandy brown
+        "text-muted": "#665b4e",  # Muted sandy brown
         "button-primary-hover-background": "#E06000",  # Darker orange for hover
         "link-color": "#007BA7",  # Cerulean blue for links
         "border-strong": "#A0522D",  # Sienna for stronger borders
@@ -814,6 +967,7 @@ industrial_gearworks_theme = Theme(
         "border-heavy": "#A9A9A9",  # DarkGray for heavier borders
         "widget-border": "#505050",  # Standard widget border
         "tooltip-background": "#4A4A4A",  # Tooltip background
+        "text-error": "#e49292",
     },
 )
 
@@ -833,7 +987,7 @@ coral_bloom_theme = Theme(
     error="#FF4081",  # Bright Pink (Material Pink A200)
     dark=False,
     variables={
-        "text-muted": "#778899",  # LightSlateGray
+        "text-muted": "#637484",  # LightSlateGray
         "list-item-active-background": "#FFEBCD",  # BlanchedAlmond (warm highlight)
         "highlight-primary": "#FF7F50 30%",  # Primary color with alpha for selections
         "badge-background": "#40E0D0",  # Secondary for badges
@@ -861,6 +1015,7 @@ autumn_embers_theme = Theme(
         "log-date-foreground": "#F1C40F",  # Golden yellow for dates in logs
         "code-comment-color": "#A0522D",  # Sienna for code comments
         "button-hover-text": "#FFFFFF",
+        "text-error": "#d8a6a6",
     },
 )
 
@@ -880,10 +1035,11 @@ zen_garden_theme = Theme(
     error="#CD5C5C",  # Terracotta/Muted Red (IndianRed)
     dark=False,
     variables={
-        "text-muted": "#707070",  # Medium gray for muted text
+        "text-muted": "#686868",  # Medium gray for muted text
         "border-zen": "#C0C0C0",  # Silver for subtle borders
         "input-focus-border": "#8FBC8F",  # Primary color for input focus border
         "container-background-alt": "#ECECEC",  # Alternative background for containers
+        "block-cursor-blurred-background": "#5f9f5f4c",
     },
 )
 
@@ -928,7 +1084,7 @@ volcanic_ash_lava_theme = Theme(
     variables={
         "tooltip-background": "#3D3D3D",  # Darker tooltip background
         "border-accent": "#FF5A00",  # Use primary for prominent borders
-        "text-muted": "#777777",  # Muted grey for less important text
+        "text-muted": "#949494",  # Muted grey for less important text
         "scrollbar-color-hover": "#FF8C00",  # DarkOrange for scrollbar hover
     },
 )
@@ -953,6 +1109,7 @@ spring_meadowburst_theme = Theme(
         "text-highlight-bg": "#FFFFB3",  # Pale yellow for text selection background
         "input-border-active": "#7FFF00",  # Primary color for active input border
         "footer-background": "#D0E0D0",  # Light, earthy green for footer
+        "block-cursor-blurred-background": "#59b2004c",
     },
 )
 
@@ -997,7 +1154,7 @@ ancient_papyrus_theme = Theme(
     variables={
         "blockquote-text": "#4A2E20",  # Darker brown for blockquote text
         "header-underline-color": "#0047AB",  # Primary color for header underlines
-        "text-muted": "#A08C78",  # Muted beige/brown for less important text
+        "text-muted": "#7a6856",  # Muted beige/brown for less important text
         "border-subtle": "#D2B48C",  # Tan for subtle borders
     },
 )
@@ -1022,6 +1179,8 @@ urban_stealth_camo_theme = Theme(
         "button-outline-focus": "#787269",  # Accent for button focus outline
         "panel-border": "#404552",  # Border for panels
         "placeholder-text": "#525860",  # Darker placeholder text
+        "text-error": "#cca1a1",
+        "block-cursor-blurred-background": "#677d8e4c",
     },
 )
 
@@ -1045,6 +1204,7 @@ confectionery_bliss_theme = Theme(
         "text-flavor-berry": "#800080",  # Purple for special flavor text
         "highlight-secondary": "#AFEEEE 40%",  # Secondary color with alpha for selection
         "button-text-primary": "#483263",  # Darker purple for text on primary buttons
+        "block-cursor-blurred-background": "#ff6f844c",
     },
 )
 
@@ -1068,6 +1228,7 @@ mystic_redwood_grove_theme = Theme(
         "log-level-debug": "#3AAFA9",  # Primary color for debug logs
         "code-background": "#243137",  # Background for code blocks
         "text-ephemeral": "#88B0A4",  # Muted teal for less important text
+        "text-error": "#da906f",
     },
 )
 
@@ -1091,6 +1252,7 @@ art_deco_metropolis_theme = Theme(
         "text-title": "#CAA472",  # Primary color for titles
         "widget-highlight-border": "#006A4E",  # Accent color for special widget borders
         "input-selection": "#455A64 50%",  # BlueGrey with alpha for input selection
+        "text-error": "#c47d7a",
     },
 )
 
@@ -1112,7 +1274,7 @@ desert_oasis_mirage_theme = Theme(
     variables={
         "water-text": "#00A2CA",  # Primary color for water-themed text
         "sand-dune-highlight": "#FAF0C8",  # Very light sand for highlights
-        "text-muted": "#8B7965",  # Muted sandy brown
+        "text-muted": "#786857",  # Muted sandy brown
         "border-strong": "#A0522D",  # Sienna for stronger borders
     },
 )
@@ -1137,6 +1299,8 @@ starlight_cinema_noir_theme = Theme(
         "text-subtle-contrast": "#CCCCCC",  # Lighter grey for subtitles or less critical text
         "button-critical-background": "#990000",  # Darker red for critical action buttons
         "dialog-border": "#444444",  # Border for dialogs
+        "text-error": "#e35f5f",
+        "block-cursor-blurred-background": "#f617224c",
     },
 )
 
@@ -1206,6 +1370,8 @@ magical_girl_transform_theme = Theme(
         "friendship-aura-bg": "#FFB6C1 30%",  # Primary pink with alpha for highlights
         "compact-mirror-border": "#C0C0C0",  # Silver for item borders
         "mascot-guide-text": "#4682B4",  # Steel blue for helper text
+        "text-error": "#86445a",
+        "block-cursor-blurred-background": "#ff3b9d4c",
     },
 )
 
@@ -1229,6 +1395,7 @@ jujutsu_sorcery_night_theme = Theme(
         "cursed-tool-sheen": "#A9A9A9",  # Dark grey for metallic tools
         "shikigami-outline": "#708090",  # Slate grey for summoned outlines
         "sukuna-tattoo-red": "#800000",  # Darker red for specific accents
+        "text-error": "#bb6969",
     },
 )
 
@@ -1252,6 +1419,8 @@ akira_neo_tokyo_grit_theme = Theme(
         "espers-power-glow": "#8A2BE2 40%",  # BlueViolet with alpha
         "government-data-blue": "#3366CC",  # Official blue for specific text
         "city-lights-yellow": "#FFFF66",  # Pale yellow for distant lights
+        "text-error": "#da8585",
+        "block-cursor-blurred-background": "#ff31314c",
     },
 )
 
@@ -1275,6 +1444,8 @@ scouting_legionnaire_theme = Theme(
         "uniform-strap-color": "#704214",  # Darker brown for details
         "titan-steam-white": "#F5F5F5 30%",  # Off-white with alpha for steam
         "flare-gun-green": "#2E8B57",  # SeaGreen for signals
+        "text-error": "#ce9c9c",
+        "block-cursor-blurred-background": "#6782394c",
     },
 )
 
@@ -1298,6 +1469,8 @@ saiyan_power_orange_theme = Theme(
         "scouter-display-green": "#00FF00",  # Bright green for scouter text
         "kame-house-roof": "#B22222",  # Firebrick for Namekian details
         "training-ground-earth": "#DEB887",  # BurlyWood for environment colors
+        "text-error": "#960000",
+        "block-cursor-blurred-background": "#a65b004c",
     },
 )
 
@@ -1344,6 +1517,7 @@ sakura_viewing_picnic_theme = Theme(
         "tatami-mat-beige": "#EEE8AA",  # PaleGoldenrod for surfaces
         "koi-pond-blue": "#87CEFA",  # LightSkyBlue for decorative elements
         "falling-petal-accent": "#FFC0CB 60%",  # Pink with alpha for subtle effects
+        "block-cursor-blurred-background": "#ff677e4c",
     },
 )
 
@@ -1421,9 +1595,276 @@ agentic_terminal_theme = Theme(
     },
 )
 
+# Ported from Orb's apricot.css (github.com/OrbFrontend/Orb, frontend/themes/):
+# peach ground, cream cards, green accent, apricot-orange brand, warm brown ink.
+apricot_theme = Theme(
+    name="apricot",
+    primary="#bd6b32",  # --apricot-deep (brand, primary actions)
+    secondary="#7fae63",  # --mint-deep (toggles, secondary elements)
+    accent="#4f8039",  # --accent green (focus highlights)
+    foreground="#2f2620",  # --ink (main text)
+    background="#f6c9a4",  # body gradient midtone (peach)
+    surface="#f8f0e4",  # --bg-surface (cards, inputs)
+    panel="#f3e8d9",  # --bg-primary (sidebars, headers)
+    success="#4f8039",
+    warning="#b8860b",  # amber brown (no Orb equivalent)
+    error="#c2503f",  # --red
+    dark=False,
+    variables={
+        "footer-key-foreground": "#bd6b32",
+        "input-selection-background": "#bd6b32 35%",
+        "text-muted": "#796453",
+    },
+)
+
+# Ported from Orb's camono.css: Everforest-style warm charcoal with sage green.
+camono_theme = Theme(
+    name="camono",
+    primary="#a7c080",
+    secondary="#6e7f54",
+    accent="#a7c080",
+    foreground="#d3c6aa",
+    background="#1e2326",
+    surface="#2e383c",
+    panel="#272e33",
+    success="#a7c080",
+    warning="#dbbc7f",
+    error="#e67e80",
+    dark=True,
+    variables={
+        "footer-key-foreground": "#a7c080",
+        "input-selection-background": "#a7c080 35%",
+        "text-muted": "#a7ada5",
+    },
+)
+
+# Ported from Orb's christmas.css: snowy blue-white, holly green, crimson accent.
+christmas_theme = Theme(
+    name="christmas",
+    primary="#c8243c",
+    secondary="#3a7a48",
+    accent="#c8243c",
+    foreground="#1a2b3c",
+    background="#eef3f8",
+    surface="#ffffff",
+    panel="#f5f8fb",
+    success="#3a7a48",
+    warning="#b8860b",
+    error="#c8243c",
+    dark=False,
+    variables={
+        "footer-key-foreground": "#c8243c",
+        "input-selection-background": "#c8243c 35%",
+        "text-muted": "#4e7354",
+    },
+)
+
+# Ported from Orb's frutiger_aero.css: glossy 2000s aqua, azure accent.
+frutiger_aero_theme = Theme(
+    name="frutiger_aero",
+    primary="#1a9bd7",
+    secondary="#54b6e4",
+    accent="#1a9bd7",
+    foreground="#123c55",
+    background="#ccecf7",
+    surface="#f6fcff",
+    panel="#e8f8fd",
+    success="#3a9a5c",
+    warning="#c08a2a",
+    error="#e0573f",
+    dark=False,
+    variables={
+        "footer-key-foreground": "#1a9bd7",
+        "input-selection-background": "#1a9bd7 35%",
+        "text-muted": "#48758f",
+    },
+)
+
+# Ported from Orb's halloween.css: near-black plum, parchment gold, pumpkin accent.
+halloween_theme = Theme(
+    name="halloween",
+    primary="#e8711a",
+    secondary="#a04e10",
+    accent="#e8711a",
+    foreground="#f0cfa0",
+    background="#0b0608",
+    surface="#1e1018",
+    panel="#140a0e",
+    success="#8a9a3a",
+    warning="#e8a83a",
+    error="#c45d5d",
+    dark=True,
+    variables={
+        "footer-key-foreground": "#e8711a",
+        "input-selection-background": "#e8711a 35%",
+        "text-muted": "#b6755d",
+    },
+)
+
+# Ported from Orb's litestep.css: Win98 gray over slate-blue desktop, rust accent.
+litestep_theme = Theme(
+    name="litestep",
+    primary="#c46418",
+    secondary="#8c480c",
+    accent="#c46418",
+    foreground="#1a1a1a",
+    background="#7188a3",
+    surface="#dcd8d0",
+    panel="#d4d0c8",
+    success="#4a7a3a",
+    warning="#b8860b",
+    error="#c03020",
+    dark=False,
+    variables={
+        "footer-key-foreground": "#c46418",
+        "input-selection-background": "#c46418 35%",
+        "text-muted": "#515a65",
+    },
+)
+
+# Ported from Orb's litestep_dark.css: retro dark gray, slate depths, orange accent.
+litestep_dark_theme = Theme(
+    name="litestep_dark",
+    primary="#f0922e",
+    secondary="#b06a1c",
+    accent="#f0922e",
+    foreground="#e4e2dc",
+    background="#232b36",
+    surface="#42423f",
+    panel="#3a3a38",
+    success="#8aa860",
+    warning="#e0b040",
+    error="#e26655",
+    dark=True,
+    variables={
+        "footer-key-foreground": "#f0922e",
+        "input-selection-background": "#f0922e 35%",
+        "text-muted": "#b4bcc4",
+    },
+)
+
+# Ported from Orb's night_city.css: cyberpunk navy, cyan accent, hot-pink red.
+night_city_theme = Theme(
+    name="night_city",
+    primary="#00d4ee",
+    secondary="#006878",
+    accent="#00d4ee",
+    foreground="#dce4f0",
+    background="#04050c",
+    surface="#0c0f1e",
+    panel="#080a16",
+    success="#39d98a",
+    warning="#f0d048",
+    error="#ff1a5e",
+    dark=True,
+    variables={
+        "footer-key-foreground": "#00d4ee",
+        "input-selection-background": "#00d4ee 35%",
+        "text-muted": "#6f7eae",
+    },
+)
+
+# Ported from Orb's dark.css (renamed: "dark" is too generic for the picker):
+# neutral charcoal, warm off-white, gold accent.
+orb_dark_theme = Theme(
+    name="orb_dark",
+    primary="#cdb06e",
+    secondary="#8a7448",
+    accent="#cdb06e",
+    foreground="#edeae5",
+    background="#0a0a0c",
+    surface="#18181e",
+    panel="#111115",
+    success="#8aa870",
+    warning="#d9a05a",
+    error="#c45d5d",
+    dark=True,
+    variables={
+        "footer-key-foreground": "#cdb06e",
+        "input-selection-background": "#cdb06e 35%",
+        "text-muted": "#8a877f",
+    },
+)
+
+# Ported from Orb's ocean_depths.css (renamed: chatbook already has an
+# unrelated "ocean_depths" theme): deep teal, emerald accent, coral red.
+orb_ocean_theme = Theme(
+    name="orb_ocean",
+    primary="#3ddc84",
+    secondary="#1e9e58",
+    accent="#3ddc84",
+    foreground="#d8f2f4",
+    background="#031720",
+    surface="#07303f",
+    panel="#052430",
+    success="#3ddc84",
+    warning="#e8c05a",
+    error="#f4574d",
+    dark=True,
+    variables={
+        "footer-key-foreground": "#3ddc84",
+        "input-selection-background": "#3ddc84 35%",
+        "text-muted": "#76acbe",
+    },
+)
+
+# Ported from Orb's parchment.css: aged paper, dark ink, bookbinding-red accent.
+parchment_theme = Theme(
+    name="parchment",
+    primary="#8b1515",
+    secondary="#5a4030",
+    accent="#8b1515",
+    foreground="#1e1208",
+    background="#e8ddd0",
+    surface="#f7f2e8",
+    panel="#f0e8d8",
+    success="#5a7a3a",
+    warning="#a9701a",
+    error="#8b1515",
+    dark=False,
+    variables={
+        "footer-key-foreground": "#8b1515",
+        "input-selection-background": "#8b1515 35%",
+        "text-muted": "#786153",
+    },
+)
+
+# Ported from Orb's vintage_wood.css: dark walnut, cream text, copper accent.
+vintage_wood_theme = Theme(
+    name="vintage_wood",
+    primary="#c47647",
+    secondary="#7a4628",
+    accent="#c47647",
+    foreground="#e6d8ce",
+    background="#16110f",
+    surface="#2b211d",
+    panel="#1f1815",
+    success="#8a9a5a",
+    warning="#d9a05a",
+    error="#9e4642",
+    dark=True,
+    variables={
+        "footer-key-foreground": "#c47647",
+        "input-selection-background": "#c47647 35%",
+        "text-muted": "#a2948c",
+    },
+)
+
 
 ALL_THEMES = [
     agentic_terminal_theme,
+    apricot_theme,
+    camono_theme,
+    christmas_theme,
+    frutiger_aero_theme,
+    halloween_theme,
+    litestep_theme,
+    litestep_dark_theme,
+    night_city_theme,
+    orb_dark_theme,
+    orb_ocean_theme,
+    parchment_theme,
+    vintage_wood_theme,
     classic_terminal_green_theme,
     modern_dark_dracula_theme,
     paper_light_theme,
@@ -1482,6 +1923,12 @@ ALL_THEMES = [
     sakura_viewing_picnic_theme,
     eighties_anime_ova_sunset_theme,
 ]
+
+# TASK-31429: the shipped catalog gets the same readability pin user themes
+# receive via create_theme_from_dict (gated by test_theme_contrast.py).
+for _shipped_theme in ALL_THEMES:
+    ensure_readable_text_hues(_shipped_theme)
+del _shipped_theme
 
 # Example of a theme with the 'variables' attribute as shown in Textual docs:
 # MY_THEMES["arctic_example"] = Theme(

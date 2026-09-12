@@ -35,12 +35,14 @@
 #
 # Imports
 import os
+import posixpath
 import re
 import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple, Union, TYPE_CHECKING
+from urllib.parse import unquote, urlsplit
 
 #
 # External Imports
@@ -102,10 +104,154 @@ EBOOK_PROCESSING_AVAILABLE = EBOOKLIB_AVAILABLE and DEFUSEDXML_AVAILABLE
 from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from loguru import logger  # noqa: E402
 from ..Utils.optional_deps import get_safe_import  # noqa: E402
+from ..Utils.path_validation import validate_path_simple  # noqa: E402
 #
 #######################################################################################################################
 # Function Definitions
 #
+
+_MAX_EPUB_ARCHIVE_MEMBERS = 10_000
+_MAX_EPUB_MEMBER_BYTES = 64 * 1024 * 1024
+_MAX_EPUB_MARKUP_BYTES = 16 * 1024 * 1024
+_MAX_EPUB_TOTAL_BYTES = 128 * 1024 * 1024
+_MAX_EPUB_COMPRESSION_RATIO = 200
+_EPUB_ARCHIVE_LIMIT_ERROR = "EPUB archive exceeds safety limits."
+_EPUB_MARKUP_SUFFIXES = frozenset(
+    {".htm", ".html", ".ncx", ".opf", ".xhtml", ".xml"}
+)
+
+
+def _normalize_epub_member_name(name: str) -> Optional[str]:
+    """Return a comparable, archive-root-relative EPUB member name."""
+    decoded = unquote(urlsplit(name).path).replace("\\", "/")
+    normalized = posixpath.normpath(decoded).lstrip("/")
+    if normalized in {"", ".", ".."} or normalized.startswith("../"):
+        return None
+    return normalized
+
+
+def _xml_local_name(tag: object) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def _manifest_declared_markup_members(
+    archive: zipfile.ZipFile,
+    members_by_name: Dict[str, zipfile.ZipInfo],
+) -> set[str]:
+    """Find package/document members whose media type declares markup."""
+    container_info = members_by_name.get("META-INF/container.xml")
+    if container_info is None:
+        return set()
+    container_root = ET.fromstring(archive.read(container_info))
+    rootfile_path = next(
+        (
+            element.attrib.get("full-path", "")
+            for element in container_root.iter()
+            if _xml_local_name(element.tag) == "rootfile"
+            and element.attrib.get("full-path")
+        ),
+        "",
+    )
+    normalized_rootfile = _normalize_epub_member_name(rootfile_path)
+    if normalized_rootfile is None:
+        raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+    package_info = members_by_name.get(normalized_rootfile)
+    if package_info is None:
+        raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+    if package_info.file_size > _MAX_EPUB_MARKUP_BYTES:
+        raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+
+    package_root = ET.fromstring(archive.read(package_info))
+    package_directory = posixpath.dirname(normalized_rootfile)
+    declared = {normalized_rootfile}
+    for element in package_root.iter():
+        if _xml_local_name(element.tag) != "item":
+            continue
+        media_type = element.attrib.get("media-type", "").strip().lower()
+        if not (
+            media_type in {"text/html", "application/xml", "text/xml"}
+            or media_type.endswith("+xml")
+        ):
+            continue
+        href = unquote(urlsplit(element.attrib.get("href", "")).path).replace(
+            "\\", "/"
+        )
+        if not href:
+            raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+        resolved = _normalize_epub_member_name(posixpath.join(package_directory, href))
+        if resolved is None or resolved not in members_by_name:
+            raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+        declared.add(resolved)
+    return declared
+
+
+def _validate_epub_archive(file_path: Union[str, Path]) -> Path:
+    """Validate an EPUB path and reject ZIP shapes that can exhaust memory."""
+    validated_path = validate_path_simple(file_path, require_exists=True)
+    try:
+        with zipfile.ZipFile(validated_path) as archive:
+            members = archive.infolist()
+            if len(members) > _MAX_EPUB_ARCHIVE_MEMBERS:
+                raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+
+            total_bytes = 0
+            markup_bytes = 0
+            suffix_markup_names: set[str] = set()
+            for member in members:
+                if (
+                    member.file_size < 0
+                    or member.compress_size < 0
+                    or member.file_size > _MAX_EPUB_MEMBER_BYTES
+                    or member.file_size
+                    > max(member.compress_size, 1) * _MAX_EPUB_COMPRESSION_RATIO
+                ):
+                    raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+                total_bytes += member.file_size
+                if total_bytes > _MAX_EPUB_TOTAL_BYTES:
+                    raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+                if Path(member.filename).suffix.lower() in _EPUB_MARKUP_SUFFIXES:
+                    markup_bytes += member.file_size
+                    normalized = _normalize_epub_member_name(member.filename)
+                    if normalized is not None:
+                        suffix_markup_names.add(normalized)
+                    if markup_bytes > _MAX_EPUB_MARKUP_BYTES:
+                        raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+
+            members_by_name = {
+                normalized: member
+                for member in members
+                if (normalized := _normalize_epub_member_name(member.filename))
+                is not None
+            }
+            try:
+                declared_markup = _manifest_declared_markup_members(
+                    archive,
+                    members_by_name,
+                )
+            except Exception as exc:
+                if _is_epub_archive_limit_error(exc):
+                    raise
+                # Parser disagreement must not turn manifest classification
+                # into a fail-open path for custom-extension document content.
+                raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR) from exc
+
+            for member_name in declared_markup - suffix_markup_names:
+                markup_bytes += members_by_name[member_name].file_size
+                if markup_bytes > _MAX_EPUB_MARKUP_BYTES:
+                    raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
+    except (OSError, zipfile.BadZipFile):
+        pass  # Preserve the existing ebooklib format/error handling.
+    return validated_path
+
+
+def _read_epub_checked(file_path: Union[str, Path]) -> "epub.EpubBook":
+    """Open an EPUB through the single archive-admission choke point."""
+    validated_path = _validate_epub_archive(file_path)
+    return epub.read_epub(str(validated_path))
+
+
+def _is_epub_archive_limit_error(exc: BaseException) -> bool:
+    return isinstance(exc, ValueError) and str(exc) == _EPUB_ARCHIVE_LIMIT_ERROR
 
 
 def process_ebook(
@@ -373,7 +519,7 @@ def epub_to_markdown(
     book = None  # Initialize book
     try:
         logger.info(f"Converting EPUB to Markdown from {epub_path}")
-        book = epub.read_epub(epub_path)
+        book = _read_epub_checked(epub_path)
         markdown_content = ""
         if include_toc:
             markdown_content = "# Table of Contents\n\n"
@@ -425,6 +571,11 @@ def epub_to_markdown(
         logger.debug("EPUB to Markdown conversion completed.")
         return markdown_content, book  # Return book object too
 
+    except ValueError as e:
+        if _is_epub_archive_limit_error(e):
+            raise
+        logger.exception(f"Error converting EPUB to Markdown: {str(e)}")
+        return f"# Error converting EPUB\n\n{e}", book
     except Exception as e:
         logger.exception(f"Error converting EPUB to Markdown: {str(e)}")
         # Still return None for the book object on error
@@ -511,7 +662,7 @@ def read_epub_filtered(epub_path) -> Tuple[str, Optional["epub.EpubBook"]]:
     """
     book = None
     try:
-        book = epub.read_epub(epub_path)
+        book = _read_epub_checked(epub_path)
 
         # Known front-matter filenames to skip, except we want to keep
         # the actual "toc" if it is meaningful. Adjust as needed.
@@ -600,6 +751,11 @@ def read_epub_filtered(epub_path) -> Tuple[str, Optional["epub.EpubBook"]]:
         )  # collapse multiple blank lines
         return full_text, book  # Return book object
 
+    except ValueError as e:
+        if _is_epub_archive_limit_error(e):
+            raise
+        logger.exception(f"Failed to parse EPUB: {str(e)}")
+        return "", book
     except Exception as e:
         logger.exception(f"Failed to parse EPUB: {str(e)}")
         return "", book  # Return empty string and potentially None book
@@ -632,7 +788,7 @@ def read_epub(file_path) -> Tuple[str, Optional["epub.EpubBook"]]:
     book = None
     try:
         logger.info(f"Reading EPUB file from {file_path}")
-        book = epub.read_epub(file_path)
+        book = _read_epub_checked(file_path)
 
         all_paragraphs = []
 
@@ -666,6 +822,10 @@ def read_epub(file_path) -> Tuple[str, Optional["epub.EpubBook"]]:
 
         logger.debug("EPUB content extraction completed (cleaned).")
         return text, book
+    except ValueError as exc:
+        if _is_epub_archive_limit_error(exc):
+            raise
+        raise RuntimeError(f"Unexpected error reading EPUB: {exc}") from exc
     except ebooklib.epub.EpubException as epub_err:  # Catch specific epub errors
         logger.opt(exception=True).error(
             f"Ebooklib error reading EPUB {file_path}: {epub_err}"
@@ -923,6 +1083,7 @@ def process_epub(
     ebook_obj: Optional["epub.EpubBook"] = None
 
     try:
+        file_path = str(_validate_epub_archive(file_path))
         logger.info(
             f"Processing EPUB file from {file_path} using extractor '{extraction_method}'"
         )

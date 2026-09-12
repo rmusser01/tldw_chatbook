@@ -20,7 +20,7 @@ The RAG (Retrieval-Augmented Generation) feature in tldw_chatbook allows you to 
 
 1. **Access RAG Search**
    - Open tldw_chatbook
-   - Navigate to the RAG Search tab (Ctrl+5)
+   - Navigate to Library (Ctrl+3) and open Search/RAG
 
 2. **Perform Your First Search**
    ```
@@ -1880,7 +1880,7 @@ Assistant: Based on the documentation, here are the best practices...
 
 Custom pipelines are also available in the dedicated RAG Search interface:
 
-1. Press `Ctrl+5` to open the RAG Search window
+1. Press `Ctrl+3` to open Library, then open Search/RAG
 2. Your custom pipelines appear in the "Search Mode" dropdown
 3. Select a pipeline and enter your query
 4. View results with pipeline-specific formatting

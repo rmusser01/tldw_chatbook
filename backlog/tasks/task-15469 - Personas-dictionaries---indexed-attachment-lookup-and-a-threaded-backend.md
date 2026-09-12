@@ -1,6 +1,6 @@
 ---
 id: TASK-15469
-title: Personas dictionaries: indexed attachment lookup and a threaded backend
+title: 'Personas dictionaries: indexed attachment lookup and a threaded backend'
 status: Done
 assignee: []
 created_date: '2026-08-11 12:05'

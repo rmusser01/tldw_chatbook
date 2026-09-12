@@ -50,3 +50,36 @@ The owner directed proceeding (soak gate superseded). The full implementation wa
 
 **Where Console's ~2.5s actually goes (cProfile, one push):** `_sync_console_control_bar` — 11 calls × 102ms = 1.12s; `_build_console_inspector_state` — rebuilt 28× = 0.75s; `Workspace_DB` — **1,352 fresh private-SQLite connections opened during one push** = 0.64s; CSS apply 1.69s across ~830 composes. The real levers are filed as task-3010 (coalesce the mount-window sync storm) and task-3011 (Workspace_DB connection reuse). This task stays open only as the umbrella target (Console 1.35s live → ≤2× median) and should be re-measured after 3010/3011.
 <!-- SECTION:NOTES:END -->
+
+## Re-measurement attempt (2026-08-21) — partial, and NOT sufficient to close
+
+Round 2 said this task "should be re-measured after 3010/3011". Both are now
+**Done**, so I re-measured — and then found my own measurement cannot close
+the AC. Recording both halves.
+
+**What I measured.** `Tests/UI/app_factory._build_test_app`, 235x52, timing
+app construction through first `pilot.pause()`, 5 runs each, interleaved on
+one machine:
+
+    chat    0.221, 0.188, 0.250, 0.242, 0.201   median 0.221s
+    notes   0.218, 0.218, 0.181, 0.179, 0.225   median 0.218s
+
+Console is **no longer distinguishable** from a structurally simpler screen
+(1.4% apart, well inside the spread). Round 2 measured Console at 2.27-2.54s
+and live switch at 1.35-1.38s against a ~0.5s median, i.e. a 2.7x outlier.
+
+**Why this does NOT close the AC.** `_build_test_app` fakes every real I/O
+seam, including the DB. Task-3011 -- one of the two levers whose landing
+prompted this re-measurement -- was specifically about `Workspace_DB` opening
+1,352 real SQLite connections per push. A harness that fakes the DB cannot
+observe the cost 3011 removed, so it cannot confirm the live improvement; it
+can only show that no *other* Console-specific outlier remains at
+mount time. The AC asks for a live measurement ("Console switch latency
+improves measurably live"), and this is not one.
+
+**Recommended next step:** a live interleaved A/B push probe of the kind
+round 2 used (real DB, real config, same machine, dev vs dev) to confirm the
+1.35s live switch has fallen to within 2x the ~0.5s median. If it has, close
+this task as achieved-by-3010/3011 rather than by widget deferral -- round 2
+already measured the deferral itself at 4-8% and reverted it as the wrong
+lever, so **do not re-attempt the deferral**; that ground is covered twice.

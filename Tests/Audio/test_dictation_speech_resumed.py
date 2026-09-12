@@ -103,6 +103,19 @@ def test_first_frame_of_a_capture_does_not_emit_resume():
     assert service._capture_saw_first_frame is True
 
 
+def test_bare_new_service_has_no_rolling_engine_and_legacy_resume_is_unchanged():
+    """The post-AEC hook must not turn raw legacy VAD frames into revisions."""
+    service = _service()
+    resumed: List[None] = []
+    service.on_speech_resumed = lambda: resumed.append(None)
+
+    assert service.transcript_engine is None
+    service._audio_callback(_frame())
+
+    assert resumed == []
+    assert service.processing_queue.qsize() == 1
+
+
 # --------------------------------------------------------------------------
 # (b) a continuous run of frames emits nothing
 # --------------------------------------------------------------------------

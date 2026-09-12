@@ -4,26 +4,35 @@
 import itertools
 import json
 from collections import deque
+from dataclasses import replace
+
+import pytest
 
 from tldw_chatbook.Agents.agent_models import (
     LOOP_DETECTION_N,
     MAX_LOOP_PERIOD,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_STUCK,
     SPAWN_TOOL_NAME,
     STEP_MODEL,
     STEP_SPAWN,
+    STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentConfig,
     ModelTurn,
     RunBudget,
     ToolCall,
     ToolCatalogEntry,
+    ToolLoadSelection,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, _detect_cycle, run_agent_loop
+from tldw_chatbook.Agents.mcp_tool_provider import KILL_SWITCH_REFUSAL
+from tldw_chatbook.Agents.run_context import current_tool_call_id
 
 CALC = ToolSchema(
     id="builtin:calculator",
@@ -56,7 +65,9 @@ def make_deps(turns, *, invoke=None, spawn=None, cancel=None, clock=None):
                 source="builtin",
             )
         ],
-        load_schemas=lambda ids: [CALC],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
+            accepted=(CALC,)
+        ),
         should_cancel=cancel or (lambda: False),
         clock=clock or (lambda: 0.0),
     )
@@ -96,6 +107,101 @@ def test_fenced_tool_call_then_answer():
     assert kinds == ["model", "tool_call", "tool_result", "model"]
 
 
+def test_tool_record_audience_inventory_keeps_raw_payload_only_in_model_history():
+    """Deleting any display/log/cycle projection call site leaks Canvas-like data."""
+    raw_argument = "<canvas-html-argument data-sentinel='task-3-1-round-1'>"
+    raw_result = "<canvas-html-result>"
+    seen_messages = []
+    records = []
+    turns = [
+        ModelTurn(text=fence("calculator", {"html": raw_argument + str(index)}))
+        for index in range(3)
+    ]
+
+    def call_model(messages, _schemas):
+        seen_messages.append(list(messages))
+        return turns.pop(0)
+
+    def project(audience, _call, result=None):
+        if audience == "cycle":
+            # Distinct raw payloads become one stable projected key, proving
+            # cycle detection consumes the projection rather than raw args.
+            return ToolRecordProjection(arguments={"digest": "same"})
+        return ToolRecordProjection(
+            arguments={"audience": audience},
+            content=f"{audience}-result",
+            error=f"{audience}-error",
+            ok=result.ok if result is not None else None,
+        )
+
+    deps = make_deps([], invoke=lambda _call: ToolResult(ok=True, content=raw_result))
+    deps.call_model = call_model
+    deps.on_record = lambda kind, payload: records.append((kind, payload)) or None
+    deps.project_tool_record = project
+    # The registry, rather than the provider, authoritatively identifies this
+    # hook as opt-in.  The loop uses that distinction to protect model steps.
+    deps.has_tool_record_projection = lambda _call: True
+    out = run_agent_loop(
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        deps,
+    )
+
+    assert out.status == RUN_STUCK
+    assert raw_result in seen_messages[1][-1]["content"]  # volatile model history
+    # Every emitted step is persisted and is also the source for the resumed
+    # Console transcript.  This includes the model step that carried the
+    # fence/native call, not merely the tool call/result rows.
+    assert all(
+        raw_argument not in str(step) and raw_result not in str(step)
+        for step in out.steps
+    )
+    assert all(raw_argument not in str(row) and raw_result not in str(row) for row in records)
+
+    from tldw_chatbook.Agents.agent_service import _safe_agent_step_record
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    persisted = [_safe_agent_step_record("run-1", step) for step in out.steps]
+    assert all(
+        raw_argument not in str(row) and raw_result not in str(row) for row in persisted
+    )
+    assert all(
+        raw_argument not in ConsoleAgentBridge._summarize_persisted_step(row)
+        and raw_result not in ConsoleAgentBridge._summarize_persisted_step(row)
+        for row in persisted
+    )
+
+
+def test_default_projection_keeps_nonfinite_tool_arguments_in_runtime_records():
+    """Default providers retain the legacy JSON spelling for non-finite values."""
+    for value, encoded in (
+        (float("nan"), "NaN"),
+        (float("inf"), "Infinity"),
+        (float("-inf"), "-Infinity"),
+    ):
+        out = run(
+            [
+                ModelTurn(
+                    text="",
+                    tool_calls=(ToolCall("calculator", {"value": value}),),
+                ),
+                ModelTurn(text="done"),
+            ],
+            invoke=lambda _call: ToolResult(ok=True, content="ok"),
+        )
+        assert out.status == RUN_DONE
+        # Display uses the original default projection, retaining Python's
+        # established JSON spelling for these values.
+        step = next(step for step in out.steps if step.kind == STEP_TOOL_CALL)
+        assert json.dumps(step.args, sort_keys=True) == f'{{"value": {encoded}}}'
+
+
 def test_native_tool_calls_take_precedence_over_text():
     out = run(
         [
@@ -108,6 +214,120 @@ def test_native_tool_calls_take_precedence_over_text():
     )
     assert out.status == RUN_DONE
     assert out.steps[1].tool_name == "calculator"
+
+
+def test_ordinary_tool_steps_share_the_native_call_id() -> None:
+    out = run(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name="calculator",
+                        args={"expression": "1"},
+                        call_id="native-call-1",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    pair = [
+        step
+        for step in out.steps
+        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+    ]
+    assert [step.call_id for step in pair] == ["native-call-1", "native-call-1"]
+
+
+def test_managed_skill_proposal_runtime_binds_call_id_and_is_pure() -> None:
+    call_ids = []
+    pure_sets = []
+    deps = make_deps(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+                        args={"request": "exact"},
+                        call_id="skill-proposal-1",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.prepare_managed_skill_promotion = lambda _args: (
+        call_ids.append(current_tool_call_id())
+        or ToolResult(ok=True, content="proposal")
+    )
+    deps.before_tool_dispatch = lambda _calls, pure: pure_sets.append(pure)
+
+    outcome = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "prepare it"}],
+        [CALC],
+        deps,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert call_ids == ["skill-proposal-1"]
+    assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in pure_sets[0]
+
+
+def test_managed_skill_proposal_runtime_refuses_without_callback() -> None:
+    generic_calls = []
+    deps = make_deps(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+                        args={"request": "hallucinated"},
+                        call_id="skill-proposal-unavailable",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda call: (
+            generic_calls.append(call)
+            or ToolResult(ok=True, content="must not execute")
+        ),
+    )
+
+    outcome = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "prepare it"}],
+        [CALC],
+        deps,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert generic_calls == []
+    results = [step for step in outcome.steps if step.kind == STEP_TOOL_RESULT]
+    assert results[-1].tool_outcome == "blocked"
+    assert "unavailable" in results[-1].result.lower()
+
+
+def test_idless_fence_tool_steps_share_one_deterministic_call_id() -> None:
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    pair = [
+        step
+        for step in out.steps
+        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+    ]
+    assert pair[0].call_id
+    assert pair[1].call_id == pair[0].call_id
 
 
 def test_tool_error_is_not_fatal_and_feeds_back():
@@ -128,6 +348,66 @@ def test_tool_error_is_not_fatal_and_feeds_back():
     assert "ERROR: boom" in seen[1][-1]["content"]
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
     assert result_steps and "boom" in result_steps[0].result
+
+
+def test_tool_result_step_records_success_before_flattening_collision_payload() -> None:
+    out = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(
+            ok=True, content="ERROR: harmless successful payload"
+        ),
+    )
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "success"
+
+
+def test_tool_result_step_distinguishes_failure_and_provider_block() -> None:
+    ordinary = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "bad"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult(ok=False, error="division failed"),
+    )
+    blocked = run(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda _call: ToolResult.blocked(KILL_SWITCH_REFUSAL),
+    )
+
+    assert (
+        next(
+            step for step in ordinary.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "failed"
+    )
+    assert (
+        next(
+            step for step in blocked.steps if step.kind == STEP_TOOL_RESULT
+        ).tool_outcome
+        == "blocked"
+    )
+
+
+def test_direct_review_refusal_records_blocked_without_dispatch() -> None:
+    deps = make_deps(
+        [
+            ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.review_tool_calls = lambda _calls: {"calculator": "review refused"}
+
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    result = next(step for step in out.steps if step.kind == STEP_TOOL_RESULT)
+    assert result.tool_outcome == "blocked"
 
 
 def test_spawn_result_and_budget():
@@ -342,6 +622,300 @@ def test_same_tool_different_args_is_not_stuck():
     assert out.status == RUN_DONE
 
 
+@pytest.mark.parametrize("native", [False, True])
+def test_same_tool_failed_calls_with_different_args_stop_after_result(native):
+    calls = [
+        ToolCall("calculator", {"expression": str(i)}, f"call-{i}")
+        for i in range(LOOP_DETECTION_N + 1)
+    ]
+    turns = [
+        ModelTurn(
+            tool_calls=(call,),
+            assistant_message={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": json.dumps(call.args),
+                        },
+                    }
+                ],
+            },
+        )
+        if native
+        else ModelTurn(text=fence(call.name, call.args))
+        for call in calls
+    ] + [ModelTurn(text="must not reach this answer")]
+    invoked = []
+    records = []
+    deps = make_deps(
+        turns,
+        invoke=lambda call: (
+            invoked.append(call) or ToolResult(ok=False, error="backend unavailable")
+        ),
+    )
+    deps.on_record = lambda kind, payload: records.append((kind, payload))
+
+    out = run_agent_loop(replace(CFG, budget=RunBudget(max_steps=50)), [], [CALC], deps)
+
+    assert out.status == RUN_STUCK
+    assert len(invoked) == LOOP_DETECTION_N
+    assert [call.args for call in invoked] == [
+        call.args for call in calls[:LOOP_DETECTION_N]
+    ]
+    assert sum(step.kind == STEP_MODEL for step in out.steps) == LOOP_DETECTION_N
+    assert out.steps[-2].kind == STEP_TOOL_RESULT
+    assert out.steps[-2].tool_outcome == "failed"
+    assert out.steps[-2].result == "ERROR: backend unavailable"
+    assert (
+        len([row for kind, row in records if kind == "tool_result"]) == LOOP_DETECTION_N
+    )
+    assert out.steps[-1].summary == (
+        f"Agent stopped: {CALC.name} failed {LOOP_DETECTION_N} times in a row. "
+        "Check the tool error before retrying, or use a different tool."
+    )
+    # Retained history is the coherent prefix last delivered to the model;
+    # the final result remains in the complete step/log history above.
+    if native:
+        expected_ids = [call.call_id for call in calls[: LOOP_DETECTION_N - 1]]
+        assert [
+            call["id"]
+            for row in out.final_messages
+            for call in row.get("tool_calls", [])
+        ] == expected_ids
+        assert [
+            row["tool_call_id"] for row in out.final_messages if row["role"] == "tool"
+        ] == expected_ids
+    else:
+        assert len(out.final_messages) == 2 * (LOOP_DETECTION_N - 1)
+
+
+@pytest.mark.parametrize(
+    "recovery",
+    [
+        ToolResult(ok=True, content="ERROR: backend unavailable"),
+        ToolResult.blocked("backend unavailable"),
+        ToolResult(ok=False, error="backend unavailable", outcome="timeout"),
+        ToolResult(ok=False, error="backend unavailable", outcome="cancelled"),
+    ],
+)
+def test_same_tool_failure_streak_resets_on_nonordinary_outcomes(recovery):
+    failure = ToolResult(ok=False, error="backend unavailable")
+    results = iter([failure, failure, recovery, failure, failure])
+    out = run(
+        [ModelTurn(text=fence("calculator", {"expression": str(i)})) for i in range(5)]
+        + [ModelTurn(text="recovered")],
+        invoke=lambda _call: next(results),
+        config=replace(CFG, budget=RunBudget(max_steps=50)),
+    )
+
+    assert out.status == RUN_DONE
+    assert out.final_text == "recovered"
+    assert len([step for step in out.steps if step.kind == STEP_TOOL_RESULT]) == 5
+
+
+def test_same_tool_failure_streak_resets_when_switching_tools():
+    names = ["calculator", "calculator", "new_tool", "calculator", "calculator"]
+    out = run(
+        [ModelTurn(text=fence(name, {"value": i})) for i, name in enumerate(names)]
+        + [ModelTurn(text="finished")],
+        invoke=lambda _call: ToolResult(ok=False, error="unavailable"),
+        config=replace(
+            CFG,
+            allowed_tools=("calculator", "new_tool"),
+            budget=RunBudget(max_steps=50),
+        ),
+    )
+
+    assert out.status == RUN_DONE
+    assert [
+        step.tool_name for step in out.steps if step.kind == STEP_TOOL_RESULT
+    ] == names
+
+
+def test_same_tool_failure_streak_is_local_to_parent_child_and_new_runs():
+    config = replace(CFG, budget=RunBudget(max_steps=50))
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)})) for i in range(3)
+    ]
+    failure = ToolResult(ok=False, error="backend unavailable")
+    child_outcomes = []
+
+    def invoke(call):
+        if call.args["expression"] == "2":
+            child_outcomes.append(
+                run(
+                    turns[:2] + [ModelTurn(text="child finished")],
+                    invoke=lambda _call: failure,
+                    config=config,
+                )
+            )
+        return failure
+
+    parent = run(turns + [ModelTurn(text="never")], invoke=invoke, config=config)
+    subsequent = run(
+        turns[:2] + [ModelTurn(text="new run finished")],
+        invoke=lambda _call: failure,
+        config=config,
+    )
+
+    assert parent.status == RUN_STUCK
+    assert [outcome.status for outcome in child_outcomes] == [RUN_DONE]
+    assert subsequent.status == RUN_DONE
+
+
+@pytest.mark.parametrize("continuation", [False, True])
+@pytest.mark.parametrize("review_refusal", [False, True])
+def test_same_tool_failure_stop_preserves_native_batch_boundaries(
+    continuation, review_refusal
+):
+    from tldw_chatbook.Agents.agent_models import (
+        ContinuationEventContext,
+        ToolCallExecuting,
+        ToolCallFinished,
+    )
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationCall,
+        ContinuationResult,
+        ContinuationRound,
+        ProviderContinuationCheckpoint,
+    )
+
+    count = 5 if review_refusal else 4
+    calls = tuple(
+        ToolCall(
+            "calculator" if i < count - 1 or review_refusal else "side_effect",
+            {"expression": str(i)},
+            f"call-{i}",
+            json.dumps({"expression": str(i)}),
+        )
+        for i in range(count)
+    )
+    checkpoint = (
+        ProviderContinuationCheckpoint(
+            schema_version=1,
+            checkpoint_revision=1,
+            provider="deepseek",
+            protocol="responses",
+            model="deepseek-v4-flash",
+            api_base_url="https://api.deepseek.com/v1",
+            state="active",
+            rounds=(
+                ContinuationRound(
+                    assistant_content="",
+                    reasoning_blocks=("private",),
+                    calls=tuple(
+                        ContinuationCall(
+                            call.call_id, call.name, json.dumps(call.args), "pending"
+                        )
+                        for call in calls
+                    ),
+                ),
+            ),
+        )
+        if continuation
+        else None
+    )
+    turn = ModelTurn(
+        tool_calls=calls,
+        assistant_message={
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": json.dumps(call.args)},
+                }
+                for call in calls
+            ],
+        },
+        provider_continuation=checkpoint,
+    )
+    invoked = []
+    events = []
+    records = []
+    final_checkpoint = (
+        replace(
+            checkpoint,
+            checkpoint_revision=2 + count * 2 - int(review_refusal),
+            state="complete",
+            rounds=(
+                replace(
+                    checkpoint.rounds[0],
+                    calls=tuple(
+                        replace(
+                            call,
+                            state="failed",
+                            result=ContinuationResult(
+                                "review refused"
+                                if review_refusal and call.call_id == "call-2"
+                                else "ERROR: backend unavailable"
+                            ),
+                        )
+                        for call in checkpoint.rounds[0].calls
+                    ),
+                ),
+            ),
+        )
+        if checkpoint is not None
+        else None
+    )
+    deps = make_deps(
+        [turn, ModelTurn(text="finished", provider_continuation=final_checkpoint)],
+        invoke=lambda call: (
+            invoked.append(call) or ToolResult(ok=False, error="backend unavailable")
+        ),
+    )
+    if continuation:
+        deps.continuation_context = ContinuationEventContext(
+            owner_message_id="owner",
+            run_id="child-run",
+            agent_kind="subagent",
+            durability="ephemeral",
+        )
+        deps.persist_provider_continuation = events.append
+    if review_refusal:
+        deps.review_tool_calls = lambda _batch: {"call-2": "review refused"}
+    deps.on_record = lambda kind, payload: records.append((kind, payload))
+    seed = [{"role": "user", "content": "calculate"}]
+    out = run_agent_loop(
+        replace(CFG, budget=RunBudget(max_steps=50)), seed, [CALC], deps
+    )
+
+    assert out.status == (RUN_DONE if review_refusal else RUN_STUCK), out.steps
+    assert invoked == (
+        [call for call in calls if call.call_id != "call-2"]
+        if review_refusal
+        else list(calls[:3])
+    )
+    result_steps = [step for step in out.steps if step.kind == STEP_TOOL_RESULT]
+    assert len(result_steps) == (5 if review_refusal else 3)
+    assert len([row for kind, row in records if kind == "tool_result"]) == len(
+        result_steps
+    )
+    if continuation:
+        assert [
+            event.call_id for event in events if isinstance(event, ToolCallExecuting)
+        ] == [call.call_id for call in invoked]
+        assert [
+            event.call_id for event in events if isinstance(event, ToolCallFinished)
+        ] == [step.call_id for step in result_steps]
+        assert all(
+            event.target_state == "failed"
+            for event in events
+            if isinstance(event, ToolCallFinished)
+        )
+    if not review_refusal:
+        assert out.final_messages == seed
+        assert result_steps[-1].call_id == "call-2"
+        assert result_steps[-1].result == "ERROR: backend unavailable"
+
+
 def _keys(*names):
     # cycle-detection keys are (name, args-json); args identical here.
     return deque([(n, "{}") for n in names], maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
@@ -444,9 +1018,24 @@ def test_cancel_recognized_after_final_answer_with_no_tool_call():
     # re-polls should_cancel at step/tool-call boundaries, and a no-tool-call
     # turn used to return RUN_DONE immediately without one more recheck.
     flags = iter([False, True])
-    out = run([ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True))
+    trace_steps = []
+    deps = make_deps(
+        [ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True)
+    )
+    deps.on_trace_step = trace_steps.append
+    out = run_agent_loop(
+        CFG, [{"role": "user", "content": "hi"}], [CALC], deps
+    )
     assert out.status == RUN_CANCELLED
     assert out.final_text == "Tokyo."
+    assert [step.kind for step in trace_steps] == [
+        "model_request_started",
+        "model_response_completed",
+        "model_cancelled",
+    ]
+    request, completed, cancelled = trace_steps
+    assert cancelled.parent_step_index == completed.index
+    assert cancelled.source_step_index == request.index
 
 
 # --- G1/Q9: load_tools `ids` coercion must never crash and must not
@@ -456,9 +1045,9 @@ def test_cancel_recognized_after_final_answer_with_no_tool_call():
 def test_load_tools_ids_null_does_not_crash_and_reports_no_valid_tools():
     seen_ids = []
 
-    def load_schemas(ids):
+    def load_schemas(ids, _messages, _call):
         seen_ids.append(ids)
-        return []
+        return ToolLoadSelection()
 
     deps = make_deps(
         [ModelTurn(text=fence("load_tools", {"ids": None})), ModelTurn(text="done")]
@@ -468,15 +1057,15 @@ def test_load_tools_ids_null_does_not_crash_and_reports_no_valid_tools():
     assert seen_ids == [[]]  # coerced to empty list, no crash
     assert out.status == RUN_DONE and out.final_text == "done"
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "ERROR: No valid tools found to load"
+    assert result_steps[0].result == "ERROR: No tool ids selected"
 
 
 def test_load_tools_ids_as_bare_string_loads_that_one_tool():
     seen_ids = []
 
-    def load_schemas(ids):
+    def load_schemas(ids, _messages, _call):
         seen_ids.append(ids)
-        return [CALC]
+        return ToolLoadSelection(accepted=(CALC,))
 
     deps = make_deps(
         [
@@ -498,10 +1087,12 @@ def test_load_tools_all_invalid_ids_reports_no_valid_tools_not_no_room():
     deps = make_deps(
         [ModelTurn(text=fence("load_tools", {"ids": ["nope"]})), ModelTurn(text="done")]
     )
-    deps.load_schemas = lambda ids: []
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        invalid_inputs=("nope",)
+    )
     out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "ERROR: No valid tools found to load"
+    assert result_steps[0].result == "ERROR: invalid tool ids: nope"
 
 
 NEW_TOOL = ToolSchema(
@@ -512,55 +1103,48 @@ NEW_TOOL = ToolSchema(
 )
 
 
-def test_load_tools_out_of_room_still_says_no_room():
-    """A genuinely NEW tool (not already active) requested while the active
-    cap is already full is refused as "no room" -- distinct from
-    re-requesting an already-active tool, which reports "already loaded"
-    instead (see test_load_tools_already_active_reports_already_loaded_not_no_room,
-    Gemini M finding, PR #636 bot review)."""
+def test_budget_omitted_load_preserves_current_working_set():
+    """A budget omission is explicit and leaves the prior set callable."""
     turns = [
         ModelTurn(text=fence("load_tools", {"ids": ["builtin:new_tool"]})),
         ModelTurn(text="done"),
     ]
     deps = make_deps(turns)
-    deps.load_schemas = lambda ids: [NEW_TOOL]
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        omitted_for_budget=("builtin:new_tool",)
+    )
+    invoked = []
+    deps.invoke_tool = lambda call: invoked.append(call.name) or ToolResult(
+        ok=True, content="42"
+    )
     out = run_agent_loop(
         AgentConfig(
             model="m",
             system_prompt="s",
             allowed_tools=("calculator", "new_tool"),
-            budget=RunBudget(max_active_tools=1),
         ),
         [{"role": "user", "content": "hi"}],
         [CALC],
         deps,
     )
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "no room"
+    assert result_steps[0].result == "not loaded (request budget): builtin:new_tool"
+    assert invoked == []
 
 
-def test_load_tools_already_active_reports_already_loaded_not_no_room():
-    """Gemini M finding (PR #636 bot review): re-requesting a tool that's
-    already active must not report the same "no room" message as
-    genuinely running out of budget -- the model would otherwise think it
-    needs to free space when it can simply proceed to call the tool it
-    already has."""
+def test_load_tools_can_replace_set_with_same_tool():
+    """Selecting the current tool again is a valid idempotent replacement."""
     turns = [
         ModelTurn(text=fence("load_tools", {"ids": ["builtin:calculator"]})),
         ModelTurn(text="done"),
     ]
-    out = run(
-        turns,
-        active=[CALC],
-        config=AgentConfig(
-            model="m",
-            system_prompt="s",
-            allowed_tools=("calculator",),
-            budget=RunBudget(max_active_tools=1),
-        ),
+    deps = make_deps(turns)
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        accepted=(CALC,)
     )
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
     result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
-    assert result_steps[0].result == "already loaded: calculator"
+    assert result_steps[0].result == "loaded: calculator"
 
 
 # --- G4: an empty spawn task must be refused with no budget consumption
@@ -757,7 +1341,9 @@ def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
             ModelTurn(text="done"),
         ]
     )
-    deps.load_schemas = lambda ids: [CALC, CALC]  # duplicate in ONE batch
+    deps.load_schemas = lambda _ids, _messages, _call: ToolLoadSelection(
+        accepted=(CALC,)
+    )
     out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [], deps)
     assert out.status == RUN_DONE
     load_result = [

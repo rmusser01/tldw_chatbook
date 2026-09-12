@@ -1,6 +1,6 @@
 ---
 id: TASK-468
-title: 'Internal Prompts editor: debug-log the modal's unknown-action branch'
+title: 'Internal Prompts editor: debug-log the modal''s unknown-action branch'
 status: To Do
 assignee: []
 created_date: '2026-07-22 22:10'

@@ -24,6 +24,8 @@ byte-for-byte, which is why the TASK-15455 suites pass unmodified.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.app import App, ComposeResult
 
@@ -31,6 +33,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.thinking_blocks import DisplayableThinkingBlock, ThinkingEnvelope
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -685,6 +689,46 @@ async def test_tail_trim_never_hides_the_selected_message():
             "the prune must still bound the DOM while the selection blocks "
             "the tail trim"
         )
+
+
+@pytest.mark.asyncio
+async def test_tail_trim_never_hides_the_owner_of_selected_thinking():
+    """A selected projected disclosure protects its causal Assistant row."""
+    app = TwoSidedHarness()
+    history = _messages(400)
+    history[-1] = replace(
+        history[-1],
+        thinking=ThinkingEnvelope(
+            (
+                DisplayableThinkingBlock(
+                    block_id="window-thinking",
+                    round_ordinal=0,
+                    provider="local_llamacpp",
+                    model="model.gguf",
+                    protocol="openai_chat",
+                    source_format="start_anchored_think",
+                    status="complete",
+                    text="selected thinking",
+                ),
+            )
+        ),
+    )
+    thinking_id = project_thinking_activities(assistant=history[-1])[0].activity_id
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        transcript.select_message(thinking_id)
+        transcript.release_anchor()
+        for _ in range(30):
+            transcript.scroll_to(y=0, animate=False)
+            await _settle(pilot)
+
+        assert "m399" in _mounted_message_ids(transcript)
+        assert transcript.selected_message_id == thinking_id
 
 
 @pytest.mark.asyncio

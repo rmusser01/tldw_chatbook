@@ -306,7 +306,9 @@ class OutputsPanel(ScrollableContainer):
             )
 
     def on_mount(self) -> None:
-        self.run_worker(self.refresh_for_mode(), exclusive=True)
+        self.run_worker(
+            self.refresh_for_mode(), exclusive=True, group="outputs-refresh-for-mode"
+        )
 
     @staticmethod
     def _clean_string(value: Any) -> str:
@@ -509,48 +511,84 @@ class OutputsPanel(ScrollableContainer):
 
     @on(Button.Pressed, "#outputs-list-templates-btn")
     def handle_list_output_templates(self) -> None:
-        self.run_worker(self.list_output_templates(), exclusive=True)
+        self.run_worker(
+            self.list_output_templates(),
+            exclusive=True,
+            group="outputs-list-output-templates",
+        )
 
     @on(Button.Pressed, "#outputs-create-template-btn")
     def handle_create_output_template(self) -> None:
-        self.run_worker(self.create_output_template(), exclusive=True)
+        self.run_worker(
+            self.create_output_template(),
+            exclusive=True,
+            group="outputs-create-output-template",
+        )
 
     @on(Button.Pressed, "#outputs-get-template-btn")
     def handle_get_output_template(self) -> None:
-        self.run_worker(self.get_output_template(), exclusive=True)
+        self.run_worker(
+            self.get_output_template(),
+            exclusive=True,
+            group="outputs-get-output-template",
+        )
 
     @on(Button.Pressed, "#outputs-update-template-btn")
     def handle_update_output_template(self) -> None:
-        self.run_worker(self.update_output_template(), exclusive=True)
+        self.run_worker(
+            self.update_output_template(),
+            exclusive=True,
+            group="outputs-update-output-template",
+        )
 
     @on(Button.Pressed, "#outputs-delete-template-btn")
     def handle_delete_output_template(self) -> None:
-        self.run_worker(self.delete_output_template(), exclusive=True)
+        self.run_worker(
+            self.delete_output_template(),
+            exclusive=True,
+            group="outputs-delete-output-template",
+        )
 
     @on(Button.Pressed, "#outputs-preview-template-btn")
     def handle_preview_output_template(self) -> None:
-        self.run_worker(self.preview_output_template(), exclusive=True)
+        self.run_worker(
+            self.preview_output_template(),
+            exclusive=True,
+            group="outputs-preview-output-template",
+        )
 
     @on(Button.Pressed, "#outputs-list-artifacts-btn")
     def handle_list_outputs(self) -> None:
-        self.run_worker(self.list_outputs(), exclusive=True)
+        self.run_worker(
+            self.list_outputs(), exclusive=True, group="outputs-list-outputs"
+        )
 
     @on(Button.Pressed, "#outputs-list-deleted-btn")
     def handle_list_deleted_outputs(self) -> None:
-        self.run_worker(self.list_deleted_outputs(), exclusive=True)
+        self.run_worker(
+            self.list_deleted_outputs(),
+            exclusive=True,
+            group="outputs-list-deleted-outputs",
+        )
 
     @on(Button.Pressed, "#outputs-get-output-btn")
     def handle_get_output(self) -> None:
-        self.run_worker(self.get_output(), exclusive=True)
+        self.run_worker(self.get_output(), exclusive=True, group="outputs-get-output")
 
     @on(Button.Pressed, "#outputs-create-output-btn")
     def handle_create_output(self) -> None:
-        self.run_worker(self.create_output(), exclusive=True)
+        self.run_worker(
+            self.create_output(), exclusive=True, group="outputs-create-output"
+        )
 
     @on(Button.Pressed, "#outputs-update-output-btn")
     def handle_update_output(self) -> None:
-        self.run_worker(self.update_output(), exclusive=True)
+        self.run_worker(
+            self.update_output(), exclusive=True, group="outputs-update-output"
+        )
 
     @on(Button.Pressed, "#outputs-delete-output-btn")
     def handle_delete_output(self) -> None:
-        self.run_worker(self.delete_output(), exclusive=True)
+        self.run_worker(
+            self.delete_output(), exclusive=True, group="outputs-delete-output"
+        )

@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
@@ -204,6 +208,14 @@ def test_local_authority_accessor_borrows_caller_owned_sqlite_transaction(
     )
     conn = db.get_connection()
     try:
+        # task-22224: the held connection is autocommit now, so a
+        # caller-owned transaction is armed with an explicit BEGIN (bare DML
+        # used to arm it via the legacy implicit-DEFERRED leak -- exactly the
+        # degradation that change removed). The subject pinned here is
+        # unchanged: the accessor must BORROW the caller's transaction, not
+        # steal, commit, or roll it back, and must leave the managed depth
+        # counter untouched.
+        conn.execute("BEGIN")
         conn.execute(
             """
             UPDATE rag_identity_context
@@ -272,16 +284,12 @@ def test_v27_migration_adds_only_nullable_authority_and_backfills_proven_local_r
     path = tmp_path / "v27-to-v28.sqlite"
     before_columns, expected_authority = _seed_v27_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="migration-test")
+    # Isolate this migration from later additive conversation columns.
+    with monkeypatch.context() as target_version:
+        target_version.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 28)
+        db = open_current_chachanotes_from_legacy(path, client_id="migration-test")
     connection = db.get_connection()
-
-    # task-1780 bumped the schema past v28, and cost ticker PR1 (v29->v30)
-    # bumped it again; a real CharactersRAGDB always migrates fully to
-    # whatever is current, so assert dynamically. Neither the v28->v29
-    # (kept_briefings/kept_scripts) nor the v29->v30 (messages.usage_json)
-    # migration touches `conversations`, so the column-delta assertion below
-    # is unaffected.
-    assert _version(connection) == db._CURRENT_SCHEMA_VERSION
+    assert _version(connection) == 28
     after_columns = _conversation_columns(connection)
     assert after_columns - before_columns == {"assistant_authority_id"}
     authority_column = next(
@@ -336,13 +344,17 @@ def test_v27_migration_rolls_back_column_backfill_and_version_on_late_failure(
             raising=False,
         )
         with pytest.raises(Exception, match="forced character authority failure"):
-            CharactersRAGDB(path, client_id="migration-test")
+            open_current_chachanotes_from_legacy(
+                path, client_id="migration-test"
+            )
 
     with sqlite3.connect(path) as connection:
         assert _version(connection) == 27
         assert _conversation_columns(connection) == before_columns
 
-    migrated = CharactersRAGDB(path, client_id="migration-test")
+    migrated = open_current_chachanotes_from_legacy(
+        path, client_id="migration-test"
+    )
     with migrated.transaction() as cursor:
         row = cursor.execute(
             """

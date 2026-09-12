@@ -20,9 +20,9 @@ from tldw_chatbook.Widgets.Console.console_workspace_details import (
 )
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 
-# The StatusPair label column is 12 cells; anything longer wraps into the
+# The StatusPair label column has 16 usable cells; anything longer wraps into the
 # orphaned-word defect this task fixes.
-LABEL_COLUMN_WIDTH = 12
+LABEL_COLUMN_WIDTH = 16
 
 
 def _state(**overrides) -> ConsoleWorkspaceContextState:
@@ -32,7 +32,7 @@ def _state(**overrides) -> ConsoleWorkspaceContextState:
         workspace_name="Default",
         authority_label="Authority: local registry ready",
         sync_label="Sync: not configured",
-        runtime_label="Runtime: none, file tools disabled",
+        runtime_label="Local file tools: Private scratch",
         conversation_rows=(),
         conversation_empty_copy="No active workspace conversations.",
         change_workspace_enabled=False,
@@ -122,15 +122,28 @@ async def test_configured_server_rows_use_unique_fitting_labels() -> None:
 
 @pytest.mark.asyncio
 async def test_default_workspace_file_tools_value_fits_without_truncation() -> None:
-    """'Off in Default workspace' ellipsized in its own default state; the
-    value must fit the ~23-cell value column outright."""
+    """Private-scratch status must fit outright in its default state."""
     app = TrayApp(_state())
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         value = str(
             app.query_one("#console-workspace-runtime-value", Static).renderable
         )
-        assert "off" in value.lower()
+        assert value == "Private scratch"
         assert len(value) <= 20, (
             f"file-tools value {value!r} is long enough to truncate in the rail"
         )
+
+
+def test_private_scratch_status_splits_into_truthful_label_and_value() -> None:
+    friendly = ConsoleWorkspaceDetailsTray._friendly_status_label(
+        "Local file tools: Private scratch + 2 folders"
+    )
+
+    label, value = ConsoleWorkspaceDetailsTray._split_status_row(
+        friendly,
+        "Local file tools",
+    )
+
+    assert label == "Local file tools"
+    assert value == "Private scratch + 2 folders"

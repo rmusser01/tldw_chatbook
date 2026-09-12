@@ -1,4 +1,7 @@
-from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
+from tldw_chatbook.Chat.llamacpp_think_filter import (
+    StartAnchoredThinkFilter,
+    split_start_anchored_thinking,
+)
 
 
 def run_filter(text: str) -> str:
@@ -61,3 +64,8 @@ class TestUnterminated:
         f = StartAnchoredThinkFilter()
         assert f.feed("<thin") == ""
         assert f.flush() == ""
+
+
+def test_compatibility_filter_matches_splitter_visible_channel():
+    raw = "\n<thinking>hidden</thinking>\nvisible"
+    assert run_filter(raw) == split_start_anchored_thinking(raw).content

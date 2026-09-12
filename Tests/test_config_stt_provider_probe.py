@@ -35,6 +35,7 @@ def test_macos_stt_default_probes_packages_without_importing_them(
         import importlib.util
         import json
         import sys
+        import sysconfig
 
         installed = {installed!r}
         guarded = {{"parakeet_mlx", "lightning_whisper_mlx"}}
@@ -55,6 +56,10 @@ def test_macos_stt_default_probes_packages_without_importing_them(
 
         importlib.util.find_spec = find_spec
         builtins.__import__ = reject_optional_runtime_import
+        # Prime the real host's lazy sysconfig variables before simulating
+        # Darwin. Otherwise a Linux interpreter may later select a Darwin
+        # scheme against uninitialized Linux variables (notably userbase).
+        sysconfig.get_config_vars()
         sys.platform = "darwin"
 
         from tldw_chatbook.config import settings

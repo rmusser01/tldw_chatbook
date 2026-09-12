@@ -1,12 +1,5 @@
 import pytest
 
-# --- Ported (chunking-engine-parity Task 4) ---------------------------------
-# Upstream file: tldw_Server_API/tests/Chunking/test_template_classifier.py
-# Skipped: templates is deferred to sub-project #2; not in the Phase-A vendored set. Remove this block when the module is vendored in
-# its own sub-project and re-sync the test from upstream.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: templates is deferred to sub-project #2; not in the Phase-A vendored set")
-
 from tldw_chatbook.Chunking.engine.templates import (
     TemplateClassifier,
     TemplateProcessor,

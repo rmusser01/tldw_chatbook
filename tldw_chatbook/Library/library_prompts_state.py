@@ -1930,12 +1930,12 @@ class PromptEditorState:
     capabilities: PromptSourceCapabilities | None = None
 
 
-PromptEditorMode = Literal["basic", "advanced"]
+PromptEditorMode = Literal["basic", "advanced", "info"]
 
 
 def coerce_prompt_editor_mode(value: object) -> PromptEditorMode:
     """Return the stored Prompt editor mode, defaulting invalid values to Basic."""
-    return "advanced" if value == "advanced" else "basic"
+    return value if value in {"basic", "advanced", "info"} else "basic"
 
 
 def prompt_basic_unavailable_reason(
@@ -2144,7 +2144,10 @@ def _row(
     if not isinstance(has_user, bool):
         has_user = bool(_raw_text(record.get("user_prompt")).strip())
     if has_system and has_user:
-        lane_summary = "System + User"
+        # task-32364: "System + User" is schema-speak -- the row says what
+        # the prompt HAS, in words. (The three other lane values keep their
+        # older phrasing; this task named only this one.)
+        lane_summary = "has system and user text"
     elif has_system:
         lane_summary = "System only"
     elif has_user:
@@ -2402,7 +2405,7 @@ def prompt_editor_meta_line(
             edits. A plain pure-function input (never derived from
             ``editor_state`` itself, which only ever reflects the
             last-saved record) -- callers thread the screen's own
-            ``_library_prompt_dirty`` flag through. Defaults to ``False``
+            ``_prompts_state.dirty`` flag through. Defaults to ``False``
             so every pre-existing call site is unaffected.
 
     Returns:

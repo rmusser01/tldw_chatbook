@@ -17,6 +17,8 @@ from tldw_chatbook.MCP.permission_store import (
     SCHEMA_VERSION,
     STORE_STATES,
     MCPPermissionStore,
+    PermissionStoreSnapshotError,
+    definition_hash,
 )
 
 
@@ -43,6 +45,157 @@ def test_load_returns_fresh_default_payload_when_file_missing(tmp_path):
     assert payload["profiles"]["default"]["global_default"] == "ask"
     assert payload["profiles"]["default"]["servers"] == {}
     assert not (tmp_path / "mcp_permissions.json").exists()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"{",
+        b'{"schema_version":99}',
+        b'{"schema_version":1,"profiles":null}',
+    ],
+)
+def test_strict_snapshot_rejects_without_touching_bytes(tmp_path, raw):
+    """Reject invalid strict snapshots without invoking legacy recovery."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
+
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+@pytest.mark.parametrize(
+    "raw, category",
+    [
+        (b"{", "invalid_json"),
+        (
+            b'{"schema_version":1,"schema_version":1,"kill_switch":false,'
+            b'"profiles":{"default":{"global_default":"ask","servers":{}}}}',
+            "duplicate_key",
+        ),
+        (
+            b'{"schema_version":99,"kill_switch":false,"profiles":{}}',
+            "invalid_shape",
+        ),
+    ],
+)
+def test_profile_inventory_snapshot_rejects_global_corruption_without_recovery(
+    tmp_path, raw, category
+):
+    """The UI inventory seam must never synthesize actionable defaults."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError, match=category):
+        MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+def test_profile_inventory_snapshot_exposes_only_lifecycle_invalid_profiles(tmp_path):
+    """A policy-valid row with bad lifecycle metadata stays inspectable."""
+    path = tmp_path / "mcp_permissions.json"
+    payload = _fresh_payload_shape()
+    payload["profiles"]["broken"] = {
+        "servers": {},
+        "profile_kind": "tool_pack_imported",
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snapshot = MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert snapshot.payload["profiles"]["broken"]["profile_kind"] == (
+        "tool_pack_imported"
+    )
+    assert path.read_text(encoding="utf-8") == json.dumps(payload)
+
+
+def test_profile_inventory_snapshot_accepts_legacy_hash_free_allow_null(tmp_path):
+    """A hash-free Allow written by older releases remains valid authority."""
+    path = tmp_path / "mcp_permissions.json"
+    payload = _fresh_payload_shape()
+    payload["profiles"]["default"]["servers"] = {
+        "agent:builtin": {
+            "tools": {
+                "calculator": {
+                    "state": "allow",
+                    "definition_hash": None,
+                }
+            }
+        }
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    strict = MCPPermissionStore(path).read_snapshot_strict()
+    inventory = MCPPermissionStore(path).read_profile_inventory_snapshot()
+
+    assert (
+        strict.payload["profiles"]["default"]["servers"]["agent:builtin"]["tools"][
+            "calculator"
+        ]["definition_hash"]
+        is None
+    )
+    assert inventory.payload == strict.payload
+
+
+def test_profile_inventory_snapshot_fails_closed_on_io_error(tmp_path, monkeypatch):
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    def fail_read(_path):
+        raise PermissionError("unavailable")
+
+    monkeypatch.setattr(type(store.path), "read_bytes", fail_read)
+
+    with pytest.raises(PermissionStoreSnapshotError, match="io_error"):
+        store.read_profile_inventory_snapshot()
+
+
+@pytest.mark.parametrize("raw", [b"{", b'{"schema_version":99}'])
+def test_raw_getters_do_not_recover_invalid_store(tmp_path, raw):
+    """Inspection uses read-only recovery rather than legacy file backup."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+    store = MCPPermissionStore(path)
+
+    assert store.get_global_default() == DEFAULT_GLOBAL
+    assert store.get_server_entry("local:docs") is None
+    assert store.get_tool_entry("local:docs", "search") is None
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+def test_strict_snapshot_wraps_deeply_nested_json_errors(tmp_path):
+    """A malformed deep document remains a typed, non-mutating failure."""
+    raw = b"[" * 10_000 + b"0" + b"]" * 10_000
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
+
+    assert path.read_bytes() == raw
+
+
+def test_strict_snapshot_rejects_float_schema_version(tmp_path):
+    """The strict schema authority accepts integer schema version 1 only."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1.0,
+                "kill_switch": False,
+                "profiles": _fresh_payload_shape()["profiles"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
 
 
 def test_load_backs_up_corrupt_json_and_returns_fresh_default(tmp_path):
@@ -126,6 +279,23 @@ def test_global_default_validates_and_round_trips(tmp_path):
         store.set_global_default("nonsense")
 
 
+def test_raw_getters_read_the_requested_profile_without_seeding(tmp_path):
+    """Profile-specific inspection must not read from or create ``default``."""
+    path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(path)
+    store.ensure_profile("portable")
+    store.set_global_default("deny", profile_id="portable")
+    store.set_server_default("local:docs", "ask", profile_id="portable")
+    store.set_tool_state("local:docs", "search", "allow", definition_hash="a" * 64, profile_id="portable")
+    before_bytes = path.read_bytes()
+
+    assert store.get_global_default(profile_id="portable") == "deny"
+    assert store.get_server_entry("local:docs", profile_id="portable")["default"] == "ask"
+    assert store.get_tool_entry("local:docs", "search", profile_id="portable")["state"] == "allow"
+    assert store.get_server_entry("local:missing", profile_id="unseeded") is None
+    assert path.read_bytes() == before_bytes
+
+
 def test_set_server_default_and_inherit_prunes_entry(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     server_key = "local:demo-server"
@@ -167,7 +337,7 @@ def test_set_tool_state_inherit_prunes_tool_but_keeps_server_default(tmp_path):
     server_key = "local:demo-server"
 
     store.set_server_default(server_key, "ask")
-    store.set_tool_state(server_key, "search", "allow", definition_hash="hash-1")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     store.set_tool_state(server_key, "search", None)
 
@@ -183,6 +353,11 @@ def test_set_tool_state_allow_without_hash_raises_value_error(tmp_path):
     with pytest.raises(ValueError):
         store.set_tool_state("local:demo-server", "search", "allow")
 
+    with pytest.raises(ValueError):
+        store.set_tool_state(
+            "local:demo-server", "search", "allow", definition_hash="not-a-sha256"
+        )
+
 
 def test_set_tool_state_allow_stores_hash_and_clears_config_changed(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
@@ -193,18 +368,18 @@ def test_set_tool_state_allow_stores_hash_and_clears_config_changed(tmp_path):
     tool_entry = store.get_tool_entry(server_key, "search")
     assert tool_entry.get("config_changed") is True
 
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     tool_entry = store.get_tool_entry(server_key, "search")
     assert tool_entry["state"] == "allow"
-    assert tool_entry["definition_hash"] == "abc123"
+    assert tool_entry["definition_hash"] == "a" * 64
     assert "config_changed" not in tool_entry
 
 
 def test_mark_config_changed_returns_true_then_false(tmp_path):
     store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
     server_key = "local:demo-server"
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     first = store.mark_config_changed(server_key, "search")
     second = store.mark_config_changed(server_key, "search")
@@ -221,7 +396,7 @@ def test_mark_config_changed_second_call_does_not_rewrite_file(tmp_path):
     path = tmp_path / "mcp_permissions.json"
     store = MCPPermissionStore(path)
     server_key = "local:demo-server"
-    store.set_tool_state(server_key, "search", "allow", definition_hash="abc123")
+    store.set_tool_state(server_key, "search", "allow", definition_hash="a" * 64)
 
     assert store.mark_config_changed(server_key, "search") is True
     before_bytes = path.read_bytes()
@@ -414,7 +589,8 @@ def test_builtin_allow_survives_schema_change(tmp_path):
     store.set_tool_state(server_key, tool_name, "allow")
     entry = store.get_tool_entry(server_key, tool_name)
     assert entry["state"] == "allow"
-    assert not entry.get("definition_hash")
+    assert "definition_hash" not in entry
+    store.read_snapshot_strict()
 
     def _tool(input_schema):
         return HubTool(
@@ -668,3 +844,665 @@ def test_explicit_builtin_tool_override_beats_the_reads_floor():
     assert eff.state == "allow"
     assert eff.origin == "tool_override"
     assert eff.risk_floored is False
+
+
+# -- Task 5 (workspace-assistant-defaults): named permission profiles -----------
+
+from tldw_chatbook.MCP.permission_store import resolve_effective_state_by_key
+
+#: Server key for the named-profile resolver tests. Deliberately the one
+#: ``BY_KEY_HASH_FREE_SERVER_KEYS`` member ("builtin:tldw_chatbook"):
+#: ``resolve_effective_state_by_key`` collapses any other key's "allow" to
+#: "ask" (no live HubTool to verify the grant against), which would make
+#: the "allow survives in the default profile" assertion below test the
+#: collapse instead of the cross-profile inheritance. It is also in
+#: ``HASH_FREE_SERVER_KEYS``, so ``set_tool_state(..., "allow")`` needs no
+#: definition_hash for it ("local:__local__" is in neither set, which is
+#: why the brief directs the adaptation).
+PROFILE_TEST_SERVER_KEY = "builtin:tldw_chatbook"
+
+
+@pytest.fixture()
+def store(tmp_path):
+    """A fresh permission store on a per-test file, matching this file's
+    construct-per-test tmp_path style."""
+    return MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+
+def test_named_profile_survives_load_and_normalizes(store, tmp_path):
+    store.ensure_profile("ws-w-1")
+    store.save({**store.load()})
+    reloaded = MCPPermissionStore(tmp_path / "mcp_permissions.json").load()
+    assert "ws-w-1" in reloaded["profiles"]
+    # hand-edited named profile with null servers coerces on load
+    payload = reloaded
+    payload["profiles"]["ws-w-1"]["servers"] = None
+    store.save(payload)
+    assert isinstance(store.load()["profiles"]["ws-w-1"]["servers"], dict)
+
+
+def test_mutators_write_only_the_named_profile(store):
+    store.ensure_profile("ws-w-1")
+    store.set_tool_state("local:__local__", "fs_write", "deny", profile_id="ws-w-1")
+    payload = store.load()
+    named = payload["profiles"]["ws-w-1"]["servers"]["local:__local__"]["tools"]["fs_write"]
+    assert named["state"] == "deny"
+    assert "local:__local__" not in payload["profiles"]["default"]["servers"]
+
+
+def test_resolver_inherits_level_by_level(store):
+    store.set_tool_state(PROFILE_TEST_SERVER_KEY, "fs_read", "allow", definition_hash=None)
+    store.set_server_default(PROFILE_TEST_SERVER_KEY, "ask", profile_id="ws-w-1")
+    payload = store.load()
+    # named server default beats default-profile tool override (per-level chain)
+    state = resolve_effective_state_by_key(
+        payload, PROFILE_TEST_SERVER_KEY, "fs_read", profile_id="ws-w-1"
+    )
+    assert state.state == "ask"
+    # key absent from named falls through to default-profile tool override
+    state = resolve_effective_state_by_key(payload, PROFILE_TEST_SERVER_KEY, "fs_read")
+    assert state.state == "allow"
+
+
+def test_unknown_profile_id_inherits_everything(store):
+    payload = store.load()
+    state = resolve_effective_state_by_key(
+        payload, "local:__local__", "fs_read", profile_id="ws-never-created"
+    )
+    assert state.state == DEFAULT_GLOBAL  # fresh workspace behaves like today
+
+
+# --- TASK-26012: per-argument allow rules -----------------------------------
+
+
+def _rule_tool(server_key="srv", name="search", *, tags=(), schema=None):
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    return HubTool(
+        server_key=server_key,
+        server_label="Server",
+        source="mcp",
+        name=name,
+        description="A tool.",
+        input_schema=schema or {"type": "object"},
+        tags=tuple(tags),
+        stale=False,
+        executable=True,
+    )
+
+
+def test_arg_rule_allows_exact_args_and_still_prompts_otherwise(tmp_path) -> None:
+    """AC#1/#2: the rule quiets exactly the saved argument shape."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "site status", "limit": 5},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    payload = store.load()
+    assert arg_rule_allows(payload, tool, {"query": "site status", "limit": 5})
+    assert arg_rule_allows(payload, tool, {"limit": 5, "query": "site status"}), (
+        "argument order must not matter"
+    )
+    assert not arg_rule_allows(payload, tool, {"query": "DIFFERENT", "limit": 5})
+    assert not arg_rule_allows(payload, tool, {"query": "site status"})
+
+
+def test_arg_rule_field_glob_patterns_match_one_field(tmp_path) -> None:
+    """AC#1: hand-written field/pattern rules give hermes-style globs."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    payload = store.load()
+    profile = payload["profiles"]["default"]
+    entry = (
+        profile.setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})
+        .setdefault("search", {})
+    )
+    entry["arg_rules"] = [
+        {
+            "field": "query",
+            "pattern": "docs *",
+            "definition_hash": definition_hash(
+                tool.description, tool.input_schema
+            ),
+        }
+    ]
+
+    assert arg_rule_allows(payload, tool, {"query": "docs search syntax"})
+    assert not arg_rule_allows(payload, tool, {"query": "rm everything"})
+
+
+def test_arg_rules_participate_in_the_rug_pull_guard(tmp_path) -> None:
+    """AC#4: a changed tool definition makes the rule inert."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    changed = _rule_tool(schema={"type": "object", "properties": {"q": {}}})
+
+    payload = store.load()
+    assert arg_rule_allows(payload, tool, {"query": "x"})
+    assert not arg_rule_allows(payload, changed, {"query": "x"})
+
+
+def test_arg_rules_never_quiet_high_risk_tools(tmp_path) -> None:
+    """AC#5: the risk floor beats any argument rule."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    risky = _rule_tool(tags=("mutates",))
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(risky.description, risky.input_schema),
+    )
+
+    assert not arg_rule_allows(store.load(), risky, {"query": "x"})
+
+
+def test_service_arg_rule_round_trip(tmp_path) -> None:
+    """The service passthrough hashes the live tool and the matcher agrees."""
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._permission_store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+
+    service.add_tool_arg_rule("srv", "search", args={"query": "x"}, tool=tool)
+
+    assert service.arg_rule_allows_call(tool, {"query": "x"}) is True
+    assert service.arg_rule_allows_call(tool, {"query": "y"}) is False
+
+
+# --- task-32281: list/remove exact-input allow rules ------------------------
+
+
+def test_list_tool_arg_rules_returns_rule_id_and_created_at(tmp_path) -> None:
+    """AC#1: the inspector needs a rule_id to remove BY and text to show."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    rules = store.list_tool_arg_rules("srv", "search")
+
+    assert len(rules) == 1
+    assert rules[0]["rule_id"] == rules[0]["args_json"]
+    assert json.loads(rules[0]["args_json"]) == {"query": "x"}
+    assert rules[0]["created_at"]
+
+
+def test_list_tool_arg_rules_omits_hand_written_field_pattern_rules(tmp_path) -> None:
+    """Only the exact-input shape the card writes is "a rule" here -- a
+    hand-written glob rule has no `args_json` and isn't this surface's
+    concern (it's still honored by `arg_rule_allows`, just not listed)."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    payload = store.load()
+    entry = (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})
+        .setdefault("search", {})
+    )
+    entry["arg_rules"] = [
+        {
+            "field": "query",
+            "pattern": "docs *",
+            "definition_hash": definition_hash(
+                tool.description, tool.input_schema
+            ),
+        }
+    ]
+    store.save(payload)
+
+    assert store.list_tool_arg_rules("srv", "search") == []
+
+
+def test_list_tool_arg_rules_empty_for_unknown_tool(tmp_path) -> None:
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+
+    assert store.list_tool_arg_rules("srv", "search") == []
+
+
+def test_remove_tool_arg_rule_round_trip_makes_the_next_call_ask_again(
+    tmp_path,
+) -> None:
+    """AC#1: removing a rule makes the next identical call ask again."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rule_id = store.list_tool_arg_rules("srv", "search")[0]["rule_id"]
+    assert arg_rule_allows(store.load(), tool, {"query": "x"})
+
+    removed = store.remove_tool_arg_rule("srv", "search", rule_id)
+
+    assert removed is True
+    assert store.list_tool_arg_rules("srv", "search") == []
+    assert not arg_rule_allows(store.load(), tool, {"query": "x"})
+
+
+def test_removing_the_last_rule_of_a_state_less_tool_stays_strictly_valid(
+    tmp_path,
+) -> None:
+    """Review round 1 (Critical): a tool that only ever had `arg_rules`
+    (no whole-tool `state`) used to leave `{}` behind when its last rule
+    was removed -- `_validate_strict_profile()` rejects a tool entry with
+    neither key, invalidating the WHOLE profile for `read_snapshot_
+    strict()`/`read_profile_inventory_snapshot()` callers (the
+    Permissions-mode profile selector)."""
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rule_id = store.list_tool_arg_rules("srv", "search")[0]["rule_id"]
+
+    assert store.remove_tool_arg_rule("srv", "search", rule_id) is True
+
+    # The empty tool entry itself is gone -- not left behind as `{}`.
+    server_entry = store.load()["profiles"]["default"]["servers"].get("srv", {})
+    assert "search" not in server_entry.get("tools", {})
+    # Both strict-read seams still validate the store.
+    strict = store.read_snapshot_strict()
+    inventory = store.read_profile_inventory_snapshot()
+    assert inventory.payload == strict.payload
+
+
+def test_remove_tool_arg_rule_unknown_id_is_a_no_op(tmp_path) -> None:
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    assert store.remove_tool_arg_rule("srv", "search", "not-a-real-rule-id") is False
+    assert len(store.list_tool_arg_rules("srv", "search")) == 1
+
+
+def test_remove_tool_arg_rule_only_deletes_the_matching_rule(tmp_path) -> None:
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "y"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rules = store.list_tool_arg_rules("srv", "search")
+    keep_id = next(r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "y")
+    remove_id = next(r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "x")
+
+    assert store.remove_tool_arg_rule("srv", "search", remove_id) is True
+
+    remaining = store.list_tool_arg_rules("srv", "search")
+    assert [r["rule_id"] for r in remaining] == [keep_id]
+
+
+def test_service_list_and_remove_tool_arg_rules_round_trip(tmp_path) -> None:
+    """The service mirrors the store's two new methods (task-32281)."""
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._permission_store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    service.add_tool_arg_rule("srv", "search", args={"query": "x"}, tool=tool)
+
+    rules = service.list_tool_arg_rules("srv", "search")
+    assert len(rules) == 1
+
+    removed = service.remove_tool_arg_rule("srv", "search", rules[0]["rule_id"])
+
+    assert removed is True
+    assert service.list_tool_arg_rules("srv", "search") == []
+    assert service.arg_rule_allows_call(tool, {"query": "x"}) is False
+
+
+def test_strict_snapshot_accepts_an_arg_rule_only_tool_entry(tmp_path) -> None:
+    """Regression (task-32281): `add_tool_arg_rule()` (task-26012) has
+    always written a tool entry with `arg_rules` but no `state` -- before
+    this fix, `read_snapshot_strict()`/`read_profile_inventory_snapshot()`
+    (the Permissions-mode profile-selector's own authority read) rejected
+    the WHOLE profile as `invalid_shape` the moment any tool had ONLY an
+    exact-input rule and no whole-tool override, which would have silently
+    broken every such profile in production."""
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    strict = store.read_snapshot_strict()
+    inventory = store.read_profile_inventory_snapshot()
+
+    tool_entry = strict.payload["profiles"]["default"]["servers"]["srv"]["tools"][
+        "search"
+    ]
+    assert "state" not in tool_entry
+    assert len(tool_entry["arg_rules"]) == 1
+    assert inventory.payload == strict.payload
+
+
+def test_strict_snapshot_still_rejects_an_empty_tool_entry(tmp_path) -> None:
+    """A tool entry with neither `state` nor `arg_rules` stays invalid --
+    the fix widens what's ACCEPTED, not a blanket "any junk key is fine"."""
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    payload = store.load()
+    (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})["search"]
+    ) = {}
+    store.save(payload)
+
+    with pytest.raises(PermissionStoreSnapshotError, match="invalid_shape"):
+        store.read_snapshot_strict()
+
+
+def test_strict_snapshot_rejects_a_non_list_arg_rules_value(tmp_path) -> None:
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    payload = store.load()
+    (
+        payload["profiles"]["default"]
+        .setdefault("servers", {})
+        .setdefault("srv", {})
+        .setdefault("tools", {})["search"]
+    ) = {"arg_rules": "not-a-list"}
+    store.save(payload)
+
+    with pytest.raises(PermissionStoreSnapshotError, match="invalid_shape"):
+        store.read_snapshot_strict()
+
+
+# --- task-32281 (Qodo #2597 #1 / #2600 #13): inheritance + mutation fence ---
+
+
+def test_list_tool_arg_rules_lists_an_inherited_rule_with_its_owner(
+    tmp_path,
+) -> None:
+    """Qodo #2597 #1 (High/Security): `arg_rule_allows` walks the profile
+    CHAIN, so a rule stored on `default` keeps quieting calls made under a
+    child profile. Listing read the selected profile ONLY, so the inspector
+    showed no rule and no Remove control for a rule that was live -- the
+    user could neither see nor revoke it.
+    """
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.ensure_profile("child")
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+
+    # The rule really is in force under the child profile.
+    assert arg_rule_allows(store.load(), tool, {"query": "x"}, profile_id="child")
+
+    rules = store.list_tool_arg_rules("srv", "search", profile_id="child")
+
+    assert len(rules) == 1
+    assert rules[0]["profile_id"] == "default"
+    assert json.loads(rules[0]["args_json"]) == {"query": "x"}
+    # A rule stored in the reviewed profile names that profile, not an ancestor.
+    assert (
+        store.list_tool_arg_rules("srv", "search")[0]["profile_id"] == "default"
+    )
+
+
+def test_removing_an_inherited_rule_targets_its_owning_profile(tmp_path) -> None:
+    """Qodo #2597 #1: Remove must delete where the rule LIVES. Aimed at the
+    child (the profile being reviewed) it was a silent no-op and the rule
+    kept authorizing calls."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.ensure_profile("child")
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    rule = store.list_tool_arg_rules("srv", "search", profile_id="child")[0]
+
+    # Aiming at the reviewed profile changes nothing (the pre-fix behaviour).
+    assert (
+        store.remove_tool_arg_rule(
+            "srv", "search", rule["rule_id"], profile_id="child"
+        )
+        is False
+    )
+    assert arg_rule_allows(store.load(), tool, {"query": "x"}, profile_id="child")
+
+    # Aiming at the OWNER -- what the UI now passes -- actually revokes it.
+    assert (
+        store.remove_tool_arg_rule(
+            "srv", "search", rule["rule_id"], profile_id=rule["profile_id"]
+        )
+        is True
+    )
+    assert store.list_tool_arg_rules("srv", "search", profile_id="child") == []
+    assert not arg_rule_allows(store.load(), tool, {"query": "x"}, profile_id="child")
+
+
+def test_a_child_profiles_own_rules_shadow_the_defaults(tmp_path) -> None:
+    """The listing stops at the first chain profile carrying rules, exactly
+    like `arg_rule_allows`' own `return False` after that profile -- listing
+    an ancestor's rules below a child's would advertise rules that cannot
+    fire."""
+    from tldw_chatbook.MCP.permission_store import (
+        MCPPermissionStore,
+        arg_rule_allows,
+    )
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    rule_hash = definition_hash(tool.description, tool.input_schema)
+    store.ensure_profile("child")
+    store.add_tool_arg_rule(
+        "srv", "search", args={"query": "inherited"}, definition_hash=rule_hash
+    )
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "own"},
+        definition_hash=rule_hash,
+        profile_id="child",
+    )
+
+    rules = store.list_tool_arg_rules("srv", "search", profile_id="child")
+
+    assert [r["profile_id"] for r in rules] == ["child"]
+    assert json.loads(rules[0]["args_json"]) == {"query": "own"}
+    # The resolver agrees: the shadowed default rule no longer authorizes.
+    assert arg_rule_allows(store.load(), tool, {"query": "own"}, profile_id="child")
+    assert not arg_rule_allows(
+        store.load(), tool, {"query": "inherited"}, profile_id="child"
+    )
+
+
+def test_arg_rule_writes_route_through_the_guarded_mutation_path(tmp_path) -> None:
+    """Qodo #2600 #13: `remove_tool_arg_rule` (and `add_tool_arg_rule`) did
+    their own bare `load()` / mutate / `save()`, so a permission write
+    landing between the load and the save was silently overwritten. Both now
+    go through `_mutate_profile_locked` -- the SAME guarded path
+    `set_tool_state` uses, which holds the resolved-path fence across the
+    whole read-modify-write.
+    """
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    rule_hash = definition_hash(tool.description, tool.input_schema)
+    guarded: list[str] = []
+    original = store._mutate_profile_locked
+
+    def _spy(profile_id, change, **kwargs):
+        guarded.append(profile_id)
+        return original(profile_id, change, **kwargs)
+
+    store._mutate_profile_locked = _spy
+
+    store.add_tool_arg_rule(
+        "srv", "search", args={"query": "x"}, definition_hash=rule_hash
+    )
+    rule_id = store.list_tool_arg_rules("srv", "search")[0]["rule_id"]
+    assert store.remove_tool_arg_rule("srv", "search", rule_id) is True
+
+    assert guarded == ["default", "default"]
+
+
+def test_concurrent_permission_writes_survive_arg_rule_churn(tmp_path) -> None:
+    """Qodo #2600 #13, behaviourally: a `set_tool_state` write must never be
+    lost to an arg-rule add/remove running beside it. Every state write below
+    is to its OWN tool name, so the only way one can go missing is a stale
+    payload being saved over it -- exactly the lost update the unfenced
+    read-modify-write allowed.
+    """
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+    import threading
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    rule_hash = definition_hash(tool.description, tool.input_schema)
+    writes = 60
+    errors: list[BaseException] = []
+
+    def _set_states() -> None:
+        try:
+            for index in range(writes):
+                store.set_tool_state("srv", f"tool-{index}", "deny")
+        except BaseException as exc:  # noqa: BLE001 -- reported to the test
+            errors.append(exc)
+
+    def _churn_rules() -> None:
+        try:
+            for index in range(writes):
+                store.add_tool_arg_rule(
+                    "srv",
+                    "search",
+                    args={"query": f"q{index}"},
+                    definition_hash=rule_hash,
+                )
+                rules = store.list_tool_arg_rules("srv", "search")
+                store.remove_tool_arg_rule("srv", "search", rules[0]["rule_id"])
+        except BaseException as exc:  # noqa: BLE001 -- reported to the test
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_set_states),
+        threading.Thread(target=_churn_rules),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not errors, errors
+    tools = store.load()["profiles"]["default"]["servers"]["srv"]["tools"]
+    missing = [f"tool-{i}" for i in range(writes) if f"tool-{i}" not in tools]
+    assert missing == [], f"permission writes lost to arg-rule churn: {missing}"
+
+
+def test_add_tool_arg_rule_still_seeds_a_missing_named_profile(tmp_path) -> None:
+    """Qodo #2600 #13 fix dropped `add_tool_arg_rule`'s separate
+    `ensure_profile()` round trip -- `_mutate_profile_locked` seeds the
+    profile inside the fence instead, which must keep working."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+    store = MCPPermissionStore(tmp_path / "perm.json")
+    tool = _rule_tool()
+    store.add_tool_arg_rule(
+        "srv",
+        "search",
+        args={"query": "x"},
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+        profile_id="fresh",
+    )
+
+    rules = store.list_tool_arg_rules("srv", "search", profile_id="fresh")
+    assert [r["profile_id"] for r in rules] == ["fresh"]
+    assert "fresh" in store.load()["profiles"]

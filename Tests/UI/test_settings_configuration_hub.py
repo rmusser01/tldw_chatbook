@@ -1,11 +1,17 @@
+import asyncio
+import threading
+import hashlib
 import inspect
+import logging
 import re
 import time
 import builtins
+import tomllib
 from collections import UserDict
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -31,22 +37,48 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from Tests.UI.test_console_session_settings import (
+    _assert_public_value_equal,
+    _assert_schema_key_absent,
+    _bare_console_state_screen,
+)
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
+import tldw_chatbook.config as config_module
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleSettingsReturnTarget,
+    ConversationSettingsReturnIntent,
+    ConversationSettingsReturnOutcome,
+    ProviderSettingsNavigationTarget,
+)
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
+)
 from tldw_chatbook.UI.Screens.settings_config_adapter import (
     SettingsConfigAdapter,
+    failure_status_text,
     redact_secret_text,
 )
 from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,
+)
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsDraftSnapshot,
 )
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
@@ -55,6 +87,15 @@ from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
 )
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Chat.console_chat_controller import (
+    CapturePolicyMutationResult,
+    CapturePolicyMutationStatus,
+)
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CapturePolicyResolution,
+    CapturePolicySource,
+)
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboardInput,
     summarize_home_dashboard,
@@ -84,6 +125,8 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 DUMMY_REDACTION_ENV_VALUE = "redaction-fixture-env-value"
 DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
+_BACKUP_LOAD_EVENT_WAIT_SECONDS = 5.0
+_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS = 10.0
 
 PERSISTED_PROVIDER_ALIASES = (
     ("llama.cpp", "llama_cpp"),
@@ -91,6 +134,248 @@ PERSISTED_PROVIDER_ALIASES = (
     ("Custom OpenAI", "custom"),
     ("custom-openai-api", "custom"),
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation_result", "expected_status"),
+    [
+        (
+            ConfigMutationResult(False, False, None, True, "identity_changed"),
+            "Failed — settings changed; reload and try again",
+        ),
+        (
+            ConfigMutationResult(False, False, "before_replace"),
+            "Failed — Safe state is active for this session; file save failed",
+        ),
+        (
+            ConfigMutationResult(True, False, "cache_reload"),
+            "Saved and active — settings cache refresh degraded",
+        ),
+    ],
+)
+async def test_console_capture_settings_reports_structured_mutation_outcomes(
+    monkeypatch, mutation_result, expected_status
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        screen.query_one(
+            "#settings-console-exchange-capture-enabled", Checkbox
+        ).value = True
+        screen.query_one(
+            "#settings-console-exchange-capture-detail", Select
+        ).value = CaptureDetail.SAFE.value
+        monkeypatch.setattr(
+            settings_screen_module,
+            "apply_console_capture_settings",
+            lambda **_kwargs: mutation_result,
+        )
+        monkeypatch.setattr(
+            settings_screen_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True, detail=CaptureDetail.SAFE, generation=8
+            ),
+        )
+        button = screen.query_one(
+            "#settings-console-exchange-capture-apply", Button
+        )
+        await screen.handle_console_exchange_capture_apply(
+            SimpleNamespace(stop=lambda: None, button=button)
+        )
+
+        assert screen._console_capture_status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        screen.query_one(
+            "#settings-console-exchange-capture-enabled", Checkbox
+        ).value = True
+        screen.query_one(
+            "#settings-console-exchange-capture-detail", Select
+        ).value = CaptureDetail.SAFE.value
+        screen.query_one(
+            "#settings-console-trace-viewer-profile", Select
+        ).value = "full"
+        confirmation = AsyncMock(return_value=True)
+        monkeypatch.setattr(host, "push_screen_wait", confirmation)
+        calls: list[dict[str, object]] = []
+
+        def apply(**kwargs):
+            calls.append(kwargs)
+            return ConfigMutationResult(True, True, None)
+
+        monkeypatch.setattr(
+            settings_screen_module, "apply_console_capture_settings", apply
+        )
+        monkeypatch.setattr(
+            settings_screen_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True,
+                detail=CaptureDetail.SAFE,
+                generation=8,
+                pii_redaction_enabled=False,
+                viewer_profile="safe",
+            ),
+        )
+        button = screen.query_one(
+            "#settings-console-exchange-capture-apply", Button
+        )
+        await screen.handle_console_exchange_capture_apply(
+            SimpleNamespace(stop=lambda: None, button=button)
+        )
+
+        modal = confirmation.await_args.args[0]
+        assert "PII detectors missed" in modal.message
+        assert calls and calls[0]["detail"] is CaptureDetail.SAFE
+        assert calls[0]["viewer_profile"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
+    monkeypatch,
+):
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+        snapshot = SimpleNamespace(
+            enabled=False,
+            next_detail=CaptureDetail.FULL,
+            conversation_detail=None,
+            global_detail=CaptureDetail.SAFE,
+            config_generation=8,
+            policy_revision=11,
+        )
+        applied_snapshot = SimpleNamespace(
+            **snapshot.__dict__,
+            effective=CapturePolicyResolution(
+                True, CaptureDetail.FULL, CapturePolicySource.NEXT_SEND, ()
+            ),
+        )
+        coordinator = Mock(
+            return_value=CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.APPLIED,
+                applied_snapshot,
+                False,
+                None,
+            )
+        )
+        controller = SimpleNamespace(
+            store=SimpleNamespace(active_session_id="session-a"),
+            capture_policy_snapshot=lambda _session: snapshot,
+            apply_global_capture_settings=coordinator,
+        )
+        app.console_runtime = SimpleNamespace(chat_controller=controller)
+        screen._console_capture_policy = SimpleNamespace(
+            enabled=False, detail=CaptureDetail.SAFE, generation=8
+        )
+        screen.query_one(
+            "#settings-console-exchange-capture-enabled", Checkbox
+        ).value = True
+        screen.query_one(
+            "#settings-console-exchange-capture-detail", Select
+        ).value = CaptureDetail.SAFE.value
+        confirmation = AsyncMock(return_value=True)
+        monkeypatch.setattr(host, "push_screen_wait", confirmation)
+        monkeypatch.setattr(
+            settings_screen_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True, detail=CaptureDetail.SAFE, generation=9
+            ),
+        )
+        button = screen.query_one(
+            "#settings-console-exchange-capture-apply", Button
+        )
+
+        await screen.handle_console_exchange_capture_apply(
+            SimpleNamespace(stop=lambda: None, button=button)
+        )
+
+        confirmation.assert_not_awaited()
+        coordinator.assert_called_once_with(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            expected_config_generation=8,
+            expected_policy_revision=11,
+            pii_redaction_enabled=False,
+            viewer_profile="safe",
+        )
+
+
+def _assert_private_values_absent(
+    surface: object,
+    private_values: tuple[str, ...],
+    *,
+    surface_label: str,
+) -> None:
+    """Fail without echoing a private value or inspected surface."""
+    rendered = surface if isinstance(surface, str) else repr(surface)
+    if any(value in rendered for value in private_values):
+        pytest.fail(
+            f"private value leaked through {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_private_value_matches_opaquely(
+    actual: object,
+    expected: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Compare private text by one-way digest and keep failures value-free."""
+    if not isinstance(actual, str):
+        pytest.fail(
+            f"private value missing from {surface_label}",
+            pytrace=False,
+        )
+    actual_digest = hashlib.sha256(actual.encode("utf-8")).digest()
+    expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+    if actual_digest != expected_digest:
+        pytest.fail(
+            f"private value mismatch in {surface_label}",
+            pytrace=False,
+        )
+
+
+def _assert_log_capture_is_live_and_private_free(
+    *,
+    saw_safe_marker: bool,
+    saw_private_value: bool,
+    surface_label: str,
+) -> None:
+    """Assert a logger capture without retaining or rendering its messages."""
+    if not saw_safe_marker:
+        pytest.fail(f"safe marker missing from {surface_label}", pytrace=False)
+    if saw_private_value:
+        pytest.fail(f"private value leaked through {surface_label}", pytrace=False)
+
+
+def _assert_public_text_present(
+    surface: str,
+    expected_text: str,
+    *,
+    surface_label: str,
+) -> None:
+    """Check a public marker without rendering the inspected surface on failure."""
+    if expected_text not in surface:
+        pytest.fail(f"public marker missing from {surface_label}", pytrace=False)
 
 
 def _capture_provider_settings_mutations(monkeypatch):
@@ -112,6 +397,16 @@ class StyledSettingsDestinationHarness(DestinationHarness):
     CSS_PATH = str(
         Path(__file__).parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
     )
+
+
+class ConversationReturnSettingsHarness(DestinationHarness):
+    def __init__(self, app_instance):
+        super().__init__(app_instance, "settings")
+        self.navigation_messages: list[NavigateToScreen] = []
+
+    def on_navigate_to_screen(self, message: NavigateToScreen) -> None:
+        self.navigation_messages.append(message)
+        message.stop()
 
 
 async def _settle_settings_mount_storm(pilot) -> None:
@@ -209,13 +504,14 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
     (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Video
     Gen (video-generation-foundation) brought it to 25; Agents
-    (supervisor-fleet PR-1 task 6) brought it to 26. This pins the literal
+    (supervisor-fleet PR-1 task 6) brought it to 26; Web Search (TASK-32189)
+    brought it to 27. This pins the literal
     count so the next addition must touch this assertion deliberately, and
     cross-checks that summaries neither miss nor duplicate an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 26
+    assert len(summaries) == len(list(SettingsCategoryId)) == 30
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
@@ -274,7 +570,7 @@ async def test_theme_category_opens_without_crashing():
     test_settings_theme_editor.py.
     """
     app = _build_test_app()
-    host = DestinationHarness(app, "settings")
+    host = ConversationReturnSettingsHarness(app)
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-theme")
         screen = _active_destination_screen(host)
@@ -618,6 +914,82 @@ def test_redact_secret_text_removes_api_key_like_values():
     assert "OPENAI_API_KEY=<redacted>" in redacted
 
 
+@pytest.mark.parametrize(
+    ("text", "secret", "expected_fragment"),
+    [
+        pytest.param(
+            "rejected: Authorization: Bearer sk-live-abc123",
+            "sk-live-abc123",
+            "Bearer <redacted>",
+            id="authorization-bearer-header",
+        ),
+        pytest.param(
+            "X-Api-Key: sk-live-abc123 was rejected",
+            "sk-live-abc123",
+            "X-Api-Key: <redacted>",
+            id="colon-separated-credential-header",
+        ),
+        pytest.param(
+            "GET https://svc/customsearch/v1?key=AIzaSyLIVE0123456789&cx=017 failed",
+            "AIzaSyLIVE0123456789",
+            "?key=<redacted>&cx=017",
+            id="bare-key-query-parameter",
+        ),
+        pytest.param(
+            "POST https://svc/v1/models?api_key=sk-live-abc123 -> 401",
+            "sk-live-abc123",
+            "api_key=<redacted>",
+            id="api-key-query-parameter",
+        ),
+    ],
+)
+def test_redact_secret_text_removes_header_and_query_string_secrets(
+    text: str,
+    secret: str,
+    expected_fragment: str,
+) -> None:
+    """TASK-23190: the assignment rule alone missed both of these shapes.
+
+    ``_SECRET_ASSIGNMENT_PATTERN`` classifies a value by the *name* to its
+    left, so ``Authorization: Bearer <token>`` (the classifying name is
+    ``Authorization``, which is not in the vocabulary) and ``?key=<token>``
+    (``key`` alone is not either) were both displayed verbatim. Probed before
+    the fix: both strings came back from ``redact_secret_text`` unchanged.
+    """
+    redacted = redact_secret_text(text)
+
+    assert secret not in redacted
+    assert expected_fragment in redacted
+
+
+def test_redact_secret_text_leaves_secret_free_text_intact() -> None:
+    """Negative control: an over-broad rule that redacts everything must fail.
+
+    The bare-``key`` query rule is the risky one -- ``key`` is an ordinary
+    English word, and a TOML parse error says it. It is anchored on ``?``/``&``
+    precisely so prose survives.
+    """
+    intact = (
+        "Model discovery failed (HTTPStatusError). Check the endpoint. "
+        "Details are in Logs (F8). Expected key but found newline at line 3"
+    )
+
+    assert redact_secret_text(intact) == intact
+
+
+def test_failure_status_text_keeps_type_name_only_copy_unchanged() -> None:
+    """AC-4: the TASK-23108 call sites must read exactly as they did."""
+
+    assert failure_status_text(
+        "Model discovery failed",
+        ValueError("secret=sk-live-abc123"),
+        next_step="Check the endpoint.",
+    ) == (
+        "Model discovery failed (ValueError). Check the endpoint. "
+        "Details are in Logs (F8)."
+    )
+
+
 def test_adapter_rejects_non_mapping_toml():
     adapter = SettingsConfigAdapter()
 
@@ -784,7 +1156,15 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
     ].owns_config_sections == (
+        "console.rail_layout_scope",
         "console.stack_collapsed_rail_labels",
+        "console.exchange_capture",
+        "console.exchange_capture_detail",
+        "console.exchange_capture_pii_redaction",
+        "console.trace_viewer_profile",
+        "console.trace_viewer_profile_version",
+        "console.show_model_thinking",
+        "console.thinking_history_policy_default",
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",
@@ -881,11 +1261,12 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
     }
-    # LIBRARY_RAG and IMAGE_GENERATION are the two "Domain Defaults" members
+    # LIBRARY_RAG, SCHEDULES, and IMAGE_GENERATION are the "Domain Defaults" members
     # with a full self-owned editor (Settings genuinely persists their
     # config) rather than a pure view-only pointer to another destination.
     mutable_categories = {
         SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.SCHEDULES,
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
     }
@@ -911,6 +1292,258 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     assert "citations" in library_copy
     assert "snippets" in library_copy
     assert "active RAG profile" in library_copy
+
+    schedules_contract = contracts[SettingsCategoryId.SCHEDULES]
+    assert schedules_contract.owner_destination == "Settings"
+    assert "briefing_schedules_enabled" in " ".join(
+        schedules_contract.source_of_truth
+    )
+
+
+def _painted_settings_widget(screen, widget) -> str:
+    """Return normalized text actually painted inside one widget's region."""
+    strips = screen._compositor.render_strips()
+    return " ".join(
+        "\n".join(
+            "".join(segment.text for segment in strips[row])[
+                widget.region.x : widget.region.x + widget.region.width
+            ]
+            for row in range(
+                widget.region.y,
+                min(widget.region.y + widget.region.height, len(strips)),
+            )
+        ).split()
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(180, 50), (100, 30)])
+async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
+    monkeypatch, tmp_path, size
+):
+    """F4 Settings owns the global gate at normal and compact sizes."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[scheduling]\nbriefing_schedules_enabled = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+    app.apply_briefing_schedules_enabled(False)
+    assert app.scheduler_loop.queue.briefing_projection is None
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.SCHEDULES,
+            selector="#settings-briefing-schedules-toggle",
+        )
+
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        button.active_effect_duration = 0
+        status_painted = _painted_settings_widget(screen, status)
+        assert "Global briefing schedules: Disabled" in status_painted
+        assert "Stored collection cadences stay saved but inactive" in status_painted
+        assert "Chatbook is open" in status_painted
+        assert button in screen._compositor.visible_widgets
+        assert "Enable scheduled briefings" in str(button.label)
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        status_painted = _painted_settings_widget(screen, status)
+        assert "Global briefing schedules: Enabled" in status_painted
+        assert "Disable scheduled briefings" in str(button.label)
+        assert button.disabled is False
+        assert app.scheduler_loop.queue.briefing_projection is not None
+        assert (
+            config_module.get_cli_setting(
+                "scheduling", "briefing_schedules_enabled", False
+            )
+            is True
+        )
+
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        status_painted = _painted_settings_widget(screen, status)
+        assert "Global briefing schedules: Disabled" in status_painted
+        assert "Enable scheduled briefings" in str(button.label)
+        assert button.disabled is False
+        assert app.scheduler_loop.queue.briefing_projection is None
+
+    assert (
+        config_module.get_cli_setting(
+            "scheduling", "briefing_schedules_enabled", True
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
+    monkeypatch, tmp_path
+):
+    """A replaced config is reported as saved even when live publish fails."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[scheduling]\nbriefing_schedules_enabled = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    assert (
+        config_module.get_cli_setting(
+            "scheduling", "briefing_schedules_enabled", True
+        )
+        is False
+    )
+
+    app = _build_test_app()
+    app.apply_briefing_schedules_enabled(False)
+    assert app.scheduler_loop.queue.briefing_projection is None
+    apply_live_gate = Mock(wraps=app.apply_briefing_schedules_enabled)
+    monkeypatch.setattr(
+        app, "apply_briefing_schedules_enabled", apply_live_gate
+    )
+    failure_detail = f"private cache failure at {config_path}"
+
+    def fail_runtime_config_publish(*_args, **_kwargs):
+        raise RuntimeError(failure_detail)
+
+    monkeypatch.setattr(
+        config_module,
+        "_publish_runtime_config_unlocked",
+        fail_runtime_config_publish,
+    )
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.SCHEDULES,
+            selector="#settings-briefing-schedules-toggle",
+        )
+        status = screen.query_one(
+            "#settings-briefing-schedules-status", Static
+        )
+        button = screen.query_one(
+            "#settings-briefing-schedules-toggle", Button
+        )
+
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        status_painted = _painted_settings_widget(screen, status)
+        expected = (
+            "Global briefing schedules were saved to disk as Enabled, but are "
+            "not active in this run. Restart Chatbook to apply the saved gate."
+        )
+        assert status_painted == expected
+        assert button in screen._compositor.visible_widgets
+        assert button.disabled is True
+        assert str(button.label) == "Enable scheduled briefings"
+        assert failure_detail not in status_painted
+        assert str(config_path) not in status_painted
+
+    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["scheduling"]["briefing_schedules_enabled"] is True
+    assert app.scheduler_loop.queue.briefing_projection is None
+    apply_live_gate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
+    monkeypatch, tmp_path
+):
+    """A restart-required gate cannot be inverted by a second press."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[scheduling]\nbriefing_schedules_enabled = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+    app.apply_briefing_schedules_enabled(False)
+    assert app.scheduler_loop.queue.briefing_projection is None
+    failure_detail = f"private live apply failure at {config_path}"
+    apply_live_gate = Mock(side_effect=RuntimeError(failure_detail))
+    monkeypatch.setattr(
+        app, "apply_briefing_schedules_enabled", apply_live_gate
+    )
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.SCHEDULES,
+            selector="#settings-briefing-schedules-toggle",
+        )
+        status = screen.query_one(
+            "#settings-briefing-schedules-status", Static
+        )
+        button = screen.query_one(
+            "#settings-briefing-schedules-toggle", Button
+        )
+        button.active_effect_duration = 0
+        real_atomic_write = config_module.atomic_private_write_text
+        writes = []
+
+        def counted_atomic_write(*args, **kwargs):
+            writes.append(args[0])
+            return real_atomic_write(*args, **kwargs)
+
+        monkeypatch.setattr(
+            config_module, "atomic_private_write_text", counted_atomic_write
+        )
+
+        assert await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        first_saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        first_runtime_projection = app.scheduler_loop.queue.briefing_projection
+        first_apply_count = apply_live_gate.call_count
+        first_write_count = len(writes)
+        first_disabled = button.disabled
+        first_visible = button in screen._compositor.visible_widgets
+        first_label = str(button.label)
+        first_status = _painted_settings_widget(screen, status)
+
+        second_clicked = await pilot.click(button)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        expected = (
+            "Global briefing schedules were saved to disk as Enabled, but are "
+            "not active in this run. Restart Chatbook to apply the saved gate."
+        )
+        assert first_saved["scheduling"]["briefing_schedules_enabled"] is True
+        assert first_runtime_projection is None
+        assert first_apply_count == 1
+        assert first_write_count == 1
+        assert first_visible is True
+        assert first_disabled is True
+        assert first_label == "Enable scheduled briefings"
+        assert first_status == expected
+        assert failure_detail not in first_status
+        assert str(config_path) not in first_status
+        assert second_clicked is True
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        assert saved["scheduling"]["briefing_schedules_enabled"] is True
+        assert app.scheduler_loop.queue.briefing_projection is None
+        assert apply_live_gate.call_count == 1
+        assert len(writes) == 1
 
 
 def test_settings_domain_category_ids_are_derived_from_contract_mapping():
@@ -1267,8 +1900,13 @@ def test_settings_library_rag_save_uses_exclusive_thread_worker():
     source = inspect.getsource(SettingsScreen)
 
     assert getattr(worker, "__wrapped__", None) is not None
+    # TASK-19559: the group is now explicit, so this worker cancels only
+    # its own predecessor rather than every other exclusive worker on the
+    # Settings screen (Textual puts an ungrouped exclusive worker in the
+    # shared "default" group).
     assert (
-        "@work(exclusive=True, thread=True)\n    def _settings_save_library_rag_worker"
+        '@work(exclusive=True, group="settings-save-library-rag", thread=True)\n'
+        "    def _settings_save_library_rag_worker"
     ) in source
 
 
@@ -1304,7 +1942,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         assert "Appearance" in text
         assert "Global visual defaults" in text
         assert "Theme owns: full theme editing" in text
-        assert "Save targets: general, web_server, and appearance" in text
+        assert "Save targets: general, web_server, appearance, and library" in text
         assert "Open Theme" in text
         assert (
             screen.query_one("#settings-appearance-theme", Select).value
@@ -1329,9 +1967,7 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         # Smooth scrolling renders as a label-cycling toggle Button (not a
         # Checkbox) — the label comes from _appearance_bool_label.
         assert (
-            str(
-                screen.query_one("#settings-appearance-smooth-scrolling", Button).label
-            )
+            str(screen.query_one("#settings-appearance-smooth-scrolling", Button).label)
             == "Enabled"
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -1344,6 +1980,15 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
         screen.handle_appearance_palette_theme_limit_changed(
             Input.Changed(palette_limit, palette_limit.value)
         )
+        expression_mode = screen.query_one(
+            "#settings-appearance-character-expression-mode", Select
+        )
+        assert expression_mode.value == "dynamic"
+        expression_mode.value = "static"
+        screen.handle_appearance_character_expression_mode_changed(
+            Select.Changed(expression_mode, "static")
+        )
+        assert "Change expressions without playing animations" in _visible_text(screen)
         transcript_style.value = "immersive_rp"
         screen.handle_appearance_transcript_style_changed(
             Select.Changed(transcript_style, transcript_style.value)
@@ -1377,6 +2022,75 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     assert saved[-1]["web_server"]["font_size"] == 14
     assert saved[-1]["appearance"]["density"] == "normal"
     assert saved[-1]["appearance"]["console_transcript_style"] == "immersive_rp"
+    assert saved[-1]["appearance"]["character_expression_mode"] == "static"
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    original = "[appearance]\nascii_glyphs = true\n"
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", False) is True
+    assert app.app_config.get("appearance", {}).get("ascii_glyphs") is True
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        toggle = screen.query_one("#settings-appearance-ascii-glyphs", Button)
+
+        assert str(toggle.label) == "Enabled"
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert config_path.read_text(encoding="utf-8") == original
+
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()
+        assert await pilot.click(toggle, offset=(toggle.region.width // 2, 0))
+        assert str(toggle.label) == "Disabled"
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
+    assert (
+        config_module.load_settings(force_reload=True)["appearance"]["ascii_glyphs"]
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.toml"
+    original = ""
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app = _build_test_app()
+
+    assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
+    assert app.app_config["appearance"]["ascii_glyphs"] is False
+
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+
+        assert (
+            str(screen.query_one("#settings-appearance-ascii-glyphs", Button).label)
+            == "Disabled"
+        )
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 @pytest.mark.asyncio
@@ -1421,6 +2135,291 @@ async def test_settings_appearance_save_signals_live_console_refresh(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_settings_appearance_library_reader_controls_round_trip_all_destinations(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["library"] = {
+        "search": {"history": ["keep-me"]},
+        "reader": {
+            "library_open": False,
+            "custom_widths_enabled": True,
+            "library_width": 34,
+            "future_shared": "keep",
+        },
+        "media_reader": {
+            "items_open": True,
+            "items_width": 52,
+        },
+        "conversations_reader": {"items_open": False, "items_width": 48},
+        "notes_reader": {
+            "items_open": True,
+            "items_width": 56,
+            "files_tree_open": False,
+            "files_tree_width": 58,
+        },
+        "prompts_reader": {"items_open": False, "items_width": 60},
+        "skills_reader": {
+            "items_open": True,
+            "items_width": 64,
+            "future_skills": "keep",
+        },
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+
+        assert "Collapsed" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-library-open", Button
+            ).label
+        )
+        assert "Open" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-items-open", Button
+            ).label
+        )
+        assert "Custom width" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-custom-widths", Button
+            ).label
+        )
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-media-library-width", Input
+            ).value
+            == "34"
+        )
+        for destination, expected_open, expected_width in (
+            ("media", "Open", "52"),
+            ("conversations", "Collapsed", "48"),
+            ("notes", "Open", "56"),
+            ("prompts", "Collapsed", "60"),
+            ("skills", "Open", "64"),
+        ):
+            assert expected_open in str(
+                screen.query_one(
+                    f"#settings-appearance-library-{destination}-items-open",
+                    Button,
+                ).label
+            )
+            assert (
+                screen.query_one(
+                    f"#settings-appearance-library-{destination}-items-width",
+                    Input,
+                ).value
+                == expected_width
+            )
+        labels = {str(widget.renderable) for widget in screen.query(Static)}
+        assert "Folder Files tree pane" in labels
+        assert "Folder Files tree width" in labels
+        assert "Collapsed" in str(
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-open", Button
+            ).label
+        )
+        folder_tree_width = screen.query_one(
+            "#settings-appearance-library-notes-files-tree-width", Input
+        )
+        assert folder_tree_width.value == "58"
+        folder_tree_width.value = "73"
+        screen.handle_appearance_library_media_layout_width(
+            Input.Changed(folder_tree_width, folder_tree_width.value)
+        )
+        assert "Folder Files tree width" in _visible_text(screen)
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE)
+
+        screen._active_settings_field_id = (
+            "settings-appearance-library-media-library-open"
+        )
+        guide_text = "\n".join(
+            f"{label}: {value}"
+            for label, value in screen._appearance_field_guidance_rows()
+        )
+        assert "Shared Library rail" in guide_text
+        assert "library.reader" in guide_text
+        assert "library.<destination>_reader" in guide_text
+        visible = _visible_text(screen)
+        assert "Library rail" in visible
+        assert "Library pane" not in visible
+        search_labels = dict(
+            settings_screen_module.FIELD_SEARCH_INDEX[SettingsCategoryId.APPEARANCE]
+        )
+        assert (
+            search_labels["settings-appearance-library-media-library-open"]
+            == "Shared Library rail"
+        )
+        assert "Automatic: 3:13 plus five, bounded to 29–39 cells." in visible
+        assert "Custom: preferred 24–48 cells" in visible
+        assert "keep 40 content cells" in visible
+        assert "Adaptive readers may collapse panes" in visible
+        assert "below 64 columns" in visible
+        assert "‹ Library" in visible
+        assert "< Library" in visible
+
+        screen.query_one("#settings-appearance-library-media-reset").scroll_visible(
+            animate=False
+        )
+        await pilot.pause()
+        await pilot.click("#settings-appearance-library-media-reset")
+        await pilot.pause()
+
+        assert "Open" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-library-open", Button
+            ).label
+        )
+        assert "Automatic width" in str(
+            screen.query_one(
+                "#settings-appearance-library-media-custom-widths", Button
+            ).label
+        )
+        assert screen.query_one(
+            "#settings-appearance-library-media-library-width", Input
+        ).disabled
+        assert screen.query_one(
+            "#settings-appearance-library-media-items-width", Input
+        ).disabled
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-open", Button
+            ).label
+            == "Open"
+        )
+        assert (
+            screen.query_one(
+                "#settings-appearance-library-notes-files-tree-width", Input
+            ).value
+            == "50"
+        )
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+
+    assert saved[-1]["library"] == {
+        "search": {"history": ["keep-me"]},
+        "reader": {
+            "future_shared": "keep",
+            "library_open": True,
+            "custom_widths_enabled": False,
+            "library_width": 36,
+        },
+        "media_reader": {
+            "items_open": True,
+            "items_width": 50,
+        },
+        "collections_reader": {"items_open": True, "items_width": 50},
+        "conversations_reader": {"items_open": True, "items_width": 50},
+        "notes_reader": {
+            "items_open": True,
+            "items_width": 50,
+            "files_tree_open": True,
+            "files_tree_width": 50,
+        },
+        "prompts_reader": {"items_open": True, "items_width": 50},
+        "skills_reader": {
+            "future_skills": "keep",
+            "items_open": True,
+            "items_width": 50,
+        },
+    }
+    assert app._library_reader_layout_refresh_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_keeps_dormant_library_width_through_resize_mode_and_generation(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["library"] = {
+        "reader": {
+            "library_open": True,
+            "custom_widths_enabled": False,
+            "library_width": 48,
+        }
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        selector = "#settings-appearance-library-media-library-width"
+
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert field.disabled
+
+        toggle = screen.query_one(
+            "#settings-appearance-library-media-custom-widths", Button
+        )
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()
+        assert detail.region.contains_region(toggle.region), (
+            detail.region,
+            toggle.region,
+        )
+        click_offset = (toggle.region.width // 2, 0)
+        assert await pilot.click(toggle, offset=click_offset)
+        await pilot.pause()
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert not field.disabled
+
+        await pilot.pause(0.1)
+        toggle = screen.query_one(
+            "#settings-appearance-library-media-custom-widths", Button
+        )
+        click_offset = (toggle.region.width // 2, 0)
+        assert await pilot.click(toggle, offset=click_offset)
+        await pilot.pause()
+        field = screen.query_one(selector, Input)
+        assert field.value == "48"
+        assert field.disabled
+
+        await pilot.resize_terminal(70, 40)
+        await pilot.resize_terminal(190, 55)
+        app._library_reader_layout_refresh_generation = (
+            int(getattr(app, "_library_reader_layout_refresh_generation", 0)) + 1
+        )
+        screen.refresh(layout=True)
+        await pilot.pause()
+
+        await _open_settings_category(pilot, "#settings-category-overview")
+        await _open_settings_category(pilot, "#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(selector, Input)
+
+        assert field.value == "48"
+        assert field.disabled
+
+    assert saved == []
+    assert app.app_config["library"]["reader"] == {
+        "library_open": True,
+        "custom_widths_enabled": False,
+        "library_width": 48,
+    }
+
+
+@pytest.mark.asyncio
 async def test_settings_appearance_revert_restores_loaded_values():
     app = _build_test_app()
     app.app_config["general"] = {"palette_theme_limit": 1}
@@ -1431,6 +2430,19 @@ async def test_settings_appearance_revert_restores_loaded_values():
         await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         font_size = screen.query_one("#settings-appearance-font-size", Input)
+        expression_mode = screen.query_one(
+            "#settings-appearance-character-expression-mode", Select
+        )
+        expression_mode.value = "static"
+        screen.handle_appearance_character_expression_mode_changed(
+            Select.Changed(expression_mode, "static")
+        )
+        assert (
+            app.app_config.get("appearance", {}).get(
+                "character_expression_mode", "dynamic"
+            )
+            == "dynamic"
+        )
         font_size.value = "16"
         screen.handle_appearance_font_size_changed(
             Input.Changed(font_size, font_size.value)
@@ -1445,6 +2457,7 @@ async def test_settings_appearance_revert_restores_loaded_values():
         await pilot.pause()
 
         assert font_size.value == "12"
+        assert expression_mode.value == "dynamic"
         assert not screen._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE)
         assert "No unsaved changes" in _visible_text(screen)
 
@@ -1471,6 +2484,8 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
         theme.value = "textual-light"
         screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
 
+        screen.query_one("#settings-preview-appearance").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-preview-appearance")
         text = _visible_text(screen)
 
@@ -1506,8 +2521,13 @@ def test_settings_appearance_save_uses_exclusive_thread_worker():
     source = inspect.getsource(SettingsScreen)
 
     assert getattr(worker, "__wrapped__", None) is not None
+    # TASK-19559: the group is now explicit, so this worker cancels only
+    # its own predecessor rather than every other exclusive worker on the
+    # Settings screen (Textual puts an ungrouped exclusive worker in the
+    # shared "default" group).
     assert (
-        "@work(exclusive=True, thread=True)\n    def _settings_save_appearance_worker"
+        '@work(exclusive=True, group="settings-save-appearance", thread=True)\n'
+        "    def _settings_save_appearance_worker"
     ) in source
 
 
@@ -1777,8 +2797,13 @@ def test_settings_storage_save_uses_exclusive_thread_worker():
     source = inspect.getsource(SettingsScreen)
 
     assert getattr(worker, "__wrapped__", None) is not None
+    # TASK-19559: the group is now explicit, so this worker cancels only
+    # its own predecessor rather than every other exclusive worker on the
+    # Settings screen (Textual puts an ungrouped exclusive worker in the
+    # shared "default" group).
     assert (
-        "@work(exclusive=True, thread=True)\n    def _settings_save_storage_worker"
+        '@work(exclusive=True, group="settings-save-storage", thread=True)\n'
+        "    def _settings_save_storage_worker"
     ) in source
 
 
@@ -2224,6 +3249,190 @@ def test_settings_apply_manual_sync_result_includes_conflict_review_summary():
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("button_id", "action", "new_name"),
+    (
+        ("#settings-notes-adoption-merge", "merge", None),
+        ("#settings-notes-adoption-rename-local", "rename_local", "Local renamed"),
+        ("#settings-notes-adoption-keep-local", "keep_local", None),
+    ),
+)
+async def test_settings_notes_adoption_controls_resolve_and_resume_enrollment(
+    button_id, action, new_name
+):
+    resolve_calls = []
+    run_calls = []
+
+    class FakeManualSyncControl:
+        def preview(self, **kwargs):
+            return ManualSyncPreview(
+                status="ready",
+                can_run=True,
+                pending_total=0,
+                pending_by_domain={},
+                user_message="Manual Sync is ready.",
+            )
+
+        def resolve_notes_organization_adoption(self, **kwargs):
+            resolve_calls.append(kwargs)
+            return True
+
+        async def run_once(self, **kwargs):
+            run_calls.append(kwargs)
+            return ManualSyncRunResult(
+                status="success",
+                user_message="Enrollment resumed.",
+                summary={},
+                preview=self.preview(),
+            )
+
+    app = _build_test_app()
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-main",
+        server_configured=True,
+    )
+    app.manual_sync_control_service = FakeManualSyncControl()
+    host = DestinationHarness(app, "settings")
+    review = SyncV2ConflictReviewItem(
+        conflict_review_id="review-1",
+        domain="notes.keyword",
+        item_label="Agent lesson",
+        cause="A local organization item collides with a server identity.",
+        local_summary="Local organization item requires a decision.",
+        remote_summary="Server identity remains separate until review.",
+        recovery_options={
+            "merge": "available",
+            "rename_local": "available",
+            "keep_local": "available",
+        },
+    )
+    result = ManualSyncRunResult(
+        status="conflict",
+        user_message="Adoption review required.",
+        summary={},
+        preview=FakeManualSyncControl().preview(),
+        conflict_reviews=(review,),
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._apply_manual_sync_result(result)
+        await pilot.pause()
+        assert (
+            screen.query_one("#settings-overview-sync-details", Collapsible).collapsed
+            is False
+        )
+        assert "private body" not in _visible_text(screen)
+        if new_name is not None:
+            name_input = screen.query_one("#settings-notes-adoption-new-name", Input)
+            name_input.scroll_visible()
+            await pilot.pause()
+            name_input.focus()
+            await pilot.press(*new_name)
+        action_button = screen.query_one(button_id, Button)
+        action_button.scroll_visible()
+        await pilot.pause()
+        action_button.focus()
+        await pilot.press("enter")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert len(resolve_calls) == 1
+    assert resolve_calls[0]["review_id"] == "review-1"
+    assert resolve_calls[0]["action"] == action
+    assert resolve_calls[0]["new_name"] == new_name
+    assert len(run_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_mixed_conflicts_display_and_resolve_same_adoption_review():
+    resolve_calls = []
+
+    class FakeManualSyncControl:
+        def preview(self, **kwargs):
+            return ManualSyncPreview(
+                status="ready",
+                can_run=True,
+                pending_total=0,
+                pending_by_domain={},
+                user_message="Manual Sync is ready.",
+            )
+
+        def resolve_notes_organization_adoption(self, **kwargs):
+            resolve_calls.append(kwargs)
+            return True
+
+        async def run_once(self, **kwargs):
+            return ManualSyncRunResult(
+                status="success",
+                user_message="Enrollment resumed.",
+                summary={},
+                preview=self.preview(),
+            )
+
+    app = _build_test_app()
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-main",
+        server_configured=True,
+    )
+    app.manual_sync_control_service = FakeManualSyncControl()
+    host = DestinationHarness(app, "settings")
+    generic = SyncV2ConflictReviewItem(
+        conflict_review_id="generic-review",
+        domain="chat.message",
+        item_label="Generic message conflict",
+        cause="A generic conflict happened first.",
+        local_summary="Generic local summary.",
+        remote_summary="Generic remote summary.",
+        recovery_options={"retry": "available"},
+    )
+    adoption = SyncV2ConflictReviewItem(
+        conflict_review_id="adoption-review",
+        domain="notes.folder",
+        item_label="Agent_Lessons",
+        cause="The local folder collides with the server identity.",
+        local_summary="Local folder is named Agent_Lessons.",
+        remote_summary="Server folder is named Agent_Lessons.",
+        recovery_options={
+            "merge": "available",
+            "rename_local": "available",
+            "keep_local": "available",
+        },
+    )
+    result = ManualSyncRunResult(
+        status="conflict",
+        user_message="Review required.",
+        summary={},
+        preview=FakeManualSyncControl().preview(),
+        conflict_reviews=(generic, adoption),
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._apply_manual_sync_result(result)
+        await pilot.pause()
+        rows = dict(screen.manual_sync_rows)
+        assert "notes.folder | Agent_Lessons" in rows["Conflict review"]
+        assert "Local folder is named Agent_Lessons." in rows["Conflict review"]
+        assert "Server folder is named Agent_Lessons." in rows["Conflict review"]
+        assert "generic" not in rows["Conflict review"].lower()
+        button = screen.query_one("#settings-notes-adoption-keep-local", Button)
+        button.scroll_visible()
+        await pilot.pause()
+        button.focus()
+        await pilot.press("enter")
+        await pilot.app.workers.wait_for_complete()
+
+    assert len(resolve_calls) == 1
+    assert resolve_calls[0]["review_id"] == "adoption-review"
+    assert resolve_calls[0]["action"] == "keep_local"
+
+
 def test_settings_manual_sync_run_worker_uses_main_event_loop_async_worker():
     worker = SettingsScreen.__dict__["_manual_sync_run_worker"]
     wrapped = getattr(worker, "__wrapped__", worker)
@@ -2324,9 +3533,7 @@ async def test_settings_overview_renders_server_sync_workspace_contracts_in_diag
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_settings_text(
-            screen, pilot, "Server connection: Main Server"
-        )
+        await _wait_for_settings_text(screen, pilot, "Server connection: Main Server")
         text = _visible_text(screen)
 
         assert "Advanced / Diagnostics" in text
@@ -2498,7 +3705,7 @@ async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
-        assert message.startswith("Provider test failed:")
+        assert message.startswith("Configuration check blocked:")
         assert "Missing API key" in message
         assert kwargs.get("severity") == "warning"
 
@@ -2535,7 +3742,10 @@ async def test_settings_provider_test_toast_states_success():
 
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
-        assert message == "Provider test passed: OpenAI is ready; model gpt-4o."
+        assert message == (
+            "Configuration check complete: OpenAI is configured; model gpt-4o. "
+            "Live generation has not been tested."
+        )
         assert kwargs.get("severity") == "information"
 
 
@@ -2601,9 +3811,7 @@ async def test_settings_overview_renders_primary_user_tasks_before_diagnostics()
             "settings-overview-storage-privacy",
             "settings-overview-sync",
         ]
-        assert "handoff" not in " ".join(
-            str(row.renderable).lower() for row in rows
-        )
+        assert "handoff" not in " ".join(str(row.renderable).lower() for row in rows)
 
 
 @pytest.mark.asyncio
@@ -2755,8 +3963,12 @@ async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop()
         assert endpoint.value == "https://draft.example/v1"
         assert api_key.value == "draft-provider-key"
         assert manual.value == "Exact_Custom-ID"
-        assert screen.query_one("#settings-provider-value", Select).value == "__manual__"
-        assert screen._provider_setting_values_mapping()["provider"] == "Exact_Custom-ID"
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "__manual__"
+        )
+        assert (
+            screen._provider_setting_values_mapping()["provider"] == "Exact_Custom-ID"
+        )
         assert screen._provider_setting_values_mapping()["model"] == "custom-model"
         assert model.value == "custom-model"
 
@@ -2778,15 +3990,17 @@ async def test_settings_provider_picker_filter_clear_restores_current_highlight(
 
         search.value = "anthropic"
         await pilot.pause()
-        assert getattr(
-            picker.get_option_at_index(picker.highlighted), "provider_id", None
-        ) == "anthropic"
+        assert (
+            getattr(picker.get_option_at_index(picker.highlighted), "provider_id", None)
+            == "anthropic"
+        )
 
         search.value = ""
         await pilot.pause()
-        assert getattr(
-            picker.get_option_at_index(picker.highlighted), "provider_id", None
-        ) == "openai"
+        assert (
+            getattr(picker.get_option_at_index(picker.highlighted), "provider_id", None)
+            == "openai"
+        )
 
 
 @pytest.mark.asyncio
@@ -2839,9 +4053,7 @@ async def test_settings_provider_picker_no_match_is_honest_with_manual_action():
 
         status = screen.query_one("#settings-provider-search-status", Static)
         assert "No catalog providers match" in str(status.renderable)
-        manual_index = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
+        manual_index = _provider_picker_option_index(picker, action="enter_provider_id")
         assert picker.get_option_at_index(manual_index).disabled is False
 
 
@@ -2953,8 +4165,7 @@ async def test_settings_provider_picker_supported_manual_alias_uses_catalog_life
 
         assert host._exception is None
         assert (
-            screen.query_one("#settings-provider-value", Select).value
-            == "local_ollama"
+            screen.query_one("#settings-provider-value", Select).value == "local_ollama"
         )
         assert screen._provider_setting_values_mapping()["provider"] == "local_ollama"
 
@@ -2987,8 +4198,7 @@ async def test_settings_provider_picker_persistence_alias_uses_catalog_lifecycle
             == canonical_provider
         )
         assert (
-            screen._provider_setting_values_mapping()["provider"]
-            == canonical_provider
+            screen._provider_setting_values_mapping()["provider"] == canonical_provider
         )
         assert manual.value == ""
         assert manual.disabled is True
@@ -3056,8 +4266,7 @@ async def test_settings_provider_picker_current_alias_preserves_connection_draft
         await pilot.pause()
 
         assert (
-            screen._provider_setting_values_mapping()["provider"]
-            == canonical_provider
+            screen._provider_setting_values_mapping()["provider"] == canonical_provider
         )
         assert endpoint.value == "https://draft.example/v1"
         assert api_key.value == "draft-provider-key"
@@ -3248,7 +4457,11 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
             model_count=3,
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3274,11 +4487,13 @@ async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
         ]
         message, kwargs = toasts[-1]
         assert message == (
-            "Provider test passed: Ollama is ready; model llama3; "
-            "endpoint reachable (3 models)."
+            "Configuration check complete: Ollama is configured; model llama3. "
+            "Live generation has not been tested; model-listing evidence updated; "
+            "generation not tested."
         )
         assert kwargs.get("severity") == "information"
-        assert "endpoint reachable (3 models)" in screen._provider_test_result
+        assert "model listing reached" in screen._provider_test_result
+        assert "generation not tested" in screen._provider_test_result
 
 
 @pytest.mark.asyncio
@@ -3291,9 +4506,14 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
         return SettingsEndpointProbeOutcome(
             reachable=False,
             summary="unreachable: connection refused",
+            category="connection_refused",
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3310,13 +4530,59 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeyp
 
         message, kwargs = toasts[-1]
         assert message == (
-            "Provider test passed: Ollama is ready; model llama3; "
-            "endpoint unreachable: connection refused."
+            "Configuration valid; model-listing check failed (connection refused); "
+            "generation not tested."
         )
         assert kwargs.get("severity") == "warning"
         assert (
-            "endpoint unreachable: connection refused" in screen._provider_test_result
+            "model listing failed (connection refused)" in screen._provider_test_result
         )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_does_not_treat_missing_models_route_as_chat_failure(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {
+        "ollama": {"api_url": "http://127.0.0.1:11434"}
+    }
+
+    async def fake_probe(base_url, **kwargs):
+        return SettingsEndpointProbeOutcome(
+            state="model_listing_unavailable",
+            category="http_status",
+            summary="Model listing unavailable; chat endpoint not tested",
+        )
+
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category()
+
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not toasts:
+            await pilot.pause(0.01)
+
+        message, kwargs = toasts[-1]
+        assert message == (
+            "Configuration valid; model listing unavailable; "
+            "chat endpoint and generation not tested."
+        )
+        assert kwargs.get("severity") == "warning"
+        assert "model listing unavailable" in screen._provider_test_result
+        assert "model listing failed" not in screen._provider_test_result
 
 
 @pytest.mark.asyncio
@@ -3331,7 +4597,11 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
         probe_calls.append(base_url)
         return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3345,7 +4615,10 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatc
 
         assert probe_calls == []
         message, kwargs = toasts[-1]
-        assert message == "Provider test passed: OpenAI is ready; model gpt-4.1."
+        assert message == (
+            "Configuration check complete: OpenAI is configured; model gpt-4.1. "
+            "Live generation has not been tested."
+        )
         assert kwargs.get("severity") == "information"
 
 
@@ -3361,7 +4634,11 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
         probe_calls.append(base_url)
         return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3375,7 +4652,7 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
 
         assert probe_calls == []
         message, kwargs = toasts[-1]
-        assert message.startswith("Provider test failed:")
+        assert message.startswith("Configuration check blocked:")
         assert kwargs.get("severity") == "warning"
 
 
@@ -3403,6 +4680,44 @@ async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
     assert outcome.reachable is True
     assert outcome.summary == "reachable (3 models)"
     assert outcome.model_count == 3
+
+
+@pytest.mark.asyncio
+async def test_field_search_folder_files_tree_width_guides_to_custom_widths_when_disabled():
+    """A disabled Folder Files width search lands on its enabling control."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen._submit_category_search("Folder Files tree width")
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-appearance-library-media-custom-widths"
+        ), f"focused={focused!r}"
+        assert screen._active_settings_field_id == (
+            "settings-appearance-library-media-custom-widths"
+        )
+        truthful_copy = (
+            "Controls whether shared Library reader widths can be edited, "
+            "including Folder Files tree width."
+        )
+        assert truthful_copy in _visible_text(screen)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert (
+            screen._appearance_setting_values()["library_reader_custom_widths_enabled"]
+            is True
+        )
+        assert truthful_copy in _visible_text(screen)
+        assert "Enable shared Library reader widths" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -4322,9 +5637,14 @@ async def test_settings_category_search_escape_clears_filter():
             if summary.category
             not in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS
         )
-        assert sum(
-            1 for button in screen.query(".settings-category-button") if button.display
-        ) == expected_visible
+        assert (
+            sum(
+                1
+                for button in screen.query(".settings-category-button")
+                if button.display
+            )
+            == expected_visible
+        )
 
 
 @pytest.mark.asyncio
@@ -4804,9 +6124,7 @@ async def test_settings_console_behavior_renders_global_default_controls():
         screen = _active_destination_screen(host)
 
         assert (
-            screen.query_one(
-                "#settings-console-default-user-display-name", Input
-            ).value
+            screen.query_one("#settings-console-default-user-display-name", Input).value
             == "Rowan"
         )
         assert (
@@ -4842,7 +6160,9 @@ async def test_settings_console_behavior_renders_global_default_controls():
             == "high"
         )
         assert (
-            screen.query_one("#settings-console-default-reasoning-summary", Select).value
+            screen.query_one(
+                "#settings-console-default-reasoning-summary", Select
+            ).value
             == "auto"
         )
         assert (
@@ -5407,9 +6727,7 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
             broken_refresh,
             raising=False,
         )
-        field = screen.query_one(
-            "#settings-console-default-user-display-name", Input
-        )
+        field = screen.query_one("#settings-console-default-user-display-name", Input)
         field.value = "Captain Rowan"
         screen.handle_console_default_user_display_name_changed(
             Input.Changed(field, field.value)
@@ -5419,9 +6737,7 @@ async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch)
         await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
 
     assert saved == [{"chat_defaults": {"user_display_name": "Captain Rowan"}}]
-    assert app.app_config["chat_defaults"] == {
-        "user_display_name": "Captain Rowan"
-    }
+    assert app.app_config["chat_defaults"] == {"user_display_name": "Captain Rowan"}
     assert app._console_identity_refresh_generation == 1
     assert refresh_signals == [1]
 
@@ -5445,9 +6761,7 @@ async def test_settings_console_behavior_rejects_overwide_cjk_display_name_atomi
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        field = screen.query_one(
-            "#settings-console-default-user-display-name", Input
-        )
+        field = screen.query_one("#settings-console-default-user-display-name", Input)
         field.value = "界" * 25
         screen.handle_console_default_user_display_name_changed(
             Input.Changed(field, field.value)
@@ -5472,9 +6786,7 @@ async def test_settings_console_behavior_display_name_revert_restores_loaded_val
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        field = screen.query_one(
-            "#settings-console-default-user-display-name", Input
-        )
+        field = screen.query_one("#settings-console-default-user-display-name", Input)
         field.value = "Captain Rowan"
         screen.handle_console_default_user_display_name_changed(
             Input.Changed(field, field.value)
@@ -5486,9 +6798,7 @@ async def test_settings_console_behavior_display_name_revert_restores_loaded_val
         await pilot.pause()
 
         assert (
-            screen.query_one(
-                "#settings-console-default-user-display-name", Input
-            ).value
+            screen.query_one("#settings-console-default-user-display-name", Input).value
             == "Rowan"
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -5793,7 +7103,7 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_non_editable_categories_disable_guided_save_revert():
+async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_raw_cli():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -5816,11 +7126,15 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
             screen,
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
-            expected_text="Guided edits: use Check Privacy.",
+            expected_text=(
+                "Guided edit: raw CLI unlock only; posture remains read-only."
+            ),
         )
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
-        assert "Guided edits: use Check Privacy." in _visible_text(screen)
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+        visible = _visible_text(screen)
+        assert "Guided edit: raw CLI unlock only; posture remains read-only." in visible
+        assert "Check Privacy" in visible
 
 
 @pytest.mark.asyncio
@@ -5933,14 +7247,14 @@ async def test_settings_provider_navigation_context_uses_one_presentation_identi
         picker = screen.query_one("#settings-provider-picker", OptionList)
         highlighted = picker.get_option_at_index(picker.highlighted)
         assert getattr(highlighted, "provider_id", None) == "huggingface"
-        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        )
         assert screen.query_one("#settings-model-value", Input).value == (
             "meta-llama/test-model"
         )
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
-        credential = screen.query_one(
-            "#settings-provider-credential-env-var", Input
-        )
+        credential = screen.query_one("#settings-provider-credential-env-var", Input)
         assert endpoint.value == "https://huggingface.example/v1"
         assert credential.value == "HUGGINGFACE_API_KEY"
         assert screen._provider_loaded_setting_values()["provider"] == "llama_cpp"
@@ -6081,6 +7395,887 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
         assert api_key.has_focus
+
+
+def _stage_conversation_settings_return_intent(app, *, provider: str = "openai"):
+    app.pending_handoffs = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent(
+        session_id="console-session-return",
+        settings_revision=3,
+        active_view="model",
+        focus_control_id="console-settings-model-picker",
+    )
+    revision = app.pending_handoffs.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        intent,
+    )
+    target = ProviderSettingsNavigationTarget(
+        category="providers-models",
+        provider=provider,
+        model="gpt-5" if provider == "openai" else "claude-3-5-sonnet",
+        field="api_key",
+        return_revision=revision,
+    )
+    return intent, target
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_clean_deep_link_focuses_exact_provider_credential():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {},
+        "anthropic": {},
+    }
+    _intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(target.to_context())
+        await _wait_for_selector(screen, pilot, "#settings-provider-api-key")
+        for _ in range(20):
+            if screen.query_one("#settings-provider-api-key", Input).has_focus:
+                break
+            await pilot.pause(0.05)
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        assert screen.query_one("#settings-provider-value", Select).value == "anthropic"
+        assert (
+            screen.query_one("#settings-model-value", Input).value
+            == "claude-3-5-sonnet"
+        )
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_preserves_explicit_unselected_model():
+    """A first-run ``model=None`` target must not inherit a configured default."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    app.pending_handoffs = PendingHandoffStore()
+    intent = ConversationSettingsReturnIntent(
+        session_id="console-session-first-run",
+        settings_revision=0,
+        active_view="model",
+        focus_control_id="console-settings-model-picker",
+    )
+    revision = app.pending_handoffs.stage(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+        intent,
+    )
+    target = ProviderSettingsNavigationTarget(
+        category="providers-models",
+        provider="openai",
+        model=None,
+        field="api_key",
+        return_revision=revision,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(target.to_context())
+        await _wait_for_settings_value(
+            screen,
+            pilot,
+            "#settings-model-value",
+            "",
+            Input,
+        )
+
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+        assert screen.query_one("#settings-model-value", Input).value == ""
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_preserves_same_provider_draft_and_discloses_fields():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        draft.set_value("api_key", "", "DUMMY-DRAFT-SECRET")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+        summary = screen.query_one(
+            "#settings-provider-existing-changes-summary", Static
+        )
+        summary_text = str(summary.renderable)
+        assert summary.display is True
+        assert "API key" in summary_text
+        assert "Endpoint" in summary_text
+        assert "DUMMY-DRAFT-SECRET" not in summary_text
+        assert "draft.example" not in summary_text
+
+
+@pytest.mark.asyncio
+async def test_provider_navigation_conflict_requires_review_discard_or_return():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"},
+        "anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"},
+    }
+    intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+        conflict = screen.query_one("#settings-provider-navigation-conflict")
+        assert conflict.display is True
+        assert "Endpoint" in _visible_text(conflict)
+        assert screen.query_one("#settings-provider-conflict-review", Button).label == (
+            "Review existing changes"
+        )
+        assert str(
+            screen.query_one("#settings-provider-conflict-discard", Button).label
+        ) == "Discard changes and configure Anthropic"
+        assert screen.query_one("#settings-provider-conflict-return", Button).label == (
+            "Return to Conversation settings"
+        )
+
+        screen.query_one("#settings-provider-conflict-review", Button).press()
+        await pilot.pause()
+        assert screen.query_one("#settings-provider-endpoint-value", Input).has_focus
+        assert screen.query_one("#settings-provider-value", Select).value == "openai"
+
+        screen.query_one("#settings-provider-conflict-return", Button).press()
+        await pilot.pause()
+        assert len(host.navigation_messages) == 1
+        return_context = host.navigation_messages[0].screen_context
+        assert set(return_context) == {
+            "session_id",
+            "settings_revision",
+            "active_view",
+            "focus_control_id",
+            "return_revision",
+            "outcome",
+        }
+        assert "draft.example" not in repr(return_context)
+        returned = ConsoleSettingsReturnTarget.from_context(return_context)
+        assert returned is not None
+        assert returned.outcome is ConversationSettingsReturnOutcome.WITHOUT_SAVING
+        assert returned.return_revision == target.return_revision
+        assert returned.session_id == intent.session_id
+        assert screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] is draft
+
+
+@pytest.mark.asyncio
+async def test_provider_navigation_conflict_discard_explicitly_applies_staged_target():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {
+        "openai": {},
+        "anthropic": {"api_key_env_var": "ANTHROPIC_API_KEY"},
+    }
+    _intent, target = _stage_conversation_settings_return_intent(
+        app, provider="anthropic"
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "", "https://draft.example/v1")
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+
+        screen.query_one("#settings-provider-conflict-discard", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+        assert screen.query_one("#settings-provider-value", Select).value == "anthropic"
+        assert screen.query_one("#settings-provider-api-key", Input).has_focus
+        assert screen.query_one("#settings-provider-navigation-conflict").display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "changed_selector",
+        "changed_value",
+        "expected_outcome",
+        "expected_continuation_copy",
+    ),
+    (
+        (
+            "#settings-provider-api-key",
+            "DUMMY-OPENAI-RETURN-KEY",
+            ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+            "Credential saved. Return to Conversation settings to check readiness; "
+            "provider acceptance is not yet verified.",
+        ),
+        (
+            "#settings-provider-endpoint-value",
+            "https://api.openai.example/v1",
+            ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+            "Provider settings saved. Return to Conversation settings to check "
+            "readiness; generation is not yet verified.",
+        ),
+    ),
+)
+async def test_conversation_settings_return_save_shows_typed_continuation(
+    monkeypatch,
+    changed_selector,
+    changed_value,
+    expected_outcome,
+    expected_continuation_copy,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    intent, target = _stage_conversation_settings_return_intent(app)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one(changed_selector, Input).value = changed_value
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert mutations
+        continuation = screen.query_one("#settings-provider-return-continuation")
+        assert continuation.display is True
+        assert expected_continuation_copy in _visible_text(screen)
+        assert screen.query_one("#settings-provider-return", Button).label == (
+            "Return to Conversation settings"
+        )
+        assert screen.query_one("#settings-provider-stay", Button).label == (
+            "Stay in Settings"
+        )
+
+        screen.query_one("#settings-provider-return", Button).press()
+        await pilot.pause()
+
+        return_context = host.navigation_messages[0].screen_context
+        assert set(return_context) == {
+            "session_id",
+            "settings_revision",
+            "active_view",
+            "focus_control_id",
+            "return_revision",
+            "outcome",
+        }
+        assert changed_value not in repr(return_context)
+        returned = ConsoleSettingsReturnTarget.from_context(return_context)
+        assert returned is not None
+        assert returned.outcome is expected_outcome
+        assert returned.session_id == intent.session_id
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_keeps_mounted_credential_out_of_transfer_surfaces(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    """The Settings-owned masked key never enters return UI or coordination data."""
+    credential = "TASK30010-mounted-api-key-sentinel-7ce14b"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    snapshot_marker = "TASK30010-linked-private-console-snapshot-31d5"
+    suspended_snapshot = ConsoleSettingsDraftSnapshot(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-5",
+            system_prompt=snapshot_marker,
+        ),
+        context_policy_overrides=ConsoleContextPolicyOverrides(),
+        raw_values={"console-settings-model-picker": "gpt-5"},
+        provider_model_drafts={"openai": "gpt-5"},
+        provider_base_url_drafts={},
+        active_view="model",
+        scroll_anchor=2,
+        focus_control_id="console-settings-model-picker",
+        disclosure_state={
+            "advanced_generation": False,
+            "connection_details": False,
+        },
+    )
+    console_store = ConsoleChatStore()
+    console_store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-5",
+            system_prompt="Committed mounted-journey prompt",
+        )
+    )
+    console_screen = _bare_console_state_screen(console_store)
+    console_screen._suspended_conversation_settings = suspended_snapshot
+    console_screen._suspended_conversation_settings_token = 1
+    seeded_console_snapshot = console_screen._serialize_native_console_state()
+    if seeded_console_snapshot is None:
+        pytest.fail("Console serializer produced no snapshot", pytrace=False)
+    runtime_identity = app._current_runtime_identity()
+    app.screen_state_store.save(
+        TAB_CHAT,
+        seeded_console_snapshot,
+        runtime_identity,
+    )
+    intent, target = _stage_conversation_settings_return_intent(app)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    from loguru import logger as loguru_logger
+
+    caplog.set_level(logging.DEBUG)
+    python_marker = "TASK30010-settings-python-capture-live"
+    loguru_marker = "TASK30010-settings-loguru-capture-live"
+    private_values = (credential,)
+    loguru_messages: list[str] = []
+    python_capture = (False, False)
+    loguru_capture = (False, False)
+    sink_id = loguru_logger.add(loguru_messages.append, level="DEBUG")
+    try:
+        async with host.run_test(size=(180, 50)) as pilot:
+            await _settle_settings_mount_storm(pilot)
+            screen = _active_destination_screen(host)
+            incoming_context = target.to_context()
+            screen.apply_navigation_context(incoming_context)
+            await _wait_for_selector(screen, pilot, "#settings-provider-api-key")
+
+            api_key = screen.query_one("#settings-provider-api-key", Input)
+            assert api_key.password is True
+            api_key.value = credential
+            screen.handle_provider_api_key_changed(Input.Changed(api_key, credential))
+            await pilot.pause()
+
+            _assert_private_values_absent(
+                str(api_key.render()),
+                private_values,
+                surface_label="masked API-key field render",
+            )
+            frame = host.export_screenshot()
+            _assert_public_text_present(
+                frame,
+                "Providers",
+                surface_label="mounted Settings compositor frame",
+            )
+            _assert_private_values_absent(
+                frame,
+                private_values,
+                surface_label="mounted Settings compositor frame",
+            )
+
+            claim = app.pending_handoffs.claim(
+                HandoffChannel.CONVERSATION_SETTINGS_RETURN
+            )
+            assert claim is not None
+            _assert_private_values_absent(
+                claim,
+                private_values,
+                surface_label="return handoff claim",
+            )
+            _assert_private_values_absent(
+                claim.value,
+                private_values,
+                surface_label="return handoff value",
+            )
+            _assert_private_values_absent(
+                claim.value.to_context(),
+                private_values,
+                surface_label="return handoff context",
+            )
+            assert app.pending_handoffs.release(claim) is True
+
+            screen.action_settings_save_category(allow_text_entry_focus=True)
+            await pilot.pause()
+            assert mutations
+            _assert_private_value_matches_opaquely(
+                mutations[-1][0]["api_settings.openai"]["api_key"],
+                credential,
+                surface_label="isolated Settings credential persistence",
+            )
+
+            continuation = screen.save_state()["provider_return_continuation"]
+            _assert_private_values_absent(
+                continuation,
+                private_values,
+                surface_label="Settings continuation state",
+            )
+            _assert_private_values_absent(
+                incoming_context,
+                private_values,
+                surface_label="incoming Settings navigation context",
+            )
+
+            screen.query_one("#settings-provider-return", Button).press()
+            await pilot.pause()
+            return_context = host.navigation_messages[0].screen_context
+            _assert_private_values_absent(
+                return_context,
+                private_values,
+                surface_label="outgoing Console return context",
+            )
+            returned = ConsoleSettingsReturnTarget.from_context(return_context)
+            assert returned is not None
+            assert returned.session_id == intent.session_id
+            logging.getLogger(__name__).debug(python_marker)
+            loguru_logger.debug(loguru_marker)
+    finally:
+        loguru_logger.remove(sink_id)
+        python_log_text = caplog.text
+        loguru_log_text = "".join(loguru_messages)
+        python_capture = (
+            python_marker in python_log_text,
+            credential in python_log_text,
+        )
+        loguru_capture = (
+            loguru_marker in loguru_log_text,
+            credential in loguru_log_text,
+        )
+        caplog.clear()
+        loguru_messages.clear()
+
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=python_capture[0],
+        saw_private_value=python_capture[1],
+        surface_label="stdlib logging capture",
+    )
+    _assert_log_capture_is_live_and_private_free(
+        saw_safe_marker=loguru_capture[0],
+        saw_private_value=loguru_capture[1],
+        surface_label="loguru capture",
+    )
+    linked_console_snapshot = app.screen_state_store.restore(
+        TAB_CHAT,
+        runtime_identity,
+    )
+    if linked_console_snapshot is None:
+        pytest.fail("linked Console snapshot was not restored", pytrace=False)
+    _assert_private_values_absent(
+        linked_console_snapshot,
+        private_values,
+        surface_label="linked Console screen-state snapshot",
+    )
+    _assert_schema_key_absent(
+        linked_console_snapshot,
+        "api_key",
+        surface_label="linked Console screen-state snapshot",
+    )
+    restored_suspended_snapshot = ConsoleSettingsDraftSnapshot.from_mapping(
+        linked_console_snapshot.get("suspended_conversation_settings")
+    )
+    if restored_suspended_snapshot is None:
+        pytest.fail("linked Console suspended draft was not restored", pytrace=False)
+    _assert_private_value_matches_opaquely(
+        restored_suspended_snapshot.settings.system_prompt,
+        snapshot_marker,
+        surface_label="linked Console suspended-draft identity",
+    )
+
+    injected_snapshot = deepcopy(linked_console_snapshot)
+    injected_snapshot["suspended_conversation_settings"]["raw_values"][
+        "console-settings-temperature"
+    ] = credential
+    with pytest.raises(pytest.fail.Exception) as injected_failure:
+        _assert_private_values_absent(
+            injected_snapshot,
+            private_values,
+            surface_label="linked Console screen-state snapshot",
+        )
+    injected_failure_text = str(injected_failure.value)
+    _assert_private_values_absent(
+        injected_failure_text,
+        private_values,
+        surface_label="linked snapshot failure artifact",
+    )
+    _assert_public_value_equal(
+        injected_failure_text,
+        "private value leaked through linked Console screen-state snapshot",
+        surface_label="linked snapshot failure copy",
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_is_single_flight_and_retries_after_failed_navigation(
+    monkeypatch,
+):
+    """Queued duplicate Return events cannot release and repost the handoff."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-SINGLE-FLIGHT-KEY"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        return_button = screen.query_one("#settings-provider-return", Button)
+        return_button.press()
+        for _ in range(20):
+            if host.navigation_messages:
+                break
+            await pilot.pause(0.01)
+        screen.handle_provider_return(Button.Pressed(return_button))
+        await pilot.pause()
+
+        assert len(host.navigation_messages) == 1
+        assert screen._provider_return_navigation_in_progress is True
+        assert return_button.disabled is True
+
+        host.navigation_messages[0].report_completion(False)
+
+        assert screen._provider_return_navigation_in_progress is False
+        assert return_button.disabled is False
+        assert screen.query_one("#settings-provider-return-continuation").display is True
+
+        return_button.press()
+        for _ in range(20):
+            if len(host.navigation_messages) == 2:
+                break
+            await pilot.pause(0.01)
+
+        assert len(host.navigation_messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_continuation_survives_fresh_settings_screen(
+    monkeypatch,
+):
+    """Ordinary Settings replacement retains only the typed safe continuation."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    saved_state = None
+
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-STATE-ONLY-SECRET"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        saved_state = screen.save_state()
+        continuation = saved_state["provider_return_continuation"]
+        assert set(continuation) == {"target", "conflict", "outcome"}
+        assert continuation["target"] == target.to_context()
+        assert continuation["conflict"] is False
+        assert continuation["outcome"] == "credential_saved"
+        assert "DUMMY-STATE-ONLY-SECRET" not in repr(continuation)
+
+    assert saved_state is not None
+    restored_host = DestinationHarness(
+        app,
+        "settings",
+        restored_state=saved_state,
+    )
+    async with restored_host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        restored = _active_destination_screen(restored_host)
+        continuation = restored.query_one("#settings-provider-return-continuation")
+        return_button = restored.query_one("#settings-provider-return", Button)
+
+        assert continuation.display is True
+        assert return_button.label == "Return to Conversation settings"
+        assert restored.query_one("#settings-provider-stay", Button).label == (
+            "Stay in Settings"
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_save_focuses_primary_return_above_compact_fold(
+    monkeypatch,
+):
+    """Successful save makes the exact return action immediately actionable."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-COMPACT-RETURN-KEY"
+        )
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        for _ in range(40):
+            return_button = screen.query_one("#settings-provider-return", Button)
+            if return_button.has_focus:
+                break
+            await pilot.pause(0.05)
+
+        return_button = screen.query_one("#settings-provider-return", Button)
+        status = screen.query_one(
+            "#settings-provider-return-continuation-status", Static
+        )
+        assert return_button.variant == "primary"
+        assert return_button.has_focus
+        assert return_button in host.screen._compositor.visible_widgets
+        assert return_button.region.width > 0
+        assert return_button.region.height > 0
+        assert str(screen.query_one("#settings-provider-stay", Button).label) == (
+            "Stay in Settings"
+        )
+        assert "check readiness" in str(status.renderable).lower()
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_save_failure_retains_draft_and_handoff(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "persist_provider_settings_atomic",
+        lambda *_args, **_kwargs: ConfigMutationResult(False, False, "before_replace"),
+    )
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-OPENAI-FAILED-RETURN-KEY"
+        )
+        await pilot.pause()
+
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-return-continuation").display is False
+        assert SettingsCategoryId.PROVIDERS_MODELS in screen._settings_drafts
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.revision == target.return_revision
+        app.pending_handoffs.release(claim)
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_without_saving_is_single_flight_on_confirm():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-UNSAVED-RETURN-KEY"
+        )
+        await pilot.pause()
+        return_without_save = screen.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+        return_without_save.press()
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert host.navigation_messages == []
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert sum(
+            isinstance(candidate, ConfirmationDialog)
+            for candidate in host.screen_stack
+        ) == 1
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
+        assert all(
+            screen.query_one(selector, Button).disabled
+            for selector in (
+                "#settings-provider-return",
+                "#settings-provider-return-without-save",
+                "#settings-provider-conflict-return",
+            )
+        )
+        host.screen_stack[-1].query_one("#confirm-button", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(host.navigation_messages) == 1
+        assert screen._provider_return_confirmation_open is False
+        assert screen._provider_return_navigation_in_progress is True
+        returned = ConsoleSettingsReturnTarget.from_context(
+            host.navigation_messages[0].screen_context
+        )
+        assert returned is not None
+        assert returned.outcome is ConversationSettingsReturnOutcome.WITHOUT_SAVING
+        assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_without_saving_cancel_allows_retry():
+    """Cancel clears the pre-dialog fence so one later return can proceed."""
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-CANCELLED-RETURN-KEY"
+        )
+        await pilot.pause()
+        return_without_save = screen.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
+        host.screen_stack[-1].query_one("#cancel-button", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert host.screen_stack[-1] is screen
+        assert screen._provider_return_confirmation_open is False
+        assert screen._provider_return_navigation_in_progress is False
+        assert return_without_save.disabled is False
+        assert host.navigation_messages == []
+
+        screen.handle_provider_return_without_saving(
+            Button.Pressed(return_without_save)
+        )
+        await pilot.pause()
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        assert screen._provider_return_confirmation_open is True
+        assert screen._provider_return_navigation_in_progress is False
+        assert sum(
+            isinstance(candidate, ConfirmationDialog)
+            for candidate in host.screen_stack
+        ) == 1
+
+
+@pytest.mark.asyncio
+async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
+    app.app_config["api_settings"] = {"openai": {}}
+    _intent, target = _stage_conversation_settings_return_intent(app)
+    _capture_provider_settings_mutations(monkeypatch)
+    host = ConversationReturnSettingsHarness(app)
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(target.to_context())
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = (
+            "DUMMY-OPENAI-STAY-KEY"
+        )
+        await pilot.pause()
+        screen.action_settings_save_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        screen.query_one("#settings-provider-stay", Button).press()
+        await pilot.pause()
+
+        assert host.navigation_messages == []
+        assert screen.query_one("#settings-provider-return-continuation").display is False
+        replacement = ConversationSettingsReturnIntent(
+            "replacement-session",
+            0,
+            "model",
+            None,
+        )
+        app.pending_handoffs.stage(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+            replacement,
+        )
+        claim = app.pending_handoffs.claim(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        )
+        assert claim is not None
+        assert claim.value == replacement
+        app.pending_handoffs.release(claim)
 
 
 @pytest.mark.asyncio
@@ -6363,10 +8558,10 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        await _wait_for_settings_text(screen, pilot, "Configuration check")
         text = _visible_text(screen)
 
-        assert "Provider test" in text
+        assert "Configuration check" in text
         assert "OPENAI_API_KEY=<redacted>" in text
         assert "sk-" not in text
 
@@ -6658,20 +8853,14 @@ def test_settings_generation_controls_allow_openai_none_reasoning_effort():
     screen = SettingsScreen(_build_test_app())
 
     assert screen._normalise_model_profile_reasoning_effort("none") == "none"
-    assert (
-        "none"
-        in settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
-    )
+    assert "none" in settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
 
 
 def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
     screen = SettingsScreen(_build_test_app())
 
     assert screen._normalise_model_profile_thinking_effort("max") == "max"
-    assert (
-        "max"
-        in settings_screen_module.THINKING_EFFORT_SELECT_OPTIONS
-    )
+    assert "max" in settings_screen_module.THINKING_EFFORT_SELECT_OPTIONS
 
 
 @pytest.mark.asyncio
@@ -6711,7 +8900,9 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
         # task-189: gated groups collapse to one summary line; dead rows hide.
         assert "Reasoning controls: unavailable for Anthropic." in text
         assert (
-            screen.query_one("#settings-model-profile-reasoning-effort", Select).disabled
+            screen.query_one(
+                "#settings-model-profile-reasoning-effort", Select
+            ).disabled
             is True
         )
         assert (
@@ -7038,9 +9229,7 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
 
     assert len(mutations) == 1
     sections, _deletes = mutations[0]
-    assert sections["api_settings.llama_cpp"]["api_url"] == (
-        "http://127.0.0.1:9099"
-    )
+    assert sections["api_settings.llama_cpp"]["api_url"] == ("http://127.0.0.1:9099")
     assert (
         app.app_config["api_settings"]["llama_cpp"]["api_url"]
         == "http://127.0.0.1:9099"
@@ -7877,7 +10066,7 @@ async def test_settings_provider_test_blocks_unknown_provider():
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
-        assert "status=blocked" in text
+        assert "configuration=blocked" in text
 
 
 @pytest.mark.asyncio
@@ -8078,6 +10267,70 @@ async def test_settings_provider_model_discovery_shows_ambiguous_provider_recove
     assert "https://proxy.example.com/v1" not in status_text
 
 
+class ExplodingDiscoveryScope:
+    """A scope service whose calls raise, for the unexpected-failure paths."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def discover_models(self, **kwargs):
+        raise self._exc
+
+    async def persist_discovered_models_to_settings(self, **kwargs):
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_crash_status_is_plain_language_without_raw_exception():
+    """TASK-23108: an unexpected discovery failure must not hand the raw
+    exception repr to the user -- plain summary, next step, type name only."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.llm_provider_catalog_scope_service = ExplodingDiscoveryScope(
+        RuntimeError("boom at https://api.example.com/v1 API_KEY=sk-super-secret")
+    )
+    screen = SettingsScreen(app)
+
+    await screen._discover_provider_models()
+
+    status = screen._model_discovery_status
+    assert "boom" not in status
+    assert "sk-super-secret" not in status
+    assert status.startswith("Model discovery failed (RuntimeError).")
+    assert "run Discover again" in status
+    assert "Logs (F8)" in status
+
+
+@pytest.mark.asyncio
+async def test_discovered_model_save_crash_status_is_plain_language():
+    """TASK-23108: same contract for the persistence path."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.llm_provider_catalog_scope_service = ExplodingDiscoveryScope(
+        OSError("disk sadness /home/user/.config/tldw_cli/config.toml")
+    )
+    screen = SettingsScreen(app)
+    screen._model_discovery_selected_model_ids = {"gpt-4o-mini"}
+
+    await screen._save_selected_discovered_provider_models()
+
+    status = screen._model_discovery_status
+    assert "disk sadness" not in status
+    assert status.startswith("Could not save the discovered models (OSError).")
+    assert "Try Save again" in status
+    assert "Logs (F8)" in status
+
+
+def test_failure_status_text_never_carries_raw_exception_text():
+    """The helper's guarantee: only the type name crosses into the UI."""
+    exc = ValueError("token=sk-live-1234 leaked into the message")
+    text = failure_status_text("Something failed", exc, next_step="Try again.")
+    assert text == (
+        "Something failed (ValueError). Try again. Details are in Logs (F8)."
+    )
+    assert "sk-live-1234" not in text
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_test_does_not_depend_on_console_sampling_defaults(
     monkeypatch,
@@ -8103,7 +10356,11 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
             model_count=3,
         )
 
-    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    monkeypatch.setattr(
+        settings_endpoint_probe_module,
+        "probe_settings_endpoint",
+        fake_probe,
+    )
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -8114,11 +10371,12 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         ).value = "not-a-number"
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Provider test")
+        await _wait_for_settings_text(screen, pilot, "Configuration check")
         text = _visible_text(screen)
 
-        assert "Provider test" in text
-        assert "status=ready" in text
+        assert "Configuration check" in text
+        assert "configuration=complete" in text
+        assert "is ready" not in text
 
 
 def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypatch):
@@ -8143,7 +10401,7 @@ def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypa
     [
         ("#settings-category-appearance", "Global visual defaults"),
         ("#settings-category-storage", "Config path"),
-        ("#settings-category-privacy-security", "Encryption"),
+        ("#settings-category-privacy-security", "Config encryption"),
         ("#settings-category-diagnostics", "Validate config"),
         ("#settings-category-advanced-config", "Raw TOML"),
     ],
@@ -8167,17 +10425,22 @@ async def test_settings_first_slice_categories_have_real_content(button_id, expe
 
 
 @pytest.mark.asyncio
-async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_as_wip():
+async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_wip():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        for button_id, expected in (
+        for button_id, expected, exposes_raw_cli_draft in (
             (
                 "#settings-category-privacy-security",
                 "Credential mutation: not available yet",
+                True,
             ),
-            ("#settings-category-diagnostics", "Diagnostics writes: not available yet"),
+            (
+                "#settings-category-diagnostics",
+                "Diagnostics writes: not available yet",
+                False,
+            ),
         ):
             # Scroll the target into view before clicking: the category
             # rail is taller than the fixed pilot viewport, and Settings >
@@ -8189,10 +10452,15 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
             text = _visible_text(screen)
 
             assert expected in text
-            # task-1585: non-draft categories no longer render the pair.
-            assert not screen.query("#settings-save-category")
-            assert not screen.query("#settings-revert-category")
-
+            if exposes_raw_cli_draft:
+                # Privacy posture and credential mutation remain read-only, but
+                # the raw CLI unlock is an intentionally narrow editable draft.
+                assert screen.query_one("#settings-save-category", Button).disabled
+                assert screen.query_one("#settings-revert-category", Button).disabled
+            else:
+                # task-1585: non-draft categories no longer render the pair.
+                assert not screen.query("#settings-save-category")
+                assert not screen.query("#settings-revert-category")
 
 
 def _strip_sensitive_config_sections(app_config: dict) -> None:
@@ -8223,6 +10491,7 @@ def _strip_sensitive_config_sections(app_config: dict) -> None:
                 _scrub(value)
 
     _scrub(app_config)
+
 
 @pytest.mark.asyncio
 async def test_settings_privacy_security_renders_guided_redacted_posture(monkeypatch):
@@ -8274,9 +10543,10 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert DUMMY_REDACTION_SERVER_VALUE not in text
-        # task-1585: non-draft categories no longer render the pair.
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
+        # Privacy posture stays read-only; the action pair belongs solely to
+        # the unchanged raw CLI unlock draft and starts disabled.
+        assert screen.query_one("#settings-save-category", Button).disabled
+        assert screen.query_one("#settings-revert-category", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -8753,9 +11023,8 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-privacy")
-        # task-1585: non-draft categories no longer render the pair.
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
+        assert screen.query_one("#settings-save-category", Button).disabled
+        assert screen.query_one("#settings-revert-category", Button).disabled
 
         await pilot.press("t")
         await _wait_for_settings_text(screen, pilot, "Privacy check: complete")
@@ -8766,9 +11035,8 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
         assert DUMMY_REDACTION_ENV_VALUE not in text
         assert DUMMY_REDACTION_CONFIG_VALUE not in text
         assert "No test action is available" not in text
-        # task-1585: non-draft categories no longer render the pair.
-        assert not screen.query("#settings-save-category")
-        assert not screen.query("#settings-revert-category")
+        assert screen.query_one("#settings-save-category", Button).disabled
+        assert screen.query_one("#settings-revert-category", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -8848,17 +11116,21 @@ def test_settings_overview_config_path_label_hides_local_directory(
     assert str(tmp_path) not in value
 
 
-def test_settings_advanced_config_save_reports_invalid_env_override(monkeypatch):
-    app = SimpleNamespace(app_config={})
-    screen = SettingsScreen(app)
-    text = '[chat_defaults]\nprovider = "Ollama"\n'
-    screen._advanced_config_validated_text = text
-    monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
+@pytest.mark.asyncio
+async def test_settings_advanced_config_save_reports_invalid_env_override(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
 
-    result = screen._save_advanced_config_text(text)
-
-    assert "Advanced config save: failed" in result
-    assert "dangerous pattern" in result
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "unsafe$(touch bad).toml"))
+    model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
+    await model.inspect_current()
+    model.edit('[chat_defaults]\nprovider = "Ollama"\n')
+    await model.validate()
+    await model.save()
+    assert not model.can_save
+    assert model.state.snapshot is None
+    assert "unsafe$(touch bad)" not in model.status
 
 
 @pytest.mark.asyncio
@@ -8876,7 +11148,7 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
         assert screen.query_one("#settings-advanced-validate-config")
         save_button = screen.query_one("#settings-advanced-save-config")
         assert save_button.disabled
-        assert "Last validated: not validated" in text
+        assert "Not validated." in text
         assert "Save blocked until the current text validates" in text
 
 
@@ -8952,12 +11224,10 @@ async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret()
         editor.text = "OPENAI_API_KEY=sk-secret-token\n[broken"
 
         await pilot.click("#settings-advanced-validate-config")
-        await _wait_for_settings_text(
-            screen, pilot, "Advanced config validation: invalid"
-        )
+        await _wait_for_settings_text(screen, pilot, "Invalid TOML.")
         text = _visible_text(screen)
 
-        assert "Advanced config validation: invalid" in text
+        assert "Invalid TOML." in text
         assert "sk-secret-token" not in text
 
 
@@ -8975,10 +11245,10 @@ async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
         save_button = screen.query_one("#settings-advanced-save-config")
 
         assert save_button.disabled
-        assert (
-            "top-level TOML value must be a table"
-            in screen._save_advanced_config_text("42")
-        )
+        await pilot.pause()
+        await screen._raw_config_model().validate()
+        assert "Invalid TOML" in screen._raw_config_model().result
+        assert not screen._raw_config_model().can_save
 
 
 @pytest.mark.asyncio
@@ -9000,16 +11270,14 @@ async def test_settings_advanced_config_saves_atomically_with_backup(
         assert screen.query_one("#settings-advanced-save-config").disabled
 
         await pilot.click("#settings-advanced-validate-config")
-        await _wait_for_settings_text(
-            screen, pilot, "Advanced config validation: valid"
-        )
+        await _wait_for_settings_text(screen, pilot, "Valid TOML.")
         assert not screen.query_one("#settings-advanced-save-config").disabled
         await pilot.click("#settings-advanced-save-config")
-        await _wait_for_settings_text(screen, pilot, "Advanced config save: saved")
+        await _wait_for_settings_text(screen, pilot, "Saved;")
         text = _visible_text(screen)
 
-        assert "Advanced config save: saved" in text
-        assert "Last validated: current text" in text
+        assert "Saved;" in text
+        assert "Current text validated." in text
 
     assert config_path.read_text(encoding="utf-8") == (
         '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
@@ -9041,34 +11309,37 @@ async def test_settings_advanced_config_loads_backup_preview_without_saving(
         assert editor.text == current_text
 
         await pilot.click("#settings-advanced-load-backup")
-        await _wait_for_settings_text(
-            screen, pilot, "Advanced config recovery: loaded backup preview"
-        )
+        await _wait_for_settings_text(screen, pilot, "Backup loaded as a draft")
         text = _visible_text(screen)
 
         assert editor.text == backup_text
         assert config_path.read_text(encoding="utf-8") == current_text
         assert screen.query_one("#settings-advanced-save-config").disabled
-        assert "validate before save" in text
+        assert "Validate before saving" in text
 
 
-def test_settings_advanced_config_backup_preview_handles_config_path_errors(
+@pytest.mark.asyncio
+async def test_settings_advanced_config_backup_preview_handles_config_path_errors(
     monkeypatch,
 ):
-    screen = SettingsScreen(_build_test_app())
+    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
+
+    model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
+    await model.inspect_current()
+    original = model.state.text
 
     def raise_config_path_error():
         raise RuntimeError(
             f"OPENAI_API_KEY={DUMMY_REDACTION_CONFIG_VALUE} path failure"
         )
 
-    monkeypatch.setattr(screen, "_config_path", raise_config_path_error)
-
-    result = screen._load_advanced_backup_preview()
-
-    assert result.startswith("Advanced config recovery: failed")
-    assert "OPENAI_API_KEY=<redacted>" in result
-    assert DUMMY_REDACTION_CONFIG_VALUE not in result
+    monkeypatch.setattr(
+        model.adapter, "read_backup_serialized", raise_config_path_error
+    )
+    await model.replace_draft("backup", model.state.revision)
+    assert "Could not load" in model.status
+    assert DUMMY_REDACTION_CONFIG_VALUE not in model.status
+    assert model.state.text == original
 
 
 @pytest.mark.asyncio
@@ -9091,33 +11362,13 @@ async def test_settings_advanced_config_load_backup_reports_decode_failure(
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
 
         await pilot.click("#settings-advanced-load-backup")
-        await _wait_for_settings_text(screen, pilot, "Advanced config recovery: failed")
+        await _wait_for_settings_text(screen, pilot, "Could not load config text")
 
         assert editor.text == current_text
-        assert "invalid start byte" in screen._advanced_config_result
+        assert "encoding" in screen._raw_config_model().result
         assert screen.query_one("#settings-advanced-save-config").disabled
 
 
-def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
-    screen = SettingsScreen(_build_test_app())
-    calls = []
-
-    def fail_direct_load():
-        raise AssertionError("backup loading should not run in the button handler")
-
-    def fake_worker():
-        calls.append("worker")
-
-    monkeypatch.setattr(screen, "_load_advanced_backup_preview", fail_direct_load)
-    monkeypatch.setattr(
-        screen, "_advanced_load_backup_worker", fake_worker, raising=False
-    )
-
-    event = SimpleNamespace(stop=lambda: calls.append("stop"))
-
-    screen.handle_advanced_load_backup(event)
-
-    assert calls == ["stop", "worker"]
 
 
 @pytest.mark.asyncio
@@ -9132,6 +11383,8 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         assert screen.query_one("#settings-advanced-open-providers-models", Button)
         assert screen.query_one("#settings-advanced-open-console-behavior", Button)
         assert screen.query_one("#settings-advanced-open-diagnostics", Button)
+        screen.query_one("#settings-advanced-guide", Collapsible).collapsed = False
+        await pilot.pause()
 
         await pilot.click("#settings-advanced-open-providers-models")
         await _wait_for_settings_text(screen, pilot, "Provider catalog")
@@ -9140,20 +11393,20 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         assert "Selected category: Providers & Models" in _visible_text(screen)
 
 
-def test_settings_advanced_config_new_file_save_reports_no_backup(
+@pytest.mark.asyncio
+async def test_settings_advanced_config_new_file_save_reports_no_backup(
     monkeypatch, tmp_path
 ):
-    config_path = tmp_path / "config.toml"
+    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
+
+    config_path = tmp_path / "new.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    app = SimpleNamespace(app_config={})
-    screen = SettingsScreen(app)
-    text = '[chat_defaults]\nprovider = "Ollama"\n'
-    screen._advanced_config_validated_text = text
-
-    result = screen._save_advanced_config_text(text)
-
-    assert "Advanced config save: saved" in result
-    assert "backup: none (new file)" in result
+    model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
+    await model.inspect_current()
+    model.edit('[chat_defaults]\nprovider = "Ollama"\n')
+    await model.validate()
+    await model.save()
+    assert "Saved; no previous file" in model.result
     assert config_path.exists()
     assert not config_path.with_suffix(".toml.bak").exists()
 
@@ -9361,18 +11614,17 @@ def test_footer_entries_advertise_save_revert_where_draft_model_acts():
         assert ("r", "revert category") in entries, category
 
 
-def test_footer_entries_testable_view_category_keeps_t_without_save_revert():
-    """Privacy & Security has a real test action but no draft: t only."""
+def test_footer_entries_privacy_keeps_test_and_raw_cli_save_revert():
+    """Privacy exposes test plus bounded raw-CLI draft actions."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     screen.active_category = SettingsCategoryId.PRIVACY_SECURITY.value
 
     entries = screen._footer_shortcut_entries()
 
-    keys = [key for key, _ in entries]
-    assert "t" in keys
-    assert "s" not in keys
-    assert "r" not in keys
+    assert ("t", "check privacy") in entries
+    assert ("s", "save category") in entries
+    assert ("r", "revert category") in entries
 
 
 @pytest.mark.asyncio
@@ -9725,6 +11977,18 @@ def test_state_banner_leads_with_persistence_badge():
         assert text.startswith(f"State: {badge} | "), (category, text)
 
 
+def test_state_banner_text_has_exactly_one_state_segment():
+    """TASK-23104: scope strings used to embed their own "State: ..." on top
+    of the badge prefix, so domain categories and Overview rendered
+    "State: Read-only here | State: Active | ..." -- two contracts colliding
+    in one line."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    for category in SettingsCategoryId:
+        text = screen._category_state_banner_text(category)
+        assert text.count("State:") == 1, (category, text)
+
+
 def test_state_banner_dirty_branch_keeps_priority():
     """Unsaved changes outrank the badge -- the dirty banner is the model
     talking, and its copy must stay the strongest signal."""
@@ -9789,6 +12053,23 @@ def test_threshold_field_has_focused_guidance():
     assert all("No field-specific guidance" not in value for _, value in rows)
 
 
+def test_model_thinking_visibility_has_search_guidance_and_device_ownership():
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._active_settings_field_id = "settings-console-show-model-thinking"
+
+    rows = screen._console_behavior_field_guidance_rows()
+    ownership = screen._ownership_record(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    assert screen._top_field_match(
+        "model thinking", SettingsCategoryId.CONSOLE_BEHAVIOR
+    ) == ("settings-console-show-model-thinking", "Show model thinking")
+    assert ("Saved as", "console.show_model_thinking") in rows
+    assert any("Presentation only" in value for _, value in rows)
+    assert "console.show_model_thinking" in ownership.owns_config_sections
+    assert "console.thinking_history_policy_default" in ownership.owns_config_sections
+
+
 @pytest.mark.asyncio
 async def test_numeric_labels_carry_units():
     """'Threshold 50' and friends were unit-less mystery numerics; the
@@ -9836,8 +12117,17 @@ async def test_every_category_renders_the_state_banner():
             screen._select_category(summary.category.value)
             await pilot.pause()
             await pilot.pause()
-            banner = screen.query_one("#settings-category-state-banner", Static)
-            assert str(banner.renderable).startswith("State: "), summary.category
+            # TASK-23104: exactly ONE banner -- Overview and the domain
+            # categories used to compose a second in-card copy on top of
+            # the pinned one, doubling the save-contract line.
+            banners = screen.query(".settings-state-banner")
+            assert len(banners) == 1, (
+                summary.category,
+                [str(b.renderable) for b in banners],
+            )
+            banner_text = str(banners.first(Static).renderable)
+            assert banner_text.startswith("State: "), summary.category
+            assert banner_text.count("State:") == 1, (summary.category, banner_text)
 
 
 # ---- critique round-4 batch: tasks 1644 and 1714-1716 ----
@@ -9879,6 +12169,207 @@ async def test_field_search_enter_focuses_the_field():
         assert focused is not None and focused.id == (
             "settings-console-paste-collapse-threshold"
         ), f"focused={focused!r}"
+
+
+def test_search_finds_reduce_motion_with_scope_text():
+    """TASK-23109: 'reduce motion' (the critique's unfindable setting) must
+    surface Appearance, and the echo line must carry category and group."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    matches = screen._filtered_category_summaries("reduce motion")
+
+    assert matches and matches[0].category is SettingsCategoryId.APPEARANCE
+    status = screen._category_search_status_text("reduce motion")
+    assert "Appearance › Reduce motion (Interface)" in status
+
+
+def test_search_ambiguous_theme_disambiguates_with_scope():
+    """TASK-23109: 'theme' hits the Theme category and Appearance's Theme
+    setting; the results line names both with their scopes instead of a
+    bare-title coin flip."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    status = screen._category_search_status_text("theme")
+
+    assert "Enter opens Theme (Interface)" in status
+    assert "Next: " in status, status
+    matches = screen._filtered_category_summaries("theme")
+    assert any(s.category is SettingsCategoryId.APPEARANCE for s in matches)
+
+
+@pytest.mark.asyncio
+async def test_search_enter_focuses_reduce_motion():
+    """TASK-23109 journey: Enter on 'reduce motion' opens Appearance with
+    the Reduce motion control focused."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("reduce motion")
+        for _ in range(8):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-appearance-reduce-motion"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_description_tier_match_still_lands_on_the_field():
+    """Review finding 2 (TASK-23109): a description-tier category match with
+    a matching field keeps task-1715's field landing -- only own-TITLE
+    matches open the category plainly."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("context window")
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-model-context-window"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_token_keeps_its_pre_existing_intra_category_landing():
+    """Review finding 13 (TASK-23109): completing the index appends rows, so
+    the intra-category winner must stay order-stable -- '/token' lands on
+    'Conversation max tokens', not the swept-in 'Token budget (per run)'."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("token")
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-console-context-budget-tokens"
+        ), f"focused={focused!r}"
+
+
+@pytest.mark.asyncio
+async def test_search_landing_expands_enclosing_collapsibles():
+    """Review finding 3a (TASK-23109): a field inside Collapsible(collapsed)
+    must be expanded and focused, not given focus at zero region."""
+    from textual.widgets import Collapsible
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._submit_category_search("temperature")
+        for _ in range(12):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        focused = host.focused
+        assert focused is not None and focused.id == (
+            "settings-model-profile-temperature"
+        ), f"focused={focused!r}"
+        for node in focused.ancestors:
+            if isinstance(node, Collapsible):
+                assert node.collapsed is False, "landing left the fold closed"
+        assert focused.region.height > 0, "focused field has zero region"
+
+
+@pytest.mark.asyncio
+async def test_search_next_segment_is_dropped_on_short_terminals():
+    """Review finding 15 (TASK-23109): at 24 rows the fully scoped status
+    line wrapped to ~5 rail rows, pushing matches below the fold -- the
+    '| Next:' segment is dropped below the height threshold and kept on
+    full-size terminals."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(110, 24)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        short = screen._category_search_status_text("theme")
+        assert "Enter opens Theme (Interface)" in short
+        assert "Next:" not in short, short
+
+    host_tall = DestinationHarness(_build_test_app(), "settings")
+    async with host_tall.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host_tall)
+        tall = screen._category_search_status_text("theme")
+        assert "Next: Appearance › Theme (Interface)" in tall, tall
+
+
+@pytest.mark.asyncio
+async def test_search_landing_on_disabled_field_explains_instead_of_no_op():
+    """Review finding 3b (TASK-23109): .focus() is a silent no-op on a
+    disabled widget -- the landing must open the category and say why in
+    the status line instead."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        # The RENDERED row label (review finding 8 fixed the index's stale
+        # "Preferred Library rail width" phrasing).
+        target_label = "Preferred rail width"
+        screen._submit_category_search(target_label)
+        for _ in range(10):
+            await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        target = screen.query_one("#settings-appearance-library-media-library-width")
+        assert target.disabled, "precondition: width input disabled by default"
+        focused = host.focused
+        assert focused is None or focused.id != target.id
+        status = str(
+            screen.query_one("#settings-category-search-status", Static).renderable
+        )
+        assert "disabled right now" in status, status
+        assert target_label in status, status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "field_id"),
+    (
+        (
+            "Folder Files tree pane",
+            "settings-appearance-library-notes-files-tree-open",
+        ),
+        (
+            "Folder Files tree width",
+            "settings-appearance-library-notes-files-tree-width",
+        ),
+    ),
+)
+async def test_field_search_finds_and_focuses_folder_files_tree_controls(
+    query, field_id
+):
+    """Folder Files controls are searchable and receive landing focus."""
+    app = _build_test_app()
+    app.app_config["library"]["reader"]["custom_widths_enabled"] = True
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        assert screen._top_field_match(query, SettingsCategoryId.APPEARANCE) == (
+            field_id,
+            query,
+        )
+        screen._submit_category_search(query)
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.APPEARANCE.value
+        focused = host.focused
+        assert focused is not None and focused.id == field_id, f"focused={focused!r}"
 
 
 @pytest.mark.asyncio
@@ -9961,6 +12452,7 @@ async def test_reassurance_short_line_off_overview():
         assert "Local-only: saves write your config file." in text
         assert "Manual sync yourself" not in text
 
+
 @pytest.mark.asyncio
 async def test_settings_overview_front_door_is_four_status_rows_with_open_affordances():
     """task-1369: the Overview landing card leads with at most four primary
@@ -10007,6 +12499,92 @@ async def test_settings_overview_front_door_is_four_status_rows_with_open_afford
         )
         assert "Manual sync" in card_text
         assert "Where changes happen" in card_text
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_status_reports_not_ready_without_credential(
+    monkeypatch,
+):
+    """TASK-31805: the Overview 'Status:' reflects send-path readiness.
+
+    The status must derive from the SAME check the send path uses
+    (``get_provider_readiness`` / ``resolve_provider_api_key``), not the mere
+    presence of a provider/model name. A profile with a selected provider but
+    no API key must read 'Status: Not ready: Missing API key' -- an identity
+    echo ("Status: OpenAI / gpt-4.1") implied usability while an actual send
+    failed with "OpenAI API Key is required but not found."
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = ""
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert "; Status: Not ready: Missing API key" in config_text
+        # The provider/model identity still shows; only the honesty of the
+        # trailing Status verdict changed.
+        assert "OpenAI / gpt-4.1" in config_text
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_status_reports_ready_with_credential(monkeypatch):
+    """Paired arm: a resolvable API key still reads 'Status: Ready'."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-ready-0123456789"
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert "; Status: Ready" in config_text
+        assert "Not ready" not in config_text
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_status_reports_not_ready_without_model(monkeypatch):
+    """Qodo #2 (TASK-31805): credential present but no model -> not-ready.
+
+    A credential-only check would return Ready here while the Overview
+    identity renders "not selected" and the send gateway blocks with "Select
+    a model before sending." The Overview 'Status:' must agree with the send
+    path for BOTH missing-key AND missing-model, so this reports 'Not ready:
+    Select a model'.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    # Valid credential resolves, but NO model is selected.
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": ""}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-nomodel-0123456789"
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert "; Status: Not ready: Select a model" in config_text
+        # The identity half shows the model is unselected, matching the status.
+        assert "not selected" in config_text
+        # Must NOT read a bare "Ready" verdict.
+        assert "; Status: Ready" not in config_text
 
 
 @pytest.mark.asyncio
@@ -10090,7 +12668,9 @@ async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloade
         assert "Loading" not in dialog.message
 
 
-def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(monkeypatch):
+def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(
+    monkeypatch,
+):
     """task-1369: popping the confirm dialog resumes the screen; while the
     run worker is in flight the resume must not overwrite the 'running' rows."""
     refresh_calls = 0
@@ -10138,7 +12718,10 @@ async def test_settings_overview_disclosures_stay_expanded_across_sync_row_recom
         # A sync-row state change (e.g. the confirm callback's "running" rows).
         screen.manual_sync_rows = (
             ("Manual sync status", "running"),
-            ("Manual sync result", "Manual Sync is running after explicit user request."),
+            (
+                "Manual sync result",
+                "Manual Sync is running after explicit user request.",
+            ),
             ("Pending outgoing", "Refreshing"),
         )
         await pilot.pause()
@@ -10178,3 +12761,125 @@ async def test_settings_manual_sync_run_token_guards_stale_worker_finally():
     # The current worker's finally clears it.
     await wrapped(screen, 2)
     assert screen._manual_sync_run_in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typing(
+    monkeypatch, tmp_path
+):
+    """TASK-19559: retained-session backup completion must preserve live typing."""
+    config_path = tmp_path / "config.toml"
+    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
+    backup_text = '[chat_defaults]\nprovider = "Ollama"\n'
+    config_path.write_text(current_text, encoding="utf-8")
+    config_path.with_suffix(".toml.bak").write_text(backup_text, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    started, release = threading.Event(), threading.Event()
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
+        await host.workers.wait_for_complete()
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        model = screen._raw_config_model()
+        original_read = model.adapter.read_backup_serialized
+
+        def gated_read():
+            started.set()
+            assert release.wait(_BACKUP_LOAD_WORKER_RELEASE_TIMEOUT_SECONDS)
+            return original_read()
+
+        monkeypatch.setattr(model.adapter, "read_backup_serialized", gated_read)
+        try:
+            await pilot.click("#settings-advanced-load-backup")
+            assert await asyncio.to_thread(started.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS)
+            editor.focus()
+            editor.move_cursor(editor.document.end)
+            await pilot.press("z")
+            typed_text = editor.text
+            assert typed_text != current_text
+        finally:
+            release.set()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert editor.text == typed_text
+        assert backup_text not in editor.text
+        assert "not applied" in model.result
+        assert "Newer edits kept" in model.result
+        assert model.state.validated_revision is None
+
+
+def test_settings_appearance_theme_options_include_registered_user_themes():
+    """TASK-31250: themes registered with the app (saved user themes) are offered."""
+    import types
+
+    stub = types.SimpleNamespace(
+        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
+        app_instance=types.SimpleNamespace(
+            available_themes={"textual-dark": object(), "ocean": object()}
+        ),
+    )
+    options = SettingsScreen._appearance_theme_options(stub)
+    assert ("Ocean (saved)", "ocean") in options
+    assert [value for _label, value in options].count("textual-dark") == 1
+
+
+@pytest.mark.asyncio
+async def test_theme_dirty_flag_clears_when_leaving_the_category():
+    """TASK-31252: leaving Theme drops the in-progress edit, so the rail marker
+    and inspector row must not keep saying 'unsaved' on the next visit."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        editor = screen.query_one("#settings-theme-editor")
+        editor.query_one("#settings-theme-color-primary", Input).value = "#123456"
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is True
+
+        screen._select_category(SettingsCategoryId.APPEARANCE.value)
+        for _ in range(6):
+            await pilot.pause()
+        assert screen.theme_editor_modified is False
+
+        screen._select_category(SettingsCategoryId.THEME.value)
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+        for _ in range(6):
+            await pilot.pause()
+        note = screen.query_one("#settings-theme-unsaved-note", Static)
+        assert "No" in str(note.renderable)
+
+
+def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
+    """TASK-31279: the inspector's themes directory reads '~/...', not a
+    five-line absolute path; paths outside home are untouched."""
+    import os
+    from pathlib import Path
+
+    from tldw_chatbook.UI.Screens.settings_screen import _display_path
+
+    inside = Path.home() / ".config" / "tldw_cli" / "themes"
+    assert _display_path(inside) == "~" + os.sep + os.sep.join((".config", "tldw_cli", "themes"))
+    assert _display_path(tmp_path) == str(tmp_path) or _display_path(tmp_path).startswith("~")
+
+
+def test_settings_appearance_theme_options_skip_runtime_only_custom_themes():
+    """PR #2375 review #8: Apply registers an unsaved palette as custom_<name>; it
+    exists only for this process and must not be offered as a launch default."""
+    import types
+
+    stub = types.SimpleNamespace(
+        _appearance_setting_values=lambda: {"default_theme": "textual-dark"},
+        app_instance=types.SimpleNamespace(
+            available_themes={"textual-dark": object(), "ocean": object(), "custom_ocean": object()}
+        ),
+    )
+    options = SettingsScreen._appearance_theme_options(stub)
+    values = [value for _label, value in options]
+    assert "ocean" in values
+    assert "custom_ocean" not in values

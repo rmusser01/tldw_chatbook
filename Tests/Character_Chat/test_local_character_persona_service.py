@@ -1,5 +1,8 @@
 import inspect
 import json
+from pathlib import Path
+
+import pytest
 
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
@@ -374,6 +377,40 @@ def test_local_character_persona_service_persists_persona_profile_crud(tmp_path)
     assert restored["deleted"] is False
     assert restored["version"] == 4
     assert reloaded.get_persona_profile("guide")["name"] == "Guide v2"
+
+
+def test_persona_store_path_passes_through_shared_validation(tmp_path, monkeypatch):
+    """The public path boundary uses the repository's central validator."""
+    from tldw_chatbook.Character_Chat import local_character_persona_service as module
+
+    observed: list[tuple[object, bool, bool]] = []
+
+    def validate(path, require_exists=False, *, probe_existing=True):
+        observed.append((path, require_exists, probe_existing))
+        return Path(path)
+
+    monkeypatch.setattr(module, "validate_path_simple", validate, raising=False)
+    target = tmp_path / "personas.json"
+
+    service = LocalCharacterPersonaService(None, persona_store_path=target)
+
+    assert service.persona_store_path == target
+    assert observed == [(target, False, False)]
+
+
+def test_persona_store_path_validation_failure_is_path_free(tmp_path, monkeypatch):
+    """Rejected configured paths expose only the service's stable category."""
+    from tldw_chatbook.Character_Chat import local_character_persona_service as module
+
+    def reject(*args, **kwargs):
+        raise ValueError("/private/configured/path")
+
+    monkeypatch.setattr(module, "validate_path_simple", reject, raising=False)
+
+    with pytest.raises(ValueError, match="^local_persona_store_invalid$"):
+        LocalCharacterPersonaService(
+            None, persona_store_path=tmp_path / "personas.json"
+        )
 
 
 def test_local_persona_service_has_only_persona_store_and_private_names(tmp_path):

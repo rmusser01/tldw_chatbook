@@ -43,7 +43,9 @@ from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
     _strict_float,
     _strict_int,
+    load_assistant_library_access_default,
     load_direct_library_tools,
+    load_rag_auto_retrieve_on_send,
 )
 
 
@@ -65,7 +67,10 @@ def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
     # not profile data -- overlay the live value so the editor never shows a
     # stale or profile-derived one.
     return dataclasses.replace(
-        defaults, direct_library_tools=load_direct_library_tools()
+        defaults,
+        direct_library_tools=load_direct_library_tools(),
+        rag_auto_retrieve_on_send=load_rag_auto_retrieve_on_send(),
+        assistant_library_access_default=load_assistant_library_access_default(),
     )
 
 
@@ -95,6 +100,8 @@ def get_profile_defaults(profile_id: str) -> Optional[SettingsLibraryRagDefaults
     return dataclasses.replace(
         _defaults_from_profile(profile),
         direct_library_tools=load_direct_library_tools(),
+        rag_auto_retrieve_on_send=load_rag_auto_retrieve_on_send(),
+        assistant_library_access_default=load_assistant_library_access_default(),
     )
 
 

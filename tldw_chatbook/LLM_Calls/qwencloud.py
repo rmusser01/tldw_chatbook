@@ -43,6 +43,7 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
+from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 logger = logger.bind(module="qwencloud")
@@ -1165,7 +1166,7 @@ def chat_with_qwencloud(
         "Content-Type": "application/json",
     }
 
-    session = requests.Session()
+    session = create_default_session()
     stream_owns_session = False
     try:
         session.mount("https://", adapter)

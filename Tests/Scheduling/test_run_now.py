@@ -15,6 +15,7 @@ import pytest
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import TaskStatus
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
+from tldw_chatbook.Scheduling.services import scheduling_service as scheduling_service_module
 from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
 
 NOW = datetime(2026, 8, 19, 12, 0, 0, tzinfo=timezone.utc)
@@ -159,6 +160,41 @@ def test_run_now_handler_failure_returns_false_and_records(db):
     assert row["last_status"] == "missed"
 
 
+@pytest.mark.parametrize("dormant_state", ["to_server_sent", "from_server_pending"])
+def test_run_now_refuses_dormant_transfer_state(db, dormant_state):
+    """Reminder-side parity guard (spec §6.1 ruling 2): the loop's manual
+    entry refuses a row mid-handoff or awaiting server release, same as
+    the definitions-side run_automation_now already did."""
+    task_id = _make_one_time(db, due_at=NOW)
+    db.update_reminder_task(task_id, transfer_state=dormant_state)
+    handler = AsyncMock()
+    loop = _make_loop(db, handler)
+    loop.queue.load()
+
+    succeeded = asyncio.run(loop.run_reminder_now(task_id))
+
+    assert succeeded is False
+    handler.assert_not_awaited()
+    row = db.get_reminder_task(task_id)
+    assert row["last_run_at"] is None  # untouched, not consumed
+
+
+@pytest.mark.parametrize("armed_state", ["to_server_pending", "to_server_failed"])
+def test_run_now_arms_non_dormant_transfer_state(db, armed_state):
+    """Corrects the any-non-NULL exclusion: a merely-queued or failed
+    transfer still dispatches manually."""
+    task_id = _make_one_time(db, due_at=NOW)
+    db.update_reminder_task(task_id, transfer_state=armed_state)
+    handler = AsyncMock()
+    loop = _make_loop(db, handler)
+    loop.queue.load()
+
+    succeeded = asyncio.run(loop.run_reminder_now(task_id))
+
+    assert succeeded is True
+    handler.assert_awaited_once()
+
+
 def test_manual_and_scheduled_dispatch_share_the_seam(db):
     """The same DB state dispatched manually vs via tick yields equal rows.
 
@@ -233,6 +269,205 @@ def test_service_run_now_missing_task_returns_none(db):
     service = SchedulingService(db=db, server_client=None, runtime_source="local")
     loop = _make_loop(db, AsyncMock())
     assert asyncio.run(service.run_reminder_now("no-such-id", loop=loop)) is None
+
+
+@pytest.mark.parametrize("dormant_state", ["to_server_sent", "from_server_pending"])
+def test_service_run_now_refuses_dormant_transfer_state(db, dormant_state):
+    """Service seam mirrors the loop's refusal -- returns None without
+    touching the row (spec §6.1 ruling 2)."""
+    task_id = _make_one_time(db, due_at=NOW)
+    db.update_reminder_task(task_id, transfer_state=dormant_state)
+    handler = AsyncMock()
+    loop = _make_loop(db, handler)
+    service = SchedulingService(db=db, server_client=None, runtime_source="local")
+    loop.queue.load()
+
+    result = asyncio.run(service.run_reminder_now(task_id, loop=loop))
+
+    assert result is None
+    handler.assert_not_awaited()
+
+
+class _FakeAutomationHandler:
+    """Stands in for `AutomationDefinitionHandler`; only `run_now` is used
+    by `SchedulingService.run_automation_now` (Task 6). `run_id=None`
+    simulates the handler's own overlap-claim refusal (deduped)."""
+
+    def __init__(self, run_id: str | None = "run-1"):
+        self.calls: list[dict] = []
+        self._run_id = run_id
+
+    async def run_now(self, definition_row: dict):
+        self.calls.append(definition_row)
+        return self._run_id
+
+
+def _make_automation_definition(db, **overrides):
+    kwargs = dict(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily Q",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    kwargs.update(overrides)
+    return db.create_automation_definition(**kwargs)
+
+
+def _service_with_automation_handler(db, handler):
+    return SchedulingService(
+        db=db,
+        server_client=None,
+        runtime_source="local",
+        automation_handler_getter=lambda: handler,
+    )
+
+
+def _stub_health(monkeypatch, health="ready", reason=""):
+    monkeypatch.setattr(
+        scheduling_service_module,
+        "compute_local_health",
+        lambda app, row: (health, reason),
+    )
+
+
+def test_service_run_automation_now_no_handler_getter_refuses(db):
+    """No `automation_handler_getter` wired -> explicit None, not a crash --
+    same honesty as `run_reminder_now(loop=None)`."""
+    definition_id = _make_automation_definition(db)
+    service = SchedulingService(db=db, server_client=None, runtime_source="local")
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result is None
+
+
+def test_service_run_automation_now_missing_definition_returns_none(db):
+    handler = _FakeAutomationHandler()
+    service = _service_with_automation_handler(db, handler)
+
+    result = asyncio.run(service.run_automation_now("no-such-id"))
+
+    assert result is None
+    assert handler.calls == []
+
+
+def test_service_run_automation_now_server_scoped_owner_refuses(db):
+    definition_id = _make_automation_definition(db, owner_id="server:abc")
+    handler = _FakeAutomationHandler()
+    service = _service_with_automation_handler(db, handler)
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result is None
+    assert handler.calls == []
+
+
+@pytest.mark.parametrize("lifecycle", ["archived", "disabled"])
+def test_service_run_automation_now_lifecycle_not_configured_or_paused_refuses(
+    db, lifecycle
+):
+    definition_id = _make_automation_definition(db, lifecycle=lifecycle)
+    handler = _FakeAutomationHandler()
+    service = _service_with_automation_handler(db, handler)
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result is None
+    assert handler.calls == []
+
+
+@pytest.mark.parametrize("dormant_state", ["to_server_sent", "from_server_pending"])
+def test_service_run_automation_now_dormant_transfer_refuses(db, monkeypatch, dormant_state):
+    """Only DORMANT_TRANSFER_STATES refuse (spec §6.1 ruling 2) -- corrected
+    from the pre-PR-5 "any non-NULL transfer_state refuses" behavior this
+    test used to pin (it used an arbitrary value, "pending", that spec
+    ruling 2 now classifies as armed, not dormant)."""
+    definition_id = _make_automation_definition(db, transfer_state=dormant_state)
+    handler = _FakeAutomationHandler()
+    service = _service_with_automation_handler(db, handler)
+    _stub_health(monkeypatch)  # would otherwise also refuse; isolate this check
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result is None
+    assert handler.calls == []
+
+
+@pytest.mark.parametrize("armed_state", [None, "to_server_pending", "to_server_failed"])
+def test_service_run_automation_now_non_dormant_transfer_arms(db, monkeypatch, armed_state):
+    """NULL, to_server_pending (merely queued), and to_server_failed (send
+    failed, re-armed) all keep executing locally per spec §6.1 ruling 2 --
+    this is the corrected two-state exclusion, not the old any-non-NULL
+    one."""
+    definition_id = _make_automation_definition(db, transfer_state=armed_state)
+    handler = _FakeAutomationHandler()
+    service = _service_with_automation_handler(db, handler)
+    _stub_health(monkeypatch)
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result == {"run_id": "run-1", "deduped": False}
+    assert len(handler.calls) == 1
+
+
+def test_service_run_automation_now_health_not_ready_refuses(db, monkeypatch):
+    definition_id = _make_automation_definition(db)
+    handler = _FakeAutomationHandler()
+    service = _service_with_automation_handler(db, handler)
+    _stub_health(monkeypatch, health="capability_unavailable", reason="no rag service")
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result is None
+    assert handler.calls == []
+
+
+def test_service_run_automation_now_paused_lifecycle_reaches_the_handler(
+    db, monkeypatch
+):
+    """`paused` clears the lifecycle gate -- proven by reaching the handler."""
+    definition_id = _make_automation_definition(db, lifecycle="paused")
+    handler = _FakeAutomationHandler(run_id="run-9")
+    service = _service_with_automation_handler(db, handler)
+    _stub_health(monkeypatch)
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result == {"run_id": "run-9", "deduped": False}
+    assert len(handler.calls) == 1
+
+
+def test_service_run_automation_now_success_dispatches_and_returns_run_id(
+    db, monkeypatch
+):
+    definition_id = _make_automation_definition(db)
+    handler = _FakeAutomationHandler(run_id="run-42")
+    service = _service_with_automation_handler(db, handler)
+    _stub_health(monkeypatch)
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result == {"run_id": "run-42", "deduped": False}
+    assert len(handler.calls) == 1
+    assert handler.calls[0]["id"] == definition_id
+
+
+def test_service_run_automation_now_deduped_when_handler_claim_refuses(
+    db, monkeypatch
+):
+    """The handler's own overlap claim (a run already in flight) declines
+    the dispatch -- still a "success" from the service's own refusal
+    checks, surfaced as `run_id=None, deduped=True` rather than `None`."""
+    definition_id = _make_automation_definition(db)
+    handler = _FakeAutomationHandler(run_id=None)
+    service = _service_with_automation_handler(db, handler)
+    _stub_health(monkeypatch)
+
+    result = asyncio.run(service.run_automation_now(definition_id))
+
+    assert result == {"run_id": None, "deduped": True}
 
 
 def test_queue_remove_by_id(db):

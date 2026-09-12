@@ -2,11 +2,13 @@
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Tooltip
+from textual.widgets import Static, Tooltip
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleApprovalsChip,
+    ConsoleLibraryChip,
     ConsoleStatusChips,
 )
 
@@ -16,7 +18,7 @@ def _state(**overrides) -> ConsoleControlState:
         provider_label="Provider: Anthropic",
         model_label="Model: claude-3-haiku",
         assistant_label="Assistant: General",
-        rag_label="RAG: off",
+        rag_label="Library · Auto off · Agent blocked",
         sources_label="Sources: 0 staged",
         tools_label="Tools: 0 ready",
         approvals_label="Approvals: 0 pending",
@@ -39,6 +41,15 @@ class _ChipsApp(App):
         yield ConsoleStatusChips(self._state, id="console-status-chips")
 
 
+class _ProductionChipsApp(ConsolidatedCSSApp):
+    def __init__(self, state: ConsoleControlState) -> None:
+        super().__init__()
+        self._state = state
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleStatusChips(self._state, id="console-status-chips")
+
+
 @pytest.mark.asyncio
 async def test_status_chips_render_one_assistant_identity_label():
     app = _ChipsApp(_state())
@@ -48,7 +59,7 @@ async def test_status_chips_render_one_assistant_identity_label():
             ("#console-provider-chip", "Provider:"),
             ("#console-model-chip", "Model:"),
             ("#console-assistant-chip", "Assistant: General"),
-            ("#console-rag-chip", "RAG:"),
+            ("#console-library-chip", "Library · Auto off · Agent blocked"),
             ("#console-sources-chip", "Sources:"),
             ("#console-tools-chip", "Tools:"),
             ("#console-approvals-chip", "Approvals:"),
@@ -57,6 +68,51 @@ async def test_status_chips_render_one_assistant_identity_label():
             assert expected in str(chip.render())
         assert not app.query("#console-character-chip")
         assert not app.query("#console-persona-chip")
+        assert len(app.query(ConsoleLibraryChip)) == 1
+        assert not app.query("#console-rag-chip")
+
+
+@pytest.mark.asyncio
+async def test_library_chip_keyboard_and_click_post_the_same_open_request() -> None:
+    app = _ChipsApp(_state())
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-library-chip", ConsoleLibraryChip)
+        posted: list[object] = []
+        original = chip.post_message
+        chip.post_message = lambda message: posted.append(message)  # type: ignore[assignment]
+        try:
+            chip.action_open_library_access()
+            chip._on_click(object())  # type: ignore[arg-type]
+        finally:
+            chip.post_message = original
+
+        assert len(posted) == 2
+        assert all(isinstance(item, ConsoleLibraryChip.OpenRequested) for item in posted)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label",
+    (
+        "Library · Auto off · Agent blocked",
+        "Library: blocked · policy unavailable",
+    ),
+)
+async def test_library_policy_is_first_stable_chip_and_fully_painted_at_120_columns(
+    label: str,
+) -> None:
+    app = _ProductionChipsApp(_state(rag_label=label))
+    async with app.run_test(size=(120, 6)) as pilot:
+        await pilot.pause()
+        scroll = app.query_one("#console-status-chip-scroll")
+        library = app.query_one("#console-library-chip")
+        provider = app.query_one("#console-provider-chip")
+
+        assert library.region.x < provider.region.x
+        assert library.region.right <= scroll.region.right
+        assert library.region.width >= len(label) + 4
+        assert str(library.render()) == label
 
 
 @pytest.mark.asyncio
@@ -312,3 +368,140 @@ async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
         console._sync_console_mode_bar()
         await pilot.pause()
         assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
+    """task-32345: a card waiting on the user overrides the streaming copy.
+
+    ``run_state.visible_copy`` ("Agent running.") is set once at dispatch
+    start and never updated when an approval round parks mid-turn -- the
+    chip must read the controller's live round registry instead, not the
+    stale run-state copy.
+    """
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+    )
+    from Tests.UI.test_destination_shells import (
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        chip = console.query_one("#console-run-chip")
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running.")
+        )
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert str(chip.render()) == "Run: Agent running."
+
+        controller.add_pending_round(session.id, "round-1")
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert chip.display is True
+        assert str(chip.render()) == "Run: Waiting for your approval."
+        # task-32345 minor: the hidden compat mode-bar static must say the
+        # same thing as the visible chip -- two copies of one fact, never
+        # allowed to disagree.
+        assert "Waiting for your approval." in str(
+            console.query_one("#console-mode-bar", Static).renderable
+        )
+
+        # Discarding the round returns the chip to the plain run copy --
+        # the override is live, not sticky.
+        controller.discard_pending_round(session.id, "round-1")
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert str(chip.render()) == "Run: Agent running."
+        assert "Waiting for your approval." not in str(
+            console.query_one("#console-mode-bar", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_chip_names_the_kind_of_decision_that_is_waiting():
+    """Qodo #4 (task-32345): the round registry holds all five interrupt
+    kinds, not just MCP approvals.
+
+    The chip used to translate the generic "something is pending" predicate
+    into "Waiting for your approval" for every one of them -- so an ask_user
+    question card said an approval was pending while the Inspector, which
+    counts mounted APPROVAL cards, correctly showed zero.
+
+    Precedence rule pinned here: when an approval is among the outstanding
+    rounds it wins, because it is the only kind the Inspector's count can
+    see -- picking anything else would make the chip and the Inspector
+    disagree again, in the other direction.
+    """
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+    )
+    from Tests.UI.test_destination_shells import (
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        chip = console.query_one("#console-run-chip")
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running.")
+        )
+
+        async def _chip_copy() -> str:
+            console._sync_console_mode_bar()
+            await pilot.pause()
+            return str(chip.render())
+
+        # A question asks for an answer, not an approval.
+        controller.add_pending_round(session.id, "q-1", kind="question")
+        assert await _chip_copy() == "Run: Waiting for your answer."
+
+        # An approval alongside it wins (see the docstring's rule).
+        controller.add_pending_round(session.id, "a-1", kind="approval")
+        assert await _chip_copy() == "Run: Waiting for your approval."
+
+        # With the approval resolved the question's own copy comes back.
+        controller.discard_pending_round(session.id, "a-1")
+        assert await _chip_copy() == "Run: Waiting for your answer."
+
+        # Every other confirmation kind asks for a confirmation.
+        controller.discard_pending_round(session.id, "q-1")
+        controller.add_pending_round(session.id, "s-1", kind="skill_install")
+        assert await _chip_copy() == "Run: Waiting for your confirmation."
+
+        controller.discard_pending_round(session.id, "s-1")
+        assert await _chip_copy() == "Run: Agent running."

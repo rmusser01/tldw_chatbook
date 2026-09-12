@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,
@@ -16,6 +17,9 @@ from tldw_chatbook.Sync_Interop.validation import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_organization_repository import (
+        NotesOrganizationRepository,
+    )
     from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -29,11 +33,21 @@ class LocalFirstSyncService:
         state_repository: Any,
         local_store: Any,
         dataset_keys: dict[str, bytes] | None = None,
+        notes_organization_repository: NotesOrganizationRepository | None = None,
+        notes_organization_sync_service: Any | None = None,
+        personal_context_outbox_dispatcher: Any = None,
+        personal_context_service: Any = None,
+        personal_context_runtime_loader: Any = None,
     ) -> None:
         self.server_service = server_service
         self.state_repository = state_repository
         self.local_store = local_store
         self.dataset_keys = dataset_keys if dataset_keys is not None else {}
+        self.notes_organization_repository = notes_organization_repository
+        self.notes_organization_sync_service = notes_organization_sync_service
+        self.personal_context_outbox_dispatcher = personal_context_outbox_dispatcher
+        self.personal_context_service = personal_context_service
+        self.personal_context_runtime_loader = personal_context_runtime_loader
 
     async def sync_once(
         self,
@@ -86,10 +100,93 @@ class LocalFirstSyncService:
                 "local_first Sync v2 profile requires device_id and dataset_id"
             )
 
+        uses_personal_context = any(
+            domain.startswith("personal_context.") for domain in domains
+        )
+        if uses_personal_context and (
+            (
+                dataset_key is None
+                and self.dataset_keys.get(str(dataset_id)) is None
+            )
+            or self.personal_context_outbox_dispatcher is None
+            or self.personal_context_service is None
+        ) and callable(self.personal_context_runtime_loader):
+            self.personal_context_runtime_loader(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+            )
         key = dataset_key or self.dataset_keys.get(str(dataset_id))
-        if key is None:
+        organization_only = bool(domains) and all(
+            domain in NOTES_ORGANIZATION_DOMAINS for domain in domains
+        )
+        if key is None and not organization_only:
             raise ValueError(
                 "dataset key is required for local_first Sync v2 envelopes"
+            )
+
+        if self.notes_organization_sync_service is not None:
+            self.notes_organization_sync_service.finalize_pending_note_organization_receipts(
+                server_profile_id=server_profile_id,
+                dataset_id=str(dataset_id),
+            )
+            if "notes" in domains:
+                self.notes_organization_sync_service.drain_pending_note_intents(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                )
+        if self.notes_organization_sync_service is not None and any(
+            domain in NOTES_ORGANIZATION_DOMAINS for domain in domains
+        ):
+            self.notes_organization_sync_service.drain_pending_intents(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                dataset_id=str(dataset_id),
+                device_id=str(device_id),
+            )
+        if uses_personal_context and (
+            self.personal_context_outbox_dispatcher is None
+            or self.personal_context_service is None
+        ):
+            raise ValueError("personal_context_sync_transport_unavailable")
+        personal_context_link = None
+        if uses_personal_context:
+            personal_context_link = self.state_repository.get_personal_context_link_state(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+            )
+            if personal_context_link is None or not self.state_repository.personal_context_sync_enabled(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                dataset_id=str(dataset_id),
+                device_id=str(device_id),
+                profile_id=personal_context_link.get("profile_id"),
+                integrity_key_id=personal_context_link.get("integrity_key_id"),
+                key_record_id=personal_context_link.get("key_record_id"),
+                purge_generation=personal_context_link.get("purge_generation"),
+                confirmed_cursor=(profile.get("dataset_cursors") or {}).get("sync_v2"),
+            ):
+                raise ValueError("personal_context_link_incomplete")
+
+        profile_outbox_result = {"dispatched": 0, "quarantined": 0}
+        if uses_personal_context:
+            assert self.personal_context_outbox_dispatcher is not None
+            assert personal_context_link is not None
+            profile_outbox_result = (
+                self.personal_context_outbox_dispatcher.dispatch_pending(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    dataset_id=str(dataset_id),
+                    device_id=str(device_id),
+                    storage_key=key,
+                    profile_id=str(personal_context_link["profile_id"]),
+                    integrity_key_id=str(personal_context_link["integrity_key_id"]),
+                    key_record_id=str(personal_context_link["key_record_id"]),
+                    purge_generation=int(personal_context_link["purge_generation"]),
+                    confirmed_cursor=str(personal_context_link["confirmed_cursor"]),
+                )
             )
 
         cursor_record = self.state_repository.get_remote_pull_cursor(
@@ -108,14 +205,39 @@ class LocalFirstSyncService:
             dataset_id=str(dataset_id),
             domains=list(domains),
         )
-        try:
-            outbox_parsed = [
-                self._coerce_envelope(entry["envelope"]) for entry in outbox_entries
+        if self.notes_organization_sync_service is not None:
+            notes_db = self.notes_organization_sync_service.notes_repository.db
+            outbox_entries = [
+                entry
+                for entry in outbox_entries
+                if str(entry.get("domain")) != "notes"
+                or notes_db.is_note_dispatchable(
+                    str(entry["envelope"].get("object_id") or "")
+                )
             ]
+        try:
+            outbox_parsed = []
+            for entry in outbox_entries:
+                envelope = self._coerce_envelope(entry["envelope"])
+                if envelope.domain.startswith("personal_context."):
+                    assert self.personal_context_outbox_dispatcher is not None
+                    envelope = self.personal_context_outbox_dispatcher.adapter.restore_from_storage(
+                        envelope,
+                        storage_key=key,
+                    )
+                outbox_parsed.append(envelope)
             outgoing_parsed = [
                 self._coerce_envelope(envelope)
                 for envelope in (outgoing_envelopes or [])
             ]
+            if self.notes_organization_sync_service is not None:
+                notes_db = self.notes_organization_sync_service.notes_repository.db
+                outgoing_parsed = [
+                    envelope
+                    for envelope in outgoing_parsed
+                    if envelope.domain != "notes"
+                    or notes_db.is_note_dispatchable(str(envelope.object_id or ""))
+                ]
             validate_outgoing_envelope_scope(
                 dataset_id=str(dataset_id),
                 device_id=str(device_id),
@@ -157,8 +279,19 @@ class LocalFirstSyncService:
             ):
                 batch_payloads = [item["payload"] for item in batch_items]
                 try:
+                    push = self.server_service.push_v2_envelopes
+                    if uses_personal_context:
+                        push = getattr(
+                            self.server_service,
+                            "_push_v2_personal_context_complete",
+                            None,
+                        )
+                        if not callable(push):
+                            raise ValueError(
+                                "personal_context_sync_transport_unavailable"
+                            )
                     batch_record = self._dump(
-                        await self.server_service.push_v2_envelopes(
+                        await push(
                             dataset_id=str(dataset_id),
                             device_id=str(device_id),
                             envelopes=batch_payloads,
@@ -235,9 +368,26 @@ class LocalFirstSyncService:
                         int(entry["outbox_id"]) for entry in batch_outbox_entries
                     )
 
+        if self.notes_organization_sync_service is not None:
+            self.notes_organization_sync_service.reconcile_acknowledgements(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                dataset_id=str(dataset_id),
+            )
+
         try:
+            pull = self.server_service.pull_v2_envelopes
+            if uses_personal_context:
+                pull = getattr(
+                    self.server_service,
+                    "_pull_v2_personal_context_complete",
+                    None,
+                )
+                if not callable(pull):
+                    raise ValueError("personal_context_sync_transport_unavailable")
             pulled = self._dump(
-                await self.server_service.pull_v2_envelopes(
+                await pull(
                     dataset_id=str(dataset_id),
                     device_id=str(device_id),
                     cursor=cursor_record.cursor,
@@ -249,7 +399,18 @@ class LocalFirstSyncService:
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="pull", exc=exc)
             raise
-        applier = SyncEnvelopeApplier(dataset_key=key, local_store=self.local_store)
+        applier = SyncEnvelopeApplier(
+            dataset_key=key,
+            local_store=self.local_store,
+            notes_organization_repository=self.notes_organization_repository,
+            notes_organization_server_profile_id=server_profile_id,
+            personal_context_adapter=(
+                None
+                if self.personal_context_outbox_dispatcher is None
+                else self.personal_context_outbox_dispatcher.adapter
+            ),
+            personal_context_service=self.personal_context_service,
+        )
         try:
             envelopes = [
                 SyncV2Envelope.model_validate(envelope)
@@ -268,6 +429,27 @@ class LocalFirstSyncService:
                 envelope_count=len(envelopes),
             )
             results = [applier.apply(envelope) for envelope in envelopes]
+            for envelope, result in zip(envelopes, results):
+                if (
+                    result.get("status") == "applied"
+                    and envelope.domain.startswith("personal_context.")
+                    and (envelope.server_cursor or envelope.server_sequence) is not None
+                ):
+                    server_cursor = envelope.server_cursor
+                    if server_cursor is None:
+                        server_cursor = envelope.server_sequence
+                    assert server_cursor is not None
+                    self.state_repository.record_sync_v2_remote_head(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                        dataset_id=str(dataset_id),
+                        domain=envelope.domain,
+                        object_id=str(envelope.object_id),
+                        server_cursor=int(server_cursor),
+                        object_revision=envelope.object_revision,
+                        payload_hash=envelope.payload_hash,
+                    )
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="apply", exc=exc)
             raise
@@ -327,6 +509,8 @@ class LocalFirstSyncService:
             "outbox_drained": len(outbox_entries),
             "outbox_dispatched": outbox_result["dispatched"],
             "outbox_retained": outbox_result["retained"],
+            "profile_outbox_dispatched": profile_outbox_result["dispatched"],
+            "profile_outbox_quarantined": profile_outbox_result["quarantined"],
             "pulled_envelopes": len(pulled.get("envelopes", [])),
             "applied_envelopes": sum(
                 1 for result in results if result.get("status") == "applied"
@@ -336,6 +520,171 @@ class LocalFirstSyncService:
             "has_more": bool(pulled.get("has_more", False)),
             "results": results,
         }
+
+    async def pull_notes_organization_history(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        page_size: int = 200,
+        after_page: Any | None = None,
+    ) -> dict[str, Any]:
+        """Pull and apply bootstrap/history pages without opening a push path."""
+
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
+        if self.notes_organization_repository is None:
+            raise ValueError("Notes organization repository is required")
+        from tldw_chatbook.Notes.notes_organization_repository import (
+            NotesOrganizationRepository,
+        )
+
+        organization_repository = NotesOrganizationRepository(
+            self.notes_organization_repository.db,
+            server_profile_id=server_profile_id,
+        )
+        profile = self.state_repository.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        if (
+            profile is None
+            or not profile.get("dataset_id")
+            or not profile.get("device_id")
+        ):
+            raise ValueError("persisted Notes organization profile is required")
+        dataset_id = str(profile["dataset_id"])
+        device_id = str(profile["device_id"])
+        cursor_record = self.state_repository.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            domain="sync_v2",
+            remote_collection=dataset_id,
+        )
+        cursor = cursor_record.cursor
+        applied = 0
+        conflicts: list[dict[str, Any]] = []
+        while True:
+            page = self._dump(
+                await self.server_service.pull_v2_envelopes(
+                    dataset_id=dataset_id,
+                    device_id=device_id,
+                    cursor=cursor,
+                    domains=list(NOTES_ORGANIZATION_DOMAINS),
+                    page_size=page_size,
+                    include_own_changes=True,
+                )
+            )
+            envelopes = [
+                SyncV2Envelope.model_validate(value)
+                for value in page.get("envelopes", [])
+            ]
+            validate_pulled_response_scope(
+                dataset_id=dataset_id,
+                response_dataset_id=page.get("dataset_id"),
+                envelopes=envelopes,
+                domains=list(NOTES_ORGANIZATION_DOMAINS),
+            )
+            validate_pull_pagination_state(
+                has_more=page.get("has_more", False),
+                next_cursor=page.get("next_cursor"),
+                envelope_count=len(envelopes),
+            )
+            applier = SyncEnvelopeApplier(
+                local_store=self.local_store,
+                notes_organization_repository=organization_repository,
+            )
+            results = [
+                {"status": "ignored", "reason": "keep_local"}
+                if self._resolved_notes_adoption(
+                    envelope, repository=organization_repository
+                )
+                == "keep_local"
+                else applier.apply(envelope)
+                for envelope in envelopes
+            ]
+            rejected_results = [
+                result for result in results if result.get("status") == "rejected"
+            ]
+            if rejected_results:
+                raise ValueError(
+                    f"apply rejected: {self._rejection_message(rejected_results)}"
+                )
+            applied += sum(result.get("status") == "applied" for result in results)
+            page_conflicts: list[dict[str, Any]] = []
+            for result in results:
+                conflict = result.get("conflict")
+                if result.get("status") == "conflict" and isinstance(conflict, dict):
+                    page_conflicts.append(conflict)
+            conflicts.extend(page_conflicts)
+            if page_conflicts:
+                return {
+                    "applied_envelopes": applied,
+                    "conflicts": conflicts,
+                    "next_cursor": cursor,
+                    "has_more": True,
+                }
+            next_cursor = page.get("next_cursor")
+            if next_cursor is not None:
+                cursor = str(next_cursor)
+                self.state_repository.set_remote_pull_cursor(
+                    source_authority="server",
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    domain="sync_v2",
+                    remote_collection=dataset_id,
+                    cursor=cursor,
+                )
+                dataset_cursors = dict(profile.get("dataset_cursors") or {})
+                dataset_cursors["sync_v2"] = cursor
+                self._persist_profile_state(
+                    profile=profile,
+                    dataset_cursors=dataset_cursors,
+                    last_error=None,
+                )
+                profile = {**profile, "dataset_cursors": dataset_cursors}
+            if after_page is not None:
+                after_page(cursor)
+            if not page.get("has_more"):
+                return {
+                    "applied_envelopes": applied,
+                    "conflicts": conflicts,
+                    "next_cursor": cursor,
+                    "has_more": False,
+                }
+
+    def _resolved_notes_adoption(
+        self, envelope: Any, *, repository: Any | None = None
+    ) -> str | None:
+        """Return the explicit resolution for a replayed remote organization item."""
+
+        if (
+            self.notes_organization_repository is None
+        ):  # pragma: no cover - caller guard
+            raise ValueError("Notes organization repository is required")
+        repository = repository or self.notes_organization_repository
+        row = (
+            repository.db.get_connection()
+            .execute(
+                "SELECT resolution FROM notes_organization_adoption_reviews "
+                "WHERE server_profile_id = ? AND dataset_id = ? AND domain = ? "
+                "AND remote_object_id = ? AND state = 'resolved' "
+                "ORDER BY resolved_at DESC LIMIT 1",
+                (
+                    repository.server_profile_id,
+                    str(envelope.dataset_id),
+                    str(envelope.domain),
+                    str(envelope.object_id),
+                ),
+            )
+            .fetchone()
+        )
+        return None if row is None else str(row["resolution"])
 
     @staticmethod
     def _dump(value: Any) -> Any:
@@ -378,12 +727,12 @@ class LocalFirstSyncService:
 
     @staticmethod
     def _chunk_push_items(
-        push_items: list[Mapping[str, Any]],
+        push_items: Sequence[Mapping[str, Any]],
         *,
         batch_size: int,
     ) -> list[list[Mapping[str, Any]]]:
         return [
-            push_items[index : index + batch_size]
+            list(push_items[index : index + batch_size])
             for index in range(0, len(push_items), batch_size)
         ]
 
@@ -471,11 +820,14 @@ class LocalFirstSyncService:
             client_envelope_id = str(conflict.get("client_envelope_id") or "").strip()
             if not client_envelope_id:
                 continue
-            outbox_entry = outbox_by_client_id.get(client_envelope_id, {})
-            envelope = (
+            outbox_entry = outbox_by_client_id.get(client_envelope_id)
+            raw_envelope = (
                 outbox_entry.get("envelope")
-                if isinstance(outbox_entry.get("envelope"), Mapping)
-                else {}
+                if isinstance(outbox_entry, Mapping)
+                else None
+            )
+            envelope: Mapping[str, Any] = (
+                raw_envelope if isinstance(raw_envelope, Mapping) else {}
             )
             domain = str(envelope.get("domain") or conflict.get("domain") or "sync_v2")
             entity_id = str(envelope.get("entity_id") or client_envelope_id)

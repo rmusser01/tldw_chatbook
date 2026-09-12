@@ -40,6 +40,7 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, Input
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_left_rail import make_console_pilot
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -72,6 +73,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscriptMessage,
     _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 class _ComposerApp(App[None]):
@@ -217,7 +219,8 @@ class _FakeSideChatGateway:
         del selection
         return _FakeResolution()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, *, route=None):
+        assert route is None
         self.stream_calls += 1
         self.messages.append(messages)
         del resolution
@@ -228,6 +231,7 @@ class _FakeSideChatGateway:
 async def _side_chat_console_pilot(gateway: _FakeSideChatGateway):
     """Real ChatScreen console with the provider gateway injected offline."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -494,7 +498,7 @@ class _StubRunStatusScreen(Screen):
         return self._run_status
 
 
-class _FeedbackTranscriptApp(App[None]):
+class _FeedbackTranscriptApp(ConsolidatedCSSApp):
     """Drag -> menu harness with app-level capture of feedback requests.
 
     The default screen is a plain ``Screen`` (no
@@ -763,7 +767,8 @@ async def test_run_gating_parametrized(run_status: str, expect_armed: bool):
             is not expect_armed
         )
         assert (
-            menu.query_one("#console-selection-lgm", Button).disabled is not expect_armed
+            menu.query_one("#console-selection-lgm", Button).disabled
+            is not expect_armed
         )
         assert not menu.query_one("#console-selection-comment", Button).disabled
         if expect_armed:
@@ -1089,8 +1094,15 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
 
     def raw(event_cls, x, y, button=0):
         return event_cls(
-            widget=None, x=x, y=y, delta_x=0, delta_y=0, button=button,
-            shift=False, meta=False, ctrl=False,
+            widget=None,
+            x=x,
+            y=y,
+            delta_x=0,
+            delta_y=0,
+            button=button,
+            shift=False,
+            meta=False,
+            ctrl=False,
         )
 
     async def drag_menu_and_click_ask(pilot) -> bool:
@@ -1120,7 +1132,9 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
         pilot.app.post_message(raw(MouseUp, cx, cy, button=1))
         await pilot.pause()
         await pilot.pause()
-        modals = [s for s in pilot.app.screen_stack if isinstance(s, ConsoleSideChatModal)]
+        modals = [
+            s for s in pilot.app.screen_stack if isinstance(s, ConsoleSideChatModal)
+        ]
         return bool(modals) and bool(sel_at_click)
 
     async with make_console_pilot(size=(80, 32)) as pilot:
@@ -1131,13 +1145,15 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
             ConsoleMessageRole,
         )
 
-        transcript.set_messages([
-            ConsoleChatMessage(
-                role=ConsoleMessageRole.ASSISTANT,
-                content="first selection text",
-                id="mm0",
-            )
-        ])
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="first selection text",
+                    id="mm0",
+                )
+            ]
+        )
         await transcript.refresh_messages()
         await pilot.pause(0.4)
 
@@ -1146,13 +1162,15 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
         await pilot.press("escape")
         await pilot.pause(0.3)
 
-        transcript.set_messages([
-            ConsoleChatMessage(
-                role=ConsoleMessageRole.ASSISTANT,
-                content="second selection text",
-                id="mm0",
-            )
-        ])
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="second selection text",
+                    id="mm0",
+                )
+            ]
+        )
         await transcript.refresh_messages()
         await pilot.pause(0.4)
         row = screen.query_one("#console-message-mm0")
@@ -1314,7 +1332,12 @@ async def test_feedback_reaches_the_real_database_unmocked(tmp_path):
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
             _stub_comment_modal(screen, "needs a retry bound")
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             # The controller caches the store it was built with, so the
@@ -1461,7 +1484,12 @@ async def test_comment_annotation_reaches_the_real_database_unmocked(tmp_path):
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
             _stub_comment_modal(screen, "tighten error paths")
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store

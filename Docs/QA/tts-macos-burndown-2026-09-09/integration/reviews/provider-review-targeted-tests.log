@@ -1,0 +1,12 @@
+....................................                                     [100%]
+=============================== warnings summary ===============================
+../../../../../../../private/tmp/tts-runtime-recovery-validation/kokoro-venv/lib/python3.12/site-packages/pydub/utils.py:14
+  /private/tmp/tts-runtime-recovery-validation/kokoro-venv/lib/python3.12/site-packages/pydub/utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+2.53s setup    Tests/UI/test_speech_kokoro_defaults.py::test_fresh_engine_follows_settings_and_session_toggle_remains_explicit[False]
+
+(24 durations < 1s hidden.)
+36 passed, 1 warning in 9.51s

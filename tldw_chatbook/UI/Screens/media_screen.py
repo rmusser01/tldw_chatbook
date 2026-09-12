@@ -9,6 +9,7 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..MediaWindow_v2 import MediaWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
+from ...Constants import MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -27,6 +28,25 @@ class MediaScreen(BaseAppScreen):
         # MediaWindow itself is rebuilt fresh every visit -- there is no
         # earlier seam to inject restored view state into before it mounts.
         self._pending_media_restore: Optional[Dict[str, Any]] = None
+        # Navigation-context deep link (Home's read-it-later suggestion):
+        # stashed pre-mount by apply_navigation_context, applied AFTER the
+        # restored view state so the user's explicit navigation wins.
+        self._pending_nav_browse_subview: Optional[str] = None
+
+    def apply_navigation_context(self, context: Dict[str, Any]) -> None:
+        """Stash a browse-subview deep link for post-mount application.
+
+        Args:
+            context: Navigation payload from ``NavigateToScreen``. A valid
+                ``MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW`` value selects the
+                MediaWindow's starting browse subview (e.g. the
+                read-it-later queue); anything else is ignored.
+        """
+        if not isinstance(context, dict):
+            return
+        subview = context.get(MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW)
+        if isinstance(subview, str) and subview.strip():
+            self._pending_nav_browse_subview = subview.strip()
 
     def compose_content(self) -> ComposeResult:
         """Compose the media window content with its destination header."""
@@ -61,6 +81,19 @@ class MediaScreen(BaseAppScreen):
                     "Error applying restored Media view state"
                 )
             self._pending_media_restore = None
+        if self._pending_nav_browse_subview and self.media_window is not None:
+            # Applied after the restored state: an explicit navigation deep
+            # link (Home's "Read-it-later" suggestion) outranks whatever
+            # subview the previous visit happened to leave behind.
+            try:
+                self.media_window.select_browse_subview(
+                    self._pending_nav_browse_subview
+                )
+            except Exception:
+                logger.opt(exception=True).error(
+                    "Error applying Media navigation browse subview"
+                )
+            self._pending_nav_browse_subview = None
 
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         """Forward runtime-source changes to the mounted production media window."""

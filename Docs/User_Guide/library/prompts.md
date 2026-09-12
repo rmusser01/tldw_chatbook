@@ -37,8 +37,11 @@ Basic                                    Advanced
 - **Prompts list** — the default view: an exact "Prompts (N)" header, the
   "Filter prompts… (Enter)" field, a local collection selector, a toolbar
   ("sort: Newest" / "sort: Name", "Select", "Import…", and "Export…"), and
-  one row per prompt showing its name, artifact/source/lane summary, and
-  description and age when present.
+  one row per prompt showing its name, a source/lane summary
+  (`Local · has system and user text`), and description and age when
+  present. A plain Prompt does not repeat "Prompt" on a canvas already
+  titled Prompts; the other artifact types still name themselves
+  (`Recipe · Local · …`).
   Lists longer than one 20-row page have **Previous** and **Next** controls
   plus an exact range, total, and page line, such as **"21-40 of 45 · Page
   2 of 3"**.
@@ -72,6 +75,10 @@ collection, and sort apply to the complete source before its page is chosen and
 successful changes return to page 1. The header and page line use the matching
 total, including results beyond the first page. While an adjacent page loads,
 the last applied rows remain visible and the pager explains why it is disabled.
+A list that fits one page shows only its item range: the "Page 1 of 1" counter,
+the "Already on the first page."/"No more results." reasons and the Previous and
+Next controls all appear the moment a second page exists, the same way the Media
+list handles it.
 If a request fails, those rows remain read-only and **Retry** repeats the failed
 request; the filter still shows the text you tried while the rows and range
 continue to describe the last applied scope. Empty outcomes remain distinct:
@@ -199,6 +206,14 @@ archive aborts instead of claiming a partial success.
 - **Advanced: System and User blocks** — exposes the complete structured
   block editor plus compiled previews, keywords, author, Collections, and
   retained history.
+- **Info: provenance and lifecycle** — the third mode button beside Basic
+  and Advanced. It does not edit anything: it states where the saved Prompt
+  came from and what state it is in ("Persisted source: Local · Prompt ·
+  \<definition state\>"), reminds you that "History and collection
+  memberships describe the saved Prompt; unsaved Basic or Advanced edits
+  remain draft-only until Save.", and shows the **Collections** membership
+  block that Advanced also carries. Your draft is untouched by switching
+  into and out of it. Disabled while a save is in flight.
 - **Remembered view** — choosing Basic or Advanced is saved for this profile.
   A Recipe, multi-block Prompt, compatibility/conversion state, version
   conflict, or record that cannot be safely updated opens in Advanced with a
@@ -234,9 +249,10 @@ to list** then reloads the current search/collection/sort/page scope before show
 it; the membership outcome never says that the Prompt itself was saved.
 
 Nothing autosaves here. While you have unsaved edits the meta line shows an "Unsaved
-changes" marker, and leaving the editor (Back, another row, another screen) is
-blocked until you save or resolve the edit. The save-status line reports the
-outcome:
+changes" marker, and leaving the editor (Back, Escape, another row, another screen)
+is blocked until you save or resolve the edit. The block is silent today — Escape
+looks like it did nothing rather than saying why it refused. The save-status line
+reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -292,10 +308,21 @@ The fixed action area shows only actions valid for the current lifecycle:
 | State | Visible actions |
 |---|---|
 | New | **Save prompt**, **Cancel** |
-| Saved and clean | **Use in Console**, **More actions** |
+| Saved and clean | **Use in Console** (in the header, see below), **More actions** |
 | Saved and changed | **Save changes**, **Discard changes** |
 | Version conflict | **Save as new**, **Reload** |
 | Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
+
+**Use in Console** sits in the editor **header**, on its own row directly
+under **Basic | Advanced | Info** — the same shape the Media Reader uses for
+its own Use in Console, and not at the bottom of the editor below every
+field. Its own row so the label paints in full even in the narrowest editor
+pane.
+
+That header **scrolls with the editor**: on a long prompt, scroll back to the
+top of the editor to reach it. The action strip that stays put at the bottom
+of the pane is the lifecycle one (**Save changes** / **Discard changes** /
+**More actions**); Use in Console is not in it.
 
 **More actions** expands inline for a saved, clean item. It contains Export…,
 Copy Markdown, Duplicate, Collections, History, and Delete. Press **Escape** to
@@ -340,8 +367,10 @@ message `A Prompt variable name exceeds 64 characters.` or
 enabled.
 
 A System lane is always a separate choice. The checkbox reads
-`Replace the current session System prompt with this System lane` and starts
-**Off**. Turning it on may add System-only fields without discarding values you
+`Replace the current session System prompt with this System lane`, paints
+**☐** while off and **☑** while on (`[ ]` / `[x]` with ASCII glyphs), and
+starts **Off** — the word beside it says so too, so the state never depends on
+colour. Turning it on may add System-only fields without discarding values you
 already entered. **Apply** fills all active lanes; **Use original placeholders**
 applies the selected lanes unchanged; **Cancel** applies nothing. A System-only
 Prompt, including one whose User lane is blank, has no active lane until you
@@ -457,3 +486,43 @@ pattern — press opens Newest / Name with ✓ on the active one, a pick
 requests that exact scope at page 1, Escape cancels; the collection
 control's label dropped the cycle glyph — it opens the collection
 manager, a direct-pick surface, and never cycled.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): the editor's **Info** mode — a third
+button beside Basic and Advanced, carrying the persisted-source/
+definition-state line, the draft-vs-saved reminder, and the Collections
+membership block — shipped undocumented and is now described. Basic and
+Advanced are unchanged.)*
+
+*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32074: the
+Prompt-variables checkbox paints ☐/☑ instead of an empty frame whose state was
+carried by colour alone, and **Use in Console** moved from the bottom of the
+editor into the header, on its own row directly under Basic/Advanced/Info.
+task-32067: a one-page prompt list drops its "Page 1 of 1" counter, boundary
+reasons and Previous/Next. Fix round 2: that header row now hides itself along
+with the button, instead of leaving an empty raised strip; and re-entering
+Media at an ordinary width no longer drops a pane priority the user just set
+with a grip.)*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32104: the
+guide now states where "Use in Console" lives and that the editor header
+scrolls, rather than implying it is always on screen. The one-page pager rule
+behind this page's Previous/Next behaviour is now one shared helper across
+Media, Conversations and Prompts, with no change to what any of them
+renders.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32217: with no
+prompt open the list takes the columns the "Select a prompt to edit it here."
+pane was holding — measured at 235 columns, list 50 → 134 cells).*
+
+*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32364: a
+row on a canvas titled Prompts no longer opens with "Prompt · " — a plain
+Prompt reads `Local · has system and user text`, while Recipe and the other
+artifact types still name themselves — and the lane summary says what the
+prompt has instead of the schema's "System + User".)*
+
+*Verified against fix/library-crit10-docs — 2026-09-11, fix round 1 (task-32366:
+the dirty-edit block now names Escape alongside Back, and says the block is
+silent today — `_exit_library_prompt_editor_guarded` returns False without
+notifying, filed as task-32393. `library.md`'s Escape section states the same
+veto in the same words.)*

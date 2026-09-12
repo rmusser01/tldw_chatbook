@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     build_llamacpp_chat_payload,
 )
+from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute
 
 BASE = "http://127.0.0.1:9191"
 MODEL = "../../../Downloads/Qwen3.8-27B-UD-Q8_K_XL.gguf"
@@ -153,6 +154,13 @@ def main() -> None:
     # --- F: OUR gateway stream filters think text (unsplit) / stays clean (split) ---
     async def stream_check() -> tuple[str, str]:
         gw = ConsoleProviderGateway()
+
+        async def admit():
+            return gw._capture_off_admission(None)
+
+        async def admit_fallback(_endpoint, _payload):
+            return gw._capture_off_admission(ConsoleRequestRoute.LLAMA_FALLBACK)
+
         try:
             chunks = []
             async for c in gw.stream_llamacpp_chat(
@@ -162,6 +170,8 @@ def main() -> None:
                 max_tokens=MAX_TOKENS,
                 temperature=0.7,
                 reasoning_effort="xhigh",
+                before_adapter=admit,
+                before_fallback_adapter=admit_fallback,
             ):
                 chunks.append(c)
             visible = "".join(chunks)
@@ -188,6 +198,7 @@ def main() -> None:
                 max_tokens=MAX_TOKENS,
                 temperature=0.7,
                 reasoning_effort="xhigh",
+                adapter_admission=gw._capture_off_admission(None),
             )
         finally:
             await gw.aclose()

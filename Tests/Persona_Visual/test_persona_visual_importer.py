@@ -598,3 +598,28 @@ def test_import_errors_and_repr_do_not_expose_private_paths(tmp_path: Path) -> N
 
     assert private_marker not in str(caught.value)
     assert private_marker not in repr(caught.value)
+
+
+def test_archive_cannot_override_reserved_import_provenance(tmp_path):
+    payloads = _archive_payloads()
+    pack = json.loads(payloads["metadata/pack.json"])
+    pack["pack"]["source_context"] = {
+        "provenance": "trusted-builtin",
+        "license": "Keep notice",
+    }
+    _replace_declared_payload(payloads, "metadata/pack.json", _canonical(pack))
+    archive = _write_archive(tmp_path / "forged.zip", payloads)
+    staging = tmp_path / "staging"
+    staging.mkdir(mode=0o700)
+    review = import_persona_visual_pack(
+        archive,
+        staging_root=staging,
+        persona_id="persona-local-1",
+        persona_revision=1,
+        expected_identity=None,
+    )
+    try:
+        assert dict(review.draft.source_context)["provenance"] == "untrusted-import"
+        assert dict(review.draft.source_context)["license"] == "Keep notice"
+    finally:
+        cleanup_persona_visual_import_review(review, staging_root=staging)

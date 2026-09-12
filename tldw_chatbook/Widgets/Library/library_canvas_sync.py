@@ -27,9 +27,11 @@ anywhere else goes stale the moment a widget is replaced.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
+from textual.css.query import NoMatches
+from textual.widgets import Button
 
 
 class PostRecomposeCallback:
@@ -59,6 +61,55 @@ class PostRecomposeCallback:
             None.
         """
         self._post_recompose_callback = callback
+
+    @property
+    def has_pending_recompose_callback(self) -> bool:
+        """Whether a follow-up is already queued for the next recompose.
+
+        ``queue_after_recompose`` REPLACES, so a caller that would install a
+        best-effort follow-up (rather than an intentional supersession) has
+        to ask first or it silently evicts the owner's -- task-31567 lost a
+        bulk-delete receipt's "land on Undo" intent that way.
+
+        Returns:
+            ``True`` while a callback is queued for the next recompose.
+        """
+        return self._post_recompose_callback is not None
+
+    def preserve_same_id_focus_after_recompose(self) -> None:
+        """Replace a focused child with its newly composed same-ID owner."""
+        focused = self.app.focused
+        focused_id = getattr(focused, "id", None)
+        if not self.is_attached or focused is None or not focused_id:
+            return
+        belongs_to_canvas = self in focused.ancestors
+        if focused.parent is None and not belongs_to_canvas:
+            try:
+                self.query_one(f"#{focused_id}")
+            except NoMatches:
+                return
+            belongs_to_canvas = True
+        if not belongs_to_canvas:
+            return
+
+        pending = self._post_recompose_callback
+        self.screen.set_focus(None)
+
+        def restore_focused_child_after_recompose() -> None:
+            live_focus = self.app.focused
+            if not (
+                live_focus is not None
+                and live_focus is not focused
+                and live_focus.parent is not None
+            ):
+                try:
+                    self.query_one(f"#{focused_id}").focus()
+                except NoMatches:
+                    pass
+            if pending is not None:
+                pending()
+
+        self.queue_after_recompose(restore_focused_child_after_recompose)
 
     def _after_recompose(self) -> None:
         """Subclass hook: post-compose wiring, run BEFORE the queued callback.
@@ -108,3 +159,38 @@ class PostRecomposeCallback:
             callback()
         except Exception:
             logger.debug("Library post-recompose callback failed")
+
+
+def library_row_button(*args: Any, **kwargs: Any) -> Button:
+    """Build a Library list ROW button with no press flash (task-31945).
+
+    Textual's ``Button._on_click`` drops any click that lands while the
+    previous press's 0.2s ``-active`` flash is still on the widget (``if
+    not self.has_class("-active"): self.press()``). A list row is clicked
+    in fast succession all the time -- ☐ and then the same row's title,
+    which is what critique #5 did and read as "only the one-cell checkbox
+    is a target" -- so the second click was simply lost. A row has no use
+    for a press flash anyway: the marker flip (select mode) or the item
+    loading into the Reader (browse mode) is the feedback.
+
+    task-31631 fixed this on the Media rows with a literal at that one
+    construction site; the conversations, notes and prompts rows kept the
+    default and dropped the same clicks. Every Library LIST row now builds
+    through this helper -- the four browse canvases the task names, plus
+    the notes TREE row and the skills row, which have the same shape and
+    the same bug -- so the press behaviour is one decision in one place
+    rather than literals that drift apart.
+
+    Args:
+        *args: Positional ``Button`` arguments (the label).
+        **kwargs: Keyword ``Button`` arguments (id, classes, compact, ...).
+
+    Returns:
+        The ``Button``, with its active-effect duration zeroed. A plain
+        ``Button`` on purpose -- a subclass would change what every
+        ``Button`` type selector in the CSS bundle and every
+        ``query(Button)`` in the app sees.
+    """
+    button = Button(*args, **kwargs)
+    button.active_effect_duration = 0
+    return button

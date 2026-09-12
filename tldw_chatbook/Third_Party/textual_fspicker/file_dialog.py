@@ -13,15 +13,36 @@ from pathlib import Path
 # Textual imports.
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.events import Mount
 from textual.widgets import Button, Input, Label, Select
 
 ##############################################################################
 # Local imports.
-from .base_dialog import ButtonLabel, FileSystemPickerScreen, InputBar
+from .base_dialog import (
+    ButtonLabel,
+    FileSystemPickerScreen,
+    InputBar,
+    resolve_typed_directory,
+)
 from .parts import DirectoryNavigation, DriveNavigation
 from .path_filters import Filters
 from .path_maker import MakePath
+
+
+##############################################################################
+class FileNameInput(Input):
+    """The input bar's file-name/path field.
+
+    Exists for one binding: Textual's `Input` maps `ctrl+a` to "go to
+    start", so the terminal-standard "select everything I typed" was
+    unreachable in the one field of this dialog a user types a path into
+    (task-32229). A subclass is the only place that binding can win --
+    the focused widget's own bindings beat the screen's.
+    """
+
+    BINDINGS = [Binding("ctrl+a", "select_all", show=False)]
 
 
 ##############################################################################
@@ -104,14 +125,43 @@ class BaseFileDialog(FileSystemPickerScreen):
         away from wherever ``_focus_initial_widget()`` put it right after
         mount (task-1479).
         """
+        self._select_folder_click_fill: str | None = None
+        """The field value ``_select_file`` most recently click-filled,
+
+        while the field still holds exactly that value (task-32122 round
+        3). Lets ``FileSystemPickerScreen._resolve_select_folder_target``
+        tell "a click on a file pre-filled this" (so ``Open`` still works)
+        apart from "the user typed a folder path into the same field" --
+        an earlier fix compared the field's value against whatever
+        ``DirectoryNavigation`` happened to have highlighted instead, but
+        ``_settle_highlight`` defaults ``highlighted`` to 0 on every
+        repopulate (including the first load) and ".." is always option 0
+        in a non-root directory, so a typed, never-clicked ".." was
+        misread as a click echo and silently swallowed.
+
+        Set only by ``_select_file`` (and only when ``_offer_select_
+        folder`` is on -- other ``BaseFileDialog`` subclasses, e.g.
+        ``FileSave``, never read this). Cleared by ``_update_field_label``
+        the moment an ``Input.Changed`` delivers a value that no longer
+        matches -- covers both genuine retyping and clicking a second,
+        different file (which re-stamps it instead). The ``Input.Changed``
+        message ``_select_file``'s own assignment posts is itself queued,
+        not delivered synchronously, so comparing values (not just
+        "was there a Changed event") is what keeps that self-echo from
+        immediately clearing the flag it just set.
+        """
 
     def _input_bar(self) -> ComposeResult:
         """Provide any widgets for the input before, before the buttons."""
         # (task-3304, MI-15) Name the field: the bar's Input was unlabeled.
         # The label precedes the Input, so the task-1479 scoped lookup
         # (InputBar's first Input) still resolves the filename field.
-        yield Label("File name:", id="file-name-label")
-        yield Input(Path(self._default_file or "").name, placeholder="File name")
+        yield Label(
+            self._field_label_text(self._default_file or ""), id="file-name-label"
+        )
+        yield FileNameInput(
+            Path(self._default_file or "").name, placeholder="File name or path"
+        )
         if self._filters:
             yield FileFilter(
                 self._filters.selections,
@@ -119,6 +169,121 @@ class BaseFileDialog(FileSystemPickerScreen):
                 value=0,
                 allow_blank=False,
             )
+
+    def _field_label_text(self, value: str) -> str:
+        """"File name:", or "Folder path:" once the typed text is a folder.
+
+        Only ``FileOpen(offer_select_folder=True)`` sets ``_offer_select_
+        folder`` -- ``FileSave`` (also a ``BaseFileDialog``) never does, so
+        this always returns "File name:" there (task-32122 AC#2: the field
+        this swaps between is exactly the one "Select folder" now reads,
+        so the label should say so precisely when that action would use
+        it -- not for every keystroke of an ordinary filename).
+        """
+        if not getattr(self, "_offer_select_folder", False) or not value:
+            return "File name:"
+        try:
+            candidate = MakePath.of(value).expanduser()
+            if not candidate.is_absolute():
+                candidate = self.query_one(DirectoryNavigation).location / candidate
+            if candidate.is_dir():
+                return "Folder path:"
+        except (RuntimeError, OSError, ValueError):
+            pass
+        return "File name:"
+
+    @on(Input.Changed)
+    def _update_field_label(self, event: Input.Changed) -> None:
+        """Keep the field label in step with what "Select folder" would use."""
+        if not getattr(self, "_offer_select_folder", False):
+            return
+        try:
+            bar_input = self.query_one(InputBar).query_one(Input)
+        except Exception:
+            return
+        if event.input is not bar_input:
+            # This screen also carries a hidden Ctrl+L path bar and a
+            # search input (both Input widgets too); only the input bar's
+            # own field selects a filename/folder.
+            return
+        if event.value != self._select_folder_click_fill:
+            # A real edit (or this delivery is stale relative to a newer
+            # click-fill) -- not the queued echo of the click-fill that
+            # set it. See ``_select_folder_click_fill``'s docstring.
+            self._select_folder_click_fill = None
+        self._refresh_field_label(event.value)
+
+    @on(Input.Changed)
+    def _follow_typed_directory(self, event: Input.Changed) -> None:
+        """Move the listing to a rooted directory path as it is typed.
+
+        task-32229: this dialog made a terminal user click down from
+        ``$HOME``; the only field that took typing was the file name, and
+        it only resolved on Enter. Typing (or pasting) an absolute path --
+        or one under ``~`` -- now walks the tree there straight away.
+
+        Deliberately ROOTED paths only. A relative value is a file name in
+        the directory being browsed, and one of them (a click on a folder
+        row) is pre-filled by ``_select_file`` for "Select folder" to read:
+        chasing those would move the ground under the value the user just
+        picked.
+        """
+        try:
+            bar_input = self.query_one(InputBar).query_one(Input)
+        except NoMatches:
+            return
+        if event.input is not bar_input:
+            # The screen's hidden Ctrl+L path bar and Ctrl+F search box are
+            # `Input`s too -- see `_update_field_label`.
+            return
+        # Rooted-ness is decided on the stripped value; the RAW value is what
+        # the resolver gets. Leading/trailing spaces are significant in a
+        # POSIX directory name and `resolve_typed_directory` documents that
+        # it takes the text exactly as typed (review round 1).
+        typed = event.value.strip()
+        try:
+            rooted = typed.startswith("~") or MakePath.of(typed).is_absolute()
+        except (OSError, ValueError):
+            return
+        if not rooted:
+            return
+        navigation = self.query_one(DirectoryNavigation)
+        target = resolve_typed_directory(event.value, navigation.location)
+        if isinstance(target, Path) and target != navigation.location:
+            navigation.location = target
+
+    @on(DirectoryNavigation.Changed)
+    def _refresh_field_label_on_navigation(
+        self, event: DirectoryNavigation.Changed
+    ) -> None:
+        """Keep the label in step with browsing too, not just typing.
+
+        ``_field_label_text`` resolves a *relative* typed value against
+        ``DirectoryNavigation.location`` -- so browsing elsewhere without
+        touching the field again changes what "Select folder" would
+        resolve it to, and the label must follow (Qodo review round 4:
+        this handler used to exist only for ``Input.Changed``, so it went
+        stale after pure navigation). This fires alongside
+        ``FileSystemPickerScreen._on_directory_changed``'s own handler for
+        the same message -- ``@on``-decorated handlers run for every class
+        in the MRO, not just the most-derived one (see
+        ``_focus_initial_widget``'s docstring in ``base_dialog.py``).
+        """
+        try:
+            bar_input = self.query_one(InputBar).query_one(Input)
+        except Exception:
+            return
+        self._refresh_field_label(bar_input.value)
+
+    def _refresh_field_label(self, value: str) -> None:
+        """Recompute and repaint ``#file-name-label`` for ``value``."""
+        if not getattr(self, "_offer_select_folder", False):
+            return
+        try:
+            label = self.query_one("#file-name-label", Label)
+        except Exception:
+            return
+        label.update(self._field_label_text(value))
 
     @on(Mount)
     def _initial_filter(self) -> None:
@@ -141,6 +306,8 @@ class BaseFileDialog(FileSystemPickerScreen):
         file_name = self.query_one(InputBar).query_one(Input)
         file_name.value = str(event.path.name)
         file_name.focus()
+        if getattr(self, "_offer_select_folder", False):
+            self._select_folder_click_fill = file_name.value
 
     @on(Input.Changed)
     def _clear_error(self) -> None:

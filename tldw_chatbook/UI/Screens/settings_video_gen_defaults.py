@@ -43,6 +43,11 @@ BACKEND_LABELS: dict[str, str] = {
     "stable_diffusion_cpp": "SD.cpp video (local)",
 }
 
+#: Retention modes, in the order the panel offers them. The first entry is
+#: also the value the panel's ``Select`` falls back to when the configured
+#: mode is unrecognized.
+RETENTION_CHOICES: tuple[str, ...] = ("session", "ttl")
+
 
 @dataclass(frozen=True)
 class FieldSpec:
@@ -211,6 +216,50 @@ _GLOBAL_DRAFT_KEYS: tuple[str, ...] = (
 )
 
 
+#: Widget ids of the two ``Select``s the panel composes. Named here because
+#: the screen has to reason about their mount-time echoes before either one
+#: exists (see ``expected_select_mount_values``).
+DEFAULT_BACKEND_SELECT_ID = "settings-videogen-default_backend"
+RETENTION_SELECT_ID = "settings-videogen-retention"
+
+
+def expected_select_mount_values(
+    cfg: VideoGenerationConfig, overlay: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The value each Video Gen ``Select`` will carry when it next mounts.
+
+    A freshly composed Textual ``Select`` re-posts ``Changed`` from its own
+    ``_on_mount`` whenever it carries a non-blank value, so the screen
+    cannot tell that echo apart from a user edit at the point it arrives.
+    It has to know, before the compose, which value each ``Select`` is
+    about to restate. This mirrors ``VideoGenSettingsPanel.compose``
+    exactly -- keep the two in step (TASK-23191: they were not, and the
+    unguarded retention ``Select`` reported "Unsaved changes" on a profile
+    nobody had edited).
+
+    Args:
+        cfg: The effective video-generation config the panel composes from.
+        overlay: The screen's staged (unsaved) draft values.
+
+    Returns:
+        ``select widget id -> mount value``. A ``Select`` that will mount
+        blank -- and so stay silent -- is absent from the mapping.
+    """
+    values: dict[str, Any] = {}
+
+    default_backend = overlay.get("default_backend", cfg.default_backend)
+    if default_backend in BACKEND_IDS:
+        values[DEFAULT_BACKEND_SELECT_ID] = default_backend
+
+    # allow_blank=False, so this one always mounts with a value and always
+    # echoes -- including the fallback when the config value is unknown.
+    retention = str(overlay.get("retention", cfg.retention))
+    values[RETENTION_SELECT_ID] = (
+        retention if retention in RETENTION_CHOICES else RETENTION_CHOICES[0]
+    )
+    return values
+
+
 def canonical_backend_order(backend_ids: Any) -> list[str]:
     """Normalize an ``enabled_backends``-shaped list to ``BACKEND_IDS``'
     canonical order, dropping any unrecognized entries (the list is a set;
@@ -334,7 +383,7 @@ _GLOBAL_INT_FIELD_SPECS: tuple[tuple[str, str, int], ...] = (
     ("max_store_mb", "Store cap (MB)", 1),
 )
 
-_RETENTION_CHOICES = frozenset({"session", "ttl"})
+_RETENTION_CHOICES = frozenset(RETENTION_CHOICES)
 
 
 def validate_draft(draft: VideoGenDraftValues) -> tuple[list[str], list[str]]:

@@ -93,6 +93,41 @@ def _parse_iso_timestamp(value: str | datetime | None) -> datetime | None:
     return parsed
 
 
+def next_briefing_eligibility(
+    row: dict[str, Any], *, now: datetime | None = None
+) -> datetime:
+    """Return one schedule row's next eligible instant in UTC.
+
+    The latest attempt wins regardless of outcome; a never-attempted schedule
+    is eligible immediately. This is shared by the queue projection and the
+    schedule mutation receipt so those surfaces cannot disagree.
+
+    Args:
+        row: Schedule row containing cadence and attempt/success timestamps.
+        now: Injected fallback for a never-attempted schedule.
+
+    Returns:
+        The next eligible timezone-aware UTC instant.
+    """
+    current = now if now is not None else datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    last_completed = _parse_iso_timestamp(
+        row.get("last_completed_at", row.get("last_success_at"))
+    )
+    last_attempt = _parse_iso_timestamp(row.get("last_attempt_at"))
+    last_activity = max(
+        (value for value in (last_completed, last_attempt) if value is not None),
+        default=None,
+    )
+    if last_activity is None:
+        return current.astimezone(timezone.utc)
+    return (
+        last_activity
+        + timedelta(seconds=int(row["briefing_cadence_seconds"]))
+    ).astimezone(timezone.utc)
+
+
 class BriefingProjection:
     """Project `SubscriptionsDB.list_briefing_schedules` rows into tasks."""
 
@@ -155,23 +190,11 @@ class BriefingProjection:
             The row projected into a `ScheduledTask`.
         """
         watchlist_id = row["watchlist_id"]
-        cadence_seconds = int(row["briefing_cadence_seconds"])
-        last_completed = _parse_iso_timestamp(row.get("last_completed_at"))
-        last_attempt = _parse_iso_timestamp(row.get("last_attempt_at"))
-        last_activity = max(
-            (dt for dt in (last_completed, last_attempt) if dt is not None),
-            default=None,
-        )
-        next_run_at = (
-            last_activity + timedelta(seconds=cadence_seconds)
-            if last_activity is not None
-            else now
-        )
         return ScheduledTask(
             id=f"{BRIEFING_TASK_PREFIX}:{watchlist_id}",
             title=row.get("name") or f"Watchlist {watchlist_id}",
             type="briefing_job",
             status=TaskStatus.WAITING,
-            next_run_at=next_run_at,
+            next_run_at=next_briefing_eligibility(row, now=now),
             owner_id=owner_id,
         )

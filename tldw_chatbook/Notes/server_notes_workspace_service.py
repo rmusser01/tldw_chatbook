@@ -792,6 +792,92 @@ class ServerNotesWorkspaceService:
         client = self._require_client()
         return await client.delete_workspace_source(workspace_id, source_id)
 
+    async def preview_workspace_source(
+        self,
+        workspace_id: str,
+        source_id: str,
+        *,
+        max_chars: int = 3000,
+        chunk_limit: int = 3,
+    ) -> dict[str, Any]:
+        """Return the server's bounded source preview projection."""
+
+        self._enforce_policy(self._workspace_action_id("detail"))
+        client = self._require_client()
+        response = await client.get_workspace_source_preview(
+            workspace_id,
+            source_id,
+            max_chars=max_chars,
+            chunk_limit=chunk_limit,
+        )
+        return dict(response)
+
+    async def get_workspace_source_status(
+        self, workspace_id: str
+    ) -> dict[str, Any]:
+        """Return the server's source readiness projection unchanged."""
+
+        self._enforce_policy(self._workspace_action_id("detail"))
+        client = self._require_client()
+        return dict(await client.get_workspace_source_status(workspace_id))
+
+    async def get_workspace_capabilities(
+        self, workspace_id: str
+    ) -> dict[str, Any]:
+        """Return the server's capability read projection unchanged."""
+
+        self._enforce_policy(self._workspace_action_id("detail"))
+        client = self._require_client()
+        return dict(await client.get_workspace_capabilities(workspace_id))
+
+    async def set_workspace_source_selection(
+        self, workspace_id: str, selected_ids: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        """Persist desired association IDs and return reconciled source rows."""
+
+        from ..tldw_api import WorkspaceSourceSelectionRequest
+
+        self._enforce_policy(self._workspace_action_id("update"))
+        client = self._require_client()
+        request = WorkspaceSourceSelectionRequest(selected_ids=list(selected_ids))
+        response = await client.set_workspace_source_selection(workspace_id, request)
+        rows = [
+            self.normalize_workspace_source(item)
+            for item in self._coerce_items(response)
+        ]
+        selected = set(request.selected_ids)
+        if any(
+            row["workspace_id"] != workspace_id
+            or row["selected"] != (str(row["id"]) in selected)
+            for row in rows
+        ):
+            raise ValueError("Server source selection reconciliation did not match.")
+        if not selected.issubset({str(row["id"]) for row in rows}):
+            raise ValueError("Server source selection reconciliation is incomplete.")
+        return rows
+
+    async def reorder_workspace_sources(
+        self, workspace_id: str, ordered_ids: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        """Persist association order and return post-write row versions."""
+
+        from ..tldw_api import WorkspaceSourceReorderRequest
+
+        self._enforce_policy(self._workspace_action_id("update"))
+        client = self._require_client()
+        request = WorkspaceSourceReorderRequest(ordered_ids=list(ordered_ids))
+        response = await client.reorder_workspace_sources(workspace_id, request)
+        rows = [
+            self.normalize_workspace_source(item)
+            for item in self._coerce_items(response)
+        ]
+        if [str(row["id"]) for row in rows] != request.ordered_ids or any(
+            row["workspace_id"] != workspace_id or row["position"] != index
+            for index, row in enumerate(rows)
+        ):
+            raise ValueError("Server source reorder reconciliation did not match.")
+        return rows
+
     async def list_workspace_artifacts(self, workspace_id: str) -> list[dict[str, Any]]:
         self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()

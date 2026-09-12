@@ -640,11 +640,15 @@ class TestPipelineRrfMerge:
     """The pipeline 'rrf_merge' parallel step fuses FTS5 legs vs semantic leg."""
 
     @staticmethod
-    def _pipeline_result(source, doc_id):
+    def _pipeline_result(source, doc_id, *, score=1.0):
         from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
 
         return SearchResult(
-            source=source, id=doc_id, title=doc_id, content=f"content {doc_id}"
+            source=source,
+            id=doc_id,
+            title=doc_id,
+            content=f"content {doc_id}",
+            score=score,
         )
 
     def test_builtin_hybrid_pipeline_uses_rrf_merge(self):
@@ -704,14 +708,14 @@ class TestPipelineRrfMerge:
         from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 
         media = [
-            self._pipeline_result("media", "m1"),
-            self._pipeline_result("media", "shared"),
+            self._pipeline_result("media", "m1", score=0.11),
+            self._pipeline_result("media", "shared", score=0.22),
         ]
-        conversations = [self._pipeline_result("conversation", "c1")]
+        conversations = [self._pipeline_result("conversation", "c1", score=0.33)]
         notes = []
         semantic = [
-            self._pipeline_result("media", "shared"),
-            self._pipeline_result("media", "s2"),
+            self._pipeline_result("media", "shared", score=0.88),
+            self._pipeline_result("media", "s2", score=0.77),
         ]
 
         async def fake_media(app, query, top_k, keyword_filter=None):
@@ -775,6 +779,21 @@ class TestPipelineRrfMerge:
         assert shared.metadata["hybrid_fusion"]["fts_rank"] == 3
         assert shared.metadata["hybrid_fusion"]["vector_rank"] == 1
         assert shared.metadata["hybrid_fusion"]["alpha"] == 0.7
+        by_key = {(result.source, result.id): result for result in results}
+        expected_raw_scores = {
+            ("media", "m1"): (0.11, None),
+            ("conversation", "c1"): (0.33, None),
+            ("media", "shared"): (0.22, 0.88),
+            ("media", "s2"): (None, 0.77),
+        }
+        for key, (fts_score, vector_score) in expected_raw_scores.items():
+            result = by_key[key]
+            fusion = result.metadata["hybrid_fusion"]
+            assert fusion["fts_score"] == fts_score
+            assert fusion["vector_score"] == vector_score
+            for raw_score in (fts_score, vector_score):
+                if raw_score is not None:
+                    assert result.score != pytest.approx(raw_score)
 
     def test_vector_leg_live_with_real_search_semantic(self, monkeypatch):
         """Regression: the vector leg must survive the pipeline param splat.

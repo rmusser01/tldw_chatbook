@@ -16,8 +16,8 @@ from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleAssistantChip,
     ConsoleChip,
+    ConsoleLibraryChip,
     ConsoleModelChip,
-    ConsoleRagChip,
     ConsoleSourcesChip,
     ConsoleToolsChip,
 )
@@ -54,16 +54,14 @@ def test_assistant_chip_is_an_action_chip():
 
 
 @pytest.mark.unit
-def test_rag_chip_is_an_action_chip():
-    """The Library-search chip opens the Library search settings modal (user
-    request 2026-08-01): "Library search: off" must be an entry point into
-    enabling it, not an inert status label."""
+def test_library_chip_is_an_action_chip():
+    """The Library policy chip opens its policy editor."""
     for action in ("enter", "space"):
         assert any(
-            binding.key == action for binding in ConsoleRagChip.BINDINGS
+            binding.key == action for binding in ConsoleLibraryChip.BINDINGS
         ), action
-    assert issubclass(ConsoleRagChip, ConsoleChip)
-    assert hasattr(ConsoleRagChip, "OpenRequested")
+    assert issubclass(ConsoleLibraryChip, ConsoleChip)
+    assert hasattr(ConsoleLibraryChip, "OpenRequested")
 
 
 @pytest.mark.unit
@@ -132,7 +130,7 @@ def test_screen_subscribes_to_both_new_chip_messages():
     for handler_name, chip in (
         ("_console_model_chip_activated", ConsoleModelChip),
         ("_console_assistant_chip_activated", ConsoleAssistantChip),
-        ("_console_rag_chip_activated", ConsoleRagChip),
+        ("_console_library_chip_activated", ConsoleLibraryChip),
         ("_console_sources_chip_activated", ConsoleSourcesChip),
         ("_console_tools_chip_activated", ConsoleToolsChip),
     ):
@@ -216,8 +214,6 @@ async def test_changing_the_query_unstages_a_pending_pick():
     visible -- clicking one would swap to a character the user was no
     longer looking at.
     """
-    from textual.app import App
-
     from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
         ConsoleCharacterPickerModal,
     )

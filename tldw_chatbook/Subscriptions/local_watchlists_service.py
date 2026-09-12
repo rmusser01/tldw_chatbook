@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import inspect
 import hashlib
+import inspect
+import json
 import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from loguru import logger
 
@@ -30,6 +30,15 @@ from .item_persist import (
 from .watchlist_content_alert_service import WatchlistContentAlertService
 from .watchlist_bundle_service import WatchlistBundleService
 from .watchlist_filter_service import WatchlistFilterService
+from .watchlist_failure import (
+    LEGACY_FAILURE_MESSAGE,
+    LEGACY_FAILURE_NEXT_ACTION,
+    WatchlistFailure,
+    classify_watchlist_failure,
+    sanitize_watchlist_failure_stats,
+    watchlist_failure_from_stats,
+    watchlist_failure_stats,
+)
 from .watchlist_normalizers import (
     WATCHLIST_NAME_SEPARATOR,
     build_watchlist_item_id,
@@ -38,6 +47,7 @@ from .watchlist_normalizers import (
     normalize_watchlist_item,
     normalize_watchlist_run,
 )
+from .watchlist_item_page import WatchlistItemCursor, WatchlistItemPage
 
 
 _ALERT_CONDITION_TYPES = frozenset(
@@ -85,6 +95,13 @@ _DISPOSITION_COUNTERS: tuple[str, ...] = (
     # already in flight -- see `_check_url_guarded`.
     "skipped",
 )
+
+_FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+_PRODUCT_USER_AGENT = "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)"
+
+_RUN_CLAIM_WAIT_TIMEOUT_SECONDS = 300.0
+_RUN_CLAIM_POLL_INITIAL_SECONDS = 0.01
+_RUN_CLAIM_POLL_MAX_SECONDS = 0.5
 
 
 def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
@@ -274,7 +291,11 @@ def _entirely_skipped_dispositions(
     Args:
         dispositions_counts: The run's `_disposition_counts()` output, or
             `None`/absent for source types with no dispositions (feed/API
-            runs, which can never skip and always return False here).
+            runs, whose dispositions are ``None`` on the ordinary path).
+            task-19562: feed/API runs CAN now skip -- when they do they carry
+            a single `DISPOSITION_SKIPPED_IN_FLIGHT` disposition precisely so
+            they match here and `execute_run` skips the health accounting,
+            exactly like an entirely-skipped url-family run.
 
     Returns:
         True only for a non-empty counts mapping that is all zeros except
@@ -375,8 +396,28 @@ def _max_withheld_percentage(dispositions: list[dict[str, Any]]) -> float | None
     return max(percentages) if percentages else None
 
 
+def _sanitize_failed_run_payload(
+    stats: Mapping[str, Any],
+) -> tuple[dict[str, Any], str, str]:
+    """Keep failed-run accounting and validated recovery fields only."""
+    safe_stats, failure = sanitize_watchlist_failure_stats(stats)
+    if failure is None:
+        return (
+            safe_stats,
+            LEGACY_FAILURE_MESSAGE,
+            f"{LEGACY_FAILURE_MESSAGE} {LEGACY_FAILURE_NEXT_ACTION}",
+        )
+    return (
+        safe_stats,
+        failure.message,
+        f"{failure.message} {failure.next_action}",
+    )
+
+
 class LocalWatchlistsService:
     """Thin adapter over `SubscriptionsDB` for the shared watchlists seam."""
+
+    CREATE_FORM_SOURCE_TYPES = ("rss", "atom", "url")
 
     #: TASK-2305. Every local run read goes through this projection, so a run
     #: arrives already knowing which source produced it and which watchlists
@@ -504,7 +545,10 @@ class LocalWatchlistsService:
             if not q
             else max(normalized_limit + normalized_offset, 1000)
         )
-        rows = self._db().get_all_subscriptions(
+        db = self._db()
+        rows = await run_db_off_loop(
+            db,
+            db.get_all_subscriptions,
             include_inactive=True,
             limit=fetch_limit,
             offset=0 if q else normalized_offset,
@@ -522,7 +566,8 @@ class LocalWatchlistsService:
         return filtered[normalized_offset : normalized_offset + normalized_limit]
 
     async def get_source(self, source_id: Any) -> dict[str, Any]:
-        row = self._db().get_subscription(int(source_id))
+        db = self._db()
+        row = await run_db_off_loop(db, db.get_subscription, int(source_id))
         if row is None:
             raise KeyError(f"Subscription not found: {source_id}")
         return normalize_local_subscription_row(row)
@@ -599,7 +644,9 @@ class LocalWatchlistsService:
         subscription_id = int(source_id) if source_id is not None else None
         status_filter = status if status else None
         fetch_limit = int(limit) + int(offset)
-        rows = db.get_new_items(
+        rows = await run_db_off_loop(
+            db,
+            db.get_new_items,
             subscription_id=subscription_id,
             status=status_filter,
             limit=fetch_limit,
@@ -614,25 +661,186 @@ class LocalWatchlistsService:
         normalized = [normalize_watchlist_item("local", row) for row in rows]
         return normalized[int(offset) : int(offset) + int(limit)]
 
-    async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    async def list_reader_items_page(
+        self,
+        *,
+        source_id: Any = None,
+        status: str | None = None,
+        limit: int = 50,
+        run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+        snapshot_max_item_id: int | None = None,
+        after: WatchlistItemCursor | None = None,
+    ) -> WatchlistItemPage:
+        """Return one normalized page from the local Reader snapshot.
+
+        Args:
+            source_id: Optional subscription scope.
+            status: Optional single status scope.
+            limit: Maximum rows in the page.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional watchlist scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope.
+            is_flagged: Optional starred-state scope.
+            search: Optional full-text terms.
+            since: Optional effective-date floor.
+            snapshot_max_item_id: Existing snapshot high-water.
+            after: Optional continuation cursor.
+
+        Returns:
+            A typed page whose item rows use the local watchlist shape.
+        """
         db = self._db()
-        local_type = self._local_type_for_source_type(payload.get("source_type"))
-        source = str(
-            payload.get("url")
-            or payload.get("source")
-            or self._first_configured_url(payload)
-            or ""
+        page = await run_db_off_loop(
+            db,
+            db.get_reader_items_page,
+            subscription_id=int(source_id) if source_id is not None else None,
+            status=status if status else None,
+            limit=int(limit),
+            run_id=int(run_id) if run_id is not None else None,
+            watchlist_id=int(watchlist_id) if watchlist_id is not None else None,
+            unassigned_only=bool(unassigned_only),
+            statuses=list(statuses) if statuses is not None else None,
+            is_flagged=is_flagged,
+            search=search,
+            since=since,
+            snapshot_max_item_id=snapshot_max_item_id,
+            after=after,
         )
-        source_id = db.add_subscription(
-            name=str(payload.get("name") or "Untitled subscription"),
-            type=local_type,
-            source=source,
-            tags=list(payload.get("tags") or []),
-            description=payload.get("description"),
-            is_active=bool(payload.get("active", True)),
-            **self._subscription_config_fields(payload),
+        return WatchlistItemPage(
+            items=tuple(
+                normalize_watchlist_item("local", row) for row in page.items
+            ),
+            has_more=page.has_more,
+            snapshot_max_item_id=page.snapshot_max_item_id,
+            snapshot_count=page.snapshot_count,
+            next_cursor=page.next_cursor,
         )
-        return normalize_local_subscription_row(db.get_subscription(source_id))
+
+    async def count_reader_item_arrivals(
+        self,
+        *,
+        snapshot_max_item_id: int,
+        source_id: Any = None,
+        status: str | None = None,
+        run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
+    ) -> int:
+        """Count matching local Reader items created after a snapshot.
+
+        Args:
+            snapshot_max_item_id: Snapshot high-water that arrivals exceed.
+            source_id: Optional subscription scope.
+            status: Optional single status scope.
+            run_id: Optional producing-run scope.
+            watchlist_id: Optional watchlist scope.
+            unassigned_only: Whether to include only unassigned sources.
+            statuses: Optional multiple-status scope.
+            is_flagged: Optional starred-state scope.
+            search: Optional full-text terms.
+            since: Optional effective-date floor.
+
+        Returns:
+            Number of matching rows created after the high-water.
+        """
+        db = self._db()
+        return int(
+            await run_db_off_loop(
+                db,
+                db.count_reader_item_arrivals,
+                snapshot_max_item_id=int(snapshot_max_item_id),
+                subscription_id=int(source_id) if source_id is not None else None,
+                status=status if status else None,
+                run_id=int(run_id) if run_id is not None else None,
+                watchlist_id=(
+                    int(watchlist_id) if watchlist_id is not None else None
+                ),
+                unassigned_only=bool(unassigned_only),
+                statuses=list(statuses) if statuses is not None else None,
+                is_flagged=is_flagged,
+                search=search,
+                since=since,
+            )
+        )
+
+    def _source_batch_rows(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for payload in payloads:
+            rows.append(
+                {
+                    "name": str(payload.get("name") or "Untitled subscription"),
+                    "type": self._local_type_for_source_type(payload.get("source_type")),
+                    "source": str(
+                        payload.get("url")
+                        or payload.get("source")
+                        or self._first_configured_url(payload)
+                        or ""
+                    ),
+                    "tags": list(payload.get("tags") or []),
+                    "description": payload.get("description"),
+                    "is_active": bool(payload.get("active", True)),
+                    **self._subscription_config_fields(payload),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _create_source_rows_exact_batch(
+        db: SubscriptionsDB, rows: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        outcomes = db.create_sources_exact_batch(
+            rows, result_mode="watchlist_source"
+        )
+        return [
+            {
+                "input_index": int(outcome["input_index"]),
+                "outcome": str(outcome["outcome"]),
+                "source": outcome["source"],
+            }
+            for outcome in outcomes
+        ]
+
+    def create_sources_exact_batch_sync(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create an ordered source batch on the current Console worker."""
+        rows = self._source_batch_rows(payloads)
+        db = self._db()
+        return self._create_source_rows_exact_batch(db, rows)
+
+    async def create_sources_exact_batch(
+        self, payloads: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Create an ordered source batch through the database-owner lock."""
+        rows = self._source_batch_rows(payloads)
+        db = self._db()
+        return await run_db_off_loop(
+            db,
+            self._create_source_rows_exact_batch,
+            db,
+            rows,
+        )
+
+    async def create_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Create or resolve one exact configured source."""
+        result = await self.create_sources_exact_batch([payload])
+        return {
+            **result[0]["source"],
+            "creation_outcome": result[0]["outcome"],
+        }
 
     async def update_source(
         self, source_id: Any, payload: Mapping[str, Any]
@@ -659,8 +867,11 @@ class LocalWatchlistsService:
             changes["type"] = self._local_type_for_source_type(payload["source_type"])
         changes.update(self._subscription_config_fields(payload))
         if changes:
-            db.update_subscription(int(source_id), **changes)
-        return normalize_local_subscription_row(db.get_subscription(int(source_id)))
+            await run_db_off_loop(
+                db, db.update_subscription, int(source_id), **changes
+            )
+        row = await run_db_off_loop(db, db.get_subscription, int(source_id))
+        return normalize_local_subscription_row(row)
 
     #: Statuses a watchlist item may be moved to from the UI. Mirrors
     #: `ItemsPane._STATUS_OPTIONS` minus its "all" filter entry.
@@ -691,7 +902,8 @@ class LocalWatchlistsService:
             row_id = int(item_id)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
-        return self._db().get_item_status(row_id)
+        db = self._db()
+        return await run_db_off_loop(db, db.get_item_status, row_id)
 
     async def get_item_content(self, item_id: Any) -> str | None:
         """Read one item's full body text -- the reader's DETAIL fetch.
@@ -718,7 +930,8 @@ class LocalWatchlistsService:
             row_id = int(item_id)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
-        return self._db().get_item_content(row_id)
+        db = self._db()
+        return await run_db_off_loop(db, db.get_item_content, row_id)
 
     async def get_url_snapshots(
         self, source_id: Any, url: str, *, limit: int = 2
@@ -729,11 +942,10 @@ class LocalWatchlistsService:
         normalization needed on the way out; the three columns it returns
         (`id`, `extracted_content`, `created_at`) are exactly what the
         screen's `ViewSnapshotRequested` handler and `SnapshotViewModal`
-        read. Not wrapped in `asyncio.to_thread`: no read on this service
-        is (see `list_items`/`get_source`/`get_item_status` above) --
-        `SubscriptionsDB`'s SQLite reads are fast enough that this service
-        has never paid for a thread hop on one, and adding it just for this
-        method would be an inconsistency, not a fix.
+        read. task-19562 B: now hops through `run_db_off_loop` like every
+        other read on this service -- the comment that used to justify
+        leaving this one inline (every other read already did) no longer
+        applies, since none of them are inline anymore either.
 
         Args:
             source_id: Owning subscription id (bare, not namespaced) --
@@ -746,7 +958,10 @@ class LocalWatchlistsService:
             Up to `limit` dicts, newest first; empty when the (source, url)
             pair has no snapshot yet.
         """
-        return self._db().get_url_snapshots(int(source_id), str(url), limit=limit)
+        db = self._db()
+        return await run_db_off_loop(
+            db, db.get_url_snapshots, int(source_id), str(url), limit=limit
+        )
 
     async def update_item(self, *, item_id: Any, status: str) -> dict[str, Any]:
         """Move one watchlist item to a new status.
@@ -780,7 +995,11 @@ class LocalWatchlistsService:
             row_id = int(item_id)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
-        if not self._db().mark_item_status(row_id, normalized_status):
+        db = self._db()
+        updated = await run_db_off_loop(
+            db, db.mark_item_status, row_id, normalized_status
+        )
+        if not updated:
             raise KeyError(f"Watchlist item not found: {item_id}")
         return {
             "success": True,
@@ -816,7 +1035,10 @@ class LocalWatchlistsService:
         Returns:
             The local row ids moved to ``reviewed``.
         """
-        return self._db().mark_all_read(
+        db = self._db()
+        return await run_db_off_loop(
+            db,
+            db.mark_all_read,
             subscription_id=int(source_id) if source_id is not None else None,
             watchlist_id=int(watchlist_id) if watchlist_id is not None else None,
             unassigned_only=bool(unassigned_only),
@@ -845,7 +1067,8 @@ class LocalWatchlistsService:
                 row_ids.append(int(item_id))
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
-        return self._db().restore_items_new(row_ids)
+        db = self._db()
+        return await run_db_off_loop(db, db.restore_items_new, row_ids)
 
     async def set_item_flagged(self, *, item_id: Any, flagged: bool) -> None:
         """Star or unstar one item (TASK-3072 plan task 7).
@@ -867,7 +1090,8 @@ class LocalWatchlistsService:
             row_id = int(item_id)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
-        self._db().set_item_flagged(row_id, bool(flagged))
+        db = self._db()
+        await run_db_off_loop(db, db.set_item_flagged, row_id, bool(flagged))
 
     async def find_source_id_by_url(self, url: str) -> int | None:
         """The id of the source carrying exactly this URL, or `None`.
@@ -883,7 +1107,8 @@ class LocalWatchlistsService:
         Returns:
             The subscription's id, or `None` when no row carries it.
         """
-        return self._db().get_subscription_id_by_source(str(url))
+        db = self._db()
+        return await run_db_off_loop(db, db.get_subscription_id_by_source, str(url))
 
     async def resolve_or_create_watchlist(self, name: str) -> tuple[dict[str, Any], bool]:
         """The watchlist named `name` (case-insensitive), creating it if missing.
@@ -908,10 +1133,14 @@ class LocalWatchlistsService:
         wanted = str(name).strip()
         if not wanted:
             raise ValueError("watchlist name cannot be empty or whitespace-only")
-        watchlist = bundle.get_watchlist_by_name_ci(wanted)
-        if watchlist is not None:
-            return watchlist, False
-        return bundle.create(wanted), True
+        result = bundle.create_with_sources(
+            wanted,
+            description=None,
+            tags=None,
+            source_ids=(),
+            if_exists="return_existing",
+        )
+        return result["watchlist"], result["outcome"] == "created"
 
     async def add_source_to_watchlist(self, *, watchlist_id: Any, source_id: Any) -> None:
         """Add a source to a watchlist (idempotent), via the bundle service.
@@ -955,7 +1184,8 @@ class LocalWatchlistsService:
         ]
 
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
-        success = self._db().delete_subscription(int(source_id))
+        db = self._db()
+        success = await run_db_off_loop(db, db.delete_subscription, int(source_id))
         return {
             "success": success,
             "id": f"local:subscription:{source_id}",
@@ -994,8 +1224,8 @@ class LocalWatchlistsService:
             KeyError: `source_id` does not name a subscription.
         """
         db = self._db()
-        db.reset_subscription_errors(int(source_id))
-        row = db.get_subscription(int(source_id))
+        await run_db_off_loop(db, db.reset_subscription_errors, int(source_id))
+        row = await run_db_off_loop(db, db.get_subscription, int(source_id))
         if row is None:
             raise KeyError(f"Subscription not found: {source_id}")
         return normalize_local_subscription_row(row)
@@ -1021,7 +1251,7 @@ class LocalWatchlistsService:
         if subscription is None:
             raise KeyError(f"Subscription not found: {resolved_source_id}")
         try:
-            run_id = await run_db_off_loop(
+            receipt = await run_db_off_loop(
                 db, self._insert_queued_run, db, resolved_source_id, self._utc_now()
             )
         except sqlite3.IntegrityError as exc:
@@ -1040,32 +1270,47 @@ class LocalWatchlistsService:
             raise KeyError(
                 f"Subscription not found: {resolved_source_id}"
             ) from exc
-        return await self.get_run(run_id)
+        run = await self.get_run(receipt["id"])
+        run["_claim_acquired"] = receipt["_claim_acquired"]
+        return run
+
+    async def accept_source_checks(
+        self, source_ids: Sequence[int]
+    ) -> list[dict[str, Any]]:
+        """Atomically commit or resolve one durable receipt per source."""
+        normalized_ids = [int(source_id) for source_id in source_ids]
+        if not normalized_ids:
+            raise ValueError("At least one source is required")
+        if len(normalized_ids) > 50 or len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("Provide between 1 and 50 unique source IDs")
+        db = self._db()
+        receipts = await run_db_off_loop(
+            db,
+            db.accept_watchlist_runs,
+            normalized_ids,
+            created_at=self._utc_now(),
+        )
+        accepted: list[dict[str, Any]] = []
+        for receipt in receipts:
+            normalized = self._normalize_run_row(receipt)
+            normalized["_claim_acquired"] = bool(receipt["_claim_acquired"])
+            accepted.append(normalized)
+        return accepted
+
+    async def execute_accepted_run(self, run_id: Any) -> dict[str, Any]:
+        """Execute exactly one previously accepted durable run receipt."""
+        return await self.execute_run(run_id, scrub_failures=True)
 
     @staticmethod
-    def _insert_queued_run(db: SubscriptionsDB, source_id: int, now: str) -> int:
-        """Insert one `queued` run row and return its id (task-15463 hop body)."""
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO local_watchlist_runs (
-                    source_id, job_id, status, stats_json, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    source_id,
-                    source_id,
-                    "queued",
-                    json.dumps({"source_id": source_id}),
-                    now,
-                    now,
-                ),
-            )
-            return cursor.lastrowid
+    def _insert_queued_run(
+        db: SubscriptionsDB, source_id: int, now: str
+    ) -> dict[str, Any]:
+        """Accept one database-owned source claim."""
+        return db.accept_watchlist_run(source_id, created_at=now)
 
-    async def execute_run(self, run_id: Any) -> dict[str, Any]:
+    async def execute_run(
+        self, run_id: Any, *, scrub_failures: bool = False
+    ) -> dict[str, Any]:
         """Execute a queued local watchlist run and persist its observed result.
 
         task-15463: every synchronous sqlite call below goes through
@@ -1158,15 +1403,6 @@ class LocalWatchlistsService:
             all_error_message = _all_error_check_message(
                 stats.get("dispositions"), len(raw_items)
             )
-            await run_db_off_loop(
-                db,
-                db.record_check_result,
-                source_id,
-                items=None,
-                stats=stats,
-                error=all_error_message,
-            )
-
             status = str(result.get("status") or "completed")
             if all_error_message and status == "completed":
                 # More honest than "completed" with zero items: every URL
@@ -1174,13 +1410,27 @@ class LocalWatchlistsService:
                 # though it did not raise (that is exactly the point of the
                 # per-URL isolation this run status is not undoing).
                 status = "failed"
+            run_error = result.get("error_msg") or (
+                LEGACY_FAILURE_MESSAGE if all_error_message else None
+            )
+            run_log = result.get("log_text")
+            if status.strip().lower() in _FAILED_RUN_STATUSES:
+                stats, run_error, run_log = _sanitize_failed_run_payload(stats)
+            await run_db_off_loop(
+                db,
+                db.record_check_result,
+                source_id,
+                items=None,
+                stats=stats,
+                error=run_error,
+            )
 
             return await self.record_run_result(
                 run_id,
                 status=status,
                 stats=stats,
-                error_msg=result.get("error_msg") or all_error_message,
-                log_text=result.get("log_text"),
+                error_msg=run_error,
+                log_text=run_log,
             )
         except asyncio.CancelledError:
             # Batch-4 review, C1 (CRITICAL). This worker is cancelled whenever
@@ -1244,7 +1494,7 @@ class LocalWatchlistsService:
                     elapsed_ms=int((time.time() - start_time) * 1000),
                 )
             except Exception:
-                logger.opt(exception=True).warning(
+                logger.warning(
                     f"Watchlists: could not record the cancellation of run "
                     f"{run_id!r}; it may still read 'running'."
                 )
@@ -1253,7 +1503,11 @@ class LocalWatchlistsService:
             return await self.record_run_failure(
                 run_id,
                 source_id=source_id,
-                error=exc,
+                error=(
+                    "Watchlists source check failed. Try again."
+                    if scrub_failures
+                    else exc
+                ),
                 elapsed_ms=int((time.time() - start_time) * 1000),
             )
 
@@ -1262,7 +1516,7 @@ class LocalWatchlistsService:
         run_id: Any,
         *,
         source_id: Any = None,
-        error: BaseException | str,
+        error: BaseException | str | WatchlistFailure,
         elapsed_ms: int = 0,
     ) -> dict[str, Any]:
         """Mark a run failed and its source errored, durably.
@@ -1286,7 +1540,15 @@ class LocalWatchlistsService:
         Returns:
             The recorded run.
         """
-        error_msg = str(error)
+        if isinstance(error, WatchlistFailure):
+            failure = watchlist_failure_from_stats(
+                {"failure_category": error.category}
+            ) or classify_watchlist_failure(RuntimeError())
+        else:
+            failure = classify_watchlist_failure(
+                error if isinstance(error, BaseException) else RuntimeError()
+            )
+        error_msg = failure.message
         db = self._db()
         if source_id is None:
             try:
@@ -1297,7 +1559,7 @@ class LocalWatchlistsService:
                 # record below is still worth writing. Warned, not debugged --
                 # this whole method exists because a swallowed failure here
                 # left no trace at all.
-                logger.opt(exception=True).warning(
+                logger.warning(
                     f"Watchlists: could not resolve the source of failed run "
                     f"{run_id}; subscriptions.last_error will not be updated."
                 )
@@ -1313,9 +1575,10 @@ class LocalWatchlistsService:
                 "items_ingested": 0,
                 "error_msg": error_msg,
                 "response_time_ms": elapsed_ms,
+                **watchlist_failure_stats(failure),
             },
             error_msg=error_msg,
-            log_text=f"Local watchlist execution failed: {error_msg}",
+            log_text=f"{error_msg} {failure.next_action}",
         )
 
     async def list_runs(
@@ -1336,6 +1599,20 @@ class LocalWatchlistsService:
             values.append(int(resolved_source_id))
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
         values.extend([int(limit), int(offset)])
+        # task-19562 B: not one of the originally enumerated 19 methods (same
+        # reason as `get_alert_rule` -- it reads through a bare
+        # `db.conn.cursor()`, not a named `SubscriptionsDB` method), but it is
+        # exactly the same class of loop-blocking read as everything else in
+        # this sweep.
+        rows = await run_db_off_loop(
+            db, self._select_run_rows, db, where_clause, values
+        )
+        return [self._normalize_run_row(row) for row in rows]
+
+    def _select_run_rows(
+        self, db: SubscriptionsDB, where_clause: str, values: list[Any]
+    ) -> list[Any]:
+        """Read a page of run rows (task-19562 B hop body)."""
         cursor = db.conn.cursor()
         cursor.execute(
             f"""
@@ -1346,7 +1623,7 @@ class LocalWatchlistsService:
             """,
             values,
         )
-        return [self._normalize_run_row(row) for row in cursor.fetchall()]
+        return cursor.fetchall()
 
     def list_home_run_snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent local watchlist runs from a synchronous Home-safe path."""
@@ -1373,6 +1650,31 @@ class LocalWatchlistsService:
             raise KeyError(f"Watchlist run not found: {run_id}")
         return self._normalize_run_row(row)
 
+    async def wait_for_terminal_run(self, run_id: Any) -> dict[str, Any]:
+        """Observe a durable winner until terminal, deadline, or cancellation.
+
+        Args:
+            run_id: Durable run identifier returned by a losing claim receipt.
+
+        Returns:
+            The terminal normalized run receipt.
+
+        Raises:
+            TimeoutError: The winner stayed active through the bounded wait.
+            asyncio.CancelledError: The caller cancelled observation.
+        """
+        deadline = time.monotonic() + _RUN_CLAIM_WAIT_TIMEOUT_SECONDS
+        delay = _RUN_CLAIM_POLL_INITIAL_SECONDS
+        while True:
+            winner = await self.get_run(run_id)
+            if str(winner.get("status") or "").lower() not in {"queued", "running"}:
+                return winner
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out waiting for watchlist run {run_id}")
+            await asyncio.sleep(min(delay, remaining))
+            delay = min(delay * 2, _RUN_CLAIM_POLL_MAX_SECONDS)
+
     def _select_run_row(self, db: SubscriptionsDB, run_id: int) -> Any:
         """Read one run row, source title and watchlist names included."""
         cursor = db.conn.cursor()
@@ -1398,17 +1700,15 @@ class LocalWatchlistsService:
         here with zero rows updated is an UPDATE that matched nothing, so
         there is nothing for either path to undo.
         """
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, finished_at = ?, stats_json = ?, error_msg = ?, log_text = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (status, now, stats_json, error_msg, log_text, now, run_id),
-            )
-            return cursor.rowcount
+        row = db.transition_watchlist_run(
+            run_id,
+            status=status,
+            finished_at=now,
+            stats_json=stats_json,
+            error_msg=error_msg,
+            log_text=log_text,
+        )
+        return int(row is not None)
 
     async def get_run_detail(self, run_id: Any, **_: Any) -> dict[str, Any]:
         return await self.get_run(run_id)
@@ -1416,19 +1716,27 @@ class LocalWatchlistsService:
     async def cancel_run(self, run_id: Any) -> dict[str, Any]:
         db = self._db()
         now = self._utc_now()
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, finished_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                ("cancelled", now, now, int(run_id)),
-            )
-            if cursor.rowcount == 0:
-                raise KeyError(f"Watchlist run not found: {run_id}")
+        # task-19562 B: the whole `db.transaction()` block hops as one unit
+        # -- `run_db_off_loop` must not be handed a callable that holds a
+        # transaction open across the await boundary, so the UPDATE and its
+        # commit/rollback happen entirely inside `_cancel_run_row`, on the
+        # worker thread.
+        updated_rows = await run_db_off_loop(
+            db, self._cancel_run_row, db, int(run_id), now
+        )
+        if updated_rows == 0:
+            raise KeyError(f"Watchlist run not found: {run_id}")
         return await self.get_run(run_id)
+
+    @staticmethod
+    def _cancel_run_row(db: SubscriptionsDB, run_id: int, now: str) -> int:
+        """Mark one run cancelled; returns rows updated (task-19562 B hop body)."""
+        row = db.transition_watchlist_run(
+            run_id,
+            status="cancelled",
+            finished_at=now,
+        )
+        return int(row is not None)
 
     async def record_run_result(
         self,
@@ -1459,8 +1767,10 @@ class LocalWatchlistsService:
         current = await self.get_run(run_id)
         now = self._utc_now()
         stats_payload = dict(stats or {})
-        if error_msg and "error_msg" not in stats_payload:
-            stats_payload["error_msg"] = error_msg
+        if str(status).strip().lower() in _FAILED_RUN_STATUSES:
+            stats_payload, error_msg, log_text = _sanitize_failed_run_payload(
+                stats_payload
+            )
         updated_rows = await run_db_off_loop(
             db,
             self._write_run_result,
@@ -1505,8 +1815,20 @@ class LocalWatchlistsService:
     ) -> list[dict[str, Any]]:
         db = self._db()
         resolved_job_id = job_id if job_id is not None else source_id
+        # task-19562 B: same reasoning as `list_runs`/`get_alert_rule` above --
+        # a bare `db.conn.cursor()` read, now hopped off the loop.
+        rows = await run_db_off_loop(
+            db, self._select_alert_rule_rows, db, resolved_job_id
+        )
+        return [
+            normalize_watchlist_alert_rule("local", self._alert_rule_row_to_dict(row))
+            for row in rows
+        ]
+
+    def _select_alert_rule_rows(self, db: SubscriptionsDB, job_id: Any) -> list[Any]:
+        """Read every alert rule, optionally scoped to one job (task-19562 B hop body)."""
         cursor = db.conn.cursor()
-        if resolved_job_id is None:
+        if job_id is None:
             cursor.execute(
                 "SELECT * FROM local_watchlist_alert_rules ORDER BY created_at DESC"
             )
@@ -1517,25 +1839,35 @@ class LocalWatchlistsService:
                 WHERE job_id = ? OR job_id IS NULL
                 ORDER BY created_at DESC
                 """,
-                (int(resolved_job_id),),
+                (int(job_id),),
             )
-        return [
-            normalize_watchlist_alert_rule("local", self._alert_rule_row_to_dict(row))
-            for row in cursor.fetchall()
-        ]
+        return cursor.fetchall()
 
     async def get_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         db = self._db()
-        cursor = db.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),)
+        # task-19562 B: not one of the originally enumerated 19 methods --
+        # the AST scan that produced that list only matched calls to named
+        # `SubscriptionsDB` methods, and this reads through a bare
+        # `db.conn.cursor()` -- but `create_alert_rule` and
+        # `update_alert_rule` both end by awaiting this method, so leaving
+        # it inline would have left those two still blocking the loop on
+        # their last statement.
+        row = await run_db_off_loop(
+            db, self._select_alert_rule_row, db, int(rule_id)
         )
-        row = cursor.fetchone()
         if row is None:
             raise KeyError(f"Watchlist alert rule not found: {rule_id}")
         return normalize_watchlist_alert_rule(
             "local", self._alert_rule_row_to_dict(row)
         )
+
+    def _select_alert_rule_row(self, db: SubscriptionsDB, rule_id: int) -> Any:
+        """Read one alert rule row (task-19562 B hop body)."""
+        cursor = db.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM local_watchlist_alert_rules WHERE id = ?", (rule_id,)
+        )
+        return cursor.fetchone()
 
     async def create_alert_rule(
         self,
@@ -1547,15 +1879,45 @@ class LocalWatchlistsService:
         source_id: Any = None,
         severity: str = "warning",
     ) -> dict[str, Any]:
+        db = self._db()
         normalized_condition_type = self._validate_condition_type(condition_type)
         resolved_job_id = job_id if job_id is not None else source_id
-        if (
-            resolved_job_id is not None
-            and self._db().get_subscription(int(resolved_job_id)) is None
-        ):
-            raise KeyError(f"Subscription not found: {resolved_job_id}")
-        db = self._db()
+        if resolved_job_id is not None:
+            subscription = await run_db_off_loop(
+                db, db.get_subscription, int(resolved_job_id)
+            )
+            if subscription is None:
+                raise KeyError(f"Subscription not found: {resolved_job_id}")
         now = self._utc_now()
+        # task-19562 B: the whole `db.transaction()` block hops as one unit
+        # -- `run_db_off_loop` must not be handed a callable that holds a
+        # transaction open across the await boundary, so the INSERT and its
+        # commit/rollback happen entirely inside `_insert_alert_rule`, on the
+        # worker thread.
+        rule_id = await run_db_off_loop(
+            db,
+            self._insert_alert_rule,
+            db,
+            int(resolved_job_id) if resolved_job_id is not None else None,
+            name,
+            normalized_condition_type,
+            self._serialize_condition_value(condition_value),
+            severity,
+            now,
+        )
+        return await self.get_alert_rule(rule_id)
+
+    @staticmethod
+    def _insert_alert_rule(
+        db: SubscriptionsDB,
+        job_id: int | None,
+        name: str,
+        condition_type: str,
+        condition_value_json: str | None,
+        severity: str,
+        now: str,
+    ) -> int:
+        """Insert one alert rule row and return its id (task-19562 B hop body)."""
         with db.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -1566,18 +1928,17 @@ class LocalWatchlistsService:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    int(resolved_job_id) if resolved_job_id is not None else None,
+                    job_id,
                     name,
                     1,
-                    normalized_condition_type,
-                    self._serialize_condition_value(condition_value),
+                    condition_type,
+                    condition_value_json,
                     severity,
                     now,
                     now,
                 ),
             )
-            rule_id = cursor.lastrowid
-        return await self.get_alert_rule(rule_id)
+            return cursor.lastrowid
 
     async def update_alert_rule(self, rule_id: Any, **fields: Any) -> dict[str, Any]:
         db = self._db()
@@ -1599,13 +1960,21 @@ class LocalWatchlistsService:
             updates["severity"] = fields["severity"]
         if "job_id" in fields:
             job_id = fields["job_id"]
-            if job_id is not None and db.get_subscription(int(job_id)) is None:
-                raise KeyError(f"Subscription not found: {job_id}")
+            if job_id is not None:
+                subscription = await run_db_off_loop(
+                    db, db.get_subscription, int(job_id)
+                )
+                if subscription is None:
+                    raise KeyError(f"Subscription not found: {job_id}")
             updates["job_id"] = int(job_id) if job_id is not None else None
         if "source_id" in fields:
             source_id = fields["source_id"]
-            if source_id is not None and db.get_subscription(int(source_id)) is None:
-                raise KeyError(f"Subscription not found: {source_id}")
+            if source_id is not None:
+                subscription = await run_db_off_loop(
+                    db, db.get_subscription, int(source_id)
+                )
+                if subscription is None:
+                    raise KeyError(f"Subscription not found: {source_id}")
             updates["job_id"] = int(source_id) if source_id is not None else None
         if not updates:
             return current
@@ -1613,24 +1982,35 @@ class LocalWatchlistsService:
         updates["updated_at"] = self._utc_now()
         assignments = ", ".join(f"{field} = ?" for field in updates)
         values = list(updates.values()) + [int(rule_id)]
+        # task-19562 B: whole transaction block hops as one unit, same
+        # reasoning as `create_alert_rule` above.
+        updated_rows = await run_db_off_loop(
+            db, self._update_alert_rule_row, db, assignments, values
+        )
+        if updated_rows == 0:
+            raise KeyError(f"Watchlist alert rule not found: {rule_id}")
+        return await self.get_alert_rule(rule_id)
+
+    @staticmethod
+    def _update_alert_rule_row(
+        db: SubscriptionsDB, assignments: str, values: list[Any]
+    ) -> int:
+        """Apply one alert rule UPDATE; returns rows updated (task-19562 B hop body)."""
         with db.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 f"UPDATE local_watchlist_alert_rules SET {assignments} WHERE id = ?",
                 values,
             )
-            if cursor.rowcount == 0:
-                raise KeyError(f"Watchlist alert rule not found: {rule_id}")
-        return await self.get_alert_rule(rule_id)
+            return cursor.rowcount
 
     async def delete_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         db = self._db()
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),)
-            )
-            deleted = cursor.rowcount > 0
+        # task-19562 B: whole transaction block hops as one unit, same
+        # reasoning as `create_alert_rule` above.
+        deleted = await run_db_off_loop(
+            db, self._delete_alert_rule_row, db, int(rule_id)
+        )
         if not deleted:
             raise KeyError(f"Watchlist alert rule not found: {rule_id}")
         return {
@@ -1640,6 +2020,16 @@ class LocalWatchlistsService:
             "entity_kind": "watchlist_alert_rule",
             "rule_id": int(rule_id),
         }
+
+    @staticmethod
+    def _delete_alert_rule_row(db: SubscriptionsDB, rule_id: int) -> bool:
+        """Delete one alert rule row (task-19562 B hop body)."""
+        with db.transaction() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM local_watchlist_alert_rules WHERE id = ?", (rule_id,)
+            )
+            return cursor.rowcount > 0
 
     @staticmethod
     def _local_type_for_source_type(source_type: Any) -> str:
@@ -1703,18 +2093,8 @@ class LocalWatchlistsService:
 
     def _mark_run_started(self, db: SubscriptionsDB, run_id: int) -> None:
         now = self._utc_now()
-        with db.transaction() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE local_watchlist_runs
-                SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ?
-                WHERE id = ?
-                """,
-                ("running", now, now, run_id),
-            )
-            if cursor.rowcount == 0:
-                raise KeyError(f"Watchlist run not found: {run_id}")
+        if db.mark_watchlist_run_started(run_id, started_at=now) is None:
+            raise RuntimeError(f"Watchlist run is no longer queued: {run_id}")
 
     async def _execute_subscription(
         self,
@@ -1745,11 +2125,19 @@ class LocalWatchlistsService:
 
         subscription_config = self._subscription_execution_config(subscription)
         source_type = str(subscription_config.get("type") or "").strip()
-        # `None` for the feed and API arms, which have no dispositions at all
-        # (spec §4) -- distinguished from `[]`, which would record four zeros.
+        # `None` for the feed and API arms on the ordinary path, which have
+        # no dispositions at all (spec §4) -- distinguished from `[]`, which
+        # would record four zeros. task-19562: those arms now REASSIGN this
+        # to a one-element skip list when the in-flight guard turns them
+        # away, so a skipped check is not mistaken for a clean zero-item run.
         dispositions: list[dict[str, Any]] | None = None
         if source_type in _FEED_SOURCE_TYPES:
-            items = await FeedMonitor().check_feed(subscription_config)
+            items, dispositions = await self._run_guarded_source_check(
+                db,
+                subscription_config,
+                "feed",
+                lambda: FeedMonitor().check_feed(subscription_config),
+            )
         elif source_type == "url":
             result, disposition = await self._check_url_guarded(
                 URLMonitor(db),
@@ -1789,7 +2177,12 @@ class LocalWatchlistsService:
                 if result:
                     items.append(result)
         elif source_type == "api":
-            items = await self._items_for_api_source(subscription_config)
+            items, dispositions = await self._run_guarded_source_check(
+                db,
+                subscription_config,
+                "api",
+                lambda: self._items_for_api_source(subscription_config),
+            )
         else:
             raise ValueError(
                 f"Unsupported local watchlist source type for execution: {source_type}"
@@ -1802,9 +2195,47 @@ class LocalWatchlistsService:
             # `execute_run` already does `stats = dict(result.get("stats") or {})`
             # and persists it to the run's `stats_json`, so this reaches the Runs
             # pane with nothing further to wire.
-            run_stats: dict[str, Any] = {
-                "dispositions": _disposition_counts(dispositions)
-            }
+            disposition_counts = _disposition_counts(dispositions)
+            run_stats: dict[str, Any] = {"dispositions": disposition_counts}
+            all_error_message = _all_error_check_message(
+                disposition_counts, len(items)
+            )
+            if all_error_message is not None:
+                failures = [
+                    failure
+                    for disposition in dispositions
+                    if (failure := watchlist_failure_from_stats(disposition))
+                    is not None
+                ]
+                categories = {failure.category for failure in failures}
+                error_count = int(disposition_counts.get("error", 0) or 0)
+                if len(failures) == error_count and len(categories) == 1:
+                    category = next(iter(categories))
+                    aggregate = watchlist_failure_from_stats(
+                        {"failure_category": category.value}
+                    )
+                    assert aggregate is not None
+                    aggregate_stats = watchlist_failure_stats(aggregate)
+                    statuses = {failure.http_status for failure in failures}
+                    retry_delays = {
+                        failure.retry_after_seconds for failure in failures
+                    }
+                    if len(statuses) == 1:
+                        aggregate_stats["http_status"] = next(iter(statuses))
+                    if len(retry_delays) == 1:
+                        aggregate_stats["retry_after_seconds"] = next(
+                            iter(retry_delays)
+                        )
+                    # Category, status, and delay are aggregate facts only
+                    # when every failed URL agrees. Never select per-URL
+                    # recovery metadata by input or exception order.
+                    run_stats.update(aggregate_stats)
+                    result_payload["error_msg"] = aggregate.message
+                    result_payload["log_text"] = (
+                        f"{aggregate.message} {aggregate.next_action}"
+                    )
+                else:
+                    result_payload["error_msg"] = LEGACY_FAILURE_MESSAGE
             # A sibling key rather than a sixth entry inside `dispositions`,
             # which is a dict of counters and stays one: a float in among the
             # integers would break every whole-dict comparison of the counts.
@@ -1815,6 +2246,79 @@ class LocalWatchlistsService:
                 run_stats["max_withheld_pct"] = max_withheld
             result_payload["stats"] = run_stats
         return result_payload
+
+    async def _run_guarded_source_check(
+        self,
+        db: Any,
+        subscription_config: Mapping[str, Any],
+        claim_kind: str,
+        check: "Callable[[], Awaitable[list[Any]]]",
+    ) -> tuple[list[Any], list[dict[str, Any]] | None]:
+        """A whole-source check behind the same in-flight guard the URL arms use.
+
+        task-19562 part A: only the url-family arms went through
+        `_check_url_guarded`. The **feed** and **API** arms -- and feeds are
+        the commonest source type -- ran unguarded, so a scheduler tick
+        overlapping a manual "Check Now" ran the check twice: the alert
+        notification fired twice and statistics double-counted.
+
+        These arms have no per-URL granularity, so the claim is scoped to the
+        whole source with a ``claim_kind`` sentinel in the URL slot. The
+        sentinel is NUL-prefixed, which no real URL can contain, so it can
+        never collide with a url-family claim for the same subscription.
+
+        A skip returns a single `DISPOSITION_SKIPPED_IN_FLIGHT` disposition
+        rather than the arm's usual ``None``. That is load-bearing, not
+        cosmetic: `_entirely_skipped_dispositions` -> `execute_run` uses it to
+        short-circuit source-health accounting, so a skipped check cannot take
+        `record_check_result`'s SUCCESS branch and reset the auto-pause
+        breaker, clear `last_error` and stamp `last_successful_check` for a
+        run that never contacted the source. Returning ``[]`` items with
+        ``None`` dispositions would have reported "nothing new" for a check
+        that never happened.
+
+        ``db`` is taken as a parameter and held in THIS frame across the
+        await on purpose: the claim key stores ``id(db)`` and no reference to
+        it, so it is the live parameter that stops the object being collected
+        and its id reused while the claim is registered (see
+        `_IN_FLIGHT_URL_CHECKS`).
+
+        Args:
+            db: The database this run writes to; part of the claim key.
+            subscription_config: The source's execution config; must carry ``id``.
+            claim_kind: Short arm name (``"feed"``/``"api"``) used to build
+                the sentinel claim slot.
+            check: Zero-arg coroutine factory performing the actual check.
+
+        Returns:
+            ``(items, dispositions)`` -- the check's items with ``None``
+            dispositions when this entrant won the claim, or ``([], [skip])``
+            when a concurrent check of the same source already held it.
+        """
+        from .monitoring_engine import DISPOSITION_SKIPPED_IN_FLIGHT
+
+        subscription_id = subscription_config.get("id")
+        claim_slot = f"\x00{claim_kind}"
+        key = (id(db), subscription_id, claim_slot)
+        if key in _IN_FLIGHT_URL_CHECKS:
+            logger.info(
+                f"watchlist check skipped: subscription {subscription_id} "
+                f"already has a {claim_kind} check in flight"
+            )
+            return [], [
+                {
+                    "kind": DISPOSITION_SKIPPED_IN_FLIGHT,
+                    "reason": None,
+                    "withheld_percentage": None,
+                }
+            ]
+        _IN_FLIGHT_URL_CHECKS.add(key)
+        try:
+            return await check(), None
+        finally:
+            # `finally` so a raise or a cancellation (the user navigating away
+            # mid-check) can never strand the source as permanently in flight.
+            _IN_FLIGHT_URL_CHECKS.discard(key)
 
     async def _check_url_guarded(
         self,
@@ -1959,10 +2463,12 @@ class LocalWatchlistsService:
             logger.debug(
                 f"watchlist URL check failed, isolated: {type(exc).__name__}"
             )
+            failure = classify_watchlist_failure(exc)
             return None, {
                 "kind": DISPOSITION_ERROR,
                 "reason": None,
                 "withheld_percentage": None,
+                **watchlist_failure_stats(failure),
             }
 
     @classmethod
@@ -2011,6 +2517,7 @@ class LocalWatchlistsService:
                 client=client,
                 max_bytes=MAX_FETCH_BYTES_SITEMAP,
                 trusted_origins=origin_set(source),
+                headers={"User-Agent": _PRODUCT_USER_AGENT},
             )
             response.raise_for_status()
 
@@ -2060,7 +2567,7 @@ class LocalWatchlistsService:
 
         headers = {
             "Accept": "application/json",
-            "User-Agent": "tldw-chatbook/1.0 (+https://github.com/tldw/chatbook)",
+            "User-Agent": _PRODUCT_USER_AGENT,
         }
         custom_headers = subscription.get("custom_headers")
         if isinstance(custom_headers, Mapping):

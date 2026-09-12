@@ -1,0 +1,30 @@
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Roleplay  ⌃6 Watchlists  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+     Prompts                                        Select a prompt to edit it here.
+     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+     ▊ Filter prompts… (Enter)                ▎
+     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+
+       collection: All prompts
+        sort: Newest     ○ Select
+        Import…     Export…
+     Nothing here to select yet.
+     No page loaded · Total unavailable
+     Couldn't load prompts. Check the local
+     Library and retry. · Page boundary is
+---> unknown.                                  <---
+        ○ Previous     ○ Next
+       Retry
+
+
+
+
+
+
+
+
+
+
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

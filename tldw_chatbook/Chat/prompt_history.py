@@ -61,11 +61,28 @@ class PromptHistory:
         # Serializes append() so a whole-file cap rewrite can never
         # interleave with another append from a concurrent send.
         self._append_lock = asyncio.Lock()
+        # TASK-22218: monotonic counter bumped on every ``_entries`` mutation
+        # (load, optimistic append, cap trim, write-failure rollback). Lets a
+        # consumer key a cache on "has the history changed?" without hashing
+        # up to ``max_entries`` entries -- the composer's blink-tick render
+        # memo is the consumer that motivated it.
+        self._revision: int = 0
 
     @property
     def size(self) -> int:
         """Number of stored entries (excludes the live draft pseudo-entry)."""
         return len(self._entries)
+
+    @property
+    def revision(self) -> int:
+        """Counter that advances whenever the stored entries change.
+
+        Cheap invalidation key for caches over ``complete()``/``get_entry``
+        results: equal revisions guarantee the stored entries are unchanged.
+        The live-draft stash (``stash_draft``/``clear_draft``) does not
+        advance it -- the stash never affects ``complete()``.
+        """
+        return self._revision
 
     @property
     def current(self) -> str:
@@ -139,6 +156,7 @@ class PromptHistory:
             logger.warning(f"Could not read prompt history {self.path}: {error}")
             entries = []
         self._entries = entries[-self.max_entries :]
+        self._revision += 1
         self._loaded = True
 
     async def append(self, text: str) -> bool:
@@ -185,11 +203,13 @@ class PromptHistory:
         # Optimistic in-memory update (rolled back on write failure) so a
         # second identical send racing this one hits the dedupe check above.
         self._entries.append(entry)
+        self._revision += 1
         excess = len(self._entries) - self.max_entries
         dropped: list[HistoryEntry] = []
         if excess > 0:
             dropped = self._entries[:excess]
             del self._entries[:excess]
+            self._revision += 1
 
         def write_history() -> None:
             """Write to the JSONL file in a worker thread."""
@@ -215,6 +235,7 @@ class PromptHistory:
                 self._entries.remove(entry)
             except ValueError:
                 pass
+            self._revision += 1
             return False
         self._current = None
         return True

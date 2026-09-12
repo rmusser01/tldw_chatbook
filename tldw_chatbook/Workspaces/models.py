@@ -90,11 +90,38 @@ DEFAULT_WORKSPACE_DESCRIPTION = (
     "until the user creates an explicit workspace."
 )
 
+WORKSPACE_ASSISTANT_KINDS = ("persona",)
+WORKSPACE_PERSONA_MEMORY_MODES = ("read_only", "read_write")
+
 
 def utc_now_iso() -> str:
     """Return a stable UTC timestamp string for registry records."""
 
     return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class WorkspaceAssistantDefaults:
+    """Reference-backed default assistant for a workspace (server contract shape)."""
+
+    assistant_kind: str = "persona"
+    assistant_id: str = ""
+    persona_memory_mode: str = "read_only"
+    voice: None = None
+    style: None = None
+    tool_policy_profile_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.assistant_kind not in WORKSPACE_ASSISTANT_KINDS:
+            raise ValueError(f"unsupported assistant_kind: {self.assistant_kind!r}")
+        if self.persona_memory_mode not in WORKSPACE_PERSONA_MEMORY_MODES:
+            raise ValueError(
+                f"invalid persona_memory_mode: {self.persona_memory_mode!r}"
+            )
+        if not _required_text(self.assistant_id, "assistant_id"):
+            raise ValueError("assistant_id must be a non-empty string")
+        if self.voice is not None or self.style is not None:
+            raise ValueError("voice/style are reserved and must be null")
 
 
 @dataclass(frozen=True)
@@ -108,6 +135,8 @@ class WorkspaceRecord:
     sync_status: WorkspaceSyncStatus | str = WorkspaceSyncStatus.NOT_CONFIGURED
     active: bool = False
     archived: bool = False
+    assistant_defaults: WorkspaceAssistantDefaults | None = None
+    assistant_defaults_explicit_none: bool = False
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -201,6 +230,91 @@ class WorkspaceRuntimeBinding:
             _coerce_enum(self.status, RuntimeBindingStatus, "status"),
         )
         object.__setattr__(self, "metadata", scrub_secret_metadata(dict(self.metadata)))
+
+
+@dataclass(frozen=True)
+class ResearchQuickNoteReceipt:
+    """Payload-free durable intent for one Local Quick Note mutation."""
+
+    receipt_id: str
+    workspace_id: str
+    local_user_id: str
+    operation_token: str
+    operation_kind: str
+    canonical_note_id: str
+    expected_version: int | None
+    owner_proof: str
+    lease_token: str
+    lease_expires_at: str
+    abandon_after: str
+    state: str = "pending"
+    revision: int = 1
+    failure_count: int = 0
+    next_retry_at: str = field(default_factory=utc_now_iso)
+    blocked_reason_code: str = ""
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+    data_source: str = "local"
+    server_profile_id: str = ""
+    principal_id: str = ""
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "receipt_id",
+            "workspace_id",
+            "local_user_id",
+            "operation_token",
+            "canonical_note_id",
+            "owner_proof",
+            "lease_token",
+            "lease_expires_at",
+            "abandon_after",
+            "next_retry_at",
+            "created_at",
+            "updated_at",
+        ):
+            object.__setattr__(
+                self, field_name, _required_text(getattr(self, field_name), field_name)
+            )
+        if self.data_source != "local":
+            raise ValueError("data_source is invalid")
+        if self.server_profile_id or self.principal_id:
+            raise ValueError("Local receipt server identity must be empty")
+        if len(self.owner_proof) < 32 or len(self.lease_token) < 32:
+            raise ValueError("receipt proof or lease token is invalid")
+        if self.operation_kind not in {"create", "delete"}:
+            raise ValueError("operation_kind is invalid")
+        if self.state not in {
+            "pending",
+            "owner_committed",
+            "projection_committed",
+            "blocked",
+        }:
+            raise ValueError("state is invalid")
+        if type(self.revision) is not int or self.revision < 1:
+            raise ValueError("revision is invalid")
+        if self.state != "pending" and self.revision < 2:
+            raise ValueError("state and revision are inconsistent")
+        if self.state == "projection_committed" and self.revision < 3:
+            raise ValueError("state and revision are inconsistent")
+        if type(self.failure_count) is not int or not 0 <= self.failure_count <= 3:
+            raise ValueError("failure_count is invalid")
+        if self.blocked_reason_code not in {
+            "",
+            "proof_mismatch",
+            "owner_conflict",
+            "owner_missing",
+            "owner_unavailable",
+            "registry_failure",
+        }:
+            raise ValueError("blocked_reason_code is invalid")
+        if self.state == "blocked" and not self.blocked_reason_code:
+            raise ValueError("blocked receipt requires a reason")
+        if self.operation_kind == "create":
+            if self.expected_version is not None:
+                raise ValueError("create receipt cannot have expected_version")
+        elif type(self.expected_version) is not int or self.expected_version < 1:
+            raise ValueError("delete receipt requires expected_version")
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,12 @@
+{
+  "bulk_active": true,
+  "loaded_actions_eligible": false,
+  "loading": false,
+  "message_epoch": "epoch-chat-a",
+  "select_mode": true,
+  "service_calls_after": 2,
+  "service_calls_before": 2,
+  "status": "Bulk selection: 0 conversations. The retained transcript is not included and remains read-only.",
+  "svg": "conversations-select-retry-fenced.svg",
+  "trigger": "retry"
+}

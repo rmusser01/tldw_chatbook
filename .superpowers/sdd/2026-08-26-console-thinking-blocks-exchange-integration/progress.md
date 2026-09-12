@@ -1,0 +1,255 @@
+# SDD ledger — plan: Docs/superpowers/plans/2026-08-26-console-thinking-blocks-exchange-integration.md
+
+Setup: isolated worktree `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/console-thinking-blocks`, branch `codex/console-thinking-blocks`.
+
+Dependencies: TASK-18932.1 complete at `9906b4d4bd`; TASK-18932.2 complete at `7ec7fbc9dc`; TASK-18932.3 complete at `402ec260b4`. Existing ADR-090 governs; no new ADR is required.
+
+Execution: serial subagent-driven development with RED/GREEN evidence, spec review, then code-quality review for each task. Full-suite verification remains excluded unless the user opts in.
+
+Task 1: round-trip supported thinking and replay policy through selected-conversation JSON and Chatbook V2, with whole-conversation preflight and shared sensitivity warnings.
+
+Task 1 initial implementation: commit `3cda0c166a`. Selected JSON RED was 11
+failures; Chatbook V2 RED was 10 failures. The final implementer gate was 165 passed
+with scoped Ruff, `py_compile`, and `git diff --check` clean.
+
+Task 1 spec-review fix round 1: commit `94db09482c`. Present-null envelopes now
+reject in both formats, deleted V2 rows cannot carry thinking, raised metadata lookups
+fail closed, and empty-string policy warns while normalizing to Auto. RED was 11
+focused failures; GREEN was 43 focused and 221 Task-1/policy cases.
+
+Task 1 spec-review fix round 2: commit `406c78bec`. Any non-null selected-conversation
+owner now requires a DB and resolved conversation record; only an explicitly ownerless
+export keeps legacy Auto. RED was 2 failures; GREEN was 26 focused and 224 Task-1/
+policy cases.
+
+Task 1 final spec review: APPROVED at `406c78bec`. The reviewer reran 102 focused
+portability/continuation cases and confirmed canonical V1-only exchange, role/tombstone
+ownership, raw policy validation, aggregate preflight, warning privacy, and per-
+conversation isolation. `git diff --check` and worktree state were clean.
+
+Task 1 code-quality review: APPROVED at `406c78bec`. The reviewer found no correctness,
+privacy, preflight-ordering, compatibility, maintainability, test-quality, or
+over-engineering issue. The same 102 focused tests, scoped Ruff, and diff check passed.
+
+Task 2: lock human-readable transcript/text/document and diagnostic trajectory output
+to visible answers, then prove derivative privacy through real FTS/search, title,
+summary, usage, speech, answer-copy, logging, and durable-owner controls.
+
+Task 1 RED (2026-08-26): `Tests/Chat/test_thinking_conversation_exchange.py`
+failed 11/11 and `Tests/Chatbooks/test_chatbook_thinking_round_trip.py` failed
+10/10 before production changes. Failures showed absent policy/thinking projections,
+missing shared warnings, unsupported-version export not refusing, and imports that did
+not yet restore or preflight thinking data.
+
+Task 1 GREEN (2026-08-26): the required portability, provider-continuation,
+Character Chat, Chatbook creator/importer/integration, and nearest reachable
+assistant-generation-state suites passed: 165 passed. A continuation-only warning
+control subsequently passed with its companion privacy suite: 56 passed. Scoped Ruff
+and `git diff --check` passed. The dependency environment reports one pre-existing
+RequestsDependencyWarning; no test failures remain.
+
+Task 1 implementation: selected-conversation JSON now projects normalized
+conversation policy and canonical structured assistant thinking while preserving its
+caller-supplied selected/active rows. `save_chat_history` passes the caller-owned DB
+instance through to content generation. Character Chat performs complete policy and
+thinking staging before its existing conversation transaction. Chatbook V2 projects
+thinking for every message graph owner it already exports and stages policy plus all
+envelopes before its existing per-conversation transaction. Both formats use the
+shared sensitivity warning for thinking or ADR-063 continuation, reject opaque future
+envelope versions with upgrade-oriented content-free copy, and preserve unrelated
+conversation isolation.
+
+Task 1 ADR check: no new ADR. The implementation follows ADR-090's dedicated
+assistant-owned thinking envelope, normalized conversation replay policy, importable
+round-trip and sensitivity boundary while retaining ADR-063 continuation as a
+separate `_private` owner. Human-readable/derivative surfaces remain Task 2.
+
+Task 1 spec-review fix round 1 (2026-08-26): four boundary findings were verified and
+fixed red-first. The combined selected-JSON/Chatbook regression run was RED with 11
+failures; an off-active-path tombstone refinement independently failed before the
+fix. Present-null `thinking_blocks`/`_thinking` values now reject by key presence,
+including wrong-role null. Chatbook V2 rejects thinking on deleted graph rows, while a
+durable soft-delete control proves the normal DB path clears the envelope. Selected
+JSON resolves DB-owned metadata once and fails with content-free copy when lookup
+fails instead of silently exporting Auto. Explicit empty-string policy is now an
+unknown bounded string that warns and normalizes to Auto; missing/null remains silent
+Auto. Focused review tests passed 43/43; the Task 1 suites plus nearest canonical and
+Console policy lifecycle tests passed 221/221. Scoped Ruff, production `py_compile`,
+and `git diff --check` passed; the existing RequestsDependencyWarning remains the only
+warning.
+
+Task 1 spec-review fix round 2 (2026-08-26): selected JSON now treats every non-null
+`conversation_id` as a claimed durable owner. RED showed 2 failures: a missing DB
+instance and a DB lookup returning no record both silently exported Auto. The export
+now requires the DB instance and resolved conversation or raises the same content-free
+metadata-unavailable error; only `conversation_id=None` retains the legacy ownerless
+Auto path. Focused exchange tests passed 26/26. The first expanded run correctly
+identified two existing privacy-test fixtures that claimed an owner without supplying
+its DB (222 passed, 2 failed); those fixtures now either provide the owner or use the
+ownerless contract. The final Task 1 plus policy suites passed 224/224 with only the
+existing RequestsDependencyWarning. Scoped Ruff, production `py_compile`, and
+`git diff --check` passed.
+
+Task 2 implementation (2026-08-26): plain Console transcripts preserve answers,
+Planning, and tools while the real grouping projection excludes thinking references
+by construction. Trajectory V1's shared validator rejects the three
+thinking-reserved field names at top-level,
+message, variant-set, and mapping variant-value locations without echoing values;
+unrelated ADR-067 additive fields remain accepted. Existing text, Markdown, document,
+FTS, title, summary, usage, speech, copy, log, and error projections were verified as
+visible/safe-data-only, so no broader production changes were made. The initial run
+was 14 failed and 1 passed: 13 failures were genuine trajectory validation RED, while
+the transcript `AttributeError` was later identified as a synthetic-harness artifact;
+focused GREEN was 15 passed.
+The new real-owner privacy inventory passed 5/5, and the required six-file gate passed
+99/99 with only the pre-existing RequestsDependencyWarning. See `task-2-report.md` for
+the decoded durable-owner matrix and ADR-090/063/067 self-review. No new ADR is
+required; Task 3 remains pending.
+
+Task 2 spec-review fix round 1 (2026-08-26): review identified evidence-fixture gaps,
+not product leaks, so production code remains unchanged. The transcript fixture failed
+because its assistant owner had no ADR-063 continuation; it now carries a canonical
+Moonshot checkpoint with a distinct raw canary. That round still used a synthetic
+monkeypatched grouping result; quality review round 2 replaced it with the real owner
+path. The diagnostic inventory RED was 6 passed/1 failed because the
+Chatbook malformed-error fixture lacked the exact notice; the new malformed export
+and import log cases already passed with displayable, raw, and notice canaries. After
+completing that fixture, focused GREEN was 7/7 plus the transcript 1/1. The required
+six-file gate passed 101/101 with the pre-existing RequestsDependencyWarning; scoped
+Ruff/format and diff checks are recorded in `task-2-report.md`. Coverage is stated as
+representative rather than falsely claiming every boundary carries all three canaries.
+No new ADR is required; Task 3 remains pending.
+
+Task 2 quality-review fix round 2 (2026-08-26): review proved the transcript's typed
+thinking guard unreachable because real `ConsoleAssistantTurn.activities` contains
+only tool-role `ConsoleChatMessage` instances; thinking refs belong to a separate
+interactive rendering/selection projection. The dead guard and synthetic monkeypatch
+were removed. A real `set_messages()`/grouping regression now owns displayable,
+proprietary, and ADR-063 continuation evidence, verifies the group contains only the
+Planning and tool rows, and proves plain text retains those rows and the answer while
+omitting all private canaries and the application notice. It passed immediately after
+the guard was removed, so this is safe-by-construction verification, not product RED.
+Existing testing-evidence lessons already cover fake call-site contracts and harness
+bypasses, so no duplicate lesson was added. Trajectory production behavior remains
+unchanged. Focused real-path verification passed 1/1, the required six-file gate
+passed 101/101, and the Task 1 selected-JSON/Chatbook exchange suites passed 46/46;
+scoped Ruff, format, `py_compile`, and diff checks passed. Task 3 remains pending.
+
+Task 2 final spec review: APPROVED at `fad81f6d68`. The reviewer confirmed the
+real `set_messages()`/grouping path retains the answer, Planning, and tool rows while
+omitting displayable thinking, ADR-063 continuation, and the exact application notice.
+The required Task 2 gate passed 101/101 and the Task 1 exchange regression passed
+46/46; scoped static checks and the clean worktree were confirmed.
+
+Task 2 final code-quality review: APPROVED at `fad81f6d68`. The original P1 is
+resolved: no unreachable transcript guard or synthetic owner remains. The trajectory
+validator stays the only Task 2 production change, and its narrow ADR-067-compatible
+contract remains approved. The reviewer found no remaining correctness, privacy,
+maintainability, test-quality, or YAGNI issue.
+
+Task 3 (2026-08-27): dispatched joined lifecycle/backend-refusal integration and user
+documentation. Root retains ownership of the isolated live Console verification and
+Backlog closeout after independent specification and code-quality reviews.
+
+Task 3 implementation (2026-08-27): joined lifecycle evidence found two genuine
+production seams. Persistent thinking compatibility was checked only after durable
+turn acceptance; it now refuses immediately after provider resolution, removes only
+the transient optimistic echo, restores pre-send conversation identity/title, keeps
+the draft, and contacts no provider. Direct delete, subtree delete, and descendant
+tombstoning after content edit cleared thinking but retained the same generation's
+provider continuation; all three now clear both fields after the complete prior
+generation's sync base hash is captured. No remote adapter or new envelope was added.
+
+Task 3 joined GREEN: the new tracked-lowercase
+`Tests/integration/test_console_thinking_end_to_end.py` passed 18/18. The ownership
+fix plus nearest DB regressions passed 4/4. Existing opaque future-envelope and
+whole-record no-splice sync controls passed 2/2. The required broad targeted gate
+passed **1,275**, skipped 2 loopback-listener permission controls, and reported 2
+environment warnings in 132.46s. CSS bundle sync, scoped Ruff format/check, relevant
+`py_compile`, and `git diff --check` passed. All five required user guides were
+updated without promising hidden chain-of-thought. See `task-3-report.md`.
+
+Task 3 diagnostic closeout: the plan/brief paths were corrected to Git's authoritative
+lowercase `scripts/` and `Tests/integration/`. Root reviewed every inventory delta
+since pin `995036264207f4249fce880c6d288c7a369beb0e`: three feature-added diagnostics
+are fixed/content-free, and the gateway/DB digest changes are formatting-only with no
+call-count or sink-topology change. The repository's documented whole-inventory write
+was therefore appropriate. The regenerated guard passes with 537 owners, 1,243
+TASK-492 calls, 7,341 TASK-494 calls, and 8 sink files. Independent reviews, isolated
+live verification, and Backlog closeout remain root-owned.
+
+Task 3 final spec review: APPROVED at `3df136697f`. The reviewer confirmed fresh and
+resumed refusal ownership, manual Retry/Bypass and queued reclaim recovery,
+model-specific local capability/replay, atomic deletion, ADR precedence, lifecycle,
+exchange, privacy, documentation, and the regenerated diagnostic inventory. Fresh
+review evidence included 107 round-2 cases and 476 wider regressions with only the two
+documented loopback-permission skips.
+
+Task 3 final code-quality review: APPROVED at `3df136697f`. The prior preparation-
+ownership P1 and ADR-governance P2 are fully resolved. No queue claim leak, double
+settlement, stale-state overwrite, artificial test seam, privacy regression, or
+remaining YAGNI issue was found. Root's isolated live Console verification and Backlog
+closeout remain pending.
+
+Task 3 specification-review fix round 1 (2026-08-27): RED proved that one local
+endpoint classified both a recognized Qwen reasoner and a plain Llama model as
+displayable, and replay ignored the selected model. The existing local controls now
+resolve with explicit `none` -> ignored, explicit non-none effort -> configured
+displayable, recognized model hint -> displayable when unset, and otherwise ignored.
+That decision is frozen with the selected model/effort. Optional local replay also
+requires an exact stored/selected model ID; Required ADR-063 continuation remains
+independent and provider-owned. The joined replay spine now uses the real resolver and
+direct HTTP adapter, while an actual plain-model/V0-backend control dispatches once
+without demanding thinking persistence. Two synthetic controller fixtures were
+corrected to use matching model IDs. `chat-basics.md` now names first answer/tool as
+the collapse boundary, terminal as fallback, and manual interaction as cancellation.
+Focused GREEN was 626 passed/2 skipped/2 warnings; the exact broad matrix was 1,280
+passed/2 skipped/2 warnings; post-format review regressions passed 12/12. Ruff,
+`py_compile`, CSS/derived bundles, diagnostic inventory (unchanged at 537/1,243/
+7,341/8), and diff checks passed. No new ADR, diagnostic, sink, Backlog status change,
+or live-gate claim was made.
+
+Task 3 quality-review fix round 2 (2026-08-27): four RED controls proved that a V1
+prepared owner resumed by manual Retry, Bypass, or queued reclaim was deleted and left
+READY/COMMITTING when persistence changed to V0. The early compatibility preflight is
+now owner-aware: resumed preparation pauses at PERSISTENCE with the exact existing
+owner, draft, frozen attachment, continuation sidecar, and current conversation
+identity/title intact; the established content-free refusal contacts no provider.
+Fresh-send cleanup is unchanged. Restoring V1 successfully retries the same manual or
+queued owner, and queue claim finalization preserves the next waiter. The older
+durable-continuation spec and ADR-090 now cross-link a dated supersession: Console
+generation deletion clears answer/thinking/continuation atomically, while ordinary
+non-deleting Discard and non-deleted off-branch ownership are unchanged. Focused
+preparation GREEN was 223/223; controller selection was 5/5; the exact broad matrix
+was 1,282 passed/2 skipped/2 warnings. CSS/derived bundles, unchanged diagnostic
+inventory (537/1,243/7,341/8), scoped Ruff/format, `py_compile`, and diff checks pass.
+No new ADR, database change, Backlog status change, or root live-gate claim was made.
+
+Task 3 root live gate (2026-08-27): the self-bootstrapping isolated harness under
+`Docs/superpowers/qa/2026-08-27-console-thinking-blocks-live-verification/` passed
+against production controller/persistence/request/UI seams and left its generated
+profile config byte-identical. Seven painted SVG frames plus `observations.json`
+record expanded-live, answer-boundary collapse, visibility off/on, collapsed restart,
+exact proprietary-unavailable copy, capable-without-evidence honesty, and effective
+Required presentation. Functional checks cover Auto/Include/Exclude/Required replay,
+same-backend reasoning/plain selection, both unsupported persistent evidence kinds,
+and resumed Retry/Bypass ownership. Three representative frames were visually
+inspected; committed evidence normalizes only exporter trailing whitespace before
+hashing. Four earlier failures were harness-only contract drift and required no
+product change. Final feature-wide review and Backlog closeout remain root-owned.
+
+Final feature review and completion (2026-08-27): review found one important privacy
+failure in the start-anchored splitter: more than 20 leading whitespace characters
+before `<think>` or `<analysis>` caused a fail-open answer projection. Strict TDD
+pinned both tags at 21 and 30,000 spaces; `a2e1f547ff` replaced the bounded probe with
+constant-state prefix recognition that drops only leading probe whitespace and keeps
+later tags literal once visible content starts. Independent re-review covered 21,
+30,000, 300,000, chunk-partitioned, and one-million-space inputs and reported no
+remaining Critical, Important, or Minor findings. The final 16-suite matrix passed
+1,286 tests with 2 environment-permission skips and 2 existing warnings; CSS and all
+four generated sheets reproduced; diagnostic inventory remained
+537/1,243/7,341/8; scoped Ruff/format, `py_compile`, feature-range diff checks, and the
+post-fix isolated live harness all passed. The first matrix attempt used a nonexistent
+pytest temp root and failed only in setup; the unchanged rerun passed after creating
+that root. Wider Ruff findings reproduce at the pre-feature base and remain repository
+baseline. No full suite was run under the repository's targeted-verification policy.

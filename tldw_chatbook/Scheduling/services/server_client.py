@@ -58,6 +58,12 @@ class ServerClientConfig:
     retry_delay: float = 1.0
 
 
+#: Sentinel distinguishing "capabilities never probed this connection"
+#: from a probed-and-absent (``None``) result -- `get_capabilities`'s
+#: caching discipline (task-3, schedules UAT remediation ruling 5).
+_CAPABILITIES_UNSET = object()
+
+
 class SchedulingServerClient:
     """Async client that delegates scheduling operations to a notifications service.
 
@@ -82,6 +88,9 @@ class SchedulingServerClient:
         """
         self.notifications_service = notifications_service
         self.config = config or ServerClientConfig()
+        self._capabilities_cache: dict[str, Any] | None | object = (
+            _CAPABILITIES_UNSET
+        )
 
     def set_notifications_service(self, notifications_service: Any | None) -> None:
         """Inject or refresh the underlying notifications service.
@@ -91,6 +100,62 @@ class SchedulingServerClient:
                 operations, or ``None`` to disconnect the server.
         """
         self.notifications_service = notifications_service
+        # A reconnect (or a switch to a different server) may answer the
+        # capabilities probe differently -- never carry a stale verdict
+        # across it (task-3 handshake caching discipline).
+        self._capabilities_cache = _CAPABILITIES_UNSET
+
+    async def get_capabilities(self, *, force: bool = False) -> dict[str, Any] | None:
+        """Probe Scheduled Tasks automation capabilities, cached per connection.
+
+        task-3 (schedules UAT remediation ruling 5) capabilities handshake
+        -- the PROBE construction mirrors `client.py`'s `/sync/
+        capabilities` route (`get_sync_v2_capabilities`), but that method
+        itself does not cache (it's a plain probe, called fresh each time
+        by `Sync_Interop/server_sync_service.py`). The per-connection
+        CACHING shape here instead mirrors `Prompt_Management/prompt_
+        scope_service.py`'s `_server_capabilities_cache` (fix round 1,
+        finding 3 -- corrected citation): fetched at most once per
+        connection (reset by `set_notifications_service`), so repeated
+        callers (every sync cycle) don't re-probe.
+
+        Qodo fix round (finding 1, HIGH): the cache is permanent for the
+        life of a connection, which is right for affordance-gating reads
+        but wrong for an explicit reachability probe -- a server that
+        died after a successful first probe would otherwise answer every
+        later probe from the stale cached verdict forever. ``force=True``
+        bypasses the cache READ (still writing a successful result back
+        to it, so ordinary callers keep benefiting) so
+        `SchedulingService.refresh_server_reachability` always makes a
+        real network attempt.
+
+        Args:
+            force: Skip the cached verdict and re-probe the server. Used
+                by explicit reachability checks; affordance-gating reads
+                should leave this ``False``.
+
+        Returns:
+            The parsed capabilities dict once fetched successfully (cached
+            from then on), or ``None`` when the server does not expose the
+            capabilities route at all -- a server old enough to predate
+            Scheduled Tasks automation entirely, degraded honestly here
+            instead of raised (root-causes.md #7). A transient failure
+            (timeout/5xx/other) is deliberately NOT cached and re-raises
+            (same error-mapping contract as every other method on this
+            class) -- a blip must never be permanently misread as "this
+            server is too old".
+        """
+        if not force and self._capabilities_cache is not _CAPABILITIES_UNSET:
+            return self._capabilities_cache  # type: ignore[return-value]
+        try:
+            result = await self._call_with_retry(
+                "get_scheduled_automation_capabilities", is_read=True
+            )
+        except ServerClientNotFoundError:
+            self._capabilities_cache = None
+            return None
+        self._capabilities_cache = result
+        return result
 
     @staticmethod
     def _strip_local_only_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -284,3 +349,464 @@ class SchedulingServerClient:
             ServerClientTimeoutError: If the request times out after retries.
         """
         return await self._call_with_retry("get_reminder", task_id, is_read=True)
+
+    async def list_automation_definitions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List the server's automation definitions (ADR-077 control plane).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+
+        Returns:
+            The definition list response (``items``/``total``/pagination).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "list_scheduled_automations", limit=limit, offset=offset, is_read=True
+        )
+
+    async def list_automation_definition_audit(
+        self,
+        definition_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str | None = None,
+    ) -> dict[str, Any]:
+        """List one definition's durable execution-audit trail (ADR-077 AC#4).
+
+        Args:
+            definition_id: The server definition whose trail to fetch.
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            event_type: Optional event-type filter (e.g. ``run_succeeded``);
+                kept for parity with the notifications service and API
+                client so callers through this layer can filter too.
+
+        Returns:
+            The audit list response (``items`` carrying ``run_{status}``
+            events with run ids for correlating results, plus pagination).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "list_scheduled_automation_audit",
+            definition_id,
+            limit=limit,
+            offset=offset,
+            event_type=event_type,
+            is_read=True,
+        )
+
+    async def run_automation_definition_now(self, definition_id: str) -> dict[str, Any]:
+        """Trigger one immediate server-side execution of a definition.
+
+        Args:
+            definition_id: The server definition to dispatch.
+
+        Returns:
+            The run reference (``definition_id``/``run_slot_utc``/``job_id``/
+            ``deduped``) for correlating with the eventual result
+            notification.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the definition refuses the run
+                (paused/archived lifecycle) or policy denies it.
+            ServerClientServerError: If the server returns a server error --
+                NOT retried: a retried trigger could enqueue a second run,
+                so the caller sees the failure instead (the server-side
+                run-slot dedupe only collapses triggers sharing a slot).
+            ServerClientTimeoutError: If the request times out (not retried,
+                for the same reason).
+
+        No ``idempotency_key`` is threaded through: this layer never retries
+        a trigger, each user-initiated Run-now is intentionally a distinct
+        run, and ``_strip_local_only_kwargs`` would drop the key before it
+        reached the network anyway.
+        """
+        return await self._call_with_retry(
+            "run_scheduled_automation_now",
+            definition_id,
+            retry=False,
+        )
+
+    async def list_automation_results(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        definition_id: str | None = None,
+        review_state: str | None = None,
+    ) -> dict[str, Any]:
+        """List the server's scheduled-task results (spec §4.2).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            definition_id: Optional filter to one definition's results.
+            review_state: Optional review-state filter.
+
+        Returns:
+            The result list response (``items``/``total``/pagination).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "list_scheduled_automation_results",
+            limit=limit,
+            offset=offset,
+            definition_id=definition_id,
+            review_state=review_state,
+            is_read=True,
+        )
+
+    async def review_automation_result(
+        self,
+        result_id: str,
+        review_state: str,
+        *,
+        review_note: str | None = None,
+    ) -> dict[str, Any]:
+        """Set one result's review state, retried on failure.
+
+        Unlike ``run_automation_definition_now``, replaying the same review
+        state is idempotent server-side -- a retry cannot double-fire
+        anything, so this call keeps the default retry behavior.
+
+        Args:
+            result_id: The server result to update.
+            review_state: New review state (``read``/``dismissed``/etc).
+            review_note: Optional free-text note attached to the review.
+
+        Returns:
+            The updated result row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the result does not exist
+                server-side (e.g. retired).
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "review_scheduled_automation_result",
+            result_id,
+            review_state,
+            review_note=review_note,
+        )
+
+    async def preview_automation_definition(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Create a server-side authoring preview, retried on failure.
+
+        Retryable: the server derives the preview's idempotency from a hash
+        of the normalized payload (spec §5.1) -- replaying an identical
+        preview request after a transient failure returns the same preview
+        rather than creating a second one, so this keeps the default retry
+        behavior like ``review_automation_result``.
+
+        Args:
+            request: The preview request payload (``ScheduledTaskPreview
+                CreateRequest`` fields -- see
+                ``tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas``).
+
+        Returns:
+            The preview response (``status``/``validation_errors``/
+            ``normalized_config``/etc).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected by
+                policy or the server (e.g. an invalid family/mode).
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "preview_scheduled_automation_definition", request
+        )
+
+    async def create_automation_definition(
+        self,
+        preview_id: str,
+        *,
+        initial_lifecycle: str = "configured",
+    ) -> dict[str, Any]:
+        """Create a server-side automation definition, retried on failure.
+
+        Retryable: creating a definition from a preview inherits the same
+        payload-hash idempotency the preview itself is built from (spec
+        §5.1) -- replaying the same ``preview_id`` after a transient
+        failure resolves to the same definition rather than a duplicate,
+        so this is safe to retry like ``preview_automation_definition``.
+
+        Args:
+            preview_id: The valid create-mode preview to consume.
+            initial_lifecycle: Starting lifecycle -- ``"configured"``
+                (default) or ``"paused"``.
+
+        Returns:
+            The created definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the preview is invalid,
+                expired, or already consumed, or policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "create_scheduled_automation_definition",
+            preview_id,
+            initial_lifecycle=initial_lifecycle,
+        )
+
+    async def update_automation_definition(
+        self,
+        definition_id: str,
+        preview_id: str,
+    ) -> dict[str, Any]:
+        """Apply a consumed update-mode preview to an existing definition.
+
+        NOT retryable at this level (``retry=False``, same precedent as
+        ``create_reminder``). The PATCH consumes the preview, so a retry
+        after an unobserved success does not double-apply -- but it does
+        get the server's preview-already-consumed 409, which maps to
+        ``ServerClientValidationError``: the caller then reports "the
+        server refused your edit" for an edit the server actually applied,
+        and the offline queue never gets the chance to sort it out.
+
+        Failing on the first ambiguous transport error instead routes the
+        save into ``SchedulingService.save_definition``'s existing
+        offline-queue fallback, whose replay runs a FRESH update-mode
+        preview before patching (``SyncEngine._push_definition_update``).
+        That is the only safe retry of this call: a new preview against
+        the definition's current version either succeeds or reports a real
+        conflict, and if the first PATCH did land the replay's preview
+        carries the already-applied fields, so it converges rather than
+        lying.
+
+        Args:
+            definition_id: The definition to update.
+            preview_id: The valid update-mode preview to consume.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the preview is invalid,
+                expired, or already consumed, or policy denies the action.
+            ServerClientServerError: If the server returns a server error.
+            ServerClientTimeoutError: If the request times out.
+        """
+        return await self._call_with_retry(
+            "update_scheduled_automation_definition",
+            definition_id,
+            preview_id,
+            retry=False,
+        )
+
+    async def pause_automation_definition(self, definition_id: str) -> dict[str, Any]:
+        """Pause a server-side automation definition, retried on failure.
+
+        Retryable: lifecycle transitions are idempotent by nature --
+        pausing an already-paused definition is a no-op server-side, so a
+        retry after an ambiguous transport failure just re-confirms the
+        same state rather than double-applying anything. This keeps the
+        default retry behavior, unlike ``update_automation_definition``.
+
+        Args:
+            definition_id: The server definition to pause.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the transition is invalid
+                (e.g. an archived definition can't be paused) or policy
+                denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "pause_scheduled_automation_definition", definition_id
+        )
+
+    async def resume_automation_definition(self, definition_id: str) -> dict[str, Any]:
+        """Resume a paused server-side automation definition, retried on failure.
+
+        Retryable for the same reason as ``pause_automation_definition``:
+        resuming an already-configured definition is a no-op server-side.
+
+        Args:
+            definition_id: The server definition to resume.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the transition is invalid or
+                policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "resume_scheduled_automation_definition", definition_id
+        )
+
+    async def archive_automation_definition(self, definition_id: str) -> dict[str, Any]:
+        """Archive a server-side automation definition, retried on failure.
+
+        Retryable for the same reason as ``pause_automation_definition``:
+        archiving an already-archived definition is a no-op server-side.
+
+        Args:
+            definition_id: The server definition to archive.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the transition is invalid or
+                policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "archive_scheduled_automation_definition", definition_id
+        )
+
+    async def mark_automation_definition_solved(
+        self, definition_id: str, *, result_id: str | None = None
+    ) -> dict[str, Any]:
+        """Mark a server-side definition solved, retried on failure.
+
+        Retryable for the same reason as ``pause_automation_definition``:
+        marking an already-solved definition solved again is a no-op
+        server-side (returns the current row, no audit event) rather than
+        an error, so a retry after an ambiguous transport failure just
+        re-confirms the same state.
+
+        Args:
+            definition_id: The server definition to mark solved.
+            result_id: The server result id that triggered the resolution,
+                if any.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the definition is archived or
+                disabled, the result id doesn't exist, or policy denies
+                the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "mark_scheduled_automation_definition_solved",
+            definition_id,
+            result_id=result_id,
+        )
+
+    async def reopen_automation_definition(
+        self,
+        definition_id: str,
+        *,
+        target_lifecycle: str = "paused",
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Reopen a solved server-side definition. NOT retried on failure.
+
+        Unlike every other lifecycle seam above, reopening is NOT a no-op
+        when replayed: the server only accepts the transition FROM
+        ``resolution_state="solved"`` and refuses (``definition_
+        resolution_transition_invalid``) once the row is already
+        ``"open"``. A retry after an ambiguous transport failure whose
+        first attempt actually landed would hit that refusal and report
+        "the server rejected reopening" for an action that already
+        succeeded -- the same false-negative ``update_automation_
+        definition`` avoids by not retrying its non-idempotent PATCH.
+
+        Args:
+            definition_id: The server definition to reopen.
+            target_lifecycle: Lifecycle to restore -- ``"configured"`` or
+                ``"paused"`` (default).
+            reason: Optional free-text reason recorded on the audit event.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the definition isn't currently
+                solved, the transition is otherwise invalid, or policy
+                denies the action.
+            ServerClientServerError: If the server returns a server error.
+            ServerClientTimeoutError: If the request times out.
+        """
+        return await self._call_with_retry(
+            "reopen_scheduled_automation_definition",
+            definition_id,
+            retry=False,
+            target_lifecycle=target_lifecycle,
+            reason=reason,
+        )

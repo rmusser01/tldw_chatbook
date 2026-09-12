@@ -36,6 +36,10 @@ from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
+from Tests.UI.test_settings_personal_context import (
+    _ProfileServiceStub,
+    _ready_snapshot,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
@@ -49,7 +53,15 @@ _HINT_LABELS = ("save category", "revert category")
 # task-1714: the `t` hint uses each category's real verb, so the honest-set
 # checks must track every advertised verb, not a single generic label.
 _TEST_VERB_LABELS = frozenset(SettingsScreen.TEST_ACTION_LABELS.values())
-_ALL_KNOWN_LABELS = frozenset(_HINT_LABELS) | _TEST_VERB_LABELS | {"test category"}
+_PROFILE_ACTION_LABELS = frozenset(
+    label for _key, label in SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+)
+_ALL_KNOWN_LABELS = (
+    frozenset(_HINT_LABELS)
+    | _TEST_VERB_LABELS
+    | _PROFILE_ACTION_LABELS
+    | {"test category", "revert raw draft"}
+)
 
 
 def _expected_labels(category: SettingsCategoryId) -> tuple[str, ...]:
@@ -65,26 +77,73 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         category = SettingsCategoryId(category_value)
         shortcuts = SettingsScreen._category_footer_shortcuts(category)
         keys = tuple(key for key, _label in shortcuts)
-        # s/r are only advertised where the guided save/revert path exists.
-        assert ("s" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
-        assert ("r" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
+        # Network owns a self-contained save path without a SettingsDraft;
+        # guided categories own the paired save/revert path.
+        has_save = (
+            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+            or category is SettingsCategoryId.NETWORK
+        )
+        assert ("s" in keys) == has_save
+        assert ("r" in keys) == (
+            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+            or category is SettingsCategoryId.ADVANCED_CONFIG
+        )
         # t is only advertised where a test action is actually implemented.
-        assert ("t" in keys) == (category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES)
+        assert ("t" in keys) == (
+            category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
+        )
+        for key in {"a", "e", "d", "x"}:
+            assert (key in keys) == (category is SettingsCategoryId.PERSONAL_CONTEXT)
         # Keys and labels stay in lockstep (ADR-031 rule 4: 1:1, no stubs).
         expected_labels = []
+        if has_save:
+            expected_labels.append("save category")
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
-            expected_labels += ["save category", "revert category"]
+            expected_labels.append("revert category")
+        if category is SettingsCategoryId.ADVANCED_CONFIG:
+            expected_labels.append("revert raw draft")
         if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
             expected_labels += [
                 SettingsScreen.TEST_ACTION_LABELS.get(category, "test category")
             ]
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            expected_labels += [
+                label for _key, label in SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+            ]
         assert tuple(label for _key, label in shortcuts) == tuple(expected_labels)
+
+
+@pytest.mark.asyncio
+async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> None:
+    app = _build_test_app()
+    app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(
+            pilot, SettingsCategoryId.PERSONAL_CONTEXT.value
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        assert (
+            screen._active_personal_context_shortcuts()
+            == SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+        )
+        screen._text_entry_focused = lambda: True
+
+        assert screen._footer_shortcut_entries() == tuple(
+            (f"Esc, {key}", label)
+            for key, label in SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+        )
 
 
 @pytest.mark.asyncio
 async def test_footer_hints_follow_the_active_category():
     """The live footer re-registers its hint set on every category switch."""
     app = _build_test_app()
+    app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -96,7 +155,11 @@ async def test_footer_hints_follow_the_active_category():
             await _click_settings_category(pilot, category_value)
             screen = _active_destination_screen(host)
             footer = screen.query_one(AppFooterStatus)
-            expected = set(_expected_labels(SettingsCategoryId(category_value)))
+            expected = {
+                label for _key, label in screen._footer_shortcut_entries()
+            }
+            if category_value == SettingsCategoryId.PERSONAL_CONTEXT.value:
+                assert expected == _PROFILE_ACTION_LABELS
             for label in expected:
                 assert label in footer.shortcut_text, (
                     f"{category_value}: footer must advertise {label!r}, "
@@ -316,6 +379,180 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
             assert label not in help_text
 
 
+def test_f1_help_has_contract_content_for_every_category():
+    """TASK-23110: every category's F1 help body carries the save contract,
+    ownership, and verbs -- no category may open an empty (title-only)
+    scroll body, as Schedules did."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    members = tuple(SettingsCategoryId)
+    assert len(members) == 30
+    for category in members:
+        state = screen._workbench_help_state(category)
+        body = state.render_text()
+        assert body.strip() != state.title.strip(), category
+        assert state.notes, category
+        assert all(note.strip() for note in state.notes), category
+        assert any(
+            note.startswith("Save contract: ") for note in state.notes
+        ), category
+        # Ownership: either the matrix's runtime-owner line, or the
+        # read-only domain pages' single "Owned by X" sentence
+        # (review finding 11 de-duplicated their four echoes).
+        assert any(
+            note.startswith(("Runtime owner: ", "Owned by "))
+            for note in state.notes
+        ), category
+        # Verbs: either real category shortcuts, or an explicit statement
+        # that none exist here.
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            # Live profile state narrows this category's actions; the
+            # unmounted screen used here has none active, while the static
+            # contract remains covered by the mounted footer tests above.
+            assert (
+                screen._category_footer_shortcuts(category)
+                == SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+            )
+        else:
+            assert state.shortcuts or any(
+                note.startswith("No shortcut keys") for note in state.notes
+            ), category
+        # The ownership matrix must actually cover the category -- the
+        # missing-record placeholder is developer copy, not help.
+        assert "Ownership record missing" not in body, category
+        # Finding 11: no note's substantial value is repeated under a
+        # second prefix within one body. The ownership line is exempt --
+        # it stays explicit even when the boundary sentence names the
+        # same owner.
+        values = [
+            note.split(": ", 1)[1].strip().rstrip(".").lower()
+            for note in state.notes
+            if ": " in note and not note.startswith("Runtime owner: ")
+        ]
+        for value in values:
+            if len(value) >= 20:
+                carriers = [v for v in values if value in v]
+                assert len(carriers) == 1, (category, value)
+
+
+def test_f1_help_video_gen_states_a_coherent_write_contract():
+    """Review finding 6 (TASK-23110): Video Gen mutates like Image Gen --
+    its help must not pair a draft badge with read-only-ownership copy."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    body = screen._workbench_help_state(
+        SettingsCategoryId.VIDEO_GENERATION
+    ).render_text()
+    assert "Save contract: Draft — save/revert below." in body
+    assert "Writes here: yes." in body
+    assert "Console owns /generate-video" in body
+    assert "read-only defaults" not in body, body
+    assert "Settings shows read-only" not in body, body
+
+
+@pytest.mark.asyncio
+async def test_f1_help_renders_literal_brackets_in_notes():
+    """Review finding 7 (TASK-23110): the help body must not eat literal
+    bracket text as Textual markup -- Agents' boundary copy contains
+    "[tools]"."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "agents")
+        screen = _active_destination_screen(host)
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        assert "[tools] gates" in panel.state.render_text()
+        body = panel.query_one("#workbench-help-body", Static)
+        assert "[tools] gates" in str(body.render()), (
+            "help body consumed the literal [tools] text as markup"
+        )
+
+
+@pytest.mark.asyncio
+async def test_f1_help_panel_body_carries_category_contract_when_mounted():
+    """TASK-23110 (review round): the contract notes must survive the REAL
+    F1 flow, not just the builder.
+
+    ``test_f1_help_has_contract_content_for_every_category`` calls the
+    private ``_workbench_help_state`` builder directly, so every break
+    BETWEEN that builder and the panel the user actually reads would stay
+    green: notes dropped from the ``WorkbenchHelpState`` the action
+    constructs, a ``notes_heading`` that never reaches the body, or a body
+    widget fed something other than ``render_text()``. This test presses
+    the real path -- ``action_show_workbench_help`` on the mounted screen
+    -- and asserts against the rendered ``#workbench-help-body`` output for
+    BOTH contract shapes:
+
+    * a draft-save category (Storage): save contract, ownership, and its
+      real verbs;
+    * an immediate-write category (Schedules -- the page whose F1 body used
+      to open empty, which is what TASK-23110 fixed): its live ownership
+      contract and an explicit "no shortcuts" statement instead of
+      advertised dead keys.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings(pilot)
+
+        # --- Draft-save category -------------------------------------
+        await _click_settings_category(pilot, "storage")
+        screen = _active_destination_screen(host)
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        body = str(panel.query_one("#workbench-help-body", Static).render())
+
+        assert "Settings: Storage" in body, body
+        # Never a title-only scroll again.
+        assert len(body.strip().splitlines()) > 1, body
+        assert "How this category works" in body, body
+        assert "Save contract: Draft — save with s." in body, body
+        assert (
+            "Runtime owner: Settings persisted defaults; storage services "
+            "active handles." in body
+        ), body
+        assert "Writes here: yes." in body, body
+        for label in _expected_labels(SettingsCategoryId.STORAGE):
+            assert label in body, (
+                f"rendered F1 body must teach {label!r}, got {body!r}"
+            )
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # --- Immediate-write domain category -------------------------
+        await _click_settings_category(pilot, "schedules")
+        screen = _active_destination_screen(host)
+        screen.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        body = str(panel.query_one("#workbench-help-body", Static).render())
+
+        assert "Settings: Schedules" in body, body
+        assert len(body.strip().splitlines()) > 1, body
+        assert "How this category works" in body, body
+        assert "Save contract: Applies immediately." in body, body
+        assert (
+            "Runtime owner: Settings global gate; Schedules runtime actions; "
+            "Artifacts collection cadence."
+            in body
+        ), body
+        assert "Writes here: yes." in body, body
+        assert "No shortcut keys are specific to this category." in body, body
+        # Honesty: immediate persistence must not teach save/revert/test keys.
+        for label in _ALL_KNOWN_LABELS:
+            assert label not in body, (
+                f"immediate-write F1 body must not advertise {label!r}, got {body!r}"
+            )
+
+
 _TEST_STUB_TOAST = "No test action is available"
 _SAVE_STUB_TOAST = "has no save action yet"
 
@@ -372,11 +609,14 @@ async def test_advertised_capabilities_match_real_action_branches():
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             save_stubbed = any(_SAVE_STUB_TOAST in toast for toast in toasts)
-            if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            if (
+                category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+                or category is SettingsCategoryId.NETWORK
+            ):
                 assert not save_stubbed, (
-                    f"{category_value}: guided category hit the save stub -- a "
+                    f"{category_value}: save-capable category hit the save stub -- a "
                     "save branch was removed without updating "
-                    f"GUIDED_SETTINGS_MUTATION_CATEGORIES (toasts: {toasts})"
+                    f"its advertised capability (toasts: {toasts})"
                 )
             else:
                 # Non-guided: guidance only, never a completed real save

@@ -2,17 +2,38 @@
 Unit tests for SQL validation module.
 """
 
+from tldw_chatbook.DB import sql_validation
 from tldw_chatbook.DB.sql_validation import (
+    VALID_COLUMNS,
     VALID_TABLES,
-    validate_identifier,
-    validate_table_name,
-    validate_column_name,
-    validate_column_list,
-    validate_link_table,
-    get_safe_table_name,
-    get_safe_column_name,
     escape_identifier,
+    get_safe_column_name,
+    get_safe_table_name,
+    validate_column_list,
+    validate_column_name,
+    validate_identifier,
+    validate_link_table,
+    validate_table_name,
 )
+
+
+def test_subscription_item_order_profiles_are_centrally_validated():
+    resolver = getattr(sql_validation, "get_safe_order_by_clause", None)
+    assert callable(resolver), "dynamic ORDER BY profiles need one central validator"
+    assert (
+        resolver("subscription_items_agent")
+        == "i.effective_date DESC, i.id ASC"
+    )
+    assert (
+        resolver("subscription_items_reader")
+        == "i.effective_date DESC, i.id DESC"
+    )
+    try:
+        resolver("i.id DESC; DROP TABLE subscription_items")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown ORDER BY profiles must fail closed")
 
 
 class TestValidateIdentifier:
@@ -99,10 +120,61 @@ class TestValidateTableName:
             "sync_log",
             "Media_fts",
             "MediaChunks",
+            "ChunkingTemplates",
         ]
 
         for table in valid_tables:
             assert validate_table_name(table, "media") is True
+
+    def test_chunking_templates_columns_accepted_and_live(self, tmp_path):
+        """task-8 (AC 27): ChunkingTemplates and its v7 columns are
+        registered, and the registered set matches the live schema exactly
+        (a fresh MediaDatabase runs the full chain to v7)."""
+        from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+        assert validate_table_name("ChunkingTemplates", "media") is True
+
+        database = MediaDatabase(str(tmp_path / "cols.db"), client_id="test")
+        try:
+            live = {
+                row["name"]
+                for row in database.get_connection().execute(
+                    "PRAGMA table_info(ChunkingTemplates)"
+                )
+            }
+        finally:
+            database.close_connection()
+
+        registered = VALID_COLUMNS["ChunkingTemplates"]
+        assert registered == live
+        for column in registered:
+            assert validate_column_name(column, "ChunkingTemplates") is True
+
+    def test_sync_log_latest_only_table_columns_are_live(self, tmp_path):
+        """task-19564: the three tables `prune_sync_log` validates against.
+
+        `validate_column_name` fails CLOSED for a table with no `VALID_COLUMNS`
+        entry, so these three sets are what lets the retention sweep route its
+        identifiers through this module at all. Pinned against a live
+        fully-migrated database so a future world-book/dictionary column
+        change cannot leave the registration stale.
+        """
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        database = CharactersRAGDB(str(tmp_path / "scopes.db"), client_id="test")
+        try:
+            for _, table, id_column, _, _ in CharactersRAGDB._SYNC_LOG_LATEST_ONLY_SCOPES:
+                assert validate_table_name(table, "chachanotes") is True
+                live = {
+                    row["name"]
+                    for row in database.get_connection().execute(
+                        f"PRAGMA table_info({table})"
+                    )
+                }
+                assert VALID_COLUMNS[table] == live, table
+                assert validate_column_name(id_column, table) is True
+        finally:
+            database.close_connection()
 
     def test_valid_prompts_tables(self):
         """Test valid table names for prompts database."""
@@ -378,24 +450,67 @@ class TestChachanotesValidTablesMatchesLiveSchema:
     table without updating it -- exactly how ``keyword_collections`` was
     missed. This test is the guard: it fails the moment the two diverge,
     instead of waiting for a user to hit an unconditional ``ValueError``.
+
+    TASK-20971: this class is the *runtime* half of a two-part guard. It has
+    now caught the same drift twice in one day (TASK-19568's repair merged at
+    00:16, TASK-19057 re-broke it at 14:51) -- both times *after* the merge,
+    because a hours-long suite with no CI verdict since 2026-06-26 only
+    reports to whoever runs it. The authoring-time half is
+    ``scripts/check_schema_table_allowlist.py`` (in ``scripts/preflight.sh``
+    and the required ``derived-artifacts`` job): it reaches the same verdict
+    by statically scanning the migration SQL, in milliseconds, with no
+    database. The two are deliberately independent oracles -- this one asks a
+    live ``sqlite_master``, that one asks the ``CREATE TABLE`` text -- and at
+    the commit that added it they agreed exactly: 69 substantive tables,
+    symmetric difference empty. The failure messages below name the checker
+    so an author who reaches this test late still learns where the early
+    signal lives.
     """
+
+    #: Appended to both failure messages. A message that names the drift but
+    #: not the fix leaves the author to go find the literal; that is friction
+    #: on the exact path this guard exists to make frictionless.
+    _WHERE_TO_FIX = (
+        "\n\nThe allowlist is VALID_TABLES['chachanotes'] in "
+        "tldw_chatbook/DB/sql_validation.py.\n"
+        "To get this verdict BEFORE you commit (no database, ~milliseconds):\n"
+        "    python3 scripts/check_schema_table_allowlist.py\n"
+        "which also runs inside ./scripts/preflight.sh."
+    )
 
     def test_no_missing_tables(self):
         """Every real, substantive table in the live schema must be allowlisted."""
         live_tables = _live_chachanotes_table_names()
         missing = live_tables - VALID_TABLES["chachanotes"]
+        paste = "\n".join(f'        "{name}",' for name in sorted(missing))
         assert not missing, (
             f"Live schema has tables not in VALID_TABLES['chachanotes']: "
-            f"{sorted(missing)}. Add them (or document a deliberate "
-            f"exclusion) in tldw_chatbook/DB/sql_validation.py."
+            f"{sorted(missing)}.\n"
+            f"Paste these lines into the set (or document a deliberate "
+            f"exclusion):\n{paste}"
+            f"{self._WHERE_TO_FIX}"
         )
 
     def test_no_stale_tables(self):
         """Every allowlisted name must correspond to a real, live table."""
         live_tables = _live_chachanotes_table_names()
         stale = VALID_TABLES["chachanotes"] - live_tables
+        remove = "\n".join(f'        "{name}",' for name in sorted(stale))
         assert not stale, (
             f"VALID_TABLES['chachanotes'] allowlists tables that no longer "
-            f"exist in the live schema: {sorted(stale)}. Remove them from "
-            f"tldw_chatbook/DB/sql_validation.py."
+            f"exist in the live schema: {sorted(stale)}.\n"
+            f"Delete these lines from the set:\n{remove}"
+            f"{self._WHERE_TO_FIX}"
         )
+
+
+def test_identifier_leaf_preserves_public_grammar_and_escaping():
+    from tldw_chatbook.DB import sql_identifier_core, sql_validation
+
+    for identifier in ["", "SELECT", "hello_world", "é声", "a" * 65, 'a"b', "x\n"]:
+        assert sql_identifier_core.validate_identifier(
+            identifier
+        ) == sql_validation.validate_identifier(identifier)
+        assert sql_identifier_core.escape_identifier(
+            identifier
+        ) == sql_validation.escape_identifier(identifier)

@@ -173,7 +173,7 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                 ("nav-home", "⌃1 Home"),
                 ("nav-console", "⌃2 Console"),
                 ("nav-library", "⌃3 Library"),
-                ("nav-settings", "F9 Settings"),
+                ("nav-settings", "F4 Settings"),
             ):
                 assert expected_nav in nav
 

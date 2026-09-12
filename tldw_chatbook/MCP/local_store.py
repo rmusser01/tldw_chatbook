@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the save-time check.)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -103,7 +105,7 @@ def _require_non_empty_field(value: str, field_name: str, record_type: str) -> s
 
 
 _PROFILE_ID_INVALID_CHARS_RE = re.compile(r"[:\s]")
-_RESERVED_EXTERNAL_PROFILE_ID = "__local__"
+_RESERVED_EXTERNAL_PROFILE_IDS = frozenset({"__local__", "__virtual_cli__"})
 
 
 def _validate_profile_id(value: str) -> str:
@@ -124,7 +126,7 @@ def _validate_profile_id(value: str) -> str:
     discouraged.
     """
     normalized = _require_non_empty_field(value, "profile_id", "Local MCP profile")
-    if normalized == _RESERVED_EXTERNAL_PROFILE_ID:
+    if normalized in _RESERVED_EXTERNAL_PROFILE_IDS:
         raise ValueError("Local MCP profile profile_id is reserved")
     if _PROFILE_ID_INVALID_CHARS_RE.search(normalized):
         raise ValueError(
@@ -650,7 +652,7 @@ class LocalMCPStoreState:
                 for item in (profiles_raw if isinstance(profiles_raw, list) else [])
             )
             if profile.profile_id
-            and profile.profile_id != _RESERVED_EXTERNAL_PROFILE_ID
+            and profile.profile_id not in _RESERVED_EXTERNAL_PROFILE_IDS
             and profile.command
         )
         governance_rules = tuple(
@@ -685,7 +687,7 @@ class LocalMCPStoreState:
                 str(server_id): dict(snapshot)
                 for server_id, snapshot in snapshots_raw.items()
                 if str(server_id).strip()
-                and _text(server_id) != _RESERVED_EXTERNAL_PROFILE_ID
+                and _text(server_id) not in _RESERVED_EXTERNAL_PROFILE_IDS
                 and isinstance(snapshot, Mapping)
             }
             if isinstance(snapshots_raw, Mapping)
@@ -697,7 +699,7 @@ class LocalMCPStoreState:
                 str(profile_id): dict(record)
                 for profile_id, record in runtime_state_raw.items()
                 if str(profile_id).strip()
-                and _text(profile_id) != _RESERVED_EXTERNAL_PROFILE_ID
+                and _text(profile_id) not in _RESERVED_EXTERNAL_PROFILE_IDS
                 and isinstance(record, Mapping)
             }
             if isinstance(runtime_state_raw, Mapping)
@@ -775,6 +777,16 @@ class LocalMCPStore:
         command = _require_non_empty_field(
             canonical_profile.command, "command", "Local MCP profile"
         )
+        # TASK-26013: refuse a dangerous command shape at save time, naming the
+        # matched rule and leaving the stored list untouched.
+        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
+        _spawn_verdict = screen_spawn_command(command, canonical_profile.args)
+        if _spawn_verdict is not None:
+            raise ValueError(
+                f"Local MCP profile command refused: {_spawn_verdict.reason} "
+                f"(rule: {_spawn_verdict.rule})"
+            )
         existing_profile = next(
             (item for item in current.profiles if item.profile_id == profile_id),
             None,
@@ -1087,6 +1099,12 @@ class LocalMCPStore:
             None,
         )
         if existing_request is None:
+            return None
+        # Qodo #9 (PR #2313): only a PENDING request may be resolved. Without
+        # this, an approval action raced against an elicitation timeout could
+        # overwrite the terminal "expired" state with "approved" -- a false
+        # audit record for a request nobody is waiting on.
+        if existing_request.status != "pending":
             return None
         now = datetime.now(timezone.utc)
         resolved_request = LocalApprovalRequest(

@@ -148,9 +148,9 @@ WAKE_NOTICE_DISCLAIMER = (
 
 #: Closing line: invites action without granting any authority.
 WAKE_NOTICE_TRAILER = (
-    "You may act on these results now, or wait for the user's next "
-    "message."
+    "You may act on these results now, or wait for the user's next message."
 )
+
 
 def _fenced(text: str) -> str:
     """Fence ``text`` with more backticks than any run it contains, so a
@@ -164,8 +164,7 @@ def _truncated(text: str, cap: int) -> str:
     if cap <= 0 or len(text) <= cap:
         return text
     return (
-        text[:cap]
-        + "\n… (truncated to share the notice's result budget; the full "
+        text[:cap] + "\n… (truncated to share the notice's result budget; the full "
         "result is in the run log)"
     )
 
@@ -209,9 +208,7 @@ def compose_wake_notice(
             header += f" — task: {shortened}"
         result = row.get("result")
         body = (
-            str(result)
-            if result
-            else f"(no result recorded; the run ended '{status}')"
+            str(result) if result else f"(no result recorded; the run ended '{status}')"
         )
         headers.append(header)
         bodies.append(body)
@@ -299,12 +296,22 @@ class ConsoleFleetWakeCoordinator:
 
     def __init__(self, controller: "ConsoleChatController"):
         self._controller = controller
+        self.buddy_sink = getattr(controller, "_buddy_sink", None)
         self._app: Any | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._registry_lock = threading.Lock()
+        self._registry_lock = threading.RLock()
+        #: Permanent teardown fence. Set under ``_registry_lock`` before
+        #: pending membership or Buddy leases are cleared, so a producer
+        #: that began earlier cannot publish after disposal.
+        self._disposed = False
         #: conversation_id -> {run_id: terminal status}; the hot-path
         #: undelivered set (the durable mark is the restart-proof bit).
         self._pending: dict[str, dict[str, str]] = {}
+        #: Per-conversation generations established by session close. A fence
+        #: rejects stale intake while close drains. A fully graceful drain may
+        #: release its exact generation so the saved conversation can be
+        #: reopened; timeout and app-disposal fences remain terminal.
+        self._conversation_fences: dict[str, int] = {}
         #: Conversation currently being delivered, or None. Serializes
         #: deliveries app-wide (one wake at a time) and anchors
         #: ``authorizes``.
@@ -316,7 +323,8 @@ class ConsoleFleetWakeCoordinator:
         #: the fact: a Console attaching mid-delivery has to re-arm
         #: ``delivery_ui_hook``, which takes the session.
         self._delivering_session: str | None = None
-        self._delivery_tasks: set[asyncio.Task] = set()
+        self._delivery_tasks: dict[asyncio.Task, str] = {}
+        self._runtime_submitter: Callable[..., str] | None = None
         #: task-15862: screen-wired hook fired on the loop thread the
         #: moment a delivery is scheduled (``_delivering`` already set).
         #: The screen arms its 0.2s transcript poll here -- a wake turn
@@ -357,19 +365,25 @@ class ConsoleFleetWakeCoordinator:
         except RuntimeError:
             pass
 
+    def bind_runtime_submitter(self, submit_wake: Callable[..., str]) -> None:
+        """Route future wake turns through app-owned runtime custody."""
+
+        self._runtime_submitter = submit_wake
+
     # -- authority ------------------------------------------------------------
 
-    def authorizes(
-        self, authorization: Any, session_id: str
-    ) -> bool:
+    def authorizes(self, authorization: Any, session_id: str) -> bool:
         """Return whether ``authorization`` is this coordinator's live
         wake token for ``session_id``."""
-        return bool(
-            isinstance(authorization, AgentWakeAuthorization)
-            and authorization._coordinator is self
-            and authorization.session_id == session_id
-            and self._delivering is not None
-        )
+        with self._registry_lock:
+            return bool(
+                not self._disposed
+                and isinstance(authorization, AgentWakeAuthorization)
+                and authorization._coordinator is self
+                and authorization.session_id == session_id
+                and self._delivering is not None
+                and self._delivering not in self._conversation_fences
+            )
 
     # -- inspection (tests / screen) -----------------------------------------
 
@@ -395,7 +409,8 @@ class ConsoleFleetWakeCoordinator:
         Returns:
             The conversation id being delivered, or ``None``.
         """
-        return self._delivering
+        with self._registry_lock:
+            return self._delivering
 
     def delivering_session_id(self) -> str | None:
         """The session a wake turn is delivering into right now.
@@ -409,7 +424,8 @@ class ConsoleFleetWakeCoordinator:
         Returns:
             The session id being delivered into, or ``None``.
         """
-        return self._delivering_session
+        with self._registry_lock:
+            return self._delivering_session
 
     # -- the drain half (child thread) ---------------------------------------
 
@@ -426,6 +442,9 @@ class ConsoleFleetWakeCoordinator:
         deliver what settled while it was off.
         """
         try:
+            with self._registry_lock:
+                if self._disposed:
+                    return
             survivors = [
                 child
                 for child in (getattr(event, "children", ()) or ())
@@ -438,11 +457,16 @@ class ConsoleFleetWakeCoordinator:
             if not conversation_id:
                 return
             with self._registry_lock:
+                if self._disposed or conversation_id in self._conversation_fences:
+                    return
                 bucket = self._pending.setdefault(conversation_id, {})
                 for child in survivors:
                     bucket[str(child.run_id)] = str(
                         getattr(child, "status", "") or "done"
                     )
+            self._publish_active_wakes(
+                conversation_id, tuple(str(child.run_id) for child in survivors)
+            )
             self.retry_soon()
         except Exception as exc:  # noqa: BLE001 -- never raise into the fan-out
             logger.warning(
@@ -462,7 +486,10 @@ class ConsoleFleetWakeCoordinator:
         poke, mount-claim seeding, and each delivery's own completion.
         No loop captured (sync harness) means nothing to schedule onto.
         """
-        loop = self._loop
+        with self._registry_lock:
+            if self._disposed:
+                return
+            loop = self._loop
         if loop is None or loop.is_closed():
             return
         try:
@@ -472,6 +499,8 @@ class ConsoleFleetWakeCoordinator:
 
     def _attempt_all(self) -> None:
         with self._registry_lock:
+            if self._disposed:
+                return
             conversations = tuple(self._pending)
         for conversation_id in conversations:
             self._attempt(conversation_id)
@@ -512,6 +541,12 @@ class ConsoleFleetWakeCoordinator:
         allowed before (no ``_shutdown_requested``) and is allowed now
         (``_disposed`` defaults False).
         """
+        with self._registry_lock:
+            if self._disposed or conversation_id in self._conversation_fences:
+                return
+            if self._delivering is not None:
+                return
+            bucket = dict(self._pending.get(conversation_id) or {})
         if not autowake_enabled():
             return
         controller = self._controller
@@ -519,10 +554,6 @@ class ConsoleFleetWakeCoordinator:
             return
         if getattr(controller, "_disposed", False):
             return
-        if self._delivering is not None:
-            return
-        with self._registry_lock:
-            bucket = dict(self._pending.get(conversation_id) or {})
         if not bucket:
             return
         session_id = self._resolve_session_id(conversation_id)
@@ -552,56 +583,115 @@ class ConsoleFleetWakeCoordinator:
         notice = compose_wake_notice(rows)
         if not notice:
             return
+        delivered_run_ids = tuple(str(row.get("id")) for row in rows)
         loop = self._loop
         if loop is None or loop.is_closed():
             return
-        self._delivering = conversation_id
-        self._delivering_session = session_id
-        authorization = AgentWakeAuthorization(
-            self, session_id, _key=_WAKE_AUTHORIZATION_KEY
-        )
-        # task-15862: tell the screen a wake turn is starting so it can arm
-        # the transcript poll. ``_delivering`` is already set, so a poll
-        # beat racing the delivery task's first run cannot self-stop in the
-        # gap. Never let a UI hook block the delivery itself.
-        hook = self.delivery_ui_hook
-        if callable(hook):
-            try:
+        with self._registry_lock:
+            # All gates above may invoke external code. Recheck the terminal
+            # fence and serializer after that work, immediately before the
+            # only enqueue/publication transition.
+            if (
+                self._disposed
+                or conversation_id in self._conversation_fences
+                or self._delivering is not None
+            ):
+                return
+            current = self._pending.get(conversation_id) or {}
+            if not all(run_id in current for run_id in delivered_run_ids):
+                return
+            self._delivering = conversation_id
+            self._delivering_session = session_id
+            authorization = AgentWakeAuthorization(
+                self, session_id, _key=_WAKE_AUTHORIZATION_KEY
+            )
+            hook = self.delivery_ui_hook
+            runtime_submitter = self._runtime_submitter
+        # The hook and scheduler are external callbacks: never invoke either
+        # while holding the registry lock. The exact in-flight identity is
+        # rechecked after each boundary.
+        try:
+            if callable(hook):
                 hook(session_id)
-            except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
-                logger.debug(
-                    "wake delivery UI hook raised (exception_type={})",
+        except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
+            logger.debug(
+                "wake delivery UI hook raised (exception_type={})",
+                type(exc).__name__,
+            )
+        with self._registry_lock:
+            if (
+                self._disposed
+                or conversation_id in self._conversation_fences
+                or self._delivering != conversation_id
+                or self._delivering_session != session_id
+            ):
+                return
+        if runtime_submitter is not None:
+            try:
+                runtime_submitter(
+                    notice,
+                    session_id=session_id,
+                    wake_authorization=authorization,
+                    on_terminal=lambda accepted: self._finish_delivery(
+                        conversation_id,
+                        session_id,
+                        delivered_run_ids,
+                        accepted=accepted,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 -- defer, never wedge
+                with self._registry_lock:
+                    if (
+                        self._delivering == conversation_id
+                        and self._delivering_session == session_id
+                    ):
+                        self._delivering = None
+                        self._delivering_session = None
+                logger.warning(
+                    "wake delivery could not enter runtime custody; deferring "
+                    "(exception_type={})",
                     type(exc).__name__,
                 )
-        # Qodo audit minor batch: `_delivering` must be set BEFORE the hook
-        # and the task (the poll-beat race above), so a `create_task` that
-        # raises -- the loop closing between the `is_closed()` check and
-        # this call is the live shape -- must CLEAR the flags on its way
-        # out. Leaving them set wedged every future `_attempt` in the
-        # process at the `self._delivering is not None` gate: no wake could
-        # ever fire again. The bucket is untouched, so the wake is
-        # deferred to the next attempt, not lost.
+            return
         try:
             task = loop.create_task(
                 self._deliver(
                     conversation_id,
                     session_id,
-                    tuple(bucket),
+                    delivered_run_ids,
                     notice,
                     authorization,
                 )
             )
-        except Exception as exc:  # noqa: BLE001 -- a failed wake defers, never wedges
-            self._delivering = None
-            self._delivering_session = None
+        except Exception as exc:  # noqa: BLE001 -- defer, never wedge
+            with self._registry_lock:
+                if (
+                    self._delivering == conversation_id
+                    and self._delivering_session == session_id
+                ):
+                    self._delivering = None
+                    self._delivering_session = None
             logger.warning(
                 "wake delivery task could not be scheduled; deferring "
                 "(exception_type={})",
                 type(exc).__name__,
             )
             return
-        self._delivery_tasks.add(task)
-        task.add_done_callback(self._delivery_tasks.discard)
+        cancel_task = False
+        with self._registry_lock:
+            if (
+                self._disposed
+                or conversation_id in self._conversation_fences
+                or self._delivering != conversation_id
+                or self._delivering_session != session_id
+            ):
+                cancel_task = True
+            else:
+                self._delivery_tasks[task] = conversation_id
+        if cancel_task:
+            task.cancel()
+            return
+        task.add_done_callback(self._forget_delivery_task)
 
     async def _deliver(
         self,
@@ -628,6 +718,12 @@ class ConsoleFleetWakeCoordinator:
             ConsoleSubmissionOrigin,
         )
 
+        with self._registry_lock:
+            disposed = self._disposed
+            fenced = conversation_id in self._conversation_fences
+        if disposed or fenced:
+            self._release_exact_wakes(conversation_id, delivered_run_ids)
+            return
         accepted = False
         try:
             result = await self._controller.submit_draft(
@@ -643,47 +739,129 @@ class ConsoleFleetWakeCoordinator:
                 type(exc).__name__,
             )
         finally:
-            self._delivering = None
-            self._delivering_session = None
-        if accepted:
-            runs_db = self._runs_db()
-            stamp = getattr(runs_db, "mark_wake_delivered", None)
-            if callable(stamp):
-                try:
-                    stamp(delivered_run_ids)
-                except Exception as exc:  # noqa: BLE001 -- a lost stamp risks one
-                    # re-announce at a later claim, never a lost result.
-                    logger.warning(
-                        "wake delivery ledger stamp failed (exception_type={})",
-                        type(exc).__name__,
-                    )
-            with self._registry_lock:
-                bucket = self._pending.get(conversation_id)
-                if bucket is not None:
-                    for run_id in delivered_run_ids:
-                        bucket.pop(run_id, None)
-                    if not bucket:
-                        self._pending.pop(conversation_id, None)
+            self._finish_delivery(
+                conversation_id,
+                session_id,
+                delivered_run_ids,
+                accepted=accepted,
+            )
+
+    def _finish_delivery(
+        self,
+        conversation_id: str,
+        session_id: str,
+        delivered_run_ids: tuple[str, ...],
+        *,
+        accepted: bool,
+    ) -> None:
+        """Commit one completed delivery without external calls under lock."""
+
+        with self._registry_lock:
+            exact_delivery = (
+                self._delivering == conversation_id
+                and self._delivering_session == session_id
+            )
+            bucket = self._pending.get(conversation_id) or {}
+            exact_membership = all(run_id in bucket for run_id in delivered_run_ids)
+            disposed = self._disposed
+            fenced = conversation_id in self._conversation_fences
+            candidate = (
+                accepted
+                and not disposed
+                and not fenced
+                and exact_delivery
+                and exact_membership
+            )
+            if not candidate:
+                if exact_delivery:
+                    self._delivering = None
+                    self._delivering_session = None
+
+        if fenced:
+            self._release_exact_wakes(conversation_id, delivered_run_ids)
+            return
+        if disposed:
+            # App exit terminally clears the volatile registry before a
+            # custodied turn's done callback can run. Durable acceptance is
+            # stronger evidence than that now-cleared membership: the wake
+            # notice already exists in the transcript, so its exact run IDs
+            # must be idempotently stamped or restart recovery will inject it
+            # again. This finalizes only the callback's frozen IDs; it never
+            # reopens intake, delivery, or coordinator membership.
+            if accepted:
+                runs_db = self._runs_db()
+                stamp = getattr(runs_db, "mark_wake_delivered", None)
+                if callable(stamp):
+                    try:
+                        stamp(delivered_run_ids)
+                    except Exception as exc:  # noqa: BLE001 -- reannounce beats loss
+                        logger.warning(
+                            "wake delivery ledger stamp failed after dispose "
+                            "(exception_type={})",
+                            type(exc).__name__,
+                        )
+            self._release_exact_wakes(conversation_id, delivered_run_ids)
+            return
+        if not candidate:
+            self.retry_soon()
+            return
+
+        # SQLite is external work and may reenter teardown. Keep the in-flight
+        # identity set while stamping, then revalidate it and membership before
+        # committing the in-memory registry transition.
+        runs_db = self._runs_db()
+        stamp = getattr(runs_db, "mark_wake_delivered", None)
+        if callable(stamp):
+            try:
+                stamp(delivered_run_ids)
+            except Exception as exc:  # noqa: BLE001 -- reannounce beats loss
+                logger.warning(
+                    "wake delivery ledger stamp failed (exception_type={})",
+                    type(exc).__name__,
+                )
+
+        with self._registry_lock:
+            exact_delivery = (
+                self._delivering == conversation_id
+                and self._delivering_session == session_id
+            )
+            bucket = self._pending.get(conversation_id)
+            exact_membership = bucket is not None and all(
+                run_id in bucket for run_id in delivered_run_ids
+            )
+            fenced = conversation_id in self._conversation_fences
+            if self._disposed or fenced or not exact_delivery or not exact_membership:
+                disposed = self._disposed
+                if exact_delivery:
+                    self._delivering = None
+                    self._delivering_session = None
+                committed = False
+                nothing_undelivered = False
+            else:
+                for run_id in delivered_run_ids:
+                    bucket.pop(run_id, None)
+                if not bucket:
+                    self._pending.pop(conversation_id, None)
+                self._delivering = None
+                self._delivering_session = None
+                committed = True
                 nothing_undelivered = conversation_id not in self._pending
-            if nothing_undelivered and self._app is not None:
-                # task-15971 (the coordinator's design ruling): the mark's
-                # fate at commit depends on whether the user WATCHED the
-                # delivery. In view -> the result is seen; clear through
-                # the named seam as always. Off view (a mounted-but-hidden
-                # Console delivering, or a non-active session tab) -> the
-                # delivery is real but unseen; the mark is SET so the ◈
-                # badge points at the delivered result until the user
-                # views it (view-clear then applies normally -- nothing
-                # is pending any more).
-                if self._conversation_in_view(conversation_id, session_id):
+
+        if disposed or fenced or committed:
+            self._release_exact_wakes(conversation_id, delivered_run_ids)
+        if committed and nothing_undelivered and self._app is not None:
+            in_view = self._conversation_in_view(conversation_id, session_id)
+            with self._registry_lock:
+                publish_mark = not self._disposed
+            if publish_mark:
+                if in_view:
                     clear_fleet_unseen_completion(self._app, conversation_id)
                 else:
                     set_fleet_unseen_completion(self._app, conversation_id)
-        self.retry_soon()
+        if not disposed and not fenced:
+            self.retry_soon()
 
-    def _conversation_in_view(
-        self, conversation_id: str, session_id: str
-    ) -> bool:
+    def _conversation_in_view(self, conversation_id: str, session_id: str) -> bool:
         """Whether the delivered conversation is actually being viewed.
 
         Consults the screen-wired ``wake_conversation_in_view`` probe
@@ -720,8 +898,7 @@ class ConsoleFleetWakeCoordinator:
             return bool(probe(conversation_id, session_id))
         except Exception as exc:  # noqa: BLE001 -- uncertainty keeps the badge
             logger.debug(
-                "wake view probe raised; keeping the unseen mark "
-                "(exception_type={})",
+                "wake view probe raised; keeping the unseen mark (exception_type={})",
                 type(exc).__name__,
             )
             return False
@@ -746,6 +923,9 @@ class ConsoleFleetWakeCoordinator:
         Returns:
             How many conversations gained pending completions.
         """
+        with self._registry_lock:
+            if self._disposed:
+                return 0
         if not autowake_enabled():
             return 0
         app = self._app
@@ -764,6 +944,9 @@ class ConsoleFleetWakeCoordinator:
             return 0
         seeded = 0
         for conversation_id in marked:
+            with self._registry_lock:
+                if conversation_id in self._conversation_fences:
+                    continue
             try:
                 rows = undelivered(conversation_id)
             except Exception as exc:  # noqa: BLE001
@@ -775,13 +958,95 @@ class ConsoleFleetWakeCoordinator:
             if not rows:
                 continue
             with self._registry_lock:
+                if (
+                    self._disposed
+                    or conversation_id in self._conversation_fences
+                ):
+                    continue
                 bucket = self._pending.setdefault(conversation_id, {})
+                run_ids: list[str] = []
                 for row in rows:
-                    bucket.setdefault(
-                        str(row.get("id")), str(row.get("status") or "done")
-                    )
+                    run_id = str(row.get("id"))
+                    bucket.setdefault(run_id, str(row.get("status") or "done"))
+                    run_ids.append(run_id)
+            self._publish_active_wakes(conversation_id, tuple(run_ids))
             seeded += 1
         return seeded
+
+    def fence_conversation(self, conversation_id: str, *, generation: int) -> None:
+        """Reject stale wake work for one closing conversation."""
+
+        with self._registry_lock:
+            # The first unreleased fence owns this conversation. A later
+            # saved-chat incarnation must not replace a timed-out fence with
+            # a generation that its own graceful close could release.
+            if conversation_id in self._conversation_fences:
+                return
+            self._conversation_fences[conversation_id] = generation
+            run_ids = tuple((self._pending.pop(conversation_id, None) or {}).keys())
+            if self._delivering == conversation_id:
+                self._delivering = None
+                self._delivering_session = None
+            tasks = tuple(
+                task
+                for task, owner in self._delivery_tasks.items()
+                if owner == conversation_id
+            )
+            for task in tasks:
+                self._delivery_tasks.pop(task, None)
+        self._release_exact_wakes(conversation_id, run_ids)
+        for task in tasks:
+            try:
+                task.get_loop().call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                continue
+        if self._app is not None:
+            try:
+                clear_fleet_unseen_completion(self._app, conversation_id)
+            except Exception:  # noqa: BLE001 - close remains best effort
+                pass
+
+    def release_conversation_fence(
+        self, conversation_id: str, *, generation: int
+    ) -> bool:
+        """Release an exact provisional fence after all old work drained.
+
+        A stale generation or retained delivery owner fails closed. Timeout
+        and app-disposal paths never call this seam, so uncooperative old work
+        remains fenced for the process lifetime.
+        """
+
+        with self._registry_lock:
+            if self._disposed:
+                return False
+            if self._conversation_fences.get(conversation_id) != generation:
+                return False
+            if self._delivering == conversation_id or any(
+                owner == conversation_id for owner in self._delivery_tasks.values()
+            ):
+                return False
+            self._conversation_fences.pop(conversation_id, None)
+            return True
+
+    def dispose(self) -> None:
+        """Terminally fence producers, then clear membership and leases."""
+        with self._registry_lock:
+            if self._disposed:
+                return
+            self._disposed = True
+            self._pending.clear()
+            self._delivering = None
+            self._delivering_session = None
+            tasks = tuple(self._delivery_tasks)
+            self._delivery_tasks.clear()
+            sink = self.buddy_sink
+        for task in tasks:
+            try:
+                task.get_loop().call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                continue
+        if sink is not None:
+            sink.clear_wakes()
 
     # -- internals ------------------------------------------------------------
 
@@ -809,25 +1074,39 @@ class ConsoleFleetWakeCoordinator:
             return None
         return getattr(bridge, "runs_db", None)
 
-    def _rows_for(
-        self, conversation_id: str, bucket: Mapping[str, str]
-    ) -> list[dict]:
+    def _rows_for(self, conversation_id: str, bucket: Mapping[str, str]) -> list[dict]:
         """Read the pending runs' rows; synthesize an honest stand-in for
         a row that cannot be read (a wiped runs DB must not strand the
         pending entry forever). A run the durable ledger already shows
         wake-delivered (a redelivered drain, or a restart racing the
         in-memory commit) is DROPPED -- from the returned rows AND from
-        the registry -- rather than re-announced."""
+        the registry -- rather than re-announced.
+
+        task-18601 part A (AC#2): every field this method (and
+        ``compose_wake_notice``, its only consumer) reads --
+        id/agent_definition/status/task/result/wake_delivered_at/
+        updated_at -- is metadata, never a step. Reads prefer
+        ``get_run_metadata``/``get_run_metadata_fresh`` (metadata-only,
+        no step-log parse at all) over ``get_run``/``get_run_fresh``,
+        via ``getattr`` so a test double that only implements the older
+        methods (pre-dating this change) keeps working unchanged."""
+        with self._registry_lock:
+            if self._disposed or conversation_id in self._conversation_fences:
+                return []
         runs_db = self._runs_db()
         rows: list[dict] = []
         stale: list[str] = []
         for run_id, status in bucket.items():
             row = None
             if runs_db is not None:
-                try:
-                    row = runs_db.get_run(run_id)
-                except Exception:  # noqa: BLE001
-                    row = None
+                read_row = getattr(runs_db, "get_run_metadata", None)
+                if not callable(read_row):
+                    read_row = getattr(runs_db, "get_run", None)
+                if callable(read_row):
+                    try:
+                        row = read_row(run_id)
+                    except Exception:  # noqa: BLE001
+                        row = None
             if row is not None and (
                 str(row.get("status")) not in TERMINAL_RUN_STATUSES
             ):
@@ -840,7 +1119,9 @@ class ConsoleFleetWakeCoordinator:
                 # connection (observed live: a minute-old 'done' child
                 # announced as 'running'). Re-read through a fresh
                 # connection, which cannot inherit the pin.
-                fresh_read = getattr(runs_db, "get_run_fresh", None)
+                fresh_read = getattr(runs_db, "get_run_metadata_fresh", None)
+                if not callable(fresh_read):
+                    fresh_read = getattr(runs_db, "get_run_fresh", None)
                 if callable(fresh_read):
                     try:
                         fresh_row = fresh_read(run_id)
@@ -865,11 +1146,56 @@ class ConsoleFleetWakeCoordinator:
             )
         if stale:
             with self._registry_lock:
+                if self._disposed:
+                    return []
                 pending_bucket = self._pending.get(conversation_id)
                 if pending_bucket is not None:
                     for run_id in stale:
                         pending_bucket.pop(run_id, None)
                     if not pending_bucket:
                         self._pending.pop(conversation_id, None)
+            self._release_exact_wakes(conversation_id, stale)
         rows.sort(key=lambda r: str(r.get("updated_at") or ""))
         return rows
+
+    def _publish_active_wakes(
+        self, conversation_id: str, run_ids: Sequence[str]
+    ) -> None:
+        """Publish active leases externally, then post-fence exact membership."""
+
+        sink = self.buddy_sink
+        if sink is None:
+            return
+        for run_id in run_ids:
+            with self._registry_lock:
+                live = (
+                    not self._disposed
+                    and conversation_id not in self._conversation_fences
+                    and run_id in self._pending.get(conversation_id, {})
+                )
+            if not live:
+                continue
+            sink.wake(conversation_id, run_id, active=True)
+            with self._registry_lock:
+                still_live = (
+                    not self._disposed
+                    and conversation_id not in self._conversation_fences
+                    and run_id in self._pending.get(conversation_id, {})
+                )
+            if not still_live:
+                sink.wake(conversation_id, run_id, active=False)
+
+    def _release_exact_wakes(
+        self, conversation_id: str, run_ids: Sequence[str]
+    ) -> None:
+        """Release only the wake owners named by a completed callback."""
+        if self.buddy_sink is None:
+            return
+        for run_id in run_ids:
+            self.buddy_sink.wake(conversation_id, run_id, active=False)
+
+    def _forget_delivery_task(self, task: asyncio.Task) -> None:
+        """Drop one local delivery task without racing a close fence."""
+
+        with self._registry_lock:
+            self._delivery_tasks.pop(task, None)

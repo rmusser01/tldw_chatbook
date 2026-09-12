@@ -1160,6 +1160,34 @@ class MediaWindow(Container):
                 self.search_panel.keyword_filter,
             )
 
+    def select_browse_subview(self, subview: str) -> None:
+        """Programmatically select a browse subview (navigation deep links).
+
+        Drives the same state + refresh path as the subview Select's event
+        handler, for callers that need to land the window on a specific
+        subview without a widget event (Home's read-it-later suggestion via
+        MediaScreen's navigation context).
+
+        Args:
+            subview: Target subview id (e.g. ``"read-it-later"``); empty
+                values fall back to ``"all"``.
+        """
+        target = str(subview or "all")
+        if self.runtime_state is not None:
+            self.runtime_state.active_browse_subview = target
+        panel = getattr(self, "search_panel", None)
+        if panel is not None:
+            panel.set_browse_subview(target)
+        if self._reset_invalid_saved_view_for_context():
+            return
+        self._sync_saved_view_controls()
+        if self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                self.search_panel.search_term,
+                self.search_panel.keyword_filter,
+            )
+
     @on(MediaItemSelectedEvent)
     async def handle_media_item_selected(self, event: MediaItemSelectedEvent) -> None:
         """Start item-detail loading without blocking the destination message pump.
@@ -1552,7 +1580,11 @@ class MediaWindow(Container):
     def handle_read_it_later_toggle(self, event: MediaReadItLaterToggleEvent) -> None:
         """Handle viewer save/remove actions in a worker."""
         event.stop()
-        self.run_worker(self._handle_read_it_later_toggle_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_read_it_later_toggle_async(event),
+            exclusive=True,
+            group="media-read-it-later-toggle",
+        )
 
     async def _handle_read_it_later_toggle_async(
         self, event: MediaReadItLaterToggleEvent
@@ -1981,14 +2013,20 @@ class MediaWindow(Container):
                 await self._reset_analysis_failure_state(event.media_id)
 
         # Run the analysis in a worker
-        self.run_worker(perform_analysis(), exclusive=True)
+        self.run_worker(
+            perform_analysis(), exclusive=True, group="media-analysis-generate"
+        )
 
     @on(MediaAnalysisSaveEvent)
     def handle_analysis_save(self, event: MediaAnalysisSaveEvent) -> None:
         """Handle saving new analysis."""
         event.stop()
         event.type_slug = self.active_media_type or ""
-        self.run_worker(self._handle_analysis_save_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_analysis_save_async(event),
+            exclusive=True,
+            group="media-analysis-save",
+        )
 
     async def _handle_analysis_save_async(self, event: MediaAnalysisSaveEvent) -> None:
         """Persist a new analysis version via the shared seam."""
@@ -2077,7 +2115,11 @@ class MediaWindow(Container):
         """Handle overwriting existing analysis."""
         event.stop()
         event.type_slug = self.active_media_type or ""
-        self.run_worker(self._handle_analysis_overwrite_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_analysis_overwrite_async(event),
+            exclusive=True,
+            group="media-analysis-overwrite",
+        )
 
     async def _handle_analysis_overwrite_async(
         self, event: MediaAnalysisOverwriteEvent
@@ -2128,7 +2170,11 @@ class MediaWindow(Container):
         """Handle deleting an analysis version."""
         event.stop()
         event.type_slug = self.active_media_type or ""
-        self.run_worker(self._handle_analysis_delete_async(event), exclusive=True)
+        self.run_worker(
+            self._handle_analysis_delete_async(event),
+            exclusive=True,
+            group="media-analysis-delete",
+        )
 
     async def _handle_analysis_delete_async(
         self, event: MediaAnalysisDeleteEvent

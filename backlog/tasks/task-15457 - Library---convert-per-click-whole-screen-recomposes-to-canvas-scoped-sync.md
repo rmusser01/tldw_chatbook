@@ -1,6 +1,6 @@
 ---
 id: TASK-15457
-title: Library: convert per-click whole-screen recomposes to canvas-scoped sync
+title: 'Library: convert per-click whole-screen recomposes to canvas-scoped sync'
 status: Done
 assignee:
   - codex

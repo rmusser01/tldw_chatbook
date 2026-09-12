@@ -41,6 +41,7 @@ from textual.containers import Vertical
 from textual.css.query import QueryError
 from textual.widgets import Button, Static
 
+from ..focus_ownership import focus_is_on_screen
 from ...Chat.Chat_Functions import chat_api_call
 from ...DB.Evals_DB import ConflictError, EvalsDB
 from ...Evals.character_probe.cards import snapshot_cards
@@ -206,6 +207,13 @@ def _default_character_probe_chat_factory(_config: CharacterProbeConfig) -> Chat
 
 class EvalsScreen(LabScreen):
     """Evals mode: library rail, detail body, readiness inspector -- on the Lab frame."""
+
+    # TASK-24459: this screen's `evals-*` rules live in the generated
+    # ``css/screen_feature_evals.tcss``, loaded by the APP on first
+    # navigation to the route (``TldwCli._ensure_screen_owned_css``) --
+    # deliberately NOT via ``CSS_PATH``, which every UI-test harness would
+    # also load, styling harness-mounted screens with only the moved half
+    # of the module (see SchedulesWorkbench's docstring for the incident).
 
     #: Both rails open on a first run. Unlike Models' server list or Speech's
     #: dependency detail, the Evals inspector is where target readiness is
@@ -568,7 +576,7 @@ class EvalsScreen(LabScreen):
             unidentifiable, or on a widget that survives.
         """
         focused = self.app.focused if self.is_running else None
-        if focused is None or focused.screen is not self or not focused.id:
+        if not focus_is_on_screen(focused, self) or not focused.id:
             return None
         region_ids = ["lab-body", "lab-inspector"]
         if rail_dirty:

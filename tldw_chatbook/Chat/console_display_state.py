@@ -2,23 +2,34 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from html import escape as html_escape
 from pathlib import PurePath
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
 
-from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Chat.citation_evidence_models import reference_can_deliver, EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
+from tldw_chatbook.RAG_Search.local_citation_capture import (
+    LocalEvidenceContext,
+    format_console_evidence_context,
+    normalize_console_evidence_references,
+)
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
-from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+from tldw_chatbook.Utils.token_counter import count_tokens_messages
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -404,10 +415,31 @@ class ConsoleEvidenceDisplayState:
     reference_rows: tuple[ConsoleDisplayRow, ...] = ()
 
 
+#: Instance attribute used to cache one launch's parsed evidence bundle:
+#: ``(payload mapping identity, parsed bundle or None)``. Stored via
+#: ``object.__setattr__`` because ``ConsoleLiveWorkLaunch`` is a frozen
+#: dataclass (with a plain ``__dict__``, so the write is safe).
+_EVIDENCE_BUNDLE_CACHE_ATTR = "_tldw_parsed_evidence_bundle_cache"
+
+
 def evidence_bundle_from_launch(
     launch: ConsoleLiveWorkLaunch | None,
 ) -> EvidenceBundle | None:
-    """Parse a staged live-work evidence bundle without exposing raw payload text."""
+    """Parse a staged live-work evidence bundle without exposing raw payload text.
+
+    TASK-21118: parsed at most ONCE per launch. All Console staged-state
+    consumers (source counts, prompted text, the workspace context's
+    staged sources, the evidence display card) funnel through this seam,
+    and while a launch was staged the control-state build re-ran
+    ``EvidenceBundle.from_payload`` for each of them on every printable
+    keystroke -- measured >=2x per key by the 2026-08-22 holistic perf
+    review, and 11x across three keys by this task's mounted probe. The
+    parse result is cached on the launch object keyed by the identity of
+    the payload's ``evidence_bundle`` mapping, so replacing the payload
+    invalidates the cache while repeat reads (including of a failed
+    parse) are free. Launches copy their payload at construction and are
+    otherwise treated as immutable, so identity is the right key.
+    """
     if launch is None:
         return None
     evidence_payload = launch.payload.get("evidence_bundle")
@@ -415,10 +447,21 @@ def evidence_bundle_from_launch(
         return evidence_payload
     if not isinstance(evidence_payload, Mapping):
         return None
+    cached = getattr(launch, _EVIDENCE_BUNDLE_CACHE_ATTR, None)
+    if cached is not None and cached[0] is evidence_payload:
+        return cached[1]
     try:
-        return EvidenceBundle.from_payload(evidence_payload)
+        bundle: EvidenceBundle | None = EvidenceBundle.from_payload(evidence_payload)
     except (TypeError, ValueError):
-        return None
+        bundle = None
+    try:
+        object.__setattr__(
+            launch, _EVIDENCE_BUNDLE_CACHE_ATTR, (evidence_payload, bundle)
+        )
+    except (AttributeError, TypeError):
+        # A slotted or otherwise write-refusing launch double stays uncached.
+        pass
+    return bundle
 
 
 def build_console_evidence_display_state(
@@ -534,6 +577,73 @@ CONSOLE_SYSTEM_PROMPT_LABEL_UNSET = "System Prompt: off"
 CONSOLE_SYSTEM_PROMPT_LABEL_SET = "System Prompt: set"
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleLibraryPolicyDisplayState:
+    """Truthful presentation of one conversation's two Library authorities."""
+
+    chip_label: str
+    source_status: str
+    auto_retrieve_label: Literal["Never", "Automatic"]
+    assistant_access_label: Literal["Blocked", "Allowed"]
+    provider_intent_label: str
+    resolved_destination_label: str
+    feedback: Literal["idle", "saving", "saved", "conflict", "unavailable", "error"]
+    feedback_copy: str
+    save_enabled: bool
+    editing_enabled: bool
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: ConsoleLibraryPolicySnapshot,
+        *,
+        provider_intent_label: str = "Library tool mode: Direct",
+        resolved_destination_label: str = "Resolved destination: not used yet",
+        feedback: Literal[
+            "idle", "saving", "saved", "conflict", "unavailable", "error"
+        ] = "idle",
+        feedback_copy: str = "",
+        dirty: bool = False,
+    ) -> "ConsoleLibraryPolicyDisplayState":
+        """Project a safe policy snapshot without mixing in staged evidence."""
+        automatic = snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
+        allowed = snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+        unavailable = snapshot.source == "unavailable"
+        auto_label: Literal["Never", "Automatic"] = (
+            "Automatic" if automatic else "Never"
+        )
+        access_label: Literal["Blocked", "Allowed"] = (
+            "Allowed" if allowed else "Blocked"
+        )
+        if unavailable:
+            chip_label = "Library: blocked · policy unavailable"
+            source_status = "Unavailable — using Never and Blocked"
+        else:
+            chip_label = (
+                f"Library · Auto {'on' if automatic else 'off'} · "
+                f"Agent {'allowed' if allowed else 'blocked'}"
+            )
+            source_status = {
+                "durable": "Saved on this device · not synced",
+                "missing": "No saved policy · safe defaults active",
+                "temporary": "Temporary chat · not saved",
+                "new_session": "New chat defaults · not saved yet",
+            }.get(snapshot.source, "Local policy · not synced")
+        editing_enabled = not unavailable and feedback != "saving"
+        return cls(
+            chip_label=chip_label,
+            source_status=source_status,
+            auto_retrieve_label=auto_label,
+            assistant_access_label=access_label,
+            provider_intent_label=str(provider_intent_label),
+            resolved_destination_label=str(resolved_destination_label),
+            feedback=feedback,
+            feedback_copy=str(feedback_copy),
+            save_enabled=editing_enabled and dirty,
+            editing_enabled=editing_enabled,
+        )
+
+
 @dataclass(frozen=True)
 class ConsoleControlState:
     """Header/control labels for the Console-native workbench chrome."""
@@ -560,7 +670,7 @@ class ConsoleControlState:
         assistant_kind: Any = None,
         assistant_name: Any = None,
         assistant_id: Any = None,
-        rag_enabled: bool = False,
+        library_policy: ConsoleLibraryPolicySnapshot | None = None,
         staged_source_count: int = 0,
         tool_count: int = 0,
         mcp_tool_count: int | None = None,
@@ -577,7 +687,8 @@ class ConsoleControlState:
             assistant_kind: Optional presentation-only assistant kind.
             assistant_name: Optional presentation-only assistant display name.
             assistant_id: Optional presentation-only assistant identifier.
-            rag_enabled: Whether RAG is on for this send.
+            library_policy: Effective two-axis Library authority. When omitted,
+                the shipped safe defaults (Never and Blocked) are shown.
             staged_source_count: Number of staged context sources.
             tool_count: Built-in tools that can run.
             mcp_tool_count: MCP catalog size that can run, or ``None`` when no MCP
@@ -622,11 +733,19 @@ class ConsoleControlState:
         # dash and the chip HIDES at zero, so the lazy-loading detail
         # ("not loaded") no longer renders at all.
         tools_label = f"Tools: {_tools_ready_text(effective_tool_count)}"
+        if library_policy is None:
+            library_policy = ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=None,
+                source="new_session",
+            )
+        library_display = ConsoleLibraryPolicyDisplayState.from_snapshot(library_policy)
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
             assistant_label=assistant_label,
-            rag_label=f"Library search: {'on' if rag_enabled else 'off'}",
+            rag_label=library_display.chip_label,
             sources_label=f"Sources: {staged_source_count}",
             tools_label=tools_label,
             approvals_label=f"Approvals: {approval_count} pending",
@@ -641,12 +760,27 @@ class ConsoleControlState:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleSourcePrimaryRow:
+    """One compact staged-source row with activation-only details."""
+
+    source_id: str
+    status: Literal["ready", "warning", "blocked"]
+    title: str
+    source_type: str
+    snippet: str
+    authority: str
+    freshness: str
+    action_label: str
+
+
 @dataclass(frozen=True)
 class ConsoleStagedContextState:
     """Display state for the Console staged-context tray."""
 
     heading: str
     summary: str
+    source_rows: tuple[ConsoleSourcePrimaryRow, ...] = ()
     rows: tuple[ConsoleDisplayRow, ...] = ()
     recovery: str = ""
     is_empty: bool = False
@@ -669,14 +803,67 @@ class ConsoleStagedContextState:
 
     def __post_init__(self) -> None:
         if self.source_count is None:
-            object.__setattr__(self, "source_count", len(self.rows))
+            object.__setattr__(
+                self,
+                "source_count",
+                len(self.source_rows) if self.source_rows else len(self.rows),
+            )
 
     @classmethod
     def from_live_work(
         cls,
         launch: ConsoleLiveWorkLaunch,
     ) -> "ConsoleStagedContextState":
+        from tldw_chatbook.Library.library_rag_state import (
+            canonical_library_open_source_type,
+        )
+
         rows = []
+        bundle = evidence_bundle_from_launch(launch)
+        source_rows = tuple(
+            ConsoleSourcePrimaryRow(
+                source_id=_safe_display_text(reference.source_id, "unknown"),
+                status=(
+                    # TASK-32330: an "available" reference whose source
+                    # kind the send-side normalizer rejects (skills,
+                    # watchlists snapshots, ...) renders "Listed" rather
+                    # than "Ready" -- it cannot reach the model on send
+                    # (verified: normalize_console_evidence_references
+                    # drops it). The truthfulness rule (TASK-2154 FR-06)
+                    # applies to the tray's own vocabulary.
+                    "listed"
+                    if reference.status == "available"
+                    and not reference_can_deliver(reference)
+                    else "ready"
+                    if reference.status == "available"
+                    else (
+                        "blocked"
+                        if reference.status in {"blocked", "missing"}
+                        else "warning"
+                    )
+                ),
+                title=_safe_display_text(reference.title, "Untitled source"),
+                source_type=(
+                    canonical_library_open_source_type(reference.source_type)
+                    or _safe_display_text(reference.source_type, "unknown")
+                ),
+                snippet=_safe_display_text(reference.snippet),
+                authority=_safe_display_text(reference.authority_label, "unknown"),
+                freshness={
+                    "available": "Current",
+                    "blocked": "Blocked",
+                    "missing": "Missing",
+                    "stale": "Stale",
+                    "unknown": "Unknown",
+                }.get(reference.status, "Unknown"),
+                action_label=(
+                    "Open in Library"
+                    if canonical_library_open_source_type(reference.source_type)
+                    else "Review details"
+                ),
+            )
+            for reference in (bundle.references if bundle is not None else ())
+        )
         evidence_state = build_console_evidence_display_state(launch)
         if evidence_state is not None:
             rows.append(
@@ -694,7 +881,6 @@ class ConsoleStagedContextState:
                     status=evidence_state.status,
                 )
             )
-            rows.extend(evidence_state.reference_rows)
         rows.extend(
             ConsoleDisplayRow(label=key, value=value)
             for key, value in launch.payload_display_items()
@@ -714,6 +900,7 @@ class ConsoleStagedContextState:
         return cls(
             heading="Staged Context",
             summary=f"{summary_title} ({summary_source}, {summary_status})",
+            source_rows=source_rows,
             rows=tuple(rows),
             recovery=launch.recovery,
             source_count=console_staged_source_count(launch),
@@ -763,72 +950,142 @@ def console_staged_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
     return len(bundle.references) or 1
 
 
-def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
-    """Return how many staged references a Console send will actually prompt.
+def _console_prompted_evidence_context(
+    launch: ConsoleLiveWorkLaunch | None,
+) -> LocalEvidenceContext | None:
+    """Build the formatted pre-authority estimate without performing I/O."""
+    bundle = evidence_bundle_from_launch(launch)
+    if bundle is None:
+        return None
+    return format_console_evidence_context(
+        normalize_console_evidence_references(bundle.available_references())
+    )
 
-    Distinct from :func:`console_staged_source_count`, which answers "how
-    much is staged". This answers "how much reaches the model", and it
-    applies exactly the filter
-    ``capture_console_staged_evidence_for_chat`` applies before formatting
-    the prompt blocks: available status (``EvidenceBundle.
-    available_references``) AND ``source_owner == "local"``. A four-result
-    bundle carrying two blocked references stages four and sends two.
+
+def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
+    """Return the formatted pre-authority estimate of prompted source count.
+
+    The actual send rechecks local authority and may carry fewer entries.
 
     Args:
         launch: Currently staged live-work launch, if any.
 
     Returns:
-        Count of references eligible to enter the prompt; ``0`` when nothing
-        is staged or the launch carries no evidence bundle (a bundleless
-        launch yields no prompt context at all).
+        Count of canonical formatted entries; ``0`` without an evidence
+        bundle.
     """
-    bundle = evidence_bundle_from_launch(launch)
-    if bundle is None:
-        return 0
-    return sum(
-        1
-        for reference in bundle.available_references()
-        if reference.source_owner.strip().lower() == "local"
-    )
+    formatted = _console_prompted_evidence_context(launch)
+    return len(formatted.entries) if formatted is not None else 0
 
 
 def console_prompted_evidence_text(launch: ConsoleLiveWorkLaunch | None) -> str:
-    """Return the staged evidence text a Console send will actually prompt.
+    """Return the zero-I/O formatted pre-authority evidence estimate.
 
-    task-6: the Console context/cost estimates used to report zero for
-    staged evidence because nothing carried its TEXT that far --
-    ``ConsoleStagedSource`` is label-only. This is the pure, zero-I/O
-    source of truth for that text, read at estimate time (settings
-    summary, cost chip) before any send happens.
-
-    Applies exactly the same filter as :func:`console_prompted_source_count`
-    (``EvidenceBundle.available_references`` AND ``source_owner == "local"``)
-    because it answers the same question that function counts: "how much
-    reaches the model". ``reference.snippet`` is the right field to read,
-    not a full re-fetch, because the actual send path
-    (``capture_console_staged_evidence_for_chat``) re-validates identity and
-    authority but never re-fetches content -- it hands the provider exactly
-    this (already length-limited, see ``EVIDENCE_SNIPPET_CHAR_LIMIT``)
-    snippet verbatim. That length limit is also why an oversized source
-    (e.g. a 942 KB document) still yields a bounded, non-zero estimate here:
-    the snippet was already capped when the reference was staged.
+    The actual send rechecks local authority and may carry less context.
 
     Args:
         launch: Currently staged live-work launch, if any.
 
     Returns:
-        Prompt-eligible reference snippets joined with blank lines, in
-        bundle order; ``""`` when nothing is staged or nothing is
-        prompt-eligible.
+        Canonical prompt-formatted context, or ``""`` without an evidence
+        bundle or formatted entries.
     """
-    bundle = evidence_bundle_from_launch(launch)
-    if bundle is None:
-        return ""
-    return "\n\n".join(
-        reference.snippet
-        for reference in bundle.available_references()
-        if reference.source_owner.strip().lower() == "local" and reference.snippet
+    formatted = _console_prompted_evidence_context(launch)
+    return formatted.context if formatted is not None else ""
+
+
+def estimate_console_next_send_tokens(
+    *,
+    payload_messages: Sequence[Mapping[str, Any]] = (),
+    payload_system: Any = None,
+    tools_info: Mapping[str, Any] | None = None,
+    extra_texts: Sequence[str] = (),
+    model: str = "",
+    provider: str = "",
+) -> Optional[int]:
+    """Estimate the tokens the next Console send will actually carry.
+
+    task-25836: the Next Send tab's "~N tokens" header estimated the
+    composer draft alone, so a first message in a fresh conversation read
+    "~3 tokens" while the real request ships the system prompt,
+    project-instruction bodies, tool schemas, and staged evidence on top of
+    the draft. This estimator counts the assembled request: every payload
+    message row (which already includes the leading system row and a
+    synthetic draft turn), the native tool schemas as JSON (tool
+    definitions are request tokens; ``tools_info``'s prose notes are not),
+    and any ``extra_texts`` (e.g. staged evidence text, which the preview
+    payload lists as label-only metadata) as one user row each.
+
+    All counting routes through :func:`count_tokens_messages` -- the same
+    real counter (custom tokenizer -> tiktoken -> chars floor, with
+    per-message framing) the settings estimate and cost chip already use --
+    so the number stays an estimate with consistent semantics everywhere it
+    appears.
+
+    Args:
+        payload_messages: ``next_send_payload["messages"]`` rows (role +
+            content; content may be a provider part-list for multimodal
+            turns, which the counter normalizes).
+        payload_system: ``next_send_payload["system"]`` -- a list of
+            message rows that DUPLICATES the leading system row when one is
+            present in ``payload_messages`` (the snapshot's by-design
+            duplication). Counted only when ``payload_messages`` carries no
+            system row of its own, so the prompt is never double-counted.
+        tools_info: ``next_send_payload["tools"]``; only its
+            ``native_schemas`` entries contribute.
+        extra_texts: Additional texts the send carries outside the payload
+            messages; blank/whitespace entries are ignored.
+        model: Model name (selects the tokenizer and framing convention).
+        provider: Provider name (selects the chars-floor ratio when no
+            tokenizer is installed).
+
+    Returns:
+        The estimated token count, or ``None`` when there is nothing to
+        send (no message rows, no schemas, no non-blank extra texts) -- the
+        caller renders no count rather than a misleading zero.
+    """
+    rows: list[dict[str, Any]] = []
+    for message in payload_messages:
+        if not isinstance(message, Mapping):
+            continue
+        rows.append(
+            {
+                "role": message.get("role", ""),
+                "content": message.get("content", ""),
+            }
+        )
+    if not any(row["role"] == "system" for row in rows) and isinstance(
+        payload_system, (list, tuple)
+    ):
+        for message in payload_system:
+            if isinstance(message, Mapping):
+                rows.append(
+                    {
+                        "role": message.get("role", "system"),
+                        "content": message.get("content", ""),
+                    }
+                )
+    schemas = (
+        tools_info.get("native_schemas") if isinstance(tools_info, Mapping) else None
     )
+    if schemas:
+        # Serialization is guarded, not assumed: a schema object whose
+        # repr raises (or a cyclic structure a provider handed back) must
+        # degrade to "no tools row" rather than propagate out of the
+        # estimator -- "no count is better than a wrong one" cuts both
+        # ways.
+        try:
+            schemas_text = json.dumps(schemas, default=str)
+        except (TypeError, ValueError):
+            schemas_text = ""
+        if schemas_text:
+            rows.append({"role": "system", "content": schemas_text})
+    for text in extra_texts:
+        if str(text).strip():
+            rows.append({"role": "user", "content": text})
+    if not rows:
+        return None
+    return count_tokens_messages(rows, model, provider)
 
 
 @dataclass(frozen=True)
@@ -1060,6 +1317,18 @@ class ConsoleInspectorState:
     #: streaming) — the status-summary/Live-work surfaces read this so they
     #: stop claiming "Ready" mid-run.
     run_active: bool = False
+    #: TASK-24602: whether the LAST run ended in failure. Distinct from
+    #: `run_active` and from any blocked/approval condition: those describe
+    #: what the NEXT send will do, this describes what the last one did. The
+    #: pinned send-authority line had no representation for it at all, so a
+    #: turn that returned HTTP 401 left `Run: Ready` on screen beside a
+    #: transcript that said the run had failed.
+    run_failed: bool = False
+    run_failure_reason: str = ""
+    staged_source_count: int = 0
+    pending_approval_count: int = 0
+    scope_item_count: int | None = None
+    ephemeral: bool = False
 
     @classmethod
     def from_values(
@@ -1083,9 +1352,71 @@ class ConsoleInspectorState:
         can_save_chatbook: bool = False,
         scope_item_count: int | None = None,
         run_active: bool = False,
+        # TASK-24602: the LAST run's outcome, distinct from whether one is
+        # in flight. Defaults preserve every existing caller.
+        run_failed: bool = False,
+        run_failure_reason: str = "",
         ephemeral: bool = False,
         change_review_available: bool = False,
+        staged_source_count: int = 0,
     ) -> "ConsoleInspectorState":
+        """Build the Inspector's rows and actions from raw run values.
+
+        The single place the Inspector's display vocabulary is decided, so
+        that the rail, the pinned authority line and the status chips cannot
+        disagree about the same run.
+
+        Args:
+            live_work_title: Pending live-work launch title. Ignored while
+                ``run_active`` -- a running generation always reads
+                "Generating…" -- and ignored while ``approval_count`` is
+                non-zero, which reads "Waiting for your approval" instead
+                (task-32345: outranks ``run_active`` too).
+            provider_label: Active provider name for the run-recipe line.
+            model_label: Active model name for the run-recipe line.
+            provider_ready: Whether the provider can be sent to. ``False``
+                renders the Provider row blocked.
+            provider_recovery: What to do about a blocked provider. Shown
+                only when ``provider_ready`` is ``False``.
+            rag_status: Retrieval summary for the Retrieval row and the
+                run-recipe's ``sources`` term.
+            evidence_summary: Staged-evidence summary. Falsy omits the row.
+            evidence_status: Status word shared by the Evidence and
+                Authority rows.
+            evidence_recovery: Recovery copy for the Evidence row.
+            evidence_authority: Authority summary. Falsy omits the row.
+            artifact_status: Artifacts row value; defaults to "unavailable".
+            tool_count: Built-in tools registered, excluding MCP.
+            approval_count: Approvals awaiting review. Any non-zero value
+                marks the row blocked and sets ``has_pending_approval``.
+            mcp_tool_count: Tools the MCP catalog reports, or ``None`` when
+                nobody looked. Added to ``tool_count`` for the Tools row and
+                the recipe's ``tools`` term (TASK-24603).
+            mcp_not_connected_count: Configured MCP servers that are not
+                connected, for the MCP row.
+            can_save_chatbook: Whether a chatbook artifact exists to save.
+                Still gated by the ephemeral-conversation block registry.
+            scope_item_count: Conversation retrieval scope size. ``None`` or
+                zero leaves the recipe line unscoped.
+            run_active: Whether a generation is in flight.
+            run_failed: Whether the LAST run ended in failure -- distinct
+                from ``run_active``, which is about a run in flight
+                (TASK-24602).
+            run_failure_reason: Visible copy for that failure, surfaced on
+                the pinned authority line.
+            ephemeral: Whether this is a temporary conversation, which
+                blocks the Save Chatbook action.
+            change_review_available: Whether change tracking has anything to
+                review. ``False`` renders the action disabled WITH its
+                reason rather than removing it (TASK-24606).
+            staged_source_count: Sources staged on the conversation.
+
+        Returns:
+            The Inspector display state: its rows, its three actions with
+            their enabled/disabled reasons, and the run flags the pinned
+            authority line reads.
+        """
+
         provider_status = "ready" if provider_ready else "blocked"
         # F2 (task-9 review): the inspector's Save Chatbook action is a
         # second door onto the same write the Console workbench action
@@ -1098,9 +1429,16 @@ class ConsoleInspectorState:
         provider_value = _clean(provider_label, "provider")
         model_value = _clean(model_label, "no model")
         source_summary = rag_value
+        # TASK-24603: the recipe counts the SAME tools the `Tools` row below
+        # reports -- `effective_tool_count`, built-ins plus the MCP catalog.
+        # It used to interpolate `normalized_tool_count`, which omits MCP, so
+        # an MCP-only Console rendered "... / tools 0" eight rows above
+        # "Tools: 4 ready". That is the third instance of this divergence:
+        # TASK-1843 (see the `Tools` row's own comment) already fixed it on
+        # the status chip and then on the row, and missed the recipe line.
         run_recipe = (
             f"{provider_value} / {model_value} / sources {source_summary} / "
-            f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
+            f"tools {effective_tool_count} / approvals {normalized_approval_count}"
         )
         # task-9: an active conversation RAG retrieval scope surfaces on the
         # run recipe line ("... / scope N items"). ``None`` (unscoped, the
@@ -1112,9 +1450,15 @@ class ConsoleInspectorState:
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
                 "Live work",
-                # TASK-347: a running generation shows "Generating…"; else
-                # the pending Library-RAG launch title, else no active work.
-                "Generating…"
+                # task-32345: a pending approval outranks everything below
+                # -- it is a fact about the USER (a card is waiting on
+                # them), more current than "a generation is in flight".
+                # TASK-347: else a running generation shows "Generating…";
+                # else the pending Library-RAG launch title, else no
+                # active work.
+                "Waiting for your approval"
+                if normalized_approval_count > 0
+                else "Generating…"
                 if run_active
                 else _clean(live_work_title, "No active work"),
             ),
@@ -1124,8 +1468,12 @@ class ConsoleInspectorState:
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
             ),
+            # TASK-24610: "Retrieval", not "Sources". This row reports whether
+            # RETRIEVAL has anything to read; the tray heading, the pinned
+            # authority row and the status chip all use "Sources" for STAGED
+            # CONTEXT, and all four were visible at once in a 33-column rail.
             ConsoleDisplayRow(
-                "Sources",
+                "Retrieval",
                 source_summary,
                 status="blocked" if _is_blocked_rag_status(source_summary) else "ready",
             ),
@@ -1198,6 +1546,12 @@ class ConsoleInspectorState:
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
             run_active=run_active,
+            run_failed=run_failed,
+            run_failure_reason=_clean(run_failure_reason, ""),
+            staged_source_count=coerce_non_negative_int(staged_source_count),
+            pending_approval_count=normalized_approval_count,
+            scope_item_count=scope_item_count,
+            ephemeral=ephemeral,
         )
 
     def to_plain_text(self) -> str:
@@ -1256,9 +1610,7 @@ def turn_file_entries(
         root-prefixed only when more than one clean ROOT (not window)
         contributed.
     """
-    clean = [
-        (row, files) for row, files in row_files if not row.get("tracking_error")
-    ]
+    clean = [(row, files) for row, files in row_files if not row.get("tracking_error")]
     multi_root = len({str(row["root"]) for row, _ in clean}) > 1
     paired: list[tuple[TurnFileEntry, Mapping[str, Any]]] = []
     for row, files in clean:
@@ -1279,103 +1631,6 @@ def turn_file_entries(
                 )
             )
     return paired
-
-
-@dataclass(frozen=True)
-class ConversationFileEntry:
-    """One file's cross-turn latest state in a conversation (review rail, TASK-18060 spec §1).
-
-    ``label`` follows :class:`TurnFileEntry`'s exact convention: the bare
-    relpath when every contributing row shares one root, ``<root-name>/
-    <relpath>`` when they span several. ``run_id``/``snapshot_id`` name the
-    NEWEST clean row that still covers this ``(root, path)`` -- the row
-    whose diff the file's ``status``/``adds``/``dels`` come from, and the
-    identity :func:`conversation_file_summary`'s caller (the rail's
-    click-through) opens the Review screen against.
-
-    **Counts honesty** (spec §1): ``adds``/``dels`` are that NEWEST row's
-    own deltas for this file, not a sum across every turn that touched
-    it -- callers must present them as "latest turn deltas", never as a
-    cumulative total.
-    """
-
-    root: str
-    path: str
-    label: str
-    status: str
-    adds: int
-    dels: int
-    run_id: str
-    snapshot_id: int
-    note_count: int
-
-
-def conversation_file_summary(
-    rows_with_files: "Sequence[tuple[Mapping[str, Any], Sequence[ChangedFile]]]",
-    note_counts: "Mapping[tuple[str, str], int]",
-) -> "list[ConversationFileEntry]":
-    """Cross-turn latest-state summary of a conversation's changed files.
-
-    Pure assembly -- no I/O, no git, no DB. The caller (the provider's
-    ``conversation_changed_files``) is responsible for filtering to CLEAN
-    rows before calling this (``tracking_error`` falsy, ``end_sha``
-    truthy -- the same guard :meth:`AgentRunsChangeReviewProvider.
-    changed_files` applies) and for skipping any row whose diff raised
-    ``ChangeTrackingError`` (retention-pruned history); a row that made it
-    into ``rows_with_files`` is assumed to be fully readable.
-
-    Latest-wins per ``(root, path)`` (spec §1): ``rows_with_files`` arrives
-    OLDEST first (mirrors ``ORDER BY cs.id``), and each row's files simply
-    overwrite whatever an earlier row recorded for the same path -- so a
-    path deleted in an early turn and recreated in a later one correctly
-    ends up "A", not "D", with no special-casing. A rename (``status
-    "R"``) keys its entry by the NEW path (``changed.path``) and deletes
-    any existing entry for the OLD path (``changed.old_path``) -- the old
-    path stops existing as of that row.
-
-    Args:
-        rows_with_files: ``(row, changed_files)`` pairs, one per CLEAN
-            snapshot row, oldest first. ``changed_files`` is whatever
-            :meth:`AgentRunsChangeReviewProvider.changed_files` returned
-            for that exact row.
-        note_counts: ``{(root, path): count}`` from
-            :meth:`AgentRunsDB.change_note_counts_for_conversation`,
-            joined onto each surviving entry's CURRENT path (a rename's
-            note count follows the note's own ``(root, path)`` key, which
-            is unaffected by later renames -- callers accept that a note
-            recorded against a path before it was renamed away no longer
-            joins to the renamed entry).
-
-    Returns:
-        One :class:`ConversationFileEntry` per ``(root, path)`` still
-        alive at the end of history, ordered NEWEST first by owning
-        snapshot id, then by path.
-    """
-    multi_root = len({str(row["root"]) for row, _ in rows_with_files}) > 1
-    latest: dict[tuple[str, str], ConversationFileEntry] = {}
-    for row, files in rows_with_files:
-        root = str(row["root"])
-        run_id = str(row["run_id"])
-        snapshot_id = int(row["id"])
-        prefix = f"{PurePath(root).name}/" if multi_root else ""
-        for changed in files:  # ChangedFile
-            if changed.status == "R" and changed.old_path:
-                latest.pop((root, str(changed.old_path)), None)
-            path = str(changed.path)
-            latest[(root, path)] = ConversationFileEntry(
-                root=root,
-                path=path,
-                label=f"{prefix}{path}",
-                status=str(changed.status),
-                adds=int(changed.adds),
-                dels=int(changed.dels),
-                run_id=run_id,
-                snapshot_id=snapshot_id,
-                note_count=int(note_counts.get((root, path), 0)),
-            )
-    return sorted(
-        latest.values(), key=lambda entry: (-entry.snapshot_id, entry.path)
-    )
 
 
 def _cell_trim_prefix(text: str, budget: int) -> str:
@@ -1709,7 +1964,9 @@ def _cap_text_to_byte_budget(text: str, budget_bytes: int, tail: str) -> str:
     return "\n".join(kept) + tail_line
 
 
-def hunk_excerpt(hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP) -> str:
+def hunk_excerpt(
+    hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP
+) -> str:
     """Render a capped, self-contained excerpt of one hunk.
 
     This is the retention safety net (spec §1): captured once at note
@@ -1781,7 +2038,7 @@ def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
     short_id = str(note["run_id"])[:8]
     kind = str(note.get("anchor_kind") or "hunk")
     if kind == "file":
-        return f"### {note['path']} — whole file   [run {short_id}]\n" f"> {note['note']}"
+        return f"### {note['path']} — whole file   [run {short_id}]\n> {note['note']}"
     if kind == "diff_line":
         return (
             f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
@@ -1826,9 +2083,7 @@ def _oldest_note_entry_truncated_to_fit(
     sep_bytes = 1  # the "\n" joining the heading and this entry
     if held_after > 0:
         holdover_bytes = len(
-            f"\n\n… {held_after} more notes held for the next message".encode(
-                "utf-8"
-            )
+            f"\n\n… {held_after} more notes held for the next message".encode("utf-8")
         )
     else:
         holdover_bytes = 0
@@ -1971,10 +2226,10 @@ def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
     for note in notes:
         kind = str(note.get("anchor_kind") or "hunk")
         if kind == "file":
-            location = f'{note["path"]} (whole file)'
+            location = f"{note['path']} (whole file)"
         elif kind == "diff_line":
-            location = f'{note["path"]} {note["hunk_header"]} line'
+            location = f"{note['path']} {note['hunk_header']} line"
         else:
-            location = f'{note["path"]} {note["hunk_header"]}'
+            location = f"{note['path']} {note['hunk_header']}"
         lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
     return "\n".join(lines)

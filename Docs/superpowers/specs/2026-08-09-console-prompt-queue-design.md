@@ -2,7 +2,7 @@
 
 Date: 2026-08-09
 Status: approved design, pending implementation
-ADR: [ADR-046: Visible bounded Console prompt queue](../../../backlog/decisions/046-visible-bounded-console-prompt-queue.md)
+ADR: [ADR-098: Visible bounded Console prompt queue](../../../backlog/decisions/098-visible-bounded-console-prompt-queue.md)
 
 ## 1. Goal
 
@@ -794,9 +794,9 @@ screen dispatcher.
 
 ADR required: yes
 
-ADR path: `backlog/decisions/046-visible-bounded-console-prompt-queue.md`
+ADR path: `backlog/decisions/098-visible-bounded-console-prompt-queue.md`
 
 Reason: the feature changes long-lived Console send behavior, controller/screen
 interfaces, application quit coordination, transient state ownership, and the
-previously approved no-queue policy. ADR-046 records the bounded visible
+previously approved no-queue policy. ADR-098 records the bounded visible
 same-session exception and its lifecycle limits.

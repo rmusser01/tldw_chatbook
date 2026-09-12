@@ -34,9 +34,9 @@ from Tests.UI.test_console_dictation_streaming import (
 )
 from Tests.UI.test_console_native_chat_flow import (
     _ReadyResolutionGateway,
+    _build_console_send_test_app as _build_test_app,
     _configure_native_ready_console,
 )
-from Tests.UI.test_destination_shells import _build_test_app
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -194,6 +194,16 @@ class _HandsFreeReplyGateway(_ReadyResolutionGateway):
         yield self.reply_text
 
 
+def _make_active_conversation_temporary(console) -> None:
+    """Allow real sends in the database-free screen harness."""
+
+    store = console._ensure_console_chat_store()
+    active_id = store.active_session_id
+    next(session for session in store.sessions() if session.id == active_id).ephemeral = (
+        True
+    )
+
+
 def _fast_countdown(monkeypatch, seconds: float = 0.3) -> None:
     """Speed up the hands-free countdown so wiring tests don't wait 1.5s+."""
     monkeypatch.setattr(
@@ -290,6 +300,7 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
@@ -469,6 +480,7 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
@@ -537,6 +549,7 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
@@ -598,6 +611,7 @@ async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
@@ -1162,18 +1176,18 @@ async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
     )
     send_calls: list[str] = []
 
-    async def _fake_send(self, event) -> bool:
-        # TASK-340: a keyboard send stashes the draft (and clears it from
-        # the composer) at the Enter KEYPRESS, before the `Button.Pressed`
-        # this fake intercepts even fires -- `composer.draft_text()` reads
-        # empty by this point; the stash is where the sent text actually is.
-        stash = self._console_pending_send_stash
-        send_calls.append(stash.text if stash is not None else "")
-        event.stop()
+    async def _fake_send(self, *, session_id=None, pending_send_token=None) -> bool:
+        # Enter freezes the draft in the app-owned pending-send carrier before
+        # the scheduled visible-action callback runs.
+        pending = self._console_pending_send
+        send_calls.append(pending.stash.text if pending is not None else "")
+        self._console_pending_send = None
         return True
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+        chat_screen_module.ChatScreen,
+        "_send_console_message_from_visible_action",
+        _fake_send,
     )
     _, host = _ready_host()
 
@@ -1212,18 +1226,18 @@ async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
     )
     send_calls: list[str] = []
 
-    async def _fake_send(self, event) -> bool:
-        # TASK-340: a keyboard send stashes the draft (and clears it from
-        # the composer) at the Enter KEYPRESS, before the `Button.Pressed`
-        # this fake intercepts even fires -- `composer.draft_text()` reads
-        # empty by this point; the stash is where the sent text actually is.
-        stash = self._console_pending_send_stash
-        send_calls.append(stash.text if stash is not None else "")
-        event.stop()
+    async def _fake_send(self, *, session_id=None, pending_send_token=None) -> bool:
+        # Enter freezes the draft in the app-owned pending-send carrier before
+        # the scheduled visible-action callback runs.
+        pending = self._console_pending_send
+        send_calls.append(pending.stash.text if pending is not None else "")
+        self._console_pending_send = None
         return True
 
     monkeypatch.setattr(
-        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+        chat_screen_module.ChatScreen,
+        "_send_console_message_from_visible_action",
+        _fake_send,
     )
     _, host = _ready_host()
 

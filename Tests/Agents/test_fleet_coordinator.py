@@ -2,8 +2,6 @@
 
 import threading
 
-import pytest
-
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RUN_ERROR
 from tldw_chatbook.Agents.fleet_coordinator import (
     FLEET_FINISHED,
@@ -34,6 +32,33 @@ def test_reserve_refuses_past_live_cap():
     assert c.reserve(task="b", agent=None) is not None
     assert c.reserve(task="c", agent=None) is None
     assert c.live_count() == 2
+
+
+def test_successful_reserve_notifies_before_returning_the_handle():
+    observations = []
+
+    def on_reserve() -> None:
+        observations.append("admitted")
+
+    coordinator = FleetCoordinator(
+        max_live=1,
+        clock=lambda: 1.0,
+        on_reserve=on_reserve,
+    )
+
+    assert coordinator.reserve(task="admitted", agent=None) is not None
+    assert coordinator.reserve(task="refused", agent=None) is None
+
+    assert observations == ["admitted"]
+
+
+def test_terminal_fence_refuses_every_late_reservation():
+    c = _coord(max_live=2)
+
+    c.fence()
+
+    assert c.reserve(task="late child", agent=None) is None
+    assert c.live_count() == 0
 
 
 def test_finish_frees_a_slot_and_emits_finished():

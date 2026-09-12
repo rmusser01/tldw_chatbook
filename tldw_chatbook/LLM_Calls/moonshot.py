@@ -30,6 +30,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatStream,
     HostedChatTurn,
     HostedHTTPTransportConfig,
+    ReasoningDisposition,
     hosted_chat_request,
     normalize_hosted_chat_base_url,
 )
@@ -75,6 +76,8 @@ class MoonshotResolution:
 
 class MoonshotFinishPolicy:
     """Validate Moonshot finish and reasoning fields."""
+
+    reasoning_disposition: ReasoningDisposition = "proprietary"
 
     def validate_finish(
         self,

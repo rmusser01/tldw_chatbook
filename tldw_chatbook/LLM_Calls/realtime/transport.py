@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ...Utils.optional_deps import require_dependency
+from ...Utils.tls_trust import ssl_context_for_transport
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
     # Annotated from its DEFINING module rather than the top-level package:
@@ -110,7 +111,14 @@ class WsTransport:
         """
         websockets = _websockets()
         try:
-            self._ws = await websockets.connect(url, additional_headers=headers)
+            ssl_arg = ssl_context_for_transport()
+            if ssl_arg is not None and not url.lower().startswith("wss://"):
+                # websockets rejects a non-None ssl argument for ws:// URIs.
+                ssl_arg = None
+            connect_kwargs: dict = {"additional_headers": headers}
+            if ssl_arg is not None:
+                connect_kwargs["ssl"] = ssl_arg
+            self._ws = await websockets.connect(url, **connect_kwargs)
         except TypeError as exc:
             # Precisely the below-floor signature mismatch: the legacy
             # client takes `extra_headers`, so it rejects this call with a

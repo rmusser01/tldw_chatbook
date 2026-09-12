@@ -79,6 +79,7 @@ class _FakeService:
         self._kill = kill
         self._session = set(session)
         self.session_approved = []
+        self.session_reads = []
 
     @property
     def loads(self):
@@ -87,11 +88,12 @@ class _FakeService:
     def get_kill_switch(self):
         return self._kill
 
-    def is_session_approved(self, server_key, tool_name):
+    def is_session_approved(self, server_key, tool_name, *, profile_id="default"):
+        self.session_reads.append((server_key, tool_name, profile_id))
         return tool_name in self._session
 
-    def approve_for_session(self, server_key, tool_name):
-        self.session_approved.append(tool_name)
+    def approve_for_session(self, server_key, tool_name, *, profile_id="default"):
+        self.session_approved.append((tool_name, profile_id))
         self._session.add(tool_name)
 
 
@@ -111,10 +113,10 @@ class _ServiceWithoutStore:
     def get_kill_switch(self):
         return False
 
-    def is_session_approved(self, server_key, tool_name):
+    def is_session_approved(self, server_key, tool_name, *, profile_id="default"):
         return False
 
-    def approve_for_session(self, server_key, tool_name):
+    def approve_for_session(self, server_key, tool_name, *, profile_id="default"):
         pass
 
 
@@ -161,7 +163,33 @@ def test_approve_session_records_a_session_approval():
     gate.begin_turn(RUN)
     gate.stamp(RUN, "write_thing", "approve_session")
     assert gate.check(_Mutating(), RUN) is None
-    assert svc.session_approved == ["write_thing"]
+    assert svc.session_approved == [("write_thing", "default")]
+
+
+def test_named_profile_is_used_for_resolution_and_session_approval():
+    payload = {
+        "profiles": {
+            "default": {
+                "servers": {"agent:builtin": {"default": "allow"}},
+            },
+            "research": {
+                "servers": {"agent:builtin": {"default": "ask"}},
+            },
+        }
+    }
+    svc = _FakeService(payload=payload)
+    gate = BuiltinToolGate(svc, profile_id="research")
+
+    state = gate.resolve(CalculatorTool())
+    gate.stamp(RUN, "calculator", "approve_session")
+    approved = gate.is_session_approved("calculator")
+
+    assert state.state == "ask"
+    assert svc.session_approved == [("calculator", "research")]
+    assert svc.session_reads == [
+        ("agent:builtin", "calculator", "research")
+    ]
+    assert approved is True
 
 
 def test_no_service_still_gates_mutating_tools():
@@ -451,7 +479,7 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     # Derived, not a literal (TASK-16174): the arity is "every builtin row
     # plus the local group's two", so adding a gateable built-in must not
     # make this test the thing that fails.
-    assert len(gates) == len(_GATEABLE_BUILTINS) + 2
+    assert len(gates) == len(_GATEABLE_BUILTINS) + 3
     assert all(isinstance(gate, ToolGate) for gate in gates)
 
     # The _GATEABLE_BUILTINS rows come first, in registration order,
@@ -468,9 +496,10 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     )  # real tool descriptions, never blank
     assert all(g.enabled is False for g in builtin_gates)  # no override -> all off
 
-    # The local group: master switch FIRST, then web_deep_search.
+    # The local group: master switch FIRST, then web_deep_search, then
+    # ask_user (PRD A12: the one [tools] gate that defaults ON).
     local_gates = gates[len(_GATEABLE_BUILTINS) :]
-    assert len(local_gates) == 2
+    assert len(local_gates) == 3
     assert local_gates[0].section == "console"
     assert local_gates[0].key == "local_tools_enabled"
     assert local_gates[0].group == "local"
@@ -480,7 +509,80 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     assert local_gates[1].section == "tools"
     assert local_gates[1].key == WEB_DEEP_SEARCH_GATE_KEY
     assert local_gates[1].group == "local"
+    assert local_gates[2].section == "tools"
+    assert local_gates[2].key == "ask_user_enabled"
+    assert local_gates[2].tool_name == "ask_user"
+    assert local_gates[2].group == "local"
+    assert local_gates[2].enabled is True  # missing key -> ON by default
     assert all(g.description for g in local_gates)
+
+
+def test_all_tool_gates_carry_display_titles_from_the_shared_table(monkeypatch):
+    """task-32284: every gate renders a human name, and the builtin rows take
+    theirs from `_GATEABLE_BUILTINS` -- the same rows the first-run wizard
+    reads, so the two surfaces cannot name the same tool differently."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+
+    gates = all_tool_gates()
+    assert all(gate.title.strip() for gate in gates)
+    builtin_gates = gates[: len(_GATEABLE_BUILTINS)]
+    assert [g.title for g in builtin_gates] == [e.title for e in _GATEABLE_BUILTINS]
+    assert [g.description for g in builtin_gates] == [
+        e.blurb for e in _GATEABLE_BUILTINS
+    ]
+
+
+def test_only_externally_published_gates_are_flagged_restart_required(monkeypatch):
+    """task-32284 AC#3: the pane's note must be honest per gate.
+
+    Every provider in this pane is rebuilt per Console agent run
+    (`Chat/console_agent_bridge.py`'s `_compose_run_registry_and_allowed`
+    constructs `BuiltinToolProvider` and `console_chat_controller.py`'s
+    `_compose_local_provider` constructs `LocalToolProvider` for each run),
+    so no gate here needs an app restart for the agent path. The single
+    exception is a gate that ALSO decides what the built-in MCP *server*
+    publishes to external clients (only reached when `[mcp]
+    expose_local_tools` is on): that list is built once when the server
+    starts.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+
+    gates = all_tool_gates()
+    assert [g.key for g in gates if g.restart_required] == [WEB_DEEP_SEARCH_GATE_KEY]
+
+
+def test_tool_gate_breadcrumb_names_the_tool_gates_pane(monkeypatch):
+    """task-32284 AC#4: the Permissions legend's gate-off count says WHERE
+    the gates live -- "the built-in server detail" never named the pane."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        LOCAL_TOOLS_MASTER_KEY,
+        TOOL_GATES_PANE_PATH,
+        tool_gate_breadcrumb,
+    )
+
+    assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
+    everything_but_the_master_off = tool_gate_breadcrumb()
+    assert everything_but_the_master_off is not None
+    assert TOOL_GATES_PANE_PATH in everything_but_the_master_off
+
+    def only_master_off(section, key=None, default=None):
+        return False if key == LOCAL_TOOLS_MASTER_KEY else True
+
+    monkeypatch.setattr(config_module, "get_cli_setting", only_master_off)
+    master_off = tool_gate_breadcrumb()
+    assert master_off is not None
+    assert TOOL_GATES_PANE_PATH in master_off
 
 
 def test_all_tool_gates_enabled_is_coerced_not_raw_truthy(monkeypatch):
@@ -614,6 +716,7 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
     (it runs on every Permissions-mode resync; construction also spams
     warnings for optional tools missing on this system)."""
     from tldw_chatbook.Agents import builtin_tool_gate, tool_catalog
+    from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     def explode(entry):
@@ -628,7 +731,7 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
     assert f"{off_count} tool gate(s)" in breadcrumb
     assert "workspace, web, and Watchlists master switch in Tools mode" in breadcrumb
     assert "local/web" not in breadcrumb
-    assert "built-in server detail" in breadcrumb
+    assert TOOL_GATES_PANE_PATH in breadcrumb
 
 
 def test_tool_gate_breadcrumb_reads_each_config_gate_once(monkeypatch):
@@ -647,3 +750,75 @@ def test_tool_gate_breadcrumb_reads_each_config_gate_once(monkeypatch):
 
     assert breadcrumb is not None
     assert reads == builtin_tool_gate._gate_key_pairs()
+
+
+# -- task-32291: session approvals are reviewable and revocable --------------
+
+
+def _real_service():
+    """A REAL `UnifiedMCPControlPlaneService` -- the gate's list/revoke pair
+    delegates to it, so a fake would only pin the delegation shape, not the
+    round trip. No local store is wired: an approval captured without a
+    policy digest never touches the permission store (see
+    `approve_for_session()`'s compatibility branch), which is exactly the
+    shape `BuiltinToolGate.stamp()` uses.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    return UnifiedMCPControlPlaneService(
+        local_service=SimpleNamespace(),
+        server_service=None,
+        target_store=None,
+        context_store=None,
+    )
+
+
+def test_gate_lists_and_revokes_its_own_session_approval():
+    """AC#1/#2 for the built-in side: a session grant is enumerable through
+    the gate, and revoking it makes the next run's `check()` refuse again
+    (the gate's own "asks again" -- `BuiltinToolProvider.invoke` turns that
+    string into a failed result and the review hook re-prompts)."""
+    service = _real_service()
+    gate = BuiltinToolGate(service)
+    gate.stamp(RUN, "write_thing", "approve_session")
+
+    assert gate.list_session_approvals() == [("agent:builtin", "write_thing")]
+    # A DIFFERENT run has no stamp of its own -- only the session grant can
+    # permit it.
+    assert gate.check(_Mutating(), "run-2") is None
+
+    assert gate.revoke_session_approval("agent:builtin", "write_thing") is True
+
+    assert gate.list_session_approvals() == []
+    assert gate.is_session_approved("write_thing") is False
+    assert gate.check(_Mutating(), "run-2") is not None
+
+
+def test_gate_lists_only_builtin_approvals_from_its_own_profile():
+    """The gate is the BUILT-IN facade over a store shared with MCP tools:
+    an MCP server's grant, and a grant under another profile, are not the
+    gate's to list or revoke."""
+    service = _real_service()
+    service.approve_for_session("local:docs", "search", profile_id="research")
+    service.approve_for_session("agent:builtin", "calculator", profile_id="other")
+    gate = BuiltinToolGate(service, profile_id="research")
+    gate.stamp(RUN, "write_thing", "approve_session")
+
+    assert gate.list_session_approvals() == [("agent:builtin", "write_thing")]
+    assert gate.revoke_session_approval("local:docs", "search") is False
+    assert service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+
+def test_service_less_gate_has_nothing_to_list_or_revoke():
+    """Constraint 7's fail-soft shape: no service means no grants, never a
+    crash -- same contract as `is_session_approved()` above."""
+    gate = BuiltinToolGate(None)
+
+    assert gate.list_session_approvals() == []
+    assert gate.revoke_session_approval("agent:builtin", "write_thing") is False

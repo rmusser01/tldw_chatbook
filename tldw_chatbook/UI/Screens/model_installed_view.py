@@ -200,6 +200,11 @@ class InstalledView(Widget):
         border: solid $surface-lighten-1;
     }
 
+    InstalledView .installed-model-row.-revealed {
+        border: solid $accent;
+        background: $accent 8%;
+    }
+
     InstalledView .installed-model-title {
         text-style: bold;
     }
@@ -281,8 +286,14 @@ class InstalledView(Widget):
         self._import_status: str | None = None
         self._import_retry_available = False
         self._restore_header_focus_id: str | None = None
+        self._revealed_reference: ArtifactRef | None = None
+        self._reveal_status: str | None = None
+        self._reveal_focus_attempts = 0
+        self._import_focus_attempts = 0
         self._observation_generation = 0
         self._observation_focus_locator: ModelLibraryFocusLocator | None = None
+        # TASK-19563: monotonic inventory-read counter; see `_apply_inventory`.
+        self._inventory_generation = 0
         super().__init__(id=id)
 
     def _non_import_lifecycle_pending(self) -> bool:
@@ -354,6 +365,13 @@ class InstalledView(Widget):
             yield Static(
                 self._lifecycle_status,
                 id="installed-lifecycle-status",
+                classes="installed-recovery-status",
+                markup=False,
+            )
+        if self._reveal_status is not None:
+            yield Static(
+                self._reveal_status,
+                id="installed-reveal-status",
                 classes="installed-recovery-status",
                 markup=False,
             )
@@ -432,6 +450,13 @@ class InstalledView(Widget):
                 ModelInstallProgress,
             )
         except NoMatches:
+            self.refresh(recompose=True)
+            return
+        if not list(widget.query("#model-install-progress-phase")):
+            # A progress tick can arrive while the state-change recompose has
+            # mounted the progress root but not its children yet. The latest
+            # progress is already retained above, so let the next composition
+            # render it instead of addressing an incomplete subtree.
             self.refresh(recompose=True)
             return
         widget.display = active
@@ -516,6 +541,8 @@ class InstalledView(Widget):
             if audio_cpp is not None
             else "installed-model-row"
         )
+        if row.reference == self._revealed_reference:
+            classes += " -revealed"
         widget = Vertical(*children, classes=classes)
         widget.reference = row.reference
         return widget
@@ -641,10 +668,11 @@ class InstalledView(Widget):
         if self._loaded and not force:
             return
         self._observation_generation += 1
+        self._inventory_generation += 1
         self._loading = True
         self._load_error = None
         self.refresh(recompose=True)
-        self._load_inventory()
+        self._load_inventory(self._inventory_generation)
 
     def _service_for_worker(self) -> ModelArtifactService:
         """Create the managed service lazily on a worker thread."""
@@ -655,8 +683,14 @@ class InstalledView(Widget):
     @work(
         thread=True, group="installed_models_load", exclusive=True, exit_on_error=False
     )
-    def _load_inventory(self) -> None:
-        """Read managed inventory, disk totals, and legacy files off-loop."""
+    def _load_inventory(self, generation: int | None = None) -> None:
+        """Read managed inventory, disk totals, and legacy files off-loop.
+
+        TASK-19563: the generation captured at dispatch travels with the read.
+        This is a *thread* worker, so `Worker.cancel()` cannot stop the body --
+        it finishes in the executor and the `call_from_thread` callbacks below
+        still land, potentially on a view the user has already left.
+        """
         try:
             service = self._service_for_worker()
             installed = service.list_installed()
@@ -683,9 +717,13 @@ class InstalledView(Widget):
                 (),
                 None,
                 "The local model inventory could not be loaded.",
+                None,
+                generation,
             )
             return
-        self.app.call_from_thread(self._apply_inventory, rows, usage, None, audio_cpp)
+        self.app.call_from_thread(
+            self._apply_inventory, rows, usage, None, audio_cpp, generation
+        )
 
     def _apply_inventory(
         self,
@@ -693,8 +731,27 @@ class InstalledView(Widget):
         usage: ArtifactDiskUsage | None,
         error: str | None,
         audio_cpp: dict[ArtifactRef, AudioCppPackageProjection] | None = None,
+        generation: int | None = None,
     ) -> None:
-        """Apply a completed inventory read on the Textual event loop."""
+        """Apply a completed inventory read on the Textual event loop.
+
+        TASK-19563: this is the arrival end of a *thread* worker, which
+        `Worker.cancel()` cannot stop -- the body finishes in the executor and
+        this callback lands regardless. Two refusals therefore live here:
+
+        * a read a newer `ensure_loaded()` has already superseded is dropped
+          outright, so a slow first read can never overwrite a fast second one;
+        * a read that arrives after the view has left the DOM records its state
+          but drives no UI. Everything below the `is_attached` check recomposes,
+          re-drives the observation pass, and restores focus -- work that lands
+          on whatever screen happens to be current, not on this one.
+
+        `is_attached` is the check that can actually be `False`; `is_mounted`
+        is never reset once set (see `UI/Screens/library_screen.py`), which is
+        why it is useless as a post-hop detach guard.
+        """
+        if generation is not None and generation != self._inventory_generation:
+            return
         self._rows = rows
         self._usage = usage
         self._loading = False
@@ -704,18 +761,97 @@ class InstalledView(Widget):
             self._audio_cpp_projections = audio_cpp
         reload_after_load = self._reload_after_load
         self._reload_after_load = False
+        revealed = self._revealed_reference
+        if error is None and revealed is not None and not reload_after_load:
+            if any(row.reference == revealed for row in rows):
+                self._reveal_status = None
+            else:
+                self._revealed_reference = None
+                self._reveal_status = (
+                    "That managed model is no longer available. Refresh Installed "
+                    "models and try again."
+                )
         if reload_after_load:
             self.ensure_loaded(force=True)
-        else:
+        elif self.is_attached:
             self.refresh(recompose=True)
             if error is None and self._observation_provider is not None:
                 self.refresh_observations()
             if self._import_status is not None:
-                self.call_after_refresh(self._focus_import_recovery)
+                self._schedule_import_focus_recovery()
             elif self._restore_header_focus_id is not None:
                 focus_id = self._restore_header_focus_id
                 self._restore_header_focus_id = None
                 self.call_after_refresh(self.restore_focus, focus_id)
+            elif self._revealed_reference is not None:
+                self._schedule_revealed_focus()
+
+    def reveal_reference(self, reference: ArtifactRef) -> None:
+        """Reveal and focus one exact managed row without activating it.
+
+        Args:
+            reference: Verified managed identity selected by another Models view.
+        """
+        if type(reference) is not ArtifactRef:
+            return
+        had_recovery = self._reveal_status is not None
+        self._reveal_status = None
+        self._revealed_reference = reference
+        if any(row.reference == reference for row in self._rows):
+            if had_recovery and self.is_attached:
+                self.refresh(recompose=True)
+                self._schedule_revealed_focus()
+                return
+            for row in self.query(".installed-model-row"):
+                row.set_class(
+                    getattr(row, "reference", None) == reference,
+                    "-revealed",
+                )
+            self._focus_revealed_reference()
+            return
+        self.ensure_loaded(force=True)
+
+    def _schedule_revealed_focus(self) -> None:
+        """Focus after recompose, retrying across Textual's child-mount gap."""
+        self._reveal_focus_attempts = 3
+        self.call_after_refresh(self._focus_revealed_after_recompose)
+
+    def _focus_revealed_after_recompose(self) -> None:
+        """Resolve one bounded post-recompose focus attempt."""
+        if self._focus_revealed_reference():
+            self._reveal_focus_attempts = 0
+            return
+        self._reveal_focus_attempts -= 1
+        if self._reveal_focus_attempts > 0:
+            self.set_timer(0.01, self._focus_revealed_after_recompose)
+
+    def _focus_revealed_reference(self) -> bool:
+        """Scroll the revealed row into view and focus activation when available."""
+        reference = self._revealed_reference
+        if reference is None:
+            return False
+        row = next(
+            (
+                widget
+                for widget in self.query(".installed-model-row")
+                if getattr(widget, "reference", None) == reference
+            ),
+            None,
+        )
+        if row is None:
+            return False
+        row.scroll_visible(animate=False, immediate=True, force=True)
+        action = next(
+            (
+                button
+                for button in row.query(".model-activate").results(Button)
+                if not button.disabled
+            ),
+            None,
+        )
+        if action is not None:
+            action.focus()
+        return True
 
     def refresh_observations(self) -> None:
         """Refresh current exact refs without re-reading managed inventory."""
@@ -831,7 +967,21 @@ class InstalledView(Widget):
             except NoMatches:
                 continue
 
-    def _focus_import_recovery(self) -> None:
+    def _schedule_import_focus_recovery(self) -> None:
+        """Focus after recompose, retrying across Textual's child-mount gap."""
+        self._import_focus_attempts = 3
+        self.call_after_refresh(self._focus_import_after_recompose)
+
+    def _focus_import_after_recompose(self) -> None:
+        """Resolve one bounded post-recompose import-focus attempt."""
+        if self._focus_import_recovery():
+            self._import_focus_attempts = 0
+            return
+        self._import_focus_attempts -= 1
+        if self._import_focus_attempts > 0 and self.is_attached:
+            self.set_timer(0.01, self._focus_import_after_recompose)
+
+    def _focus_import_recovery(self) -> bool:
         """Restore focus to one stable import control after recomposition."""
         for selector in (
             "#installed-gguf-import-retry",
@@ -843,7 +993,8 @@ class InstalledView(Widget):
                 continue
             if not control.disabled:
                 self.screen.set_focus(control)
-                return
+                return True
+        return False
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Keep keyboard-selected disclosures and actions inside the viewport."""
@@ -1210,7 +1361,7 @@ class InstalledView(Widget):
         self._set_import_lane_owned(False)
         self.notify(message, severity="warning")
         self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_import_recovery)
+        self._schedule_import_focus_recovery()
 
     @on(Button.Pressed, "#installed-gguf-import-cancel")
     def _cancel_import_pressed(self) -> None:

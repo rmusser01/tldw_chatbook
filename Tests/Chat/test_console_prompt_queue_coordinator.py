@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_activity_receipts import (
+    ConsoleActivityReceiptService,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
@@ -14,7 +21,16 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDispatchCheckpointState,
+    ConsoleDispatchResultStatus,
+    ConsoleDispatchWriteResult,
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueMode,
     PromptQueuePauseReason,
@@ -23,6 +39,17 @@ from tldw_chatbook.Chat.console_prompt_queue import (
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     QueueGenerationAuthorization,
 )
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from Tests.console_provider_doubles import provider_resolution
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class SequencedGateway:
@@ -42,6 +69,12 @@ class SequencedGateway:
                 "model": "test-model",
                 "base_url": "http://127.0.0.1:9099",
                 "visible_copy": "",
+                "resolved_destination": ConsoleResolvedDestination(
+                    provider="llama_cpp",
+                    model="test-model",
+                    endpoint_identity="http://127.0.0.1:9099",
+                    egress_class=ConsoleEgressClass.ON_DEVICE,
+                ),
             },
         )()
 
@@ -71,6 +104,92 @@ class RecordingPromptHistory:
 class RecordingPersistence:
     def __init__(self) -> None:
         self.created_messages: list[dict] = []
+        self._policy_snapshot = None
+        self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
+        self.console_dispatch_repository = self
+        self._checkpoint = None
+
+    def _read_policy(self, conversation_id):
+        del conversation_id
+        return SimpleNamespace(durable_policy=object(), snapshot=self._policy_snapshot)
+
+    def _cas_state(self, transition):
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        checkpoint = replace(
+            checkpoint,
+            state=transition.new_state,
+            checkpoint_revision=checkpoint.checkpoint_revision + 1,
+            assistant_message_version=checkpoint.assistant_message_version + 1,
+            attempt_id=transition.new_attempt_id,
+        )
+        self._checkpoint = checkpoint
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            checkpoint,
+            checkpoint.assistant_message_version,
+            "fake-payload-hash",
+        )
+
+    cas_state = _cas_state
+
+    def settle_with_assistant(self, settlement):
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        self._checkpoint = None
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            None,
+            checkpoint.assistant_message_version + 1,
+            "fake-terminal-hash",
+        )
+
+    def commit_durable_turn(self, *, acceptance, policy_candidate, conversation_kwargs):
+        del conversation_kwargs
+        self._policy_snapshot = ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
+        self.created_messages.extend(
+            (
+                {
+                    "sender": "user",
+                    "content": acceptance.user_content,
+                    "message_id": acceptance.user_message_id,
+                },
+                {
+                    "sender": "assistant",
+                    "content": "",
+                    "message_id": acceptance.assistant_message_id,
+                },
+            )
+        )
+        checkpoint = ConsoleDispatchCheckpoint(
+            assistant_message_id=acceptance.assistant_message_id,
+            user_message_id=acceptance.user_message_id,
+            conversation_id=acceptance.conversation_id,
+            preparation_id=acceptance.preparation_id,
+            attempt_id=acceptance.attempt_id,
+            state=ConsoleDispatchCheckpointState.ACCEPTED,
+            checkpoint_revision=1,
+            user_message_version=1,
+            assistant_message_version=1,
+            origin=acceptance.origin,
+            queue_entry_id=acceptance.queue_entry_id,
+            frozen_authority=acceptance.frozen_authority,
+            resolved_destination=acceptance.resolved_destination,
+            reconstructability=acceptance.reconstructability,
+        )
+        self._checkpoint = checkpoint
+        return checkpoint
 
     def create_conversation(self, **kwargs):
         return "conversation-1"
@@ -108,11 +227,9 @@ class RefuseSecondGateway(SequencedGateway):
     async def resolve_for_send(self, selection):
         self.resolve_calls += 1
         if self.resolve_calls == 2:
-            return type(
-                "Resolution",
-                (),
-                {"ready": False, "visible_copy": "Provider blocked: unavailable"},
-            )()
+            return provider_resolution(
+                ready=False, visible_copy="Provider blocked: unavailable"
+            )
         return await super().resolve_for_send(selection)
 
 
@@ -232,7 +349,7 @@ async def test_lifecycle_impact_does_not_describe_paused_queue_as_live_run():
 def test_session_lifecycle_impact_is_revisioned_independently():
     gateway = SequencedGateway()
     controller, _store, session_id = _arm_controller(gateway)
-    other = controller.new_session(title="Other")
+    other = controller.new_session(title="Other", ephemeral=True)
 
     session_before = controller.lifecycle_impact(session_id=session_id)
     fleet_before = controller.lifecycle_impact()
@@ -315,6 +432,76 @@ async def test_three_turn_chain_drains_fifo_with_one_slot_and_explicit_origins()
 
 
 @pytest.mark.asyncio
+async def test_queued_drain_enters_runtime_custody_before_controller_with_frozen_config():
+    gateway = SequencedGateway()
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Queue custody owner")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    accepted_requests = []
+    original_accept_turn = runtime.accept_turn
+
+    def accept_turn_once(request, **kwargs):
+        accepted_requests.append((request, kwargs))
+        return original_accept_turn(request, **kwargs)
+
+    runtime.accept_turn = accept_turn_once  # type: ignore[method-assign]
+    controller.temperature = 0.15
+
+    chain_task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session.id)
+    )
+    await gateway.started[0].wait()
+    queued_id = _queue(controller, session.id, "two frozen")
+    controller.temperature = 1.75
+
+    queued_submit_started = asyncio.Event()
+    release_queued_submit = asyncio.Event()
+    observations: list[tuple[str, float | None, bool]] = []
+    original_submit = controller.submit_draft
+
+    async def submit_with_barrier(draft: str, **kwargs):
+        if kwargs.get("origin") is ConsoleSubmissionOrigin.QUEUED:
+            record = next(iter(runtime._turn_custody.values()), None)
+            configuration = kwargs.get("configuration")
+            observations.append(
+                (
+                    draft,
+                    configuration.provider_payload_settings.get("temperature"),
+                    bool(
+                        record is not None
+                        and record.request is not None
+                        and record.request.draft == draft
+                    ),
+                )
+            )
+            queued_submit_started.set()
+            await release_queued_submit.wait()
+        return await original_submit(draft, **kwargs)
+
+    controller.submit_draft = submit_with_barrier  # type: ignore[method-assign]
+    gateway.release[0].set()
+    await queued_submit_started.wait()
+    release_queued_submit.set()
+    await gateway.started[1].wait()
+    gateway.release[1].set()
+    await chain_task
+
+    assert observations == [("two frozen", 0.15, True)]
+    assert len(accepted_requests) == 1
+    accepted_request, accepted_kwargs = accepted_requests[0]
+    assert accepted_request.draft == "two frozen"
+    assert accepted_request.attachment_ids == ()
+    assert accepted_request.staged_evidence_launch is None
+    assert accepted_kwargs["origin"] is ConsoleSubmissionOrigin.QUEUED
+    assert accepted_kwargs["queue_entry_id"] == queued_id
+    assert controller.prompt_queue_registry.snapshot(session.id).total_count == 0
+    assert not runtime._turn_custody
+
+
+@pytest.mark.asyncio
 async def test_intermediate_completions_emit_only_one_final_background_outcome():
     gateway = SequencedGateway()
     controller, _store, session_id = _arm_controller(gateway)
@@ -326,7 +513,7 @@ async def test_intermediate_completions_emit_only_one_final_background_outcome()
     )
     await gateway.started[0].wait()
     _queue(controller, session_id, "two")
-    controller.new_session(title="Viewed elsewhere")
+    controller.new_session(title="Viewed elsewhere", ephemeral=True)
 
     gateway.release[0].set()
     await gateway.started[1].wait()
@@ -444,6 +631,19 @@ async def test_queued_origin_requires_coordinator_authority():
         )
 
 
+def test_agent_wake_acceptance_does_not_require_a_prompt_queue_chain():
+    gateway = SequencedGateway()
+    controller, _store, session_id = _arm_controller(gateway)
+
+    controller.prompt_queue_coordinator.turn_accepted(
+        session_id,
+        origin=ConsoleSubmissionOrigin.AGENT_WAKE,
+        context_epoch=0,
+    )
+
+    assert controller.prompt_queue_registry.snapshot(session_id).entries == ()
+
+
 @pytest.mark.asyncio
 async def test_stop_pauses_immediately_and_resume_next_dispatches_once():
     gateway = SequencedGateway()
@@ -514,11 +714,10 @@ async def test_failed_retry_stays_on_queue_owner_after_viewed_session_switch():
     failed = next(
         message
         for message in store.messages_for_session(session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
-        and message.status == "failed"
+        if message.role is ConsoleMessageRole.ASSISTANT and message.status == "failed"
     )
 
-    viewed = controller.new_session(title="Viewed elsewhere")
+    viewed = controller.new_session(title="Viewed elsewhere", ephemeral=True)
     assert store.active_session_id == viewed.id
     recovery = asyncio.create_task(controller.retry_failed_queue_turn(failed.id))
     await gateway.started[1].wait()
@@ -538,7 +737,10 @@ async def test_failed_retry_stays_on_queue_owner_after_viewed_session_switch():
 @pytest.mark.asyncio
 async def test_preaccept_refusal_returns_claim_to_head_and_writes_no_history():
     gateway = RefuseSecondGateway()
-    controller, _store, session_id = _arm_controller(gateway)
+    controller, store, session_id = _arm_controller(gateway)
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
     history = RecordingPromptHistory()
     controller.prompt_history = history
     task = asyncio.create_task(
@@ -555,6 +757,8 @@ async def test_preaccept_refusal_returns_claim_to_head_and_writes_no_history():
     assert [entry.entry_id for entry in snapshot.entries] == [queued_id]
     assert history.items == ["one"]
     assert gateway.user_turns == ["one"]
+    assert runtime.recoveries_for_session(session_id) == ()
+    assert not runtime._turn_custody
 
 
 @pytest.mark.asyncio
@@ -595,12 +799,10 @@ async def test_shutdown_during_claimed_readiness_cannot_accept_or_dispatch_it():
 
     assert accepted_entries == []
     assert gateway.user_turns == ["one"]
-    queued_echo = next(
-        message
+    assert not any(
+        message.role is ConsoleMessageRole.USER and message.content == "two"
         for message in store.messages_for_session(session_id)
-        if message.role is ConsoleMessageRole.USER and message.content == "two"
     )
-    assert queued_echo.status == "failed"
 
 
 @pytest.mark.asyncio
@@ -613,7 +815,7 @@ async def test_close_tombstones_before_cancel_and_never_starts_next_prompt():
     await gateway.started[0].wait()
     _queue(controller, session_id, "two")
 
-    controller.close_session(session_id)
+    close_controller_session(controller, session_id)
     await asyncio.gather(chain_task, return_exceptions=True)
 
     assert gateway.user_turns == ["one"]
@@ -648,7 +850,7 @@ async def test_paused_queue_gates_unrelated_generation_and_cap_refuses_reacquire
         if message.role is ConsoleMessageRole.USER
     ] == before_users
 
-    other = controller.new_session(title="Occupies only slot")
+    other = controller.new_session(title="Occupies only slot", ephemeral=True)
     controller._set_run_state(
         controller.run_state_for(other.id).__class__(
             ConsoleRunStatus.STREAMING, "Streaming response."
@@ -728,7 +930,7 @@ async def test_two_sessions_keep_independent_chains_and_each_occupies_one_slot()
     store = ConsoleChatStore()
     first = store.ensure_session(title="First")
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    second = controller.new_session(title="Second")
+    second = controller.new_session(title="Second", ephemeral=True)
 
     first_task = asyncio.create_task(
         controller.run_prompt_chain("a1", session_id=first.id)
@@ -807,6 +1009,14 @@ async def test_rider_added_after_admission_returns_claim_without_consuming_it():
     )
     await gateway.started[0].wait()
     queued_id = _queue(controller, session.id, "two")
+    later_attachment = PendingAttachment(
+        "/later.png",
+        "later.png",
+        "image",
+        "attachment",
+        data=b"later",
+    )
+    assert store.add_pending_attachment(session.id, later_attachment)
     rider_present = True
     gateway.release[0].set()
     await task
@@ -816,8 +1026,43 @@ async def test_rider_added_after_admission_returns_claim_without_consuming_it():
     assert snapshot.pause_reason is PromptQueuePauseReason.DISPATCH_REFUSED
     assert [entry.entry_id for entry in snapshot.entries] == [queued_id]
     assert gateway.user_turns == ["one"]
+    assert store.pending_attachments(session.id) == [later_attachment]
 
 
 def test_queue_generation_authorization_cannot_be_constructed_externally():
     with pytest.raises(PermissionError):
         QueueGenerationAuthorization(object(), "session", _key=object())
+
+
+@pytest.mark.asyncio
+async def test_multi_entry_queue_chain_publishes_one_final_durable_outcome(tmp_path):
+    gateway = SequencedGateway()
+    store = ConsoleChatStore()
+    queued_session = store.ensure_session(title="Queued")
+    active_session = store.create_session(title="Active", ephemeral=True)
+    store.switch_session(queued_session.id)
+    service = ConsoleActivityReceiptService(
+        AgentRunsDB(tmp_path / "queue-activity.db"), None
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        activity_receipts=service,
+    )
+
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=queued_session.id)
+    )
+    await gateway.started[0].wait()
+    _queue(controller, queued_session.id, "two")
+    store.switch_session(active_session.id)
+    gateway.release[0].set()
+    await gateway.started[1].wait()
+    gateway.release[1].set()
+    await task
+
+    receipts = service.unseen_snapshot()
+    assert len(receipts) == 1
+    assert receipts[0].logical_outcome_id.startswith("queue-chain:")
+    assert receipts[0].status == "done"
+    assert receipts[0].session_id == queued_session.id

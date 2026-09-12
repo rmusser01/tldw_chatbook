@@ -1,0 +1,74 @@
+TASK-22857 production width matrix — detached tmux PTY evidence
+Status: TARGETED AUTOMATED + DETACHED-PTY UAT COMPLETE; FULL SWEEP NOT OPTED IN
+Branch checkpoint: 2283283fd89e9bb67a10f33e74d8653ce2111582
+Date prepared: 2026-08-26
+
+Do not replace PENDING with PASS from Pilot geometry alone. For every executed
+row record: tmux session, pane size, stty size, pwd, process command, route,
+focus target, effective Library/Items/Work widths, overflow/intersection result,
+return result, capture path, and saved preference before/after.
+
+DEFAULT BOUNDED MODE
+
+Outer  Grid  Expected rail/stage     Expected adaptive state                 Observed
+235    231   alongside, 34           ordinary landing rail 34 + canvas 197   PASS projection
+170    166   alongside, 31           ordinary landing rail 31 + canvas 135   PASS projection
+120    116   alongside, 24           ordinary landing rail 24 + canvas 92    PASS projection
+100    100   alongside, 24           post-fix rail 24 + canvas 76            PASS after restart
+ 80     80   alongside, 24           post-fix rail 24 + canvas 56            PASS after restart
+ 60     60   emergency single-stage  rail-only; canvas-only after `i`         PASS geometry
+
+At outer widths below 120, verify compact CSS removes the normal grid border and
+padding so grid content width equals terminal width. At every width verify no
+rail/canvas/pane/footer intersection and no compositor overflow.
+
+CUSTOM WIDTH BOUNDARIES (configure through production Settings)
+
+Saved  Outer  Expected effective  Saved value after resize  Observed
+35      74     34                  35                        PASS 34 + 40
+35      75     35                  35                        PASS 35 + 40
+48      64     24                  48                        PASS 24 + 40
+48      80     40                  48                        PASS 40 + 40
+48      87     47                  48                        PASS 47 + 40
+48      88     48                  48                        PASS 48 + 40
+
+EMERGENCY RETURN / RESTORATION
+
+Action                                                        Observed
+60: activate Import into canvas-only with `i`                  PASS
+60: safe eligible Escape uses guarded return path              PASS
+60: real dirty/modal first-refusal guard                        MOUNTED-TEST EVIDENCE
+60: pinned Enter on 86ad27385c                                 PRE-FIX FAIL
+60: Shift+Tab, Enter on 28ce0a88a0                             POST-FIX PASS
+64: resize restores active route                               PASS
+60: resize back restores prior rail-only stage                 PASS
+60: enable ASCII glyphs in Settings; return reads < Library    PASS
+60: Settings label on 28ce0a88a0                              PRE-FIX FAIL (Disabled)
+60: Settings label on 2283283fd8                              POST-FIX PASS (Enabled)
+
+CAPTURE INVENTORY
+
+Width/route/state                                              Capture
+235 / initial Library landing                                  PASS projection 34 + 197
+170 / Collections                                              collections-170.txt — PASS 31 + 135
+170 / ordinary Search/RAG                                      search-rag-170.txt — PASS 31 + 135
+170 / Media adaptive                                           media-170.txt — PASS 31/5/40/5/85
+170 / Chats adaptive                                           chats-170.txt — PASS 31/5/40/5/85
+170 / Notes adaptive                                           notes-170.txt — PASS 31/5/40/5/85
+120 / responsive landing                                       PASS projection 24 + 92
+100 / ordinary landing pre-fix                                 landing-100.txt — FAILED evidence
+100 / ordinary landing post-fix                                landing-100-postfix.txt — PASS
+80 / ordinary landing pre-fix                                  landing-80.txt — FAILED evidence
+80 / ordinary landing post-fix                                 landing-80-postfix.txt — PASS
+60 / rail-only                                                  PASS captured live
+60 / canvas-only + safe Escape                                 PASS captured live
+60 / pinned Enter return pre-fix                               FAILED evidence
+60 / pinned Enter return post-fix                              PASS captured live
+60 / ASCII < Library                                           PASS captured live
+235 / post-fix Settings truth                                  PASS Enabled/custom48/clean
+
+CLEANUP
+
+tmux -L tldw22301 kill-server                                 PASS
+tmux -L tldw22301 has-session                                 ABSENT as expected
+Task22301 app/tmux process inspection                          NONE surviving

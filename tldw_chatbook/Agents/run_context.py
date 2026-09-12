@@ -1,7 +1,7 @@
-"""The dispatching run's id, bound around a run's tool-facing work.
+"""The dispatching run actor, bound around a run's tool-facing work.
 
-Two bindings exist, both established by ``AgentService`` and both reading
-back through ``current_run_id()``. They are not redundant: they cover
+Two bindings exist, both established by ``AgentService`` and readable through
+``current_run_actor()``/``current_run_id()``. They are not redundant: they cover
 different THREADS, because the work they guard runs in different places.
 
 1. **Per-invocation** (PR2a Task 5, ``_make_invoke_tool``) -- bound around
@@ -26,7 +26,7 @@ different THREADS, because the work they guard runs in different places.
    built one layer below any run identity). One binding there covers both
    -- and every future loop-thread consumer -- with no signature churn.
 
-The two nest harmlessly: the inner binding sets the same id the outer one
+The two nest harmlessly: the inner binding sets the same actor the outer one
 holds, on a different thread.
 
 WHY A ContextVar AT ALL (PR2a Task 5). Both permission gates key this
@@ -44,7 +44,7 @@ signature is a Protocol (``tool_catalog.ToolProvider``) implemented by
 every provider and called generically by
 ``ToolCatalogRegistry.invoke_by_name``; widening it would touch every
 provider and hundreds of call sites for a value only three of them want.
-So the run id rides a ``ContextVar`` that ``AgentService`` binds around
+So the run actor rides a ``ContextVar`` that ``AgentService`` binds around
 each invocation instead -- the same shape, and for the same reason, as
 ``Tools/workspace_file_roots.run_workspace``, which already binds THIS
 run's workspace around ``BuiltinToolProvider.invoke``'s tool execution.
@@ -68,10 +68,74 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator
+from dataclasses import dataclass
+from typing import Iterator, Literal
 
-#: The run id whose tool call is executing on this thread, or "" for none.
-_CURRENT_RUN_ID: ContextVar[str] = ContextVar("tldw_agent_run_id", default="")
+
+#: task-31382: a sub-agent display label is cut here so a card title or a
+#: marker header stays one line. Shared by the label's one producer
+#: (``subagent_display_label``) and both of its renderers.
+SUBAGENT_LABEL_MAX_CHARS = 40
+
+
+def clean_subagent_label(text: str | None) -> str:
+    """Return ``text`` as one bounded, single-line, terminal-safe label.
+
+    Newlines and control characters become spaces, runs of whitespace
+    collapse, and anything past ``SUBAGENT_LABEL_MAX_CHARS`` is cut with an
+    ellipsis. The empty string means "no label".
+
+    Args:
+        text: The raw label, or None.
+
+    Returns:
+        The cleaned label, possibly empty.
+    """
+    flattened = "".join(
+        char if char.isprintable() else " " for char in str(text or "")
+    )
+    cleaned = " ".join(flattened.split())
+    if len(cleaned) > SUBAGENT_LABEL_MAX_CHARS:
+        return cleaned[: SUBAGENT_LABEL_MAX_CHARS - 1].rstrip() + "…"
+    return cleaned
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentRunActor:
+    """Attribution for the primary or subagent invoking a provider tool.
+
+    Args:
+        kind: Whether the actor is the primary run or a spawned sub-agent.
+        run_id: The acting run's id.
+        parent_run_id: The spawning run's id for a sub-agent, else None.
+        label: task-31382: a display label for a sub-agent (the named
+            agent's name, else a short form of its task) so surfaces that
+            attribute a run's work to the user -- the ask_user card and
+            marker first -- can name WHICH child. None for the primary and
+            for callers that never set it.
+    """
+
+    kind: Literal["primary", "subagent"]
+    run_id: str
+    parent_run_id: str | None
+    label: str | None = None
+
+
+_CURRENT_RUN_ACTOR: ContextVar[CurrentRunActor | None] = ContextVar(
+    "tldw_agent_run_actor", default=None
+)
+_CURRENT_TOOL_CALL_ID: ContextVar[str] = ContextVar(
+    "tldw_agent_tool_call_id", default=""
+)
+
+
+def current_run_actor() -> CurrentRunActor | None:
+    """Return the actor bound to this tool thread, if any.
+
+    Returns:
+        Exact bound actor, or ``None`` outside an agent run.
+    """
+    return _CURRENT_RUN_ACTOR.get()
 
 
 def current_run_id() -> str:
@@ -81,7 +145,35 @@ def current_run_id() -> str:
         The bound run id, or ``""`` when no agent run bound one on this
         thread (a direct provider call outside any run). Never raises.
     """
-    return _CURRENT_RUN_ID.get()
+    actor = current_run_actor()
+    return actor.run_id if actor is not None else ""
+
+
+def current_tool_call_id() -> str:
+    """Return the native id of the tool call currently being dispatched."""
+    return _CURRENT_TOOL_CALL_ID.get()
+
+
+@contextmanager
+def use_run_actor(actor: CurrentRunActor) -> Iterator[None]:
+    """Bind exact provider-call attribution for the duration of a block.
+
+    Args:
+        actor: Non-empty primary or subagent attribution to bind.
+
+    Yields:
+        None while the actor is bound on the current context.
+
+    Raises:
+        ValueError: If ``actor`` is not a valid non-empty attribution.
+    """
+    if not isinstance(actor, CurrentRunActor) or not actor.run_id:
+        raise ValueError("a non-empty CurrentRunActor is required")
+    token = _CURRENT_RUN_ACTOR.set(actor)
+    try:
+        yield
+    finally:
+        _CURRENT_RUN_ACTOR.reset(token)
 
 
 @contextmanager
@@ -96,8 +188,19 @@ def use_run_id(run_id: str) -> Iterator[None]:
         None. The previous binding is restored on exit, including on an
         exception, so nested inline runs on one thread unwind correctly.
     """
-    token = _CURRENT_RUN_ID.set(run_id or "")
+    actor = CurrentRunActor("primary", run_id, None) if run_id else None
+    token = _CURRENT_RUN_ACTOR.set(actor)
     try:
         yield
     finally:
-        _CURRENT_RUN_ID.reset(token)
+        _CURRENT_RUN_ACTOR.reset(token)
+
+
+@contextmanager
+def use_tool_call_id(call_id: str) -> Iterator[None]:
+    """Bind one tool-call id without changing its run attribution."""
+    token = _CURRENT_TOOL_CALL_ID.set(str(call_id or ""))
+    try:
+        yield
+    finally:
+        _CURRENT_TOOL_CALL_ID.reset(token)

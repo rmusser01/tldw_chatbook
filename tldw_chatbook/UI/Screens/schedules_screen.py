@@ -45,7 +45,7 @@ SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
 
 
 class SchedulesScreen(BaseAppScreen):
-    """When jobs, watchlists, and workflows run."""
+    """When scheduled tasks fire and recurring questions run."""
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "schedules", **kwargs)
@@ -65,7 +65,7 @@ class SchedulesScreen(BaseAppScreen):
         )
         self._refresh_latest_console_context(has_recent_work)
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="schedules-refresh-console-context", thread=True)
     def _refresh_latest_console_context(self, has_recent_work: bool) -> None:
         latest_console_item = self._latest_console_follow_item_from_adapter(
             has_recent_work

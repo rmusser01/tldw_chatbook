@@ -19,6 +19,7 @@ from textual.widgets import Button, Static
 from Tests.UI.test_console_native_chat_flow import (
     RestoredConsoleHarness,
     StaticConversationTreeService,
+    _configure_native_ready_console,
     _static_plain_text,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -26,7 +27,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app as _build_base_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.Chat.rag_scope import (
@@ -44,6 +45,7 @@ from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     LABEL_ID,
     NARROW_BTN_ID,
     ROW_ID,
+    console_retrieval_scope_label,
 )
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ConsoleScopePickerModal,
@@ -51,6 +53,28 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
 from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
 
 SCOPE_CHIP_ID = "console-scope-chip"
+
+
+def _build_test_app(*args, **kwargs):
+    """Build a mounted-UI app whose setup modal does not cover scope controls."""
+    app = _build_base_test_app(*args, **kwargs)
+    _configure_native_ready_console(app)
+    return app
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    (
+        (ConsoleRetrievalScopeState.unscoped(), "Scope: everything"),
+        (ConsoleRetrievalScopeState(is_scoped=True, item_count=3), "Scope: 3 items"),
+        (ConsoleRetrievalScopeState.empty(), "Scope: no sources"),
+    ),
+)
+def test_retrieval_scope_label_is_shared_with_manual_search(
+    state: ConsoleRetrievalScopeState,
+    expected: str,
+) -> None:
+    assert console_retrieval_scope_label(state) == expected
 
 
 class _AlwaysExistsMediaDB:
@@ -124,7 +148,23 @@ class _SpyNotesScopeService:
 
 async def _open_inspector_and_get_row(console, pilot):
     await _open_console_inspector(console, pilot)
-    return console.query_one(f"#{ROW_ID}")
+    row = console.query_one(f"#{ROW_ID}")
+    body = console.query_one("#console-inspector-rail-body")
+    body.scroll_to_widget(row, animate=False, immediate=True)
+    await pilot.pause()
+    return row
+
+
+async def _click_scope_action(console, pilot, button_id: str) -> None:
+    """Scroll a scope action through the pinned fold cue before clicking it."""
+    button = console.query_one(f"#{button_id}", Button)
+    button.scroll_visible(animate=False, immediate=True)
+    await pilot.pause()
+    landed = await pilot.click(
+        button,
+        offset=(max(0, button.region.width // 2), 0),
+    )
+    assert landed, f"scope action #{button_id} remained obscured after reveal"
 
 
 @pytest.mark.asyncio
@@ -295,7 +335,7 @@ async def test_narrow_button_opens_modal_with_real_listers_wired():
         console = host.screen_stack[-1]
         await _open_inspector_and_get_row(console, pilot)
 
-        await pilot.click(f"#{NARROW_BTN_ID}")
+        await _click_scope_action(console, pilot, NARROW_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -402,7 +442,7 @@ async def test_edit_button_seeds_modal_from_held_scope():
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        await pilot.click(f"#{EDIT_BTN_ID}")
+        await _click_scope_action(console, pilot, EDIT_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -672,7 +712,7 @@ async def test_clear_button_unpersisted_session():
         console._sync_console_retrieval_scope_row()
         await pilot.pause()
 
-        await pilot.click(f"#{CLEAR_BTN_ID}")
+        await _click_scope_action(console, pilot, CLEAR_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -705,7 +745,7 @@ async def test_clear_button_persisted_session():
             row = console.query_one(f"#{ROW_ID}")
             assert list(row.query(f"#{CLEAR_BTN_ID}"))
 
-            await pilot.click(f"#{CLEAR_BTN_ID}")
+            await _click_scope_action(console, pilot, CLEAR_BTN_ID)
             await pilot.pause()
             for _ in range(20):
                 await pilot.pause(0.02)
@@ -1129,6 +1169,17 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
     async with host.run_test(size=(240, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, f"#{WORKSPACE_SCOPE_BTN_ID}")
+                # TASK-23193/23199 leave Workspaces closed by default, and a button
+        # inside a closed section has no reachable geometry -- the hit test
+        # below lands on the nav bar. Open it, which is what a user does
+        # before pressing anything in it.
+        if not console._current_console_rail_state().workspace_open:
+            console._toggle_console_rail_section("workspace")
+            for _ in range(200):
+                body = console.query_one("#console-rail-section-body-workspace")
+                if body.display and body.region.height:
+                    break
+                await pilot.pause(0.01)
         registry = app.workspace_registry_service
         active = registry.get_active_workspace()
         assert active is not None
@@ -1139,11 +1190,16 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
         # narrow ~38-column Console left rail only fits a couple of
         # compact buttons per row -- see console_workspace_context.py).
         button = console.query_one(f"#{WORKSPACE_SCOPE_BTN_ID}", Button)
-        rail_body = console.query_one("#console-rail-section-body-session")
+        rail_body = console.query_one("#console-rail-section-body-workspace")
         assert button.region.right <= rail_body.region.right, (
             f"RAG Scope button region {button.region} extends past the "
             f"rail body's clipped width {rail_body.region} -- it would be "
             "unreachable by a real click"
+        )
+        hit, _ = console.get_widget_at(*button.region.center)
+        assert hit is button, (
+            f"RAG Scope button center is intercepted by {hit!r}; the control "
+            "would be unreachable by a real click"
         )
 
         await pilot.click(f"#{WORKSPACE_SCOPE_BTN_ID}")
@@ -1231,7 +1287,7 @@ async def test_conversation_picker_universe_is_workspace_scope_when_set():
         )
         await _open_inspector_and_get_row(console, pilot)
 
-        await pilot.click(f"#{NARROW_BTN_ID}")
+        await _click_scope_action(console, pilot, NARROW_BTN_ID)
         await pilot.pause()
         for _ in range(20):
             await pilot.pause(0.02)
@@ -1441,3 +1497,47 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
         chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
         assert chip.display is True
         assert _static_plain_text(chip) == "Scope: 2"
+
+
+# --- TASK-24607 -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        ConsoleRetrievalScopeState(is_scoped=False),
+        ConsoleRetrievalScopeState(is_scoped=True, item_count=12),
+        ConsoleRetrievalScopeState(is_scoped=True, item_count=1234),
+        ConsoleRetrievalScopeState(is_scoped=False, is_empty=True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_scope_row_label_survives_a_narrow_rail_in_every_state(state):
+    """TASK-24607: no scope state may paint a label with no value.
+
+    The unscoped default is only one of four. The scoped states additionally
+    swap the single ``Narrow…`` control for ``Edit`` + ``Clear``; before the
+    fix each Textual Button claimed its DEFAULT_CSS ``min-width: 16``, so two
+    of them needed 33 cells of a 30-cell row and the label was squeezed
+    below its own text before wrapping even entered the picture.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 35)) as pilot:
+        console = host.screen_stack[-1]
+        row = await _open_inspector_and_get_row(console, pilot)
+        row.sync_state(state)
+        await pilot.pause()
+
+        label = console.query_one(f"#{LABEL_ID}", Static)
+        expected = console_retrieval_scope_label(state)
+        assert _static_plain_text(label) == expected
+
+        assert label.region.height == 1, (
+            f"label wrapped to {label.region.height} rows for {expected!r}; the "
+            "row is capped at max-height 1 so row 2 is clipped away unseen"
+        )
+        painted = label.render_line(0).text.rstrip()
+        assert painted.startswith("Scope:")
+        value = painted[len("Scope:") :].strip()
+        assert value, f"bare label painted for {expected!r}: {painted!r}"

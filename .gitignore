@@ -217,3 +217,16 @@ yandex-folder-id.txt
 # written by build_css.py beside the generated sheets; describes the local
 # build, never the repo.
 tldw_chatbook/css/.css-build-manifest.json
+
+# Local test evidence logs (teed pytest runs kept per worktree, never committed)
+test-logs/
+
+# Local verification artifacts (generated, never repository evidence)
+/output/
+/verification_*.png
+/serve_log*.txt
+/suite_result.txt
+
+# Diarizer bake-off corpus (TASK-31827): ~370 MB of VoxConverse/AMI audio the
+# harness materialises on demand; CC-BY-4.0 but not ours to redistribute.
+Tests/Audio/bakeoff/data/

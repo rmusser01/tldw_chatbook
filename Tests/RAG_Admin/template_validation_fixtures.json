@@ -1,0 +1,224 @@
+{
+  "_header": {
+    "purpose": "AC 14 provability clause: expected verdicts for the local validator were transcribed check-for-check from the pinned SERVER source, not invented. Regenerate expectations ONLY by re-reading the upstream pin (then update the ranges here).",
+    "upstream_source": {
+      "repo": "tldw_server2",
+      "pin": "385afa951922c8a9dc2002c675bb6cad65e4ac23",
+      "validate_endpoint": "tldw_Server_API/app/api/v1/endpoints/chunking_templates.py:782-992 (POST /validate; spec §7 cited 'endpoints/chunking_templates.py:782-992' - the real path is app/api/v1/endpoints/)",
+      "pydantic_first_pass": "tldw_Server_API/app/api/v1/schemas/chunking_templates_schemas.py:38-83 (TemplateConfig + validate_chunking/validate_classifier; extra keys are IGNORED by default, model_dump drops them - wart 3)",
+      "method_fallback_list": "endpoints/chunking_templates.py:830-832 (stale 11-name list; §11 item 13 / UPSTREAM_DEFECTS.md)",
+      "exception_tuple": "endpoints/chunking_templates.py:48-56 (_CHUNKING_TEMPLATES_NONCRITICAL_EXCEPTIONS)",
+      "checks_map": {
+        "chunking-required": "endpoint :806-812 + pydantic 'Field required' (unreachable in practice - pydantic fails first)",
+        "method-required": "pydantic validate_chunking :51-55 (fires before the endpoint's own :817-820 check)",
+        "method-registry": "endpoint :821-840",
+        "hierarchical-bool": "endpoint :848-854",
+        "boundaries-list-count-rules": "endpoint :855-901",
+        "classifier-handrolled": "endpoint :903-935 (only reached for the chunking.config.classifier path; top-level classifier is fully handled by the pydantic pass)",
+        "operation-key": "endpoint :937-973",
+        "json-serializable": "endpoint :975-982"
+      }
+    },
+    "expectation_format": {
+      "valid": "bool",
+      "errors_by_field": "error COUNT per 'field' string (field parity is pinned; message text is not - pydantic-wrapped vs hand-rolled phrasing differs by design)",
+      "warnings_count": "int"
+    },
+    "input_markers": {
+      "$$set": "test-only: {'$$set': [...]} expands to a Python set(...) - a non-JSON-serializable value that still passes the pydantic Any-typed fields (JSON itself cannot encode one)"
+    },
+    "registry_note": "Rows run against the DEFAULT methods source = LIVE engine registry (Chunking.engine.chunker.Chunker().get_available_methods()). fixed_size-validates-live therefore distinguishes live resolution from the endpoint's stale fallback list."
+  },
+  "cases": [
+    {
+      "id": "missing-chunking",
+      "note": "pydantic pass: 'Field required' on chunking; early return, hand-rolled checks never run",
+      "input": {"preprocessing": []},
+      "expected": {"valid": false, "errors_by_field": {"chunking": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "missing-method",
+      "note": "pydantic validate_chunking raises; field is 'chunking', not 'chunking.method' (endpoint :817-820 unreachable)",
+      "input": {"chunking": {}},
+      "expected": {"valid": false, "errors_by_field": {"chunking": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "unknown-method",
+      "note": "hand-rolled registry check; error field IS chunking.method here",
+      "input": {"chunking": {"method": "telepathy"}},
+      "expected": {"valid": false, "errors_by_field": {"chunking.method": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "fixed-size-validates-live",
+      "note": "AC 14: fixed_size is MISSING from the endpoint's stale fallback list but IS in the live engine registry - live resolution is the whole point (§11 item 13)",
+      "input": {"chunking": {"method": "fixed_size", "config": {"chunk_size": 512}}},
+      "expected": {"valid": true, "errors_by_field": {}, "warnings_count": 0}
+    },
+    {
+      "id": "canonical-valid",
+      "note": "full valid template exercising every stage",
+      "input": {
+        "preprocessing": [{"operation": "normalize_whitespace", "params": {}}],
+        "chunking": {"method": "words", "config": {"max_size": 400, "overlap": 50}},
+        "postprocessing": [{"operation": "merge_short", "params": {"min_words": 3}}],
+        "classifier": {"media_types": ["pdf"], "min_score": 0.5, "priority": 1}
+      },
+      "expected": {"valid": true, "errors_by_field": {}, "warnings_count": 0}
+    },
+    {
+      "id": "boundaries-over-20",
+      "note": "21 individually-valid anchored rules: exactly one count error; per-rule loop still inspects the first 20",
+      "input": {
+        "chunking": {
+          "method": "words",
+          "config": {
+            "hierarchical_template": {
+              "boundaries": [
+                {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"},
+                {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"},
+                {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"},
+                {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"},
+                {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"},
+                {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"},
+                {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}, {"pattern": "^Chapter \\d+"}
+              ]
+            }
+          }
+        }
+      },
+      "expected": {"valid": false, "errors_by_field": {"chunking.config.hierarchical_template.boundaries": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "unsafe-nested-quantifier-pattern",
+      "note": "ReDoS heuristic (a+)+ rejected by regex_safety.check_pattern max_len=256 pass",
+      "input": {
+        "chunking": {
+          "method": "words",
+          "config": {"hierarchical_template": {"boundaries": [{"pattern": "(a+)+b"}]}}
+        }
+      },
+      "expected": {"valid": false, "errors_by_field": {"chunking.config.hierarchical_template.boundaries[0].pattern": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "boundary-flags-s-rejected",
+      "note": "compile_flags allowlist is {i, m}; 's' is not in it",
+      "input": {
+        "chunking": {
+          "method": "words",
+          "config": {"hierarchical_template": {"boundaries": [{"pattern": "^H", "flags": "s"}]}}
+        }
+      },
+      "expected": {"valid": false, "errors_by_field": {"chunking.config.hierarchical_template.boundaries[0].flags": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "boundary-flags-im-ok",
+      "note": "i and m are the only accepted flags and both at once is fine",
+      "input": {
+        "chunking": {
+          "method": "words",
+          "config": {"hierarchical_template": {"boundaries": [{"pattern": "^#+ ", "flags": "im"}]}}
+        }
+      },
+      "expected": {"valid": true, "errors_by_field": {}, "warnings_count": 0}
+    },
+    {
+      "id": "unanchored-wildcard-warns-not-errors",
+      "note": "spec §7: unanchored .* is a WARNING, never an error - template stays valid",
+      "input": {
+        "chunking": {
+          "method": "words",
+          "config": {"hierarchical_template": {"boundaries": [{"pattern": ".*intro"}]}}
+        }
+      },
+      "expected": {"valid": true, "errors_by_field": {}, "warnings_count": 1}
+    },
+    {
+      "id": "boundary-rule-missing-pattern",
+      "note": "per-rule structural check on boundaries[i]",
+      "input": {
+        "chunking": {
+          "method": "words",
+          "config": {"hierarchical_template": {"boundaries": [{"flags": "i"}]}}
+        }
+      },
+      "expected": {"valid": false, "errors_by_field": {"chunking.config.hierarchical_template.boundaries[0]": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "hierarchical-non-bool",
+      "note": "hierarchical flag must be a bool",
+      "input": {"chunking": {"method": "words", "config": {"hierarchical": "yes"}}},
+      "expected": {"valid": false, "errors_by_field": {"chunking.config.hierarchical": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "classifier-strict-key-reject",
+      "note": "pydantic validate_classifier strict allowlist; error field is 'classifier' (validator raises for the whole field)",
+      "input": {
+        "chunking": {"method": "words"},
+        "classifier": {"frobnicate": true}
+      },
+      "expected": {"valid": false, "errors_by_field": {"classifier": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "min-score-out-of-range-top-level",
+      "note": "pydantic pass rejects 1.5; field 'classifier' (not classifier.min_score)",
+      "input": {
+        "chunking": {"method": "words"},
+        "classifier": {"min_score": 1.5}
+      },
+      "expected": {"valid": false, "errors_by_field": {"classifier": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "min-score-out-of-range-config-path",
+      "note": "chunking.config.classifier bypasses pydantic entirely; the HAND-ROLLED check (:910-916) names the field 'classifier.min_score' - the two paths disagree on field naming, by parity",
+      "input": {
+        "chunking": {"method": "words", "config": {"classifier": {"min_score": 1.5}}}
+      },
+      "expected": {"valid": false, "errors_by_field": {"classifier.min_score": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "classifier-regex-too-long",
+      "note": "hand-rolled classifier regex length cap is 128 (boundary cap is 256)",
+      "input": {
+        "chunking": {"method": "words"},
+        "classifier": {"filename_regex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      },
+      "expected": {"valid": false, "errors_by_field": {"classifier.filename_regex": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "wart-unknown-op-name-validates-clean",
+      "note": "PARITY PIN §7.1 wart 1 (AC 15): operation NAMES are never checked against the registry - only the 'operation' KEY is required. Unknown op validates clean (warned-and-skipped at runtime).",
+      "input": {
+        "chunking": {"method": "words"},
+        "preprocessing": [{"operation": "definitely_not_registered", "params": {"x": 1}}]
+      },
+      "expected": {"valid": true, "errors_by_field": {}, "warnings_count": 0}
+    },
+    {
+      "id": "wart-type-params-op-fails-validate",
+      "note": "PARITY PIN §7.1 wart 2 (AC 15): runtime accepts {type, params} ops but validation requires 'operation', so a runnable template FAILS validation",
+      "input": {
+        "chunking": {"method": "words"},
+        "preprocessing": [{"type": "strip_headers", "params": {}}]
+      },
+      "expected": {"valid": false, "errors_by_field": {"preprocessing[0]": 1}, "warnings_count": 0}
+    },
+    {
+      "id": "wart-unknown-top-level-key-ignored",
+      "note": "PARITY PIN §7.1 wart 3 (AC 15): the pydantic pass (extra=ignore) silently drops unknown top-level keys before the hand-rolled checks see them - validates clean",
+      "input": {
+        "chunking": {"method": "words"},
+        "schema_version": 99,
+        "some_future_field": {"a": 1}
+      },
+      "expected": {"valid": true, "errors_by_field": {}, "warnings_count": 0}
+    },
+    {
+      "id": "non-serializable-reject",
+      "note": "a set inside chunking.config passes the pydantic Any-typed field but fails the final json.dumps check ($$set expanded by the test)",
+      "input": {
+        "chunking": {"method": "words", "config": {"weird": {"$$set": ["a"]}}}
+      },
+      "expected": {"valid": false, "errors_by_field": {"template_config": 1}, "warnings_count": 0}
+    }
+  ]
+}

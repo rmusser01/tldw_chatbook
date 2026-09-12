@@ -70,6 +70,48 @@ their operational meaning would otherwise be obscured. A successful
 Appearance save publishes a generation signal and mounted Console transcripts
 re-resolve their presentation without an application restart.
 
+### 2026-08-26 amendment: durable historical character-name snapshots
+
+`console_roleplay_context` v2 adds an optional `character_name_snapshot`. New
+writes use v2; readers accept v1 and v2; versions greater than v2 remain
+fail-closed and block merge writes. The snapshot is the character name that
+owned the resolved prompt/template projection when the conversation was saved.
+
+A v1 conversation has no historical-name authority. Resume must not fetch or
+backfill the current character-card name. Saved resolved `system_prompt`
+remains authoritative when provenance or the historical name is absent. The
+data remains in the existing merge-safe metadata object; no schema migration
+is introduced.
+
+This amendment supports [TASK-22988](../tasks/task-22988%20-%20Resume-prior-character-chats-from-Roleplay.md)
+and the approved [Roleplay Resume Prior Character Chat Design](../../Docs/superpowers/specs/2026-08-26-roleplay-resume-prior-character-chat-design.md).
+
+### 2026-09-03 amendment: typed activation and aggregate Roleplay draft veto
+
+[ADR-120](120-character-conversation-navigation-and-local-semantic-search.md)
+preserves historical saved display identity and exact ID-only resume while
+making cross-surface activation Console-owned, cancellable, and result typed.
+Context, `Ctrl+K`, and Roleplay pass an immutable resolved local character key
+and exact conversation ID to the canonical Console opener; none reconstructs a
+transcript or substitutes the current or same-named card.
+
+The opener returns exactly `OPENED`, `CANCELLED_PRECOMMIT`, `NOT_FOUND`,
+`DATA_PROFILE_CHANGED`, `CHARACTER_UNAVAILABLE`, or `FAILED`. Its atomic
+`commit_started` acknowledgement is the cancellation linearization point.
+Cancellation that wins before it guarantees no Console target, tab, draft, or
+focus change. Once commit starts, the caller remains mounted until the exact
+destination is current and visible or the opener atomically restores the prior
+Console state. Only `OPENED` dismisses directly to Console.
+
+Before a Roleplay deep link changes card selection or unmounts an editor, the
+app-owned navigation coordinator captures one aggregate draft snapshot across
+form edits, character-visual authoring, shared-Persona visual authoring, Persona
+visual authoring, attachments, and every in-flight save owner. Dirty state must
+complete Save and continue, Discard and continue, or Stay; save failure or
+partial success preserves remaining drafts and blocks navigation. This
+amendment is owned by
+[TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
+
 ## Context
 
 The native Console session already persists character identity, including

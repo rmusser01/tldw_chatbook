@@ -8,14 +8,13 @@ change rather than a dynamic schema side effect.
 from __future__ import annotations
 
 import asyncio
-import math
 import os
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal
 
 from loguru import logger
 from rich.text import Text
@@ -44,6 +43,13 @@ from tldw_chatbook.Chat.console_voice_input import (
     realtime_vad_threshold as _read_realtime_vad_threshold,
     realtime_voice as _read_realtime_voice,
 )
+from tldw_chatbook.Chat.console_voice_settings import (
+    RESPONSE_EAGERNESS_DEFAULT_MS,
+    RESPONSE_EAGERNESS_MAX_MS,
+    RESPONSE_EAGERNESS_MIN_MS,
+    pipeline_aec_enabled,
+    response_eagerness_ms,
+)
 from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
 from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 from tldw_chatbook.Model_Artifacts.store import managed_service
@@ -70,6 +76,10 @@ from tldw_chatbook.TTS.audio_cpp_recipes import (
     AUDIO_CPP_PINNED_RELEASE,
     AudioCppMatchState,
     AudioCppReferenceRequirement,
+)
+from tldw_chatbook.TTS.legacy_catalogs import (
+    LEGACY_DEFAULT_MODELS,
+    LEGACY_DEFAULT_VOICES,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
@@ -112,8 +122,6 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     CredentialSource,
     GlobalSpeechTTSEffectiveSource,
     GlobalSpeechTTSCredentialMutation,
-    GlobalSpeechTTSCredentialState,
-    GlobalSpeechTTSDefaults,
     GlobalSpeechTTSSaveProposal,
     GlobalSpeechTTSState,
     GlobalSpeechTTSValidationError,
@@ -132,37 +140,20 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     validate_audio_cpp_managed_settings,
 )
 
+# TASK-21108: the draft-validation cluster below (bounds, the realtime
+# sibling draft, the detach/validate helpers, and the
+# ``SpeechTTSPanelDraftSnapshot`` payload) lives in the pure
+# ``speech_tts_panel_types`` module so ``app.py`` can read the payload class
+# without importing this 5,600-line widget module. These are re-exports, not
+# copies: ``type(x) is SpeechTTSPanelDraftSnapshot`` stays true across both
+# import paths.
+from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
+    _MAX_DRAFT_REVISION,
+    _PipelineVoiceSettingsDraft,
+    _RealtimeSettingsDraft,
+    SpeechTTSPanelDraftSnapshot,
+)
 
-_MAX_DRAFT_REVISION = 2**63 - 1
-_MAX_DRAFT_TEXT_CHARACTERS = 4096
-_MAX_DRAFT_GRAPH_DEPTH = 8
-_MAX_DRAFT_GRAPH_NODES = 4096
-_MAX_DRAFT_GRAPH_TEXT_CHARACTERS = 262_144
-_PRIVATE_DRAFT_KEYS = frozenset(
-    {
-        "token",
-        "api_key",
-        "auth_token",
-        "client_secret",
-        "access_token",
-        "refresh_token",
-        "password",
-        "passphrase",
-        "secret",
-        "credential",
-        "credentials",
-        "handoff_token",
-    }
-)
-_PRIVATE_DRAFT_KEY_SUFFIXES = (
-    "_token",
-    "_secret",
-    "_credential",
-    "_credentials",
-    "_password",
-    "_passphrase",
-    "_api_key",
-)
 
 _PROVIDER_OPTIONS = [
     (TTS_PROVIDER_LABELS[provider_id], provider_id)
@@ -273,303 +264,6 @@ _REALTIME_HANDSFREE_ENGINE_OPTIONS = [
 ]
 
 
-@dataclass
-class _RealtimeSettingsDraft:
-    """Local editable copy of the realtime engine's plain config keys.
-
-    `realtime`/`dictation` are plain top-level config sections, not TTS
-    provider adapters -- there is no `GlobalSpeechTTSState` provider entry
-    for them and no TTS service adapter to reconfigure at runtime. This
-    stays a self-contained sibling draft, persisted through the same atomic
-    config writer other Settings surfaces use (`save_settings_to_cli_config`,
-    which is `apply_settings_mutation_to_cli_config` underneath), never a
-    second, bespoke config writer (TASK-2111).
-    """
-
-    enabled: bool
-    provider: str
-    model: str
-    voice: str
-    idle_timeout_minutes: str
-    handsfree_engine: str
-    turn_detection: str
-    vad_threshold: str
-    vad_silence_ms: str
-
-    def snapshot(self) -> tuple[bool, str, str, str, str, str, str, str, str]:
-        return (
-            self.enabled,
-            self.provider,
-            self.model,
-            self.voice,
-            self.idle_timeout_minutes,
-            self.handsfree_engine,
-            self.turn_detection,
-            self.vad_threshold,
-            self.vad_silence_ms,
-        )
-
-
-def _validated_realtime_draft_copy(value: object) -> _RealtimeSettingsDraft:
-    """Return one detached, structurally bounded Realtime draft."""
-
-    if type(value) is not _RealtimeSettingsDraft:
-        raise TypeError("Realtime Settings draft is invalid")
-    if type(value.enabled) is not bool:
-        raise TypeError("Realtime Settings draft is invalid")
-    for field_name in (
-        "provider",
-        "model",
-        "voice",
-        "idle_timeout_minutes",
-        "handsfree_engine",
-        "turn_detection",
-        "vad_threshold",
-        "vad_silence_ms",
-    ):
-        text = getattr(value, field_name)
-        if type(text) is not str or len(text) > _MAX_DRAFT_TEXT_CHARACTERS:
-            raise ValueError("Realtime Settings draft is invalid")
-    return replace(value)
-
-
-def _detached_draft_data(value: object) -> object:
-    """Detach one bounded JSON-like provider tree without private payloads."""
-
-    nodes = 0
-    text_characters = 0
-
-    def detach(item: object, depth: int) -> object:
-        nonlocal nodes, text_characters
-        nodes += 1
-        if depth > _MAX_DRAFT_GRAPH_DEPTH or nodes > _MAX_DRAFT_GRAPH_NODES:
-            raise ValueError("Global Speech & TTS draft is too large")
-        if item is None or type(item) is bool or type(item) is int:
-            return item
-        if type(item) is float:
-            if not math.isfinite(item):
-                raise ValueError("Global Speech & TTS draft is invalid")
-            return item
-        if type(item) is str:
-            text_characters += len(item)
-            if (
-                len(item) > _MAX_DRAFT_TEXT_CHARACTERS
-                or text_characters > _MAX_DRAFT_GRAPH_TEXT_CHARACTERS
-            ):
-                raise ValueError("Global Speech & TTS draft is too large")
-            return item
-        if type(item) is list:
-            return [detach(child, depth + 1) for child in item]
-        if type(item) is tuple:
-            return tuple(detach(child, depth + 1) for child in item)
-        if type(item) is dict:
-            detached: dict[str, object] = {}
-            for key, child in item.items():
-                if type(key) is not str:
-                    raise TypeError("Global Speech & TTS draft key is invalid")
-                normalized = key.casefold()
-                if normalized in _PRIVATE_DRAFT_KEYS or normalized.endswith(
-                    _PRIVATE_DRAFT_KEY_SUFFIXES
-                ):
-                    raise ValueError("Global Speech & TTS draft is private")
-                detached[key] = detach(child, depth + 1)
-            return detached
-        raise TypeError("Global Speech & TTS draft value is invalid")
-
-    return detach(value, 0)
-
-
-def _validated_global_speech_tts_state_copy(value: object) -> GlobalSpeechTTSState:
-    """Return one detached complete state after existing pure field validation."""
-
-    if type(value) is not GlobalSpeechTTSState:
-        raise TypeError("Global Speech & TTS draft is invalid")
-    validated = cast(GlobalSpeechTTSState, value)
-    defaults = validated.defaults
-    if type(defaults) is not GlobalSpeechTTSDefaults:
-        raise TypeError("Global Speech & TTS defaults are invalid")
-    default_values = (
-        defaults.provider_id,
-        defaults.model_mode,
-        defaults.model_id,
-        defaults.voice_mode,
-        defaults.voice_id,
-        defaults.response_format,
-        defaults.speed,
-        defaults.default_profile_id,
-    )
-    detached_defaults = _detached_draft_data(default_values)
-    assert isinstance(detached_defaults, tuple)
-    copied_defaults = GlobalSpeechTTSDefaults(*detached_defaults)
-
-    if type(validated.providers) is not dict or set(validated.providers) != set(
-        BUILT_IN_TTS_PROVIDER_ORDER
-    ):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    copied_providers: dict[str, dict[str, object]] = {}
-    for provider_id, provider_values in validated.providers.items():
-        if type(provider_values) is not dict or any(
-            type(key) is not str for key in provider_values
-        ):
-            raise ValueError("Global Speech & TTS draft is invalid")
-        allowed = set(GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]) - {"credential"}
-        if not set(provider_values).issubset(allowed):
-            raise ValueError("Global Speech & TTS draft is invalid")
-        detached = _detached_draft_data(provider_values)
-        assert isinstance(detached, dict)
-        copied_providers[provider_id] = detached
-
-    provider_ids = set(BUILT_IN_TTS_PROVIDER_ORDER)
-    if type(validated.credentials) is not dict or not set(
-        validated.credentials
-    ).issubset(provider_ids):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    credential_metadata: list[tuple[object, ...]] = []
-    for provider_id, credential in validated.credentials.items():
-        if (
-            type(provider_id) is not str
-            or type(credential) is not GlobalSpeechTTSCredentialState
-            or credential.provider_id != provider_id
-        ):
-            raise ValueError("Global Speech & TTS credential metadata is invalid")
-        credential_metadata.append(
-            (
-                provider_id,
-                credential.provider_id,
-                credential.setting_key,
-                credential.environment_variable,
-                credential.source.value,
-                credential.local_saved,
-                credential.local_shadowed,
-            )
-        )
-    if type(validated.defaults_source) is not GlobalSpeechTTSEffectiveSource:
-        raise ValueError("Global Speech & TTS draft is invalid")
-    if (
-        type(validated.provider_sources) is not dict
-        or set(validated.provider_sources) != provider_ids
-        or any(
-            type(key) is not str or type(source) is not GlobalSpeechTTSEffectiveSource
-            for key, source in validated.provider_sources.items()
-        )
-    ):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    if (
-        type(validated.provider_field_sources) is not dict
-        or set(validated.provider_field_sources) != provider_ids
-        or any(
-            type(provider_id) is not str
-            or type(sources) is not dict
-            or not set(sources).issubset(GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id])
-            or any(
-                type(field_id) is not str
-                or type(source) is not GlobalSpeechTTSEffectiveSource
-                for field_id, source in sources.items()
-            )
-            for provider_id, sources in validated.provider_field_sources.items()
-        )
-    ):
-        raise ValueError("Global Speech & TTS draft is invalid")
-    _detached_draft_data(
-        (
-            credential_metadata,
-            validated.defaults_source.value,
-            tuple(
-                (provider_id, source.value)
-                for provider_id, source in validated.provider_sources.items()
-            ),
-            tuple(
-                (
-                    provider_id,
-                    tuple(
-                        (field_id, source.value) for field_id, source in sources.items()
-                    ),
-                )
-                for provider_id, sources in validated.provider_field_sources.items()
-            ),
-        )
-    )
-    copied = replace(
-        validated,
-        defaults=copied_defaults,
-        providers=copied_providers,
-        credentials={},
-        defaults_source=GlobalSpeechTTSEffectiveSource.DEFAULT,
-        provider_sources={
-            provider_id: GlobalSpeechTTSEffectiveSource.DEFAULT
-            for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
-        },
-        provider_field_sources={
-            provider_id: {} for provider_id in BUILT_IN_TTS_PROVIDER_ORDER
-        },
-    )
-    # These existing pure validators cover every provider field plus the
-    # defaults axes without performing provider, filesystem, or config I/O.
-    # A draft snapshot must also preserve an intentionally invalid field so
-    # the mounted Save action can focus it and explain the validation error.
-    for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
-        try:
-            build_global_speech_tts_save_proposal(
-                copied,
-                copied,
-                configure_provider=provider_id,
-            )
-        except GlobalSpeechTTSValidationError:
-            pass
-    return copied
-
-
-@dataclass(frozen=True, slots=True, repr=False)
-class SpeechTTSPanelDraftSnapshot:
-    """Complete process-local non-secret Speech/TTS panel draft."""
-
-    state: GlobalSpeechTTSState
-    original_state: GlobalSpeechTTSState
-    realtime_draft: _RealtimeSettingsDraft
-    realtime_original: _RealtimeSettingsDraft
-    configure_provider: str
-    draft_revision: int
-
-    def __post_init__(self) -> None:
-        if self.configure_provider not in BUILT_IN_TTS_PROVIDER_ORDER:
-            raise ValueError("Speech/TTS draft provider is invalid")
-        if (
-            type(self.draft_revision) is not int
-            or self.draft_revision < 0
-            or self.draft_revision > _MAX_DRAFT_REVISION
-        ):
-            raise ValueError("Speech/TTS draft revision is invalid")
-        object.__setattr__(
-            self,
-            "state",
-            _validated_global_speech_tts_state_copy(self.state),
-        )
-        object.__setattr__(
-            self,
-            "original_state",
-            _validated_global_speech_tts_state_copy(self.original_state),
-        )
-        object.__setattr__(
-            self,
-            "realtime_draft",
-            _validated_realtime_draft_copy(self.realtime_draft),
-        )
-        object.__setattr__(
-            self,
-            "realtime_original",
-            _validated_realtime_draft_copy(self.realtime_original),
-        )
-
-    def __repr__(self) -> str:
-        """Expose only bounded navigation metadata, never draft values."""
-
-        return (
-            "SpeechTTSPanelDraftSnapshot("
-            f"configure_provider={self.configure_provider!r}, "
-            f"draft_revision={self.draft_revision})"
-        )
-
-
 @dataclass(frozen=True)
 class _RealtimeSavePayload:
     """One validated realtime/dictation mutation, ready for the shared writer."""
@@ -577,6 +271,7 @@ class _RealtimeSavePayload:
     section_values: dict[str, dict[str, Any]]
     delete_keys: dict[str, tuple[str, ...]]
     persisted_draft: _RealtimeSettingsDraft
+    persisted_pipeline_draft: _PipelineVoiceSettingsDraft
 
 
 def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
@@ -601,6 +296,28 @@ def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
         # than writing a number the user never chose.
         vad_threshold=_format_optional_number(_read_realtime_vad_threshold()),
         vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms()),
+    )
+
+
+def _read_pipeline_voice_settings_draft() -> _PipelineVoiceSettingsDraft:
+    """Read only the two canonical speculative-pipeline config keys."""
+
+    section = {
+        "response_eagerness_ms": get_cli_setting(
+            "dictation",
+            "response_eagerness_ms",
+            RESPONSE_EAGERNESS_DEFAULT_MS,
+        ),
+        "pipeline_aec_enabled": get_cli_setting(
+            "dictation",
+            "pipeline_aec_enabled",
+            True,
+        ),
+    }
+    config = {"dictation": section}
+    return _PipelineVoiceSettingsDraft(
+        response_eagerness_ms=str(response_eagerness_ms(config)),
+        pipeline_aec_enabled=pipeline_aec_enabled(config),
     )
 
 
@@ -942,6 +659,8 @@ class SpeechTTSSettingsPanel(Vertical):
                 realtime_original=draft_snapshot.realtime_original,
                 configure_provider=draft_snapshot.configure_provider,
                 draft_revision=draft_snapshot.draft_revision,
+                pipeline_voice_draft=draft_snapshot.pipeline_voice_draft,
+                pipeline_voice_original=draft_snapshot.pipeline_voice_original,
             )
             self.original_state = deepcopy(restored.original_state)
             self.state = deepcopy(restored.state)
@@ -1062,10 +781,14 @@ class SpeechTTSSettingsPanel(Vertical):
         if restored is None:
             self._realtime_original = _read_realtime_settings_draft()
             self._realtime_draft = replace(self._realtime_original)
+            self._pipeline_voice_original = _read_pipeline_voice_settings_draft()
+            self._pipeline_voice_draft = replace(self._pipeline_voice_original)
             self._draft_revision = 0
         else:
             self._realtime_original = replace(restored.realtime_original)
             self._realtime_draft = replace(restored.realtime_draft)
+            self._pipeline_voice_original = replace(restored.pipeline_voice_original)
+            self._pipeline_voice_draft = replace(restored.pipeline_voice_draft)
             self._draft_revision = restored.draft_revision
         self._draft_revision_basis = self._draft_revision_values()
 
@@ -1143,6 +866,8 @@ class SpeechTTSSettingsPanel(Vertical):
             deepcopy(self.original_state),
             replace(self._realtime_draft),
             replace(self._realtime_original),
+            replace(self._pipeline_voice_draft),
+            replace(self._pipeline_voice_original),
             self.configure_provider,
         )
 
@@ -1169,6 +894,8 @@ class SpeechTTSSettingsPanel(Vertical):
             realtime_original=self._realtime_original,
             configure_provider=self.configure_provider,
             draft_revision=self._draft_revision,
+            pipeline_voice_draft=self._pipeline_voice_draft,
+            pipeline_voice_original=self._pipeline_voice_original,
         )
 
     def restore_draft_snapshot(
@@ -1188,6 +915,8 @@ class SpeechTTSSettingsPanel(Vertical):
             realtime_original=snapshot.realtime_original,
             configure_provider=snapshot.configure_provider,
             draft_revision=snapshot.draft_revision,
+            pipeline_voice_draft=snapshot.pipeline_voice_draft,
+            pipeline_voice_original=snapshot.pipeline_voice_original,
         )
         focus_id = self._focused_id() if self.is_mounted else None
         live_metadata = self.state
@@ -1204,6 +933,8 @@ class SpeechTTSSettingsPanel(Vertical):
             target.provider_field_sources = deepcopy(metadata.provider_field_sources)
         self._realtime_draft = replace(restored.realtime_draft)
         self._realtime_original = replace(restored.realtime_original)
+        self._pipeline_voice_draft = replace(restored.pipeline_voice_draft)
+        self._pipeline_voice_original = replace(restored.pipeline_voice_original)
         self.configure_provider = restored.configure_provider
         self._draft_revision = restored.draft_revision
         self._draft_revision_basis = self._draft_revision_values()
@@ -2091,15 +1822,16 @@ class SpeechTTSSettingsPanel(Vertical):
         """Return the global-selection draft state independently of setup."""
 
         try:
-            changed = (
-                self.state.defaults.snapshot()
-                != self.original_state.defaults.snapshot()
-            )
+            preferences = self.state.defaults.snapshot()
         except GlobalSpeechTTSValidationError as error:
             if "required" in str(error).lower():
                 return SpeechTTSConfigurationState.INCOMPLETE
             return SpeechTTSConfigurationState.INVALID
-        if changed:
+        try:
+            original_preferences = self.original_state.defaults.snapshot()
+        except GlobalSpeechTTSValidationError:
+            return SpeechTTSConfigurationState.UNSAVED
+        if preferences != original_preferences:
             return SpeechTTSConfigurationState.UNSAVED
         if self.state.defaults_source is GlobalSpeechTTSEffectiveSource.DEFAULT:
             return SpeechTTSConfigurationState.DEFAULT
@@ -2324,6 +2056,8 @@ class SpeechTTSSettingsPanel(Vertical):
             classes="settings-focus-card",
         )
 
+        yield from self._compose_pipeline_conversation_section()
+
         yield from self._compose_realtime_section()
 
         yield _SpeechSettingsCard(
@@ -2434,10 +2168,13 @@ class SpeechTTSSettingsPanel(Vertical):
                 ("Exact", "exact"),
                 ("First available", "first_available"),
             ]
-            voice_policy_options = [
-                ("Exact", "exact"),
-                ("Server default", "server_default"),
-            ]
+            voice_policy_options = [("Exact", "exact")]
+            if defaults.voice_mode == "server_default":
+                # Keep invalid saved state visible so it can be corrected;
+                # ordinary Save rejects it before publishing preferences.
+                voice_policy_options.append(
+                    ("Server default (unsupported; choose Exact)", "server_default")
+                )
         yield Static("Global defaults", classes="destination-section")
         yield Static(
             f"Default voice setup: {self._defaults_configuration_state().value}.",
@@ -2804,6 +2541,92 @@ class SpeechTTSSettingsPanel(Vertical):
             yield Static(
                 "Ordinary Save validates and persists locally. Use Speech Lab for "
                 "connection tests, discovery, generation, and playback.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+
+    def _compose_pipeline_conversation_section(self) -> ComposeResult:
+        """Build the speculative pipeline's small canonical settings block."""
+
+        draft = self._pipeline_voice_draft
+        with Vertical(
+            id="settings-speech-pipeline-conversation",
+            classes="settings-focus-card",
+        ):
+            yield Static("Pipeline conversation", classes="destination-section")
+            yield Static(
+                "Transcription mode: Native live is preferred when the selected "
+                "speech-to-text backend supports it; otherwise the pipeline uses "
+                "the rolling-window fallback.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield Static(
+                "Cost: a remote rolling-window backend may process overlapping audio "
+                "more than once. Starting replies sooner can also create billable "
+                "discarded STT, model, or speech attempts when you continue talking.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "Response eagerness (ms)",
+                Input(
+                    value=draft.response_eagerness_ms,
+                    id="settings-speech-pipeline-response-eagerness-ms",
+                    placeholder=str(RESPONSE_EAGERNESS_DEFAULT_MS),
+                    type="integer",
+                    classes="settings-compact-input settings-speech-draft-field",
+                ),
+                error=self._error("pipeline", "response_eagerness_ms"),
+            )
+            yield self._row(
+                "Response preset",
+                Horizontal(
+                    Button(
+                        "Fast · 700 ms",
+                        id="settings-speech-pipeline-preset-fast",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 700 milliseconds.",
+                    ),
+                    Button(
+                        "Balanced · 1200 ms",
+                        id="settings-speech-pipeline-preset-balanced",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 1200 milliseconds.",
+                    ),
+                    Button(
+                        "Deliberate · 2000 ms",
+                        id="settings-speech-pipeline-preset-deliberate",
+                        compact=True,
+                        classes="settings-speech-pipeline-preset",
+                        tooltip="Set response eagerness to 2000 milliseconds.",
+                    ),
+                    classes="settings-action-row",
+                ),
+            )
+            yield Static(
+                "Safe range: 500-3000 ms. Presets — Fast: 700 ms; "
+                "Balanced: 1200 ms; Deliberate: 2000 ms. Values below 700 ms "
+                "are more likely to restart during a mid-thought pause.",
+                classes="settings-detail-row",
+                markup=False,
+            )
+            yield self._row(
+                "Echo cancellation",
+                Switch(
+                    value=draft.pipeline_aec_enabled,
+                    id="settings-speech-pipeline-aec-enabled",
+                    classes="settings-speech-field settings-speech-draft-field",
+                ),
+                error=self._error("pipeline", "pipeline_aec_enabled"),
+            )
+            yield Static(
+                "Keep echo cancellation on. Turning it off is for troubleshooting "
+                "only and forces half duplex while the assistant speaks. If echo "
+                "cancellation is warming, unhealthy, or unavailable, the pipeline "
+                "also switches to safe half duplex automatically.",
                 classes="settings-detail-row",
                 markup=False,
             )
@@ -3663,6 +3486,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 values[field_id] = widget.value
 
         self._collect_realtime_visible_state()
+        self._collect_pipeline_voice_visible_state()
 
     def _collect_realtime_visible_state(self) -> None:
         """Copy the Realtime block's mounted widget values into its draft."""
@@ -3706,6 +3530,19 @@ class SpeechTTSSettingsPanel(Vertical):
         self._realtime_draft.vad_threshold = threshold_widget.value
         self._realtime_draft.vad_silence_ms = silence_widget.value
 
+    def _collect_pipeline_voice_visible_state(self) -> None:
+        """Copy the mounted pipeline controls into their separate draft."""
+
+        try:
+            eagerness = self.query_one(
+                "#settings-speech-pipeline-response-eagerness-ms", Input
+            )
+            aec = self.query_one("#settings-speech-pipeline-aec-enabled", Switch)
+        except QueryError:
+            return
+        self._pipeline_voice_draft.response_eagerness_ms = eagerness.value
+        self._pipeline_voice_draft.pipeline_aec_enabled = bool(aec.value)
+
     def has_unsaved_changes(self) -> bool:
         """Return whether any non-secret global value differs from its baseline."""
         self._collect_visible_state()
@@ -3746,7 +3583,11 @@ class SpeechTTSSettingsPanel(Vertical):
                 continue
             if proposal.settings or proposal.delete_setting_keys:
                 return True
-        return self._realtime_draft.snapshot() != self._realtime_original.snapshot()
+        return (
+            self._realtime_draft.snapshot() != self._realtime_original.snapshot()
+            or self._pipeline_voice_draft.snapshot()
+            != self._pipeline_voice_original.snapshot()
+        )
 
     def _announce_draft_state(self) -> None:
         """Publish the latest safe draft snapshot to the Settings shell."""
@@ -3867,8 +3708,13 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             if "audio_cpp" in proposal.changed_provider_ids:
                 validate_audio_cpp_managed_settings(self.state.providers["audio_cpp"])
+            try:
+                original_preferences = self.original_state.defaults.snapshot()
+            except GlobalSpeechTTSValidationError:
+                # A valid draft must be able to replace invalid saved defaults.
+                original_preferences = None
             defaults_changed = (
-                proposal.preferences != self.original_state.defaults.snapshot()
+                proposal.preferences != original_preferences
                 # `default_profile_id` lives outside `TTSPreferencesSnapshot`
                 # (a distinct precedence rung -- see has_unsaved_changes and
                 # build_global_speech_tts_save_proposal), so the snapshot
@@ -3928,17 +3774,20 @@ class SpeechTTSSettingsPanel(Vertical):
         if realtime_payload is not None and not (guided_packages or guided_lease_refs):
             if not self._persist_realtime_draft(realtime_payload):
                 self._set_result(
-                    "Realtime engine settings were not saved.",
+                    "Voice engine settings were not saved.",
                     severity="error",
                 )
                 return None
             self._realtime_original = replace(realtime_payload.persisted_draft)
+            self._pipeline_voice_original = replace(
+                realtime_payload.persisted_pipeline_draft
+            )
 
         if not provider_save_required:
             # Only the realtime/dictation block changed; already persisted
             # locally above through the same atomic config writer -- no TTS
             # provider adapter round trip needed.
-            self._set_result("Saved locally. Realtime engine settings updated.")
+            self._set_result("Saved locally. Voice engine settings updated.")
             self._announce_draft_state()
             return None
 
@@ -4076,10 +3925,13 @@ class SpeechTTSSettingsPanel(Vertical):
             if not self._persist_realtime_draft(realtime_payload):
                 self._abort_pending_save(
                     request_id,
-                    "Realtime engine settings were not saved.",
+                    "Voice engine settings were not saved.",
                 )
                 return
             self._realtime_original = replace(realtime_payload.persisted_draft)
+            self._pipeline_voice_original = replace(
+                realtime_payload.persisted_pipeline_draft
+            )
         try:
             self._post_settings_save(request_id, proposal)
         except BaseException:
@@ -4125,6 +3977,65 @@ class SpeechTTSSettingsPanel(Vertical):
             leave_waiter.set_result(False)
 
     def _validated_realtime_payload(self) -> _RealtimeSavePayload | None:
+        """Validate and merge Realtime plus speculative-pipeline mutations."""
+
+        realtime_payload = self._validated_realtime_only_payload()
+        pipeline_changed = (
+            self._pipeline_voice_draft.snapshot()
+            != self._pipeline_voice_original.snapshot()
+        )
+        if not pipeline_changed:
+            return realtime_payload
+
+        raw_eagerness = self._pipeline_voice_draft.response_eagerness_ms.strip()
+        try:
+            eagerness_ms = int(raw_eagerness)
+        except (TypeError, ValueError):
+            eagerness_ms = None
+        if (
+            eagerness_ms is None
+            or str(eagerness_ms) != raw_eagerness
+            or eagerness_ms < RESPONSE_EAGERNESS_MIN_MS
+            or eagerness_ms > RESPONSE_EAGERNESS_MAX_MS
+        ):
+            raise GlobalSpeechTTSValidationError(
+                "pipeline",
+                "response_eagerness_ms",
+                "Response eagerness must be a whole number from 500 to 3000 ms.",
+            )
+
+        section_values = (
+            {
+                section: dict(values)
+                for section, values in realtime_payload.section_values.items()
+            }
+            if realtime_payload is not None
+            else {}
+        )
+        section_values.setdefault("dictation", {}).update(
+            {
+                "response_eagerness_ms": eagerness_ms,
+                "pipeline_aec_enabled": (
+                    self._pipeline_voice_draft.pipeline_aec_enabled
+                ),
+            }
+        )
+        return _RealtimeSavePayload(
+            section_values=section_values,
+            delete_keys=(
+                dict(realtime_payload.delete_keys)
+                if realtime_payload is not None
+                else {}
+            ),
+            persisted_draft=(
+                replace(realtime_payload.persisted_draft)
+                if realtime_payload is not None
+                else replace(self._realtime_draft)
+            ),
+            persisted_pipeline_draft=replace(self._pipeline_voice_draft),
+        )
+
+    def _validated_realtime_only_payload(self) -> _RealtimeSavePayload | None:
         """Validate the Realtime block draft; ``None`` when unchanged.
 
         Sibling validation shape to the global defaults' speed field: an
@@ -4214,6 +4125,7 @@ class SpeechTTSSettingsPanel(Vertical):
             },
             delete_keys=delete_keys,
             persisted_draft=replace(self._realtime_draft),
+            persisted_pipeline_draft=replace(self._pipeline_voice_draft),
         )
 
     @staticmethod
@@ -4273,8 +4185,27 @@ class SpeechTTSSettingsPanel(Vertical):
                 )
             )
         except Exception:
-            logger.exception("Failed to save realtime engine settings")
+            logger.exception("Failed to save voice engine settings")
             return False
+
+    @on(Button.Pressed, ".settings-speech-pipeline-preset")
+    def handle_pipeline_response_preset(self, event: Button.Pressed) -> None:
+        """Apply one named preset to the editable numeric field."""
+
+        values = {
+            "settings-speech-pipeline-preset-fast": 700,
+            "settings-speech-pipeline-preset-balanced": 1200,
+            "settings-speech-pipeline-preset-deliberate": 2000,
+        }
+        value = values.get(event.button.id or "")
+        if value is None:
+            return
+        event.stop()
+        eagerness = self.query_one(
+            "#settings-speech-pipeline-response-eagerness-ms", Input
+        )
+        eagerness.value = str(value)
+        eagerness.focus()
 
     def submit_credential_mutation(
         self,
@@ -5025,8 +4956,8 @@ class SpeechTTSSettingsPanel(Vertical):
         if event.value == self.state.defaults.provider_id:
             return
         self._collect_visible_state()
+        persisted = self.original_state.defaults
         if event.value == "audio_cpp":
-            persisted = self.original_state.defaults
             if persisted.provider_id == "audio_cpp":
                 self.state.defaults.model_mode = persisted.model_mode
                 self.state.defaults.model_id = persisted.model_id
@@ -5039,6 +4970,17 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state.defaults.voice_id = None
             self.state.defaults.response_format = "wav"
             self.state.defaults.speed = 1.0
+        elif event.value in LEGACY_DEFAULT_MODELS:
+            if persisted.provider_id == event.value:
+                self.state.defaults.model_mode = persisted.model_mode
+                self.state.defaults.model_id = persisted.model_id
+                self.state.defaults.voice_mode = persisted.voice_mode
+                self.state.defaults.voice_id = persisted.voice_id
+            else:
+                self.state.defaults.model_mode = "exact"
+                self.state.defaults.model_id = LEGACY_DEFAULT_MODELS[event.value]
+                self.state.defaults.voice_mode = "exact"
+                self.state.defaults.voice_id = LEGACY_DEFAULT_VOICES[event.value]
         await self._replace_card_bodies(
             self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
         )
@@ -5437,6 +5379,7 @@ class SpeechTTSSettingsPanel(Vertical):
         self._clear_validation_errors()
         self.state = deepcopy(self.original_state)
         self._realtime_draft = replace(self._realtime_original)
+        self._pipeline_voice_draft = replace(self._pipeline_voice_original)
         self.result_text = "Reverted to the last successfully loaded global values."
 
     async def revert_to_saved(self) -> None:

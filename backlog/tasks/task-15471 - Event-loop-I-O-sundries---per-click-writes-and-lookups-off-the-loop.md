@@ -1,6 +1,6 @@
 ---
 id: TASK-15471
-title: Event-loop I/O sundries: per-click writes and lookups off the loop
+title: 'Event-loop I/O sundries: per-click writes and lookups off the loop'
 status: Done
 assignee: []
 created_date: '2026-08-11 12:05'

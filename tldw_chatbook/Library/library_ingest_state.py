@@ -9,7 +9,10 @@ booting the TUI, mirroring ``library_notes_sync_state.py``.
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import math
+import os
 import re
 import time
 from dataclasses import dataclass, field, replace
@@ -17,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import PurePath
 
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any, Sequence
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -321,7 +324,7 @@ _GLYPH_DONE = "✓"  # "✓"
 #: import -- the two used to be byte-identical rows.
 _GLYPH_MATCHED = "≡"
 _GLYPH_FAILED = "✗"  # "✗"
-_GLYPH_SKIPPED = "○"  # neutral: never attempted (task-2220)
+from .library_shell_state import LIBRARY_GLYPH_OUTCOME_SKIPPED as _GLYPH_SKIPPED  # "–" task-32235
 _GLYPH_CANCELLED = "⊘"  # "⊘" -- stopped deliberately, not an error
 
 # L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
@@ -490,8 +493,89 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
     module's Textual-free, importable-in-isolation contract (see the module
     docstring) never has to reach into ``Home`` (the dependency runs the
     other way: ``Home`` already imports from ``Library``).
+
+    (task-32054) The word is ``retry``, not ``attempt``: the user guide and
+    Home's own suffix both said "retry 1" while this one said "attempt 2",
+    so the same job read two different ways on two surfaces.
     """
-    return f" · attempt {job.retry_count + 1}" if job.retry_count else ""
+    return f" · retry {job.retry_count}" if job.retry_count else ""
+
+
+#: (task-32054) Pool-start failures arrive as this prefix from
+#: ``app._top_up_ingest_parse_pool``; the raw tail is a spawn-machinery
+#: message, never user copy.
+_POOL_START_FAILURE_MARKER = "Parse pool could not start"
+
+#: Plain-language copy for an OS resource ceiling hit while starting the
+#: parse worker. macOS reports POSIX-semaphore exhaustion as ENOSPC, so the
+#: raw text ("No space left on device") is actively misleading on a disk
+#: with free space -- the live critique #8 finding.
+_RESOURCE_LIMIT_SUMMARY = (
+    "The import worker couldn't start on this machine (system resource limit)"
+)
+_RESOURCE_LIMIT_NEXT_STEP = "Restart the app, then Retry"
+
+
+@dataclass(frozen=True)
+class IngestFailureCopy:
+    """User-facing copy for one ingest failure.
+
+    Attributes:
+        summary: The plain-language reason, safe to render on the row.
+        detail: The underlying text, shown only behind "Show details".
+        next_step: What the user should do next, or empty when the reason
+            already implies it.
+        retryable: Whether offering Retry is honest for this failure.
+    """
+
+    summary: str
+    detail: str
+    next_step: str = ""
+    retryable: bool = True
+
+
+def map_ingest_failure(
+    exc_or_text: BaseException | str,
+    *,
+    context: str = "",
+) -> IngestFailureCopy:
+    """Map a raw ingest failure to row copy plus an on-demand detail.
+
+    Args:
+        exc_or_text: The exception the pipeline raised, or the error text
+            already stored on the job.
+        context: Optional origin hint. ``"pool_start"`` marks a failure
+            raised while creating the parse worker pool, which the stored
+            text otherwise carries as a ``"Parse pool could not start:"``
+            prefix.
+
+    Returns:
+        The row summary, the raw detail, an optional next step, and whether
+        Retry is honest for this failure.
+    """
+    raw = (
+        exc_or_text
+        if isinstance(exc_or_text, str)
+        else str(exc_or_text).strip() or exc_or_text.__class__.__name__
+    )
+    from_pool_start = (
+        context == "pool_start" or _POOL_START_FAILURE_MARKER in raw
+    )
+    errno_value = getattr(exc_or_text, "errno", None)
+    hit_resource_limit = errno_value == errno.ENOSPC or "[Errno 28]" in raw
+    if from_pool_start and hit_resource_limit:
+        return IngestFailureCopy(
+            summary=_RESOURCE_LIMIT_SUMMARY,
+            detail=raw,
+            next_step=_RESOURCE_LIMIT_NEXT_STEP,
+            retryable=True,
+        )
+    return IngestFailureCopy(
+        summary=short_ingest_error(raw),
+        detail=raw,
+        retryable=_SUPPORTED_TYPES_ERROR_MARKER not in raw,
+    )
+
 
 # Human-readable (singular, plural) labels for pre-flight type groups.
 # ``unsupported`` is popped into ``unsupported_files`` before this mapping is
@@ -1210,8 +1294,10 @@ class LibraryIngestLastSubmission:
 class LibraryIngestFormState:
     """Mutable form echo for the ingest canvas.
 
-    Owned by the screen as a single bundled field (``self._library_ingest_form``)
-    rather than a scatter of scalar attributes, and reset wholesale to
+    Owned by the screen as a single bundled field (``self._ingest_state.form``,
+    a ``LibraryIngestState`` field since the ingest series' own state PR;
+    ``self._library_ingest_form`` before it) rather than a scatter of scalar
+    attributes, and reset wholesale to
     defaults on rail re-entry into Ingest (see
     ``_reset_library_ingest_transient_state``). Every field here is display
     text only -- validated/coerced values (a resolved path, an int chunk
@@ -1236,7 +1322,7 @@ class LibraryIngestFormState:
             a recompose -- the analyze/chunk toggle handlers' own, or a
             registry-listener-driven one -- never snaps an expanded panel
             shut out from under the user (mirrors
-            ``_library_rag_history_collapsed``/
+            ``_rag_search_state.history_collapsed``/
             ``sync_library_rag_history_collapsed`` in ``library_screen.py``).
         expanded_type_groups: Set of type-group ids whose collapsible option
             panels are currently expanded, so user toggles survive
@@ -1335,10 +1421,191 @@ class IngestQueueRow:
     source_path: str = ""
     progress: dict[str, Any] | None = None
     error_detail: dict[str, Any] | None = None
+    #: True when the job is governed by a durable Research source receipt.
+    research_owned: bool = False
     #: (task-2043) Inline error-detail expansion (replaces the old details
     #: toast): whether this row's details are open, and the lines to show.
     details_expanded: bool = False
     detail_lines: tuple[str, ...] = ()
+    #: (task-32054) Whether this row offers "Show details". True for every
+    #: failed row that has ANY underlying text -- the widget layer used to
+    #: gate the action on ``error_detail`` alone, which hid the raw error on
+    #: exactly the failures that carry none (a parse pool that never started).
+    can_show_details: bool = False
+    #: (Qodo 2 on PR #2577) The submitting batch, mirrored from the job the
+    #: same way ``origin`` is. Part of the outcome-group key: the canvas
+    #: emits only a group's LEADING member's task-2221 batch header, so a
+    #: group spanning two submissions hides the second header and puts a
+    #: per-batch count above a row counting both.
+    batch_id: str | None = None
+    #: (task-32231) The settled row's plain-language cause, WITHOUT the
+    #: basename -- the group key for collapsing identical outcomes. Empty
+    #: for active rows (queued/parsing/writing), which never group because
+    #: their per-file progress is the point.
+    reason: str = ""
+
+
+#: (task-32231) Only SETTLED outcomes collapse. An active row's per-file
+#: progress is the whole point of showing it, so queued/parsing/writing rows
+#: never group however identical their text.
+_GROUPABLE_ROW_STATES = (
+    IngestJobState.FAILED,
+    IngestJobState.SKIPPED,
+    IngestJobState.CANCELLED,
+)
+
+
+@dataclass(frozen=True)
+class IngestOutcomeGroup:
+    """A contiguous run of queue rows sharing one settled outcome.
+
+    (task-32231) A folder import with a single cause painted one identical
+    ``✗ failed`` row per file, each with its own three buttons and no way to
+    clear the lot. A run of them now renders as one row naming the count and
+    the cause, with the members one press away.
+
+    Named apart from ``IngestQueueGroup`` deliberately: that one is
+    task-2221's per-SUBMISSION batch header (one group per Start press,
+    whatever the outcomes), this one is per-OUTCOME within the render order.
+
+    Attributes:
+        glyph: The members' shared state glyph.
+        line: Ready-to-render text -- the member's own line for a group of
+            one, ``"{glyph} {state} · {n} files · {reason}"`` for a run.
+        members: The rows in render order; never empty.
+        expanded: Whether the members are currently revealed underneath.
+    """
+
+    glyph: str
+    line: str
+    members: tuple[IngestQueueRow, ...]
+    expanded: bool = False
+
+    @property
+    def key(self) -> str:
+        """Stable, id-safe handle for the group, derived from its identity.
+
+        (Qodo 5 on PR #2577) Keyed by the LEADING member's job id, a group
+        was re-keyed the moment that member left it -- dismissing the first
+        row of an expanded group changed the key the panel's expansion set
+        holds, so the remaining members collapsed under the user. The key
+        is now the group's own identity (what makes those rows one group),
+        so losing a member cannot change it.
+
+        Hashed because a reason string is not a valid widget id; truncated
+        because these ids only have to be unique among the handful of
+        groups one queue can show at once.
+
+        Returns:
+            A 12-character hex token, stable for as long as the group's
+            state/reason/batch identity is.
+        """
+        return _outcome_group_id(self.members[0])
+
+    @property
+    def can_retry(self) -> bool:
+        """Whether "Retry all" is honest -- true only if EVERY member is.
+
+        Returns:
+            ``True`` when every member row offers Retry on its own, so the
+            bulk action cannot promise more than the rows behind it.
+        """
+        return all(row.can_retry for row in self.members)
+
+    @property
+    def can_dismiss(self) -> bool:
+        """Whether "Dismiss all" is honest -- true only if EVERY member is.
+
+        Returns:
+            ``True`` when every member row offers Dismiss on its own.
+        """
+        return all(row.can_dismiss for row in self.members)
+
+
+def _outcome_group_key(row: IngestQueueRow) -> tuple[Any, ...]:
+    """Group key for one queue row.
+
+    Settled rows sharing a state AND a plain-language reason share a key;
+    everything else gets its own ``job_id``-derived key, which is unique, so
+    it can never join a run.
+    """
+    if row.state in _GROUPABLE_ROW_STATES and row.reason:
+        # (Qodo 2) ...and the submission, so a collapse can never span two
+        # batch headers.
+        return ("outcome", row.state.value, row.reason, row.batch_id or "")
+    return ("row", row.job_id)
+
+
+def _outcome_group_id(row: IngestQueueRow) -> str:
+    """Hash one row's group key into a widget-id-safe token.
+
+    Args:
+        row: Any member of the group -- every member hashes identically,
+            which is the property that survives losing the leading one.
+
+    Returns:
+        12 hex characters.
+    """
+    joined = "\x00".join(_outcome_group_key(row))
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()[:12]
+
+
+def group_ingest_queue_rows(
+    rows: Sequence[IngestQueueRow],
+    *,
+    expanded: Collection[str] = (),
+) -> tuple[IngestOutcomeGroup, ...]:
+    """Collapse contiguous runs of identical settled outcomes (task-32231).
+
+    Only CONTIGUOUS runs collapse, so the queue is never reordered: a later
+    twin of an earlier failure keeps its own position. A run of one renders
+    exactly what it renders today -- its own line, filename and all.
+
+    Args:
+        rows: The canvas state's queue rows, in render order.
+        expanded: Group keys (leading job ids) whose members are revealed.
+
+    Returns:
+        One group per rendered queue entry, in render order.
+    """
+    groups: list[IngestOutcomeGroup] = []
+    run: list[IngestQueueRow] = []
+    run_key: tuple[Any, ...] | None = None
+
+    def _flush() -> None:
+        if not run:
+            return
+        members = tuple(run)
+        leader = members[0]
+        run.clear()
+        if len(members) == 1:
+            groups.append(
+                IngestOutcomeGroup(
+                    glyph=leader.glyph, line=leader.line, members=members
+                )
+            )
+            return
+        word = leader.state.value if leader.state is not None else ""
+        groups.append(
+            IngestOutcomeGroup(
+                glyph=leader.glyph,
+                line=(
+                    f"{leader.glyph} {word} · {len(members)} files "
+                    f"· {leader.reason}"
+                ),
+                members=members,
+                expanded=_outcome_group_id(leader) in expanded,
+            )
+        )
+
+    for row in rows:
+        key = _outcome_group_key(row)
+        if key != run_key:
+            _flush()
+            run_key = key
+        run.append(row)
+    _flush()
+    return tuple(groups)
 
 
 @dataclass(frozen=True)
@@ -1530,6 +1797,27 @@ class LibraryIngestCanvasState:
     #: transient/environmental blockers (blank path, missing media DB)
     #: where a submit is merely premature, not doomed.
     selection_has_nothing_importable: bool = False
+    #: (task-28007 AC#1/AC#2) Media ids, across the WHOLE visible queue
+    #: (every batch and singleton submission, not one per run), whose
+    #: import completed with analysis skipped and that STILL have no
+    #: analysis (an id the screen's own outcomes map already marked
+    #: ``ok=True`` drops out). Deliberately canvas-scoped rather than one
+    #: set per ``IngestQueueGroup``: the action's id
+    #: (``library-ingest-analyze-skipped``) is fixed, not job/batch-suffixed,
+    #: so more than one group offering it at once would mount the same id
+    #: twice and crash. Non-empty independent of ``analysis_action_ready``,
+    #: so a caller can still resolve "what would this run over" even while
+    #: the action itself is hidden.
+    analyze_skipped_media_ids: tuple[str, ...] = ()
+    #: Whether the "Analyze N skipped" run-summary action should render:
+    #: at least one id above AND the provider is ready right now (Task 1's
+    #: reason is ""). The caller resolves readiness ONCE per render (it can
+    #: do I/O) and passes it in -- never re-resolved per id.
+    show_analyze_skipped: bool = False
+    #: Whether that action should render disabled because a bulk-Analyze
+    #: run (this one or Select mode's) is already in flight. Meaningless
+    #: when ``show_analyze_skipped`` is False.
+    analyze_skipped_running: bool = False
 
 
 def _basename(source_path: str) -> str:
@@ -1766,6 +2054,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             source_path=job.source_path,
             progress=job.progress,
             error_detail=job.error_detail,
+            reason=short_error if job.error else "",
         )
 
     if job.state == IngestJobState.SKIPPED:
@@ -1786,24 +2075,39 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             source_path=job.source_path,
             progress=job.progress,
             error_detail=job.error_detail,
+            reason=short_error if job.error else "",
         )
 
     is_unsupported = (
         job.error_detail is not None
         and job.error_detail.get("category") == "unsupported_file_type"
     )
+    # (task-32054) The row states the mapped reason and its next step; the
+    # raw text (an errno the user cannot act on) stays behind Show details.
+    failure_copy = map_ingest_failure(job.error or "")
+    reason = _strip_basename_echo(failure_copy.summary, basename)
+    if failure_copy.next_step:
+        reason = f"{reason} · {failure_copy.next_step}"
     return IngestQueueRow(
         job_id=job.job_id,
         glyph=_GLYPH_FAILED,
-        line=f"{_GLYPH_FAILED} failed · {basename} · {short_error}{_retry_suffix(job)}",
+        line=f"{_GLYPH_FAILED} failed · {basename} · {reason}{_retry_suffix(job)}",
         can_open=False,
-        can_retry=not job.permanent and not is_unsupported,
+        can_retry=(
+            not job.permanent and not is_unsupported and failure_copy.retryable
+        ),
         can_dismiss=True,
+        # (task-32054 AC#2) EVERY failed row offers the underlying error --
+        # the pool-start failure that produced this finding carries no
+        # ``error_detail`` at all, so gating on that hid the one detail the
+        # user needed.
+        can_show_details=bool(job.error_detail) or bool(job.error),
         media_id=job.media_id,
         state=job.state,
         source_path=job.source_path,
         progress=job.progress,
         error_detail=job.error_detail,
+        reason=reason,
     )
 
 
@@ -1935,8 +2239,10 @@ def _build_queue_row(
         row = replace(
             row,
             origin=job.origin,
+            batch_id=job.batch_id,
             can_cancel=can_cancel,
             can_force_stop=can_force_stop,
+            research_owned=bool(job.research_source_operation_id),
         )
     else:
         can_cancel = (
@@ -1945,8 +2251,21 @@ def _build_queue_row(
         row = replace(
             row,
             origin=job.origin,
+            batch_id=job.batch_id,
             can_cancel=can_cancel,
             line=f"{row.line}{_SERVER_ROW_SUFFIX}",
+            research_owned=bool(job.research_source_operation_id),
+        )
+    if details_expanded and not job.error_detail and row.can_show_details:
+        # (task-32054) A failure with no structured detail still has the
+        # underlying text the row deliberately does not show -- an errno,
+        # a spawn-machinery message. Show details is where it belongs.
+        return replace(
+            row,
+            details_expanded=True,
+            detail_lines=(
+                f"Details: {map_ingest_failure(job.error or '').detail}",
+            ),
         )
     if details_expanded and job.error_detail:
         # (task-2043) Inline expansion replaces the old auto-expiring
@@ -2004,6 +2323,89 @@ def _build_queue_row(
                 lines.append(advice)
         row = replace(row, details_expanded=True, detail_lines=tuple(lines))
     return row
+
+
+def _apply_analyze_outcome(
+    row: IngestQueueRow,
+    job: LibraryIngestJob,
+    outcomes: Mapping[str, tuple[bool, str]],
+) -> IngestQueueRow:
+    """Overlay a bulk "Analyze N skipped" outcome onto its own row (AC#2).
+
+    Rows ARE individually addressable in the Import queue (each one is its
+    own ``Static`` keyed by ``job_id``), so a completed run reports per item
+    in the SAME place the "analysis skipped: ..." note came from, rather
+    than only in a run summary -- the row's stale skip note is replaced
+    with the receipt grammar, using the same glyphs Task 2's Media-canvas
+    receipt uses (``_GLYPH_DONE``/``_GLYPH_FAILED``).
+
+    Args:
+        row: The row already built for ``job``'s current state.
+        job: The row's source job, for its source basename (the "title"
+            the receipt names).
+        outcomes: media-id-string -> ``(ok, reason)``, recorded by the
+            screen's ``on_item_done`` callback as the run progresses.
+
+    Returns:
+        ``row`` unchanged when ``job`` has no media id or no recorded
+        outcome; otherwise a copy whose progress message is overwritten.
+    """
+    if job.media_id is None:
+        return row
+    outcome = outcomes.get(str(job.media_id))
+    if outcome is None:
+        return row
+    ok, reason = outcome
+    title = _basename(job.source_path)
+    if ok:
+        # (Qodo review round, PR #2400 #3) An id the AC#3 partition pass
+        # auto-skipped (it already carried an analysis) is resolved
+        # through this same hook with a distinguishing reason, so its row
+        # reads as "already analyzed" rather than claiming a fresh
+        # generation that never ran.
+        message = f"{_GLYPH_DONE} {reason} · {title}" if reason else (
+            f"{_GLYPH_DONE} analyzed · {title}"
+        )
+    else:
+        message = f"{_GLYPH_FAILED} analysis failed · {title} · {reason}"
+    new_progress = dict(row.progress or {})
+    new_progress["message"] = message
+    # A stale percent from the import's own progress payload no longer
+    # describes anything once the message is replaced.
+    new_progress.pop("percent", None)
+    return replace(row, progress=new_progress)
+
+
+def library_ingest_analyze_skipped_ids(
+    jobs: Sequence[LibraryIngestJob],
+    outcomes: Mapping[str, tuple[bool, str]],
+) -> tuple[str, ...]:
+    """Media ids across the WHOLE visible queue still needing analysis (AC#1).
+
+    A job counts when its import completed with an analysis-skipped note
+    AND it has not since been given a successful outcome through this same
+    action -- "N is the count of skipped rows that still have no analysis"
+    (an id fixed by this action drops out; a failed re-attempt stays,
+    since it still has no analysis).
+
+    Args:
+        jobs: The registry snapshot, in render order.
+        outcomes: media-id-string -> ``(ok, reason)`` outcomes recorded so
+            far by the screen's ``on_item_done`` callback.
+
+    Returns:
+        Deduplicated media-id strings, in first-seen order.
+    """
+    return tuple(
+        dict.fromkeys(
+            str(job.media_id)
+            for job in jobs
+            if job.state == IngestJobState.DONE
+            and job.media_id is not None
+            and str((job.progress or {}).get("analysis_skipped") or "").strip()
+            and not outcomes.get(str(job.media_id), (False, ""))[0]
+        )
+    )
 
 
 #: (xhigh review round) One ``Failed to <verb> <type> file:`` stage
@@ -2249,7 +2651,8 @@ def build_ingest_queue_groups(
     """Group jobs into contiguous per-submission runs (task-2221).
 
     Contiguous runs of a shared ``batch_id`` become one headed group
-    (source dirname, file count, relative age, outcome tallies); jobs
+    (the members' common root folder, file count, relative age, outcome
+    tallies); jobs
     without a batch id are singleton groups with no header, so a
     single-file submission reads exactly as before. Also returns the
     latest-batch tally line ("Latest batch: …"), ``""`` when no
@@ -2280,7 +2683,24 @@ def build_ingest_queue_groups(
                     )
                 )
             return
+        # task-32351 AC#1 (critique #10, B D1): the first member's parent is
+        # whichever subdirectory the recursive scan enumerated first, so a
+        # six-file import of `inbox/` was labelled "nested" after its one
+        # nested file. The folder the USER chose is the common root of every
+        # member, which the members already carry -- no new field, no schema
+        # change. ``commonpath`` raises on mixed absolute/relative or
+        # non-path sources (URL imports), which keeps the old behaviour.
+        # (review finding 2) Only a batch that is entirely real filesystem
+        # paths has a common root worth naming. A URL batch across two hosts
+        # would otherwise be headed "https:", and two unrelated roots "batch",
+        # where the first member's own parent still says something useful.
         source = PurePath(str(members[0].source_path)).parent.name or "batch"
+        if all(PurePath(str(job.source_path)).is_absolute() for job in members):
+            parents = [str(PurePath(str(job.source_path)).parent) for job in members]
+            try:
+                source = PurePath(os.path.commonpath(parents)).name or "batch"
+            except ValueError:  # Windows: members on different drives.
+                pass
         count = len(members)
         # (Qodo round) A batch is "running" until EVERY member is
         # terminal -- a finished member's age on an in-progress batch
@@ -2391,6 +2811,10 @@ def build_library_ingest_state(
     start_confirm_line: str = "",
     last_submission_available: bool = False,
     retry_confirm_armed: bool = False,
+    analyze_outcomes: Mapping[str, tuple[bool, str]] | None = None,
+    analyze_skipped_media_ids: tuple[str, ...] | None = None,
+    analysis_action_ready: bool = False,
+    analyze_running: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -2399,6 +2823,24 @@ def build_library_ingest_state(
             typically the registry's own newest-first ``jobs()`` tuple,
             passed straight through into ``queue_rows``).
         form: The current form echo.
+        analyze_outcomes: (task-28007 AC#1/AC#2) media-id-string ->
+            ``(ok, reason)`` outcomes the screen's "Analyze N skipped" run
+            has recorded so far, via its ``on_item_done`` callback. Overlays
+            each outcome onto its own row's progress line and excludes a
+            successfully-fixed id from ``analyze_skipped_media_ids``.
+        analyze_skipped_media_ids: (final review, M-7) The caller's own
+            already-computed ``library_ingest_analyze_skipped_ids(jobs,
+            analyze_outcomes)`` -- the screen resolves it once to gate the
+            "Analyze N skipped" button, and this lets that same tuple carry
+            straight into the state instead of a second, redundant call
+            here. ``None`` (every unit test, and any caller with nothing
+            handy) falls back to computing it fresh from ``jobs`` and
+            ``analyze_outcomes``, so passing it is a pure optimisation.
+        analysis_action_ready: Whether the analysis provider is callable
+            right now (Task 1's resolver reason is ``""``). Resolved ONCE
+            by the caller (it can do I/O) -- never per row.
+        analyze_running: Whether a bulk-Analyze run is already in flight,
+            so the run-summary action should render disabled.
         runtime_source: The Library's active runtime scope (``"local"`` or
             ``"server"``); only affects ``server_quiet_line``, since local
             ingest always targets the local media store regardless of
@@ -2467,15 +2909,27 @@ def build_library_ingest_state(
         unavailable_line = MEDIA_DB_UNAVAILABLE_COPY
     else:
         unavailable_line = ""
+    resolved_analyze_outcomes: Mapping[str, tuple[bool, str]] = analyze_outcomes or {}
     queue_rows = tuple(
-        _build_queue_row(
+        _apply_analyze_outcome(
+            _build_queue_row(
+                job,
+                now=resolved_now,
+                details_expanded=job.job_id in expanded_details,
+            ),
             job,
-            now=resolved_now,
-            details_expanded=job.job_id in expanded_details,
+            resolved_analyze_outcomes,
         )
         for job in jobs
     )
     queue_groups, latest_batch_line = build_ingest_queue_groups(jobs)
+    if analyze_skipped_media_ids is None:
+        analyze_skipped_media_ids = library_ingest_analyze_skipped_ids(
+            jobs, resolved_analyze_outcomes
+        )
+    show_analyze_skipped = bool(analyze_skipped_media_ids) and bool(
+        analysis_action_ready
+    )
     # (task-2220 Qodo round) SKIPPED counts as finished everywhere, so it
     # must also SHOW the control -- a skips-only queue was unclearble.
     queue_show_clear_finished = any(
@@ -2995,6 +3449,9 @@ def build_library_ingest_state(
         selection_has_nothing_importable=bool(
             nothing_importable or nothing_sendable
         ),
+        analyze_skipped_media_ids=analyze_skipped_media_ids,
+        show_analyze_skipped=show_analyze_skipped,
+        analyze_skipped_running=bool(analyze_running),
     )
 
 

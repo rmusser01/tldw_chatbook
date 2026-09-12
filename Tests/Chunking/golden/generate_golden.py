@@ -72,6 +72,7 @@ CORPUS = {
 METHODS = [
     "words", "sentences", "paragraphs", "tokens", "json", "xml",
     "ebook_chapters", "structure_aware", "code", "fixed_size",
+    "propositions",
 ]
 
 

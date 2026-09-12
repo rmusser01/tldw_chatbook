@@ -3,8 +3,9 @@
 Ported from tldw_Server_API/tests/Chunking/ @ 385afa95 with the same import
 rewrite as Helper_Scripts/sync_chunking_engine.py. Engine-only tests run
 against the vendored tree directly; server-fixture files (endpoints, AuthNZ,
-templates, async_chunker, auto_planner, server Metrics) are skipped at module
-level with documented reasons.
+templates, async_chunker, server Metrics) are skipped at module level with
+documented reasons. (auto_planner is vendored — sub-project #3, Task 1 —
+and its planner suite runs un-skipped.)
 """
 import os
 from pathlib import Path

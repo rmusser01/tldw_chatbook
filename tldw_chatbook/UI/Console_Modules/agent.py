@@ -134,11 +134,12 @@ straight from `ConsoleAgentBridge.fleet_snapshot`/`historical_snapshot`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import partial
 from typing import Any, Dict, Iterable, TYPE_CHECKING
 
+import re
 import time
 
 from loguru import logger
@@ -150,6 +151,11 @@ from ...Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
 )
 from ...Chat.cost_display import format_token_count
+from ...Chat.console_chat_models import (
+    ConsoleMessageRole,
+    console_pending_round_copy_for,
+)
+from ...Chat.console_glyphs import STATUS_GLYPHS
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_STATE_HIDDEN,
     ConsoleAgentSteeringState,
@@ -173,13 +179,54 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: below -- one vocabulary, one place (agent.py:354/:457-463 in the PR2b
 #: seam map). Unknown/future statuses fall back to "●" wherever this is
 #: consulted via `.get(status, "●")`.
-_AGENT_STATUS_GLYPHS: Dict[str, str] = {
-    "done": "✓",
-    "running": "●",
-    "stuck": "⚠",
-    "error": "✗",
-    "cancelled": "✗",
-}
+#: TASK-32334: the fleet's status glyphs moved to the shared Console
+#: vocabulary (``Chat/console_glyphs.STATUS_GLYPHS``) so every rail section
+#: renders statuses with one glyph language. Same keys, same marks; the
+#: shared map additionally covers "blocked" (Environment/Tasks rows).
+_AGENT_STATUS_GLYPHS: Dict[str, str] = dict(STATUS_GLYPHS)
+
+#: TASK-31429: the rail's Agent status line ("Agent: running · step 3",
+#: "Sub-agent · done") carries its run status as the first word after the
+#: prefix; that word selects the line's `$ds-status-*` colour class.
+_AGENT_STATUS_LINE_RE = re.compile(r"^(?:Agent:|Sub-agent ·)\s*([a-z-]+)")
+
+
+def console_agent_status_state(status_line: str) -> str:
+    """Return the run status a rail status line carries, or "" to stay uncoloured.
+
+    Only the statuses in ``_AGENT_STATUS_GLYPHS`` are colour-worthy; "idle",
+    "unavailable", and anything unrecognised return "".
+
+    Args:
+        status_line: The rendered Agent-section status text, e.g.
+            ``"Agent: running · step 3"`` or ``"Sub-agent · done"``.
+
+    Returns:
+        The status word (``"running"``, ``"done"``, ``"stuck"``, ``"error"``,
+        ``"cancelled"``) when it should be coloured, otherwise ``""``.
+    """
+    match = _AGENT_STATUS_LINE_RE.match(status_line or "")
+    status = match.group(1) if match else ""
+    return status if status in _AGENT_STATUS_GLYPHS else ""
+
+
+def apply_console_agent_status_state(widget: Any, status_line: str) -> None:
+    """Swap ``widget``'s ``console-agent-section-status-<state>`` class to match.
+
+    Exactly one state class (or none) is present after the call; the base
+    classes are left alone.
+
+    Args:
+        widget: The status-line widget (any object exposing Textual's
+            ``set_class(bool, name)``), normally the
+            ``#console-agent-section-status`` Static.
+        status_line: The rendered status text the widget shows; see
+            :func:`console_agent_status_state` for the accepted shapes.
+    """
+    state = console_agent_status_state(status_line)
+    for status in _AGENT_STATUS_GLYPHS:
+        widget.set_class(status == state, f"console-agent-section-status-{status}")
+
 
 #: The ``ConsoleInspectorSection.section_id`` the fleet mini-section is
 #: constructed with (``left_rail.py``'s ``compose()``) and the id
@@ -205,15 +252,38 @@ CONSOLE_TURN_ACTIVITY_TOOL_GLYPH = "⚙"
 #: emitted AFTER the round returns, carrying its text), so this is derived
 #: from "the last primary step is not a tool call", not from an event.
 CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
+#: task-32344: the turn-activity line's PRE-PROVIDER state. The send has
+#: been accepted but the first provider call has not happened yet, because
+#: the run is still composing this turn's tool surface (MCP catalog, local
+#: tools, and the lazily-bootstrapped Personal Context profile tools).
+#: There is no step to name -- there is no run yet -- so this state comes
+#: from the bridge's own setup mark, not from ``steps``.
+CONSOLE_TURN_ACTIVITY_SETUP = "Connecting tools…"
+#: task-32345: a primary tool call is parked awaiting the user's approval
+#: decision (an MCP/skill approval round is outstanding for the viewed
+#: session -- ``ConsoleChatController.has_pending_approval_round``). Takes
+#: priority over every other state: a card waiting on the user is the most
+#: important thing to tell them, more than a stale tool name or sub-agent
+#: noise.
+CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL = "Waiting for your approval"
 #: Separator between the state and its elapsed segment.
 CONSOLE_TURN_ACTIVITY_SEPARATOR = " · "
+#: task-31386: a primary tool call that has run at least this long offers
+#: the "abandon call" affordance next to the activity line.
+CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS = 5.0
+#: The Textual action that affordance runs (a `ChatScreen` action).
+CONSOLE_TURN_ACTIVITY_ABANDON_ACTION = "screen.abandon_console_tool_call"
 
 __all__ = [
     "ConsoleAgentController",
     "CONSOLE_AGENT_FLEET_SECTION_ID",
+    "CONSOLE_TURN_ACTIVITY_ABANDON_ACTION",
+    "CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS",
     "CONSOLE_TURN_ACTIVITY_SEPARATOR",
+    "CONSOLE_TURN_ACTIVITY_SETUP",
     "CONSOLE_TURN_ACTIVITY_THINKING",
     "CONSOLE_TURN_ACTIVITY_TOOL_GLYPH",
+    "CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL",
     "console_turn_activity_text",
 ]
 
@@ -249,7 +319,86 @@ def _format_fleet_elapsed(seconds: float | None) -> str:
     return f"{minutes}m {secs}s"
 
 
-def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
+def _fleet_turn_activity(children: Sequence[Any], *, now: float) -> str:
+    """task-31386: the line for a primary that is waiting on its children.
+
+    Args:
+        children: The RUNNING sub-agents' own live snapshots (duck-typed:
+            a ``steps`` sequence), as the parent's ``subagents`` summary
+            lists them.
+        now: ``time.monotonic()`` reading for this poll tick.
+
+    Returns:
+        ``"N sub-agent(s) · ⚙ <tool> · <elapsed>"`` naming the child tool
+        that has run longest, ``"N sub-agent(s) working"`` when no child is
+        inside a tool call, or ``""`` when nothing is running.
+    """
+    # Every running child counts, even one whose run has not attached or
+    # published a step yet (its entry is None); only children WITH a live
+    # feed can name a tool.
+    count = len(children)
+    if not count:
+        return ""
+    label = f"{count} sub-agent{'s' if count != 1 else ''}"
+    tool_steps = []
+    for child in children:
+        if child is None:
+            continue
+        steps = tuple(getattr(child, "steps", ()) or ())
+        last = steps[-1] if steps else None
+        if last is not None and getattr(last, "kind", "") == STEP_TOOL_CALL:
+            tool_steps.append(last)
+    if not tool_steps:
+        return f"{label} working"
+    longest = min(
+        tool_steps,
+        key=lambda step: (
+            step.started_at if getattr(step, "started_at", None) is not None else now
+        ),
+    )
+    line = f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {longest.text}"
+    started_at = getattr(longest, "started_at", None)
+    elapsed = _format_fleet_elapsed(max(0.0, now - started_at)) if started_at is not None else ""
+    return f"{line}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else line
+
+
+def console_turn_activity_abandon_action(snapshot: Any, *, now: float) -> str:
+    """task-31386: the action to offer next to the line, or ``""``.
+
+    Only the PRIMARY's own in-flight tool call qualifies, and only once it
+    has run ``CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS``; a child's call
+    (its own run, its own budget) and the model's thinking never do.
+
+    Args:
+        snapshot: The conversation's ``AgentLiveSnapshot`` (duck-typed).
+        now: ``time.monotonic()`` reading for this poll tick.
+
+    Returns:
+        ``CONSOLE_TURN_ACTIVITY_ABANDON_ACTION`` or ``""``.
+    """
+    if getattr(snapshot, "status", "idle") != "running":
+        return ""
+    steps = tuple(getattr(snapshot, "steps", ()) or ())
+    step = next(
+        (s for s in reversed(steps) if getattr(s, "agent_kind", "") == AGENT_KIND_PRIMARY),
+        None,
+    )
+    if step is None or step.kind != STEP_TOOL_CALL:
+        return ""
+    started_at = getattr(step, "started_at", None)
+    if started_at is None or now - started_at < CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS:
+        return ""
+    return CONSOLE_TURN_ACTIVITY_ABANDON_ACTION
+
+
+def console_turn_activity_text(
+    snapshot: Any,
+    *,
+    now: float,
+    children: Sequence[Any] = (),
+    pending_approval: bool = False,
+    pending_copy: str = "",
+) -> str:
     """Return the live activity line for one in-flight Console turn.
 
     **Live-only, by construction.** There is no resumed counterpart and
@@ -260,16 +409,33 @@ def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
     ``format_agent_step_marker``, which is deliberately shared by the live
     and resume paths so both render byte-identical text.)
 
-    The four states, derived from the primary agent's most recent step:
+    The six states. All but the first two are derived from the primary
+    agent's most recent step:
 
     ===========================  ==========================================
     situation                    line
     ===========================  ==========================================
+    pre-provider setup           ``Connecting tools… · <elapsed>``
+    interrupt round pending      ``Waiting for your <approval|answer|
+                                 confirmation> · <elapsed>`` (by kind)
     a tool is running            ``⚙ <tool> · <elapsed>``
     between tools / after one    ``Thinking… · <elapsed>``
     running, no primary step     ``Generating…`` (today's copy, unchanged)
     turn ended (any non-running) ``""`` -- the caller renders nothing
     ===========================  ==========================================
+
+    task-32344: the ``setup`` state is the window between "send accepted"
+    and "provider called", which the first send of a process pays in full
+    (tool catalogs plus the lazy Personal Context bootstrap) and which
+    used to render as a blank assistant row for its whole duration.
+
+    task-32345: the approval-pending state is a LEADING branch, checked
+    right after the running-status gate and before the tool/thinking
+    derivation below -- a card waiting on the user outranks whatever the
+    primary's last step happened to be (a stale tool name, or a fleet of
+    sub-agents still nominally "working"). Its elapsed segment reuses the
+    same ``step.started_at`` base the tool/thinking states use, so the
+    clock does not reset just because the label changed.
 
     Sub-agent steps are skipped, not merely deprioritised: a child's work
     belongs to the Agent rail's fleet rows, never to the primary assistant
@@ -288,15 +454,46 @@ def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
     text -- mid-turn that is the tool-call fence itself -- so the state, not
     the summary, is what the user sees.
 
+    task-31386: during a fleet turn the primary is between tools while its
+    children work, which used to read as ``Thinking…``; with ``children``
+    (the running sub-agents' own live snapshots) that state renders their
+    count and longest-running tool instead. A primary tool call still wins.
+
     Args:
         snapshot: The conversation's ``AgentLiveSnapshot`` (duck-typed:
             ``status`` plus a ``steps`` sequence).
         now: ``time.monotonic()`` reading for this poll tick, injected so
             the elapsed segment is testable without sleeping.
+        children: Live snapshots of the RUNNING sub-agents, if any.
+        pending_approval: Whether an approval-like round is outstanding for
+            this session (``ConsoleChatController.has_pending_approval_
+            round``) -- never inferred from a tool name.
+        pending_copy: Qodo #4 -- the waiting label for the KIND of round
+            actually outstanding (``console_chat_models.console_pending_
+            round_copy_for``): "Waiting for your answer" for an ask_user
+            question, "Waiting for your confirmation" for a skill-install/
+            skill-script/worktree-merge confirm. Empty (the default, and
+            every pre-existing caller) keeps the approval wording, which is
+            what this line said for all five kinds before.
 
     Returns:
         The line to render, or ``""`` when nothing is live.
     """
+    if getattr(snapshot, "status", "idle") == "setup":
+        # No steps exist yet -- the run has not started -- so the elapsed
+        # segment times from the setup mark, or is omitted when there is
+        # none (`_format_fleet_elapsed`'s "no usable base" rule).
+        started_at = getattr(snapshot, "setup_started_at", None)
+        elapsed = (
+            _format_fleet_elapsed(max(0.0, now - started_at))
+            if started_at is not None
+            else ""
+        )
+        return (
+            f"{CONSOLE_TURN_ACTIVITY_SETUP}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}"
+            if elapsed
+            else CONSOLE_TURN_ACTIVITY_SETUP
+        )
     if getattr(snapshot, "status", "idle") != "running":
         return ""
     step = next(
@@ -307,6 +504,21 @@ def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
         ),
         None,
     )
+    if pending_approval:
+        started_at = getattr(step, "started_at", None) if step is not None else None
+        elapsed = (
+            _format_fleet_elapsed(max(0.0, now - started_at))
+            if started_at is not None
+            else ""
+        )
+        label = pending_copy or CONSOLE_TURN_ACTIVITY_WAITING_APPROVAL
+        return (
+            f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else label
+        )
+    if step is None or step.kind != STEP_TOOL_CALL:
+        fleet = _fleet_turn_activity(children, now=now)
+        if fleet:
+            return fleet
     if step is None:
         # Pre-first-token: the model has not come back once yet, so there is
         # no step to name and no honest base to time from.
@@ -394,7 +606,9 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
     )
 
 
-def _fleet_row_from_summary(summary: "SubAgentSummary", index: int) -> InspectorSectionRow:
+def _fleet_row_from_summary(
+    summary: "SubAgentSummary", index: int
+) -> InspectorSectionRow:
     """Build one fleet row from a HISTORICAL/resumed ``SubAgentSummary``.
 
     No elapsed segment: unlike a live ``FleetHandle``,
@@ -476,11 +690,10 @@ class ConsoleAgentController:
            `_ensure_console_agent_bridge` only ever `getattr`s off it.
         3. Every **app-level dependency** is a named keyword-only callable,
            wired at the call site as a late-binding lambda -- never a bound
-           method, which would freeze the screen's CURRENT method and stop
-           observing a later `monkeypatch.setattr` on the instance. Two of
-           these are patched by name in the pre-existing suite
-           (`_current_console_rail_conversation_id` and
-           `_current_console_rail_state`, both in
+           method, which would freeze the current target and stop observing
+           a later `monkeypatch.setattr`. The pre-existing suite patches
+           `_current_console_rail_conversation_id` on `screen._character`
+           and `_current_console_rail_state` on the screen (both in
            `Tests/UI/test_console_agent_rail.py`), so this is load-bearing,
            not ceremony.
 
@@ -592,7 +805,7 @@ class ConsoleAgentController:
 
     @property
     def _current_console_rail_conversation_id(self) -> Any:
-        """`ChatScreen._current_console_rail_conversation_id`, by name."""
+        """The character controller's rail-conversation accessor, by name."""
         return self._current_rail_conversation_id
 
     @property
@@ -712,9 +925,80 @@ class ConsoleAgentController:
         read_snapshot = getattr(bridge, "live_snapshot", None)
         if read_snapshot is None:
             return ""
+        snapshot = read_snapshot(conversation_id)
+        # task-31386: a running child's steps live in its OWN run feed
+        # (`live_run_snapshot`, the one live source of a working child's
+        # steps); `getattr` because bare bridge doubles lack it.
+        read_run = getattr(bridge, "live_run_snapshot", None)
+        children = [
+            (
+                read_run(conversation_id, summary.run_id)
+                if read_run is not None and getattr(summary, "run_id", "")
+                else None
+            )
+            for summary in (getattr(snapshot, "subagents", ()) or ())
+            if getattr(summary, "status", "") == "running"
+        ]
+        # task-32345: the pending flag comes ONLY from the controller's own
+        # round registry, never inferred from a tool name -- `getattr`
+        # because `_GateController` (and other partial doubles) expose a
+        # bare `SimpleNamespace(run_state=...)`, not the real controller.
+        has_pending = getattr(controller, "has_pending_approval_round", None)
+        pending_approval = False
+        pending_copy = ""
+        if has_pending is not None:
+            store = getattr(controller, "store", None)
+            session_id = getattr(store, "active_session_id", None) if store else None
+            pending_approval = bool(has_pending(session_id or ""))
+            if pending_approval:
+                # Qodo #4: which kind is waiting decides the wording -- a
+                # question card asked for an answer, not an approval. Same
+                # late-bound, double-tolerant lookup as the flag above.
+                pending_copy = console_pending_round_copy_for(
+                    controller, session_id or ""
+                )
         return console_turn_activity_text(
+            snapshot,
+            now=time.monotonic(),
+            children=children,
+            pending_approval=pending_approval,
+            pending_copy=pending_copy,
+        )
+
+    def console_turn_activity_abandon_action(self) -> str:
+        """task-31386: the "abandon call" action for the live line, or ``""``.
+
+        Same guards as ``console_turn_activity``: no active run, no bridge
+        or no snapshot reader means no affordance.
+
+        Returns:
+            ``CONSOLE_TURN_ACTIVITY_ABANDON_ACTION`` while the primary's
+            tool call has run long enough, else ``""``.
+        """
+        from ..Screens.chat_screen import CONSOLE_ACTIVE_RUN_STATUSES
+
+        controller = self._console_chat_controller
+        run_state = getattr(controller, "run_state", None) if controller else None
+        if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+            return ""
+        bridge = self._console_agent_bridge
+        read_snapshot = getattr(bridge, "live_snapshot", None) if bridge else None
+        if read_snapshot is None:
+            return ""
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        action = console_turn_activity_abandon_action(
             read_snapshot(conversation_id), now=time.monotonic()
         )
+        if not action:
+            return ""
+        # Only a call the service registered through its timeout wrapper
+        # can be abandoned; a definitive-after-start tool (or a call with
+        # no timeout) runs outside it and must not advertise the action.
+        from tldw_chatbook.Agents.agent_service import inflight_tool_call
+
+        find_run = getattr(bridge, "live_primary_run_id", None)
+        run_id = find_run(conversation_id) if find_run is not None else None
+        return action if run_id and inflight_tool_call(run_id) is not None else ""
 
     def _console_agent_section_lines(self) -> tuple[str, str, str]:
         """Return the Agent rail's (status, steps, sub-agents) line text.
@@ -804,9 +1088,7 @@ class ConsoleAgentController:
                         else None
                     )
                     if live_run is not None:
-                        steps = "\n".join(
-                            f"{s.kind}: {s.text}" for s in live_run.steps
-                        )
+                        steps = "\n".join(f"{s.kind}: {s.text}" for s in live_run.steps)
                 # PR3b Task 4: a resumed sub-agent (send_to_agent to a
                 # finished child starts a NEW run seeded with its retained
                 # transcript) carries its lineage in the header. The run
@@ -1234,7 +1516,9 @@ class ConsoleAgentController:
         subagent_runs = getattr(bridge, "subagent_runs", None)
         if subagent_runs is None:
             return ()
-        return tuple(_fleet_row_from_record(record) for record in subagent_runs(conversation_id))
+        return tuple(
+            _fleet_row_from_record(record) for record in subagent_runs(conversation_id)
+        )
 
     def _console_agent_fleet_token_total(self) -> int:
         """Sum the active conversation's LIVE fleet's measured token spend.
@@ -1717,10 +2001,26 @@ class ConsoleAgentController:
         if bridge is None:
             return messages
         from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
+        from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
+
+        thinking_rounds_by_owner = {
+            message.persisted_message_id or message.id: frozenset(
+                block.round_ordinal for block in message.thinking.blocks
+            )
+            for message in messages
+            if message.role is ConsoleMessageRole.ASSISTANT
+            and isinstance(message.thinking, ThinkingEnvelope)
+        }
 
         # bridge.resume_marker_messages returns the (anchor_id, block) pairs
         # inject_resume_agent_markers now expects directly -- no reshaping
         # needed here, just passed straight through.
         return inject_resume_agent_markers(
-            messages, bridge.resume_marker_messages(conversation_id)
+            messages,
+            bridge.resume_marker_messages(
+                conversation_id,
+                thinking_round_ordinals_by_assistant_message_id=(
+                    thinking_rounds_by_owner
+                ),
+            ),
         )

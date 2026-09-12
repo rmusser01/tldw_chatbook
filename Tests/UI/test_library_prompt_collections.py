@@ -2016,7 +2016,7 @@ async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct
         name_input = screen.query_one("#library-prompt-name", Input)
         name_input.value = "Retry prompt dirty"
         await pilot.pause()
-        assert screen._library_prompt_dirty is True
+        assert screen._prompts_state.dirty is True
         controller.stage_memberships(
             tuple(sorted((first["collection_id"], second["collection_id"])))
         )
@@ -2032,8 +2032,8 @@ async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct
         )
         assert controller.membership_state.can_apply is True
         assert apply.disabled is False
-        assert screen._library_prompt_dirty is True
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.dirty is True
+        assert screen._prompts_state.status == ""
 
         apply.press()
         await _wait_for_condition(
@@ -2045,8 +2045,8 @@ async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct
         assert (await read_memberships(mode="local", prompt_id=prompt_id))[
             "collection_ids"
         ] == tuple(sorted((first["collection_id"], second["collection_id"])))
-        assert screen._library_prompt_dirty is True
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.dirty is True
+        assert screen._prompts_state.status == ""
 
 
 @pytest.mark.asyncio
@@ -2114,7 +2114,14 @@ async def test_library_screen_collection_manager_selects_exact_browse_scope(tmp_
 
 @pytest.mark.asyncio
 async def test_real_library_screen_collection_manager_crosses_sqlite_page_100(tmp_path):
-    _db, service = _real_prompt_scope_service(tmp_path)
+    db, service = _real_prompt_scope_service(tmp_path)
+    db.add_prompt(
+        name="Collection paging prompt",
+        author="A",
+        details="Keeps the populated-list collection control mounted.",
+        system_prompt="System",
+        user_prompt="User",
+    )
     created = []
     for index in range(1, 108):
         created.append(
@@ -2167,7 +2174,7 @@ async def test_real_library_screen_collection_manager_crosses_sqlite_page_100(tm
 @pytest.mark.asyncio
 async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
-    db.add_prompt(
+    prompt_id, _prompt_uuid, _message = db.add_prompt(
         name="Manager flow prompt",
         author="A",
         details="Manager flow",
@@ -2212,7 +2219,6 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         )
         assert created_page["total"] == 1
         collection_id = created_page["collections"][0]["collection_id"]
-
         host.screen.query_one(
             "#prompt-collection-manager-new-name", Input
         ).value = created_name.swapcase()
@@ -2299,10 +2305,27 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             ),
             message="renamed collection never became the active filter",
         )
-        await _wait_for_selector(screen, pilot, "#library-prompts-collection")
-        assert (
-            str(screen.query_one("#library-prompts-collection", Button).label)
-            == f"collection: {renamed_name}"
+        await _wait_for_selector(
+            screen, pilot, "#library-prompts-empty-collection-label"
+        )
+        assert len(screen.query("#library-prompts-collection")) == 0
+        assert renamed_name in str(
+            screen.query_one(
+                "#library-prompts-empty-collection-label", Static
+            ).renderable
+        )
+
+        screen.query_one("#library-prompts-empty-all-prompts", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_browse_controller.scope.collection_id is None
+                and screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.scope.collection_id
+                is None
+                and len(screen.query("#library-prompts-collection")) == 1
+            ),
+            message="empty collection recovery did not restore All prompts",
         )
 
         screen.query_one("#library-prompts-collection", Button).press()
@@ -2326,14 +2349,11 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             lambda: _active_library_screen(host) is screen,
             message="filtered manager did not close",
         )
-        assert (
-            screen._library_prompt_browse_controller.scope.collection_id
-            == collection_id
-        )
+        assert screen._library_prompt_browse_controller.scope.collection_id is None
         await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         assert (
             str(screen.query_one("#library-prompts-collection", Button).label)
-            == f"collection: {renamed_name}"
+            == "collection: All prompts"
         )
 
         screen.query_one("#library-prompts-collection", Button).press()
@@ -2353,11 +2373,16 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
             ),
             message="All prompts was not explicitly restored",
         )
-        await _wait_for_selector(screen, pilot, "#library-prompts-collection")
         await _wait_for_condition(
             pilot,
             lambda: (
-                str(screen.query_one("#library-prompts-collection", Button).label)
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.scope.collection_id
+                is None
+                and len(screen.query("#library-prompts-collection")) == 1
+                and str(
+                    screen.query_one("#library-prompts-collection", Button).label
+                )
                 == "collection: All prompts"
             ),
             message="All prompts label did not refresh",
@@ -2407,7 +2432,7 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
         name_input = screen.query_one("#library-prompt-name", Input)
         name_input.value = "Dirty prompt edited"
         await pilot.pause()
-        assert screen._library_prompt_dirty is True
+        assert screen._prompts_state.dirty is True
         refreshes: list[str] = []
         screen._refresh_local_source_snapshot = lambda: refreshes.append("refresh")
         browse_token = screen._library_prompt_browse_controller.result.request_token
@@ -2457,8 +2482,8 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
         assert after_apply["collection_ids"] == tuple(
             sorted((first["collection_id"], second["collection_id"]))
         )
-        assert screen._library_prompt_dirty is True
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.dirty is True
+        assert screen._prompts_state.status == ""
         assert refreshes == ["refresh"]
         assert (
             screen._library_prompt_browse_controller.result.request_token > browse_token
@@ -2470,7 +2495,7 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
 
 
 @pytest.mark.asyncio
-async def test_membership_apply_defers_exact_browse_until_clean_back_to_list(
+async def test_membership_apply_refreshes_retained_items_before_clean_back_to_list(
     tmp_path, monkeypatch
 ):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -2521,7 +2546,7 @@ async def test_membership_apply_defers_exact_browse_until_clean_back_to_list(
                 screen._library_prompt_collections_controller.membership_state.status
                 == "ready"
             ),
-            message="memberships did not load before deferred refresh test",
+            message="memberships did not load before retained Items refresh test",
         )
         scope = screen._library_prompt_browse_controller.scope
         browse_before_apply = len(browse_calls)
@@ -2537,25 +2562,41 @@ async def test_membership_apply_defers_exact_browse_until_clean_back_to_list(
             lambda: (
                 screen._library_prompt_collections_controller.membership_state.status
                 == "success"
+                and len(browse_calls) == browse_before_apply + 1
+                and screen._library_prompt_browse_controller.result.status
+                == "empty_collection"
             ),
-            message="membership Apply did not settle",
+            message="membership Apply did not refresh retained Items",
         )
-        assert len(browse_calls) == browse_before_apply
+        assert screen._prompts_state.view == "editor"
+        assert screen._prompts_state.selected_prompt_id == prompt_id
+        assert screen.query_one("#library-prompt-name", Input).value == (
+            "Deferred refresh prompt"
+        )
+        assert browse_calls[-1] == {
+            "mode": "local",
+            "query": scope.query,
+            "collection_id": scope.collection_id,
+            "sort_by": scope.sort_by,
+            "sort_order": scope.sort_order,
+            "page": scope.page,
+            "page_size": scope.page_size,
+        }
         assert count_refreshes == ["count"]
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.status == ""
 
         screen.query_one("#library-prompt-back", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_prompts_view == "list"
-                and len(browse_calls) == browse_before_apply + 1
+                screen._prompts_state.view == "list"
+                and len(browse_calls) == browse_before_apply + 2
                 and screen._library_prompt_browse_controller.result.status
                 == "empty_collection"
             ),
             message=lambda: (
-                "Back to list did not dispatch the deferred exact browse: "
-                f"view={screen._library_prompts_view!r}, "
+                "Back to list did not dispatch its exact list-entry browse: "
+                f"view={screen._prompts_state.view!r}, "
                 f"calls={browse_calls[browse_before_apply:]!r}, "
                 f"scope={screen._library_prompt_browse_controller.scope!r}, "
                 f"result={screen._library_prompt_browse_controller.result!r}"
@@ -2578,4 +2619,4 @@ async def test_membership_apply_defers_exact_browse_until_clean_back_to_list(
             )
         )["collection_ids"] == (second["collection_id"],)
         assert count_refreshes == ["count", "count"]
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.status == ""

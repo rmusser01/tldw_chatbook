@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import os
 import threading
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Callable, ContextManager
 
 from loguru import logger
 
@@ -299,7 +301,11 @@ def _validate_run_id_path_component(run_id: str) -> str | None:
     return s
 
 
-def resolve_log_root() -> Path | None:
+def resolve_log_root(
+    *,
+    sandbox_root: Path | None = None,
+    workspace_id: str | None = None,
+) -> Path | None:
     """Return the directory the log tree is created under, or ``None``.
 
     Prefers the run's first read-write workspace folder root so the log is
@@ -315,17 +321,39 @@ def resolve_log_root() -> Path | None:
     side channel had no remaining purpose and was removed. The return
     value is a bare ``Path | None``, exactly as before.
 
+    Args:
+        sandbox_root: Optional explicit fallback root. When omitted, preserve
+            the non-Console global sandbox behavior.
+        workspace_id: Optional live Workspace scope used to resolve writable
+            explicit folder bindings before the fallback root.
+
     Returns:
         The chosen root directory, or ``None`` when none is usable.
     """
     try:
         from tldw_chatbook.Tools.file_operation_tools import _tool_sandbox_root
-        from tldw_chatbook.Tools.workspace_file_roots import allowed_file_roots
+        from tldw_chatbook.Tools.workspace_file_roots import (
+            allowed_file_roots,
+            run_workspace,
+        )
 
-        sandbox = _tool_sandbox_root()
-        roots = allowed_file_roots(write=True, sandbox_root=sandbox)
-    except Exception:
-        logger.opt(exception=True).warning("run log: cannot resolve any root")
+        sandbox = (
+            Path(sandbox_root).resolve()
+            if sandbox_root is not None
+            else _tool_sandbox_root()
+        )
+        workspace_scope = (
+            run_workspace(workspace_id)
+            if workspace_id is not None
+            else nullcontext()
+        )
+        with workspace_scope:
+            roots = allowed_file_roots(write=True, sandbox_root=sandbox)
+    except Exception as exc:
+        logger.warning(
+            "run log: cannot resolve any root category={}",
+            exc.__class__.__name__,
+        )
         return None
     if not roots:
         return None
@@ -338,7 +366,11 @@ def resolve_log_root() -> Path | None:
     return roots[0]
 
 
-def resolve_existing_log_dir(run_id: str) -> Path | None:
+def resolve_existing_log_dir(
+    run_id: str,
+    *,
+    root: Path | None = None,
+) -> Path | None:
     """Locate an already-written run log directory for ``run_id``, if any.
 
     TASK-870: the Console's "read the full result" affordance needs to
@@ -375,6 +407,8 @@ def resolve_existing_log_dir(run_id: str) -> Path | None:
             ``AgentRunsDB`` run id -- ``AgentService._run_one`` binds the
             writer to this same id via ``self.db.create_run()``'s return
             value).
+        root: Optional explicit confinement root. When supplied, global
+            Workspace and sandbox discovery is never consulted.
 
     Returns:
         The run's log directory when it exists and holds at least one
@@ -386,13 +420,13 @@ def resolve_existing_log_dir(run_id: str) -> Path | None:
     safe_run_id = _validate_run_id_path_component(run_id)
     if safe_run_id is None:
         return None
-    root = resolve_log_root()
-    if root is None:
+    resolved_root = Path(root).resolve() if root is not None else resolve_log_root()
+    if resolved_root is None:
         return None
     configured = _setting("run_log_dir_name", DEFAULT_DIR_NAME)
     dir_name = _coerce_dir_name(configured, DEFAULT_DIR_NAME)
     for candidate_dir_name in (dir_name, f".{dir_name}"):
-        run_dir = root / candidate_dir_name / safe_run_id
+        run_dir = resolved_root / candidate_dir_name / safe_run_id
         try:
             if run_dir.is_dir() and any(run_dir.glob("logs.*.txt")):
                 return run_dir
@@ -442,6 +476,9 @@ class RunLogWriter:
         dir_name: str | None = None,
         segment_bytes: int | None = None,
         max_record_bytes: int | None = None,
+        root: Path | None = None,
+        access_scope: Callable[[], ContextManager[Path]] | None = None,
+        on_bound: Callable[[str, Path], None] | None = None,
     ) -> None:
         """Build an UNBOUND writer. Explicit args override ``[agents]`` config.
 
@@ -451,6 +488,12 @@ class RunLogWriter:
                 ``[agents] run_log_segment_bytes``.
             max_record_bytes: Per-record ceiling; defaults to
                 ``[agents] run_log_max_record_bytes``.
+            root: Optional explicit confinement root. When supplied, global
+                workspace/sandbox resolution is never consulted.
+            access_scope: Optional context manager factory required around
+                every filesystem access.
+            on_bound: Optional callback receiving the primary run id and
+                resolved confinement root after a successful bind.
         """
         # Coerce dir_name defensively using shared helper.
         if dir_name is not None:
@@ -479,6 +522,9 @@ class RunLogWriter:
             self._max_record_bytes = configured_max_record_bytes()
 
         self._lock = threading.Lock()
+        self._explicit_root = Path(root).resolve() if root is not None else None
+        self._access_scope = access_scope or nullcontext
+        self._on_bound = on_bound
         self._counter = 0
         self._segment_index = 1
         self._segment_size = 0
@@ -513,7 +559,19 @@ class RunLogWriter:
         if not _setting("run_log_enabled", True):
             self._active = False
             return
-        root = resolve_log_root()
+        try:
+            with self._access_scope():
+                self._bind_under_scope(run_id)
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
+            )
+            self._active = False
+
+    def _bind_under_scope(self, run_id: str) -> None:
+        """Create the run directory while the caller holds file authority."""
+        root = self._explicit_root or resolve_log_root()
         if root is None:
             self._active = False
             return
@@ -544,44 +602,43 @@ class RunLogWriter:
             # `base` (the dotted target) is known.
             legacy_dir_name = dir_name
             dir_name = f".{dir_name}"
-        try:
-            from tldw_chatbook.Tools.file_operation_tools import is_within
+        from tldw_chatbook.Tools.file_operation_tools import is_within
 
-            base = root / dir_name
-            # Verify containment before creating any directories.
-            if not is_within(base, root):
-                logger.warning(
-                    "run log: base directory escapes root; logging disabled"
-                )
-                self._active = False
-                return
-            if legacy_dir_name is not None:
-                # Best-effort, self-contained (never raises): see
-                # `_migrate_legacy_dir` for the full upgrade-safety policy.
-                self._migrate_legacy_dir(root, legacy_dir_name, base)
-            base.mkdir(parents=True, exist_ok=True)
-            gitignore = base / ".gitignore"
-            if not gitignore.exists():
-                # Created only if absent: writing into a user's repository
-                # is itself a mutation.
-                gitignore.write_text("*\n", encoding="utf-8")
-            run_dir = base / run_id
-            # Verify containment of run_dir before creating it.
-            if not is_within(run_dir, root):
-                logger.warning(
-                    "run log: run directory escapes root; logging disabled"
-                )
-                self._active = False
-                return
-            run_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "run log: cannot create log directory; logging disabled"
+        base = root / dir_name
+        # Verify containment before creating any directories.
+        if not is_within(base, root):
+            logger.warning("run log: base directory escapes root; logging disabled")
+            self._active = False
+            return
+        if legacy_dir_name is not None:
+            # Best-effort, self-contained (never raises): see
+            # `_migrate_legacy_dir` for the full upgrade-safety policy.
+            self._migrate_legacy_dir(root, legacy_dir_name, base)
+        base.mkdir(parents=True, exist_ok=True)
+        gitignore = base / ".gitignore"
+        if not gitignore.exists():
+            # Created only if absent: writing into a user's repository
+            # is itself a mutation.
+            gitignore.write_text("*\n", encoding="utf-8")
+        run_dir = base / run_id
+        # Verify containment of run_dir before creating it.
+        if not is_within(run_dir, root):
+            logger.warning(
+                "run log: run directory escapes root; logging disabled"
             )
             self._active = False
             return
+        run_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir = run_dir
         self._active = True
+        if self._on_bound is not None:
+            try:
+                self._on_bound(run_id, root)
+            except Exception as exc:  # noqa: BLE001 -- observers never break logging
+                logger.debug(
+                    "run log: on_bound callback failed category={}",
+                    exc.__class__.__name__,
+                )
 
     def _migrate_legacy_dir(self, root: Path, legacy_name: str, dotted: Path) -> None:
         """Move a pre-TASK-1270 undotted log tree under its dotted name.
@@ -681,10 +738,11 @@ class RunLogWriter:
                 legacy.rmdir()
             except OSError:
                 pass
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as exc:
+            logger.warning(
                 "run log: legacy directory migration failed; historical "
-                "logs may remain reachable until a future run retries"
+                "logs may remain reachable until a future run retries category={}",
+                exc.__class__.__name__,
             )
 
     def _segment_path(self) -> Path:
@@ -722,7 +780,54 @@ class RunLogWriter:
         status: str = "",
         call_id: str = "",
     ) -> int | None:
-        """Append one record and return its number.
+        """Append one record while holding the configured file authority.
+
+        Args:
+            run_id: Identifier of the parent or child run.
+            kind: Run kind, such as ``primary`` or ``subagent``.
+            type: Record type, such as ``model`` or ``tool_result``.
+            content: Full record content before the configured byte cap.
+            tool: Tool name when the record describes a tool operation.
+            status: Tool or run status when applicable.
+            call_id: Provider tool-call identifier when applicable.
+
+        Returns:
+            The assigned record number, or ``None`` when logging is inactive
+            or file authority cannot be acquired.
+        """
+        if not self._active or self.log_dir is None:
+            return None
+        try:
+            with self._access_scope():
+                return self._append_under_scope(
+                    run_id=run_id,
+                    kind=kind,
+                    type=type,
+                    content=content,
+                    tool=tool,
+                    status=status,
+                    call_id=call_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
+            )
+            self._active = False
+            return None
+
+    def _append_under_scope(
+        self,
+        *,
+        run_id: str,
+        kind: str,
+        type: str,
+        content: str,
+        tool: str = "",
+        status: str = "",
+        call_id: str = "",
+    ) -> int | None:
+        """Append one record after the caller acquires file authority.
 
         Args:
             run_id: Id of the run this record belongs to (parent or child).
@@ -774,15 +879,19 @@ class RunLogWriter:
                     # fsync the segment being retired; it will not be
                     # appended to again.
                     self._write_bytes(self._segment_path(), b"", sync=True)
-                except Exception:  # noqa: BLE001 — durability is best-effort
-                    logger.opt(exception=True).warning("run log: segment fsync failed")
+                except Exception as exc:  # noqa: BLE001 — durability is best-effort
+                    logger.warning(
+                        "run log: segment fsync failed category={}",
+                        exc.__class__.__name__,
+                    )
                 self._segment_index += 1
                 self._segment_size = 0
             try:
                 self._write_bytes(self._segment_path(), payload)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "run log: append failed; logging disabled for this run"
+            except Exception as exc:
+                logger.warning(
+                    "run log: append failed; logging disabled for this run category={}",
+                    exc.__class__.__name__,
                 )
                 self._active = False
                 return None
@@ -790,6 +899,20 @@ class RunLogWriter:
             return RunLogRecordNumber(record.number, truncated=bool(truncated_from))
 
     def write_manifest(self, metadata: dict) -> None:
+        """Write run-level metadata while holding configured file authority."""
+        if self.log_dir is None:
+            return
+        try:
+            with self._access_scope():
+                self._write_manifest_under_scope(metadata)
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
+            )
+            self._active = False
+
+    def _write_manifest_under_scope(self, metadata: dict) -> None:
         """Write run-level convenience metadata. Never raises.
 
         The manifest is deliberately NOT load-bearing: segment discovery is
@@ -812,17 +935,37 @@ class RunLogWriter:
                 json.dumps(payload, indent=2, default=str).encode("utf-8"),
                 sync=True,
             )
-        except Exception:  # noqa: BLE001 — convenience metadata only
-            logger.opt(exception=True).warning("run log: manifest write failed")
+        except Exception as exc:  # noqa: BLE001 — convenience metadata only
+            logger.warning(
+                "run log: manifest write failed category={}",
+                exc.__class__.__name__,
+            )
 
     def close(self) -> None:
+        """Flush the final segment while holding configured file authority."""
+        if not self._active or self.log_dir is None:
+            return
+        try:
+            with self._access_scope():
+                self._close_under_scope()
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
+            )
+            self._active = False
+
+    def _close_under_scope(self) -> None:
         """Flush the final segment to disk. Idempotent and always safe."""
         if not self._active or self.log_dir is None:
             return
         try:
             self._write_bytes(self._segment_path(), b"", sync=True)
-        except Exception:  # noqa: BLE001 — best-effort durability
-            logger.opt(exception=True).warning("run log: final fsync failed")
+        except Exception as exc:  # noqa: BLE001 — best-effort durability
+            logger.warning(
+                "run log: final fsync failed category={}",
+                exc.__class__.__name__,
+            )
 
 
 def _now_iso() -> str:

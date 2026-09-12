@@ -2,6 +2,7 @@
 
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -212,6 +213,66 @@ async def test_script_cannot_write_into_its_own_bundle(script_service):
     result = await service.run_skill_script(name, "scripts/writer.py", [])
     assert "wrote" in result.stdout
     assert not (skill_dir / "tampered.txt").exists()
+
+
+def _add_output_producer(service, name: str) -> None:
+    """Add and trust a script that leaves one retained artifact."""
+    (service._skill_dir(name) / "scripts" / "produce.py").write_text(
+        "open('artifact.txt', 'w').write('chat-owned')",
+        encoding="utf-8",
+    )
+    service.trust_service.trust_current_skill(name, audit_event="test_setup")
+
+
+@pytest.mark.asyncio
+async def test_explicit_console_output_root_overrides_shared_skill_config(
+    script_service,
+    tmp_path,
+    monkeypatch,
+):
+    service, name = script_service
+    _add_output_producer(service, name)
+    shared = tmp_path / "shared"
+    chat_root = tmp_path / "chat"
+    monkeypatch.setattr(service, "_script_output_root", lambda: shared)
+
+    result = await service.run_skill_script(
+        name,
+        "scripts/produce.py",
+        [],
+        output_root=chat_root / "skill_script_output",
+    )
+
+    assert Path(result.output_dir).is_relative_to(chat_root)
+    assert not shared.exists()
+
+
+@pytest.mark.asyncio
+async def test_two_console_skill_runs_retain_under_their_own_chat_roots(
+    script_service,
+    tmp_path,
+):
+    service, name = script_service
+    _add_output_producer(service, name)
+    first = tmp_path / "chat-a" / "skill_script_output"
+    second = tmp_path / "chat-b" / "skill_script_output"
+
+    result_a = await service.run_skill_script(
+        name,
+        "scripts/produce.py",
+        [],
+        output_root=first,
+    )
+    result_b = await service.run_skill_script(
+        name,
+        "scripts/produce.py",
+        [],
+        output_root=second,
+    )
+
+    assert Path(result_a.output_dir).is_relative_to(first)
+    assert Path(result_b.output_dir).is_relative_to(second)
+    assert not Path(result_a.output_dir).is_relative_to(second)
 
 
 @pytest.mark.asyncio
@@ -566,6 +627,26 @@ async def test_scope_service_rejects_server_mode(script_scope_service):
     scope, name = script_scope_service
     with pytest.raises(ValueError, match="local-only"):
         await scope.run_skill_script(name, "scripts/hello.py", [], mode="server")
+
+
+@pytest.mark.asyncio
+async def test_scope_service_forwards_explicit_console_output_root(
+    script_scope_service,
+    tmp_path,
+):
+    scope, name = script_scope_service
+    service = scope.local_service
+    _add_output_producer(service, name)
+    output_root = tmp_path / "chat" / "skill_script_output"
+
+    result = await scope.run_skill_script(
+        name,
+        "scripts/produce.py",
+        [],
+        output_root=output_root,
+    )
+
+    assert Path(result.output_dir).is_relative_to(output_root)
 
 
 @pytest.mark.asyncio

@@ -165,9 +165,7 @@ def test_enabled_factory_does_not_replace_missing_key_for_existing_rows(
         db,
         sidecar_path=tmp_path / "chat_rag_context.json",
         policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
-        key_provider=KeyringCitationFingerprintKeyProvider(
-            keyring_backend=backend
-        ),
+        key_provider=KeyringCitationFingerprintKeyProvider(keyring_backend=backend),
     )
 
     assert repository.local_citation_writes_ready is False

@@ -8,10 +8,17 @@ import pytest
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskStatus
+from tldw_chatbook.Scheduling.schedule_input_parsing import system_timezone_name
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
+from tldw_chatbook.Scheduling.services import scheduling_service as scheduling_service_module
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
-from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientConfig,
+    ServerClientPolicyError,
+    ServerClientValidationError,
+    ServerUnavailableError,
+)
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
@@ -165,6 +172,48 @@ async def test_update_reminder_local(db):
     refreshed = await svc.get_reminder(task.id)
     assert refreshed is not None
     assert refreshed.title == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_preserves_detected_timezone_for_one_time(db):
+    """task-31711 review finding 1 (root-cause, not the form): `ReminderForm.
+    _save()` builds the identical form_data shape for a create AND an edit,
+    setting `timezone=system_timezone_name()` for a one-time reminder either
+    way. `update_reminder`'s local-path branch used to hard-null `timezone`
+    back to `None` on EVERY edit regardless of what the payload carried
+    (`if merged_task.schedule_kind == ScheduleKind.ONE_TIME: ...
+    payload["timezone"] = None`) -- so a reminder created with a real zone
+    lost it the moment it was next saved, silently reproducing the exact
+    "later displays UTC" bug AC#2 was meant to fix. Round-trips through the
+    real service + DB (no form/widget involved) with the same field shape
+    `ReminderForm._save()` sends, so it fails on the old `= None` the way
+    the form-only test (which never reaches `update_reminder`) could not."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    detected = system_timezone_name()
+
+    created = await svc.create_reminder(
+        _reminder_payload("Water plants", body="", timezone=detected)
+    )
+    assert created.timezone == detected
+
+    # The exact shape ReminderForm._save() sends for a ONE_TIME edit
+    # (owner_id is popped by the caller before this call, per
+    # SchedulesWorkbench._on_reminder_form_result).
+    edit_payload = {
+        "title": "Water plants",
+        "body": "",
+        "schedule_kind": "one_time",
+        "run_at": created.run_at,
+        "cron": None,
+        "timezone": detected,
+    }
+    updated = await svc.update_reminder(created.id, edit_payload)
+    assert updated is not None
+    assert updated.timezone == detected
+
+    refreshed = await svc.get_reminder(created.id)
+    assert refreshed is not None
+    assert refreshed.timezone == detected
 
 
 @pytest.mark.asyncio
@@ -376,6 +425,106 @@ async def test_delete_reminder_server_falls_back_to_tombstone_on_generic_error(d
     assert tombstone is not None
 
 
+# ---------------------------------------------------------------------------
+# Cross-owner writes (final review F4): redesign PR-2's Queue lists
+# reminders across owners, so "the row under the cursor" is no longer
+# guaranteed to be the service's ACTIVE owner. Every reminder write now
+# takes the ROW's owner, the same `owner_id=` thread `create_reminder`
+# established -- without it a `server:` row's toggle/delete took the
+# local-only branch: no server call, no pending mutation, no tombstone,
+# and the next pull silently undid the user's action.
+# ---------------------------------------------------------------------------
+
+
+async def _server_owned_row(db, server_client):
+    """A local row owned by `server:1`, created while `local` is active."""
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    server_client.create_reminder.side_effect = ServerUnavailableError("offline")
+    task = await svc.create_reminder(
+        _reminder_payload("Server row"), owner_id="server:1"
+    )
+    db.update_reminder_task(task.id, server_id="srv-1")
+    db.delete_pending_mutation_for_record(task.id, "reminder_task", "server:1")
+    server_client.create_reminder.side_effect = None
+    assert svc.owner_id == "local"
+    return svc, task
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_for_server_row_reaches_the_server_while_local_active(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.update_reminder.return_value = {
+        "id": "srv-1",
+        "title": "Server row",
+        "schedule_kind": "one_time",
+        "run_at": "2026-07-20T14:00:00+00:00",
+        "enabled": False,
+    }
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+
+    server_client.update_reminder.assert_awaited_once()
+    assert server_client.update_reminder.await_args.args[0] == "srv-1"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_for_server_row_records_mutation_when_offline(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.update_reminder.side_effect = ServerUnavailableError("offline")
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert [row["payload"]["action"] for row in pending] == ["update"]
+    assert db.get_reminder_task(task.id)["enabled"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_for_server_row_reaches_the_server_while_local_active(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.delete_reminder.return_value = {"deleted": True}
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+
+    server_client.delete_reminder.assert_awaited_once_with("srv-1")
+    assert await svc.get_reminder(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_for_server_row_records_tombstone_when_offline(db):
+    server_client = AsyncMock()
+    svc, task = await _server_owned_row(db, server_client)
+    server_client.delete_reminder.side_effect = ServerUnavailableError("offline")
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+
+    assert await svc.get_reminder(task.id) is None
+    assert db.get_tombstone(task.id, "reminder_task", "server:1") is not None
+
+
+@pytest.mark.asyncio
+async def test_local_row_writes_record_nothing_while_a_server_owner_is_active(db):
+    """The inverse guard: threading the ROW's owner must not start
+    recording server mutations for LOCAL rows just because the active
+    owner happens to be a server."""
+    server_client = AsyncMock()
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Local row"))
+    svc.set_owner("server:1")
+
+    await svc.update_reminder(task.id, {"enabled": False}, owner_id=task.owner_id)
+    assert db.get_pending_mutations("local", primitive="reminder_task") == []
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    server_client.update_reminder.assert_not_awaited()
+
+    assert await svc.delete_reminder(task.id, owner_id=task.owner_id) is True
+    server_client.delete_reminder.assert_not_awaited()
+    assert db.get_tombstone(task.id, "reminder_task", "local") is None
+
+
 @pytest.mark.asyncio
 async def test_delete_reminder_returns_false_for_missing_id(db):
     svc = SchedulingService(db=db, runtime_source="local")
@@ -454,6 +603,102 @@ async def test_list_tasks_filters_watchlist_by_owner(db):
 
     assert tasks == []
     projection.list_jobs.assert_called_once_with(owner_id="server:1")
+
+
+# --- spans-owners `owner_id` parameter (schedules-redesign PR-2, Task 1) ---
+#
+# `list_tasks()` (zero args, the default `...` sentinel) must keep behaving
+# EXACTLY as every test above pins it -- these add the new opt-in shape
+# without touching that default path.
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_default_still_scopes_to_current_owner(db):
+    """Byte-for-byte preservation: calling with no argument at all must
+    still scope reminders to `self.owner_id`, same as before this
+    parameter existed."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks()
+
+    assert [t.title for t in tasks] == ["Local reminder"]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_owner_id_none_spans_every_owner(db):
+    """The new spans-owners seam: `owner_id=None` returns reminders from
+    EVERY owner, not just `self.owner_id` -- the redesign's unified Queue
+    list (plan ruling, survey SS2's cross-owner listing gap)."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks(owner_id=None)
+
+    assert {t.title for t in tasks} == {"Local reminder", "Server reminder"}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_owner_id_explicit_string_scopes_to_that_owner(db):
+    """A specific owner id (not the service's current one) scopes
+    reminders to just that owner."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    db.create_reminder_task(
+        owner_id="local",
+        title="Local reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-20T14:00:00+00:00",
+    )
+    db.create_reminder_task(
+        owner_id="server:9",
+        title="Server reminder",
+        schedule_kind="one_time",
+        run_at="2026-07-21T14:00:00+00:00",
+    )
+
+    tasks = await svc.list_tasks(owner_id="server:9")
+
+    assert [t.title for t in tasks] == ["Server reminder"]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_spans_owners_keeps_projections_scoped_to_current_owner(db):
+    """Watchlist/briefing `list_jobs` only STAMP the owner id onto every
+    row (their underlying read has no per-owner filter) -- passing them
+    `owner_id=None` would fail their `ScheduledTask.owner_id: str` field.
+    A spans-owners reminder listing must not do that: projections stay
+    scoped to `self.owner_id` regardless of the reminder-side argument."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    projection = MagicMock(spec=WatchlistProjection)
+    projection.list_jobs.return_value = []
+    svc.watchlist_projection = projection
+
+    tasks = await svc.list_tasks(owner_id=None)
+
+    assert tasks == []
+    projection.list_jobs.assert_called_once_with(owner_id="local")
 
 
 # --- briefing projection (task-1810): scheduled briefings on the unified list ---
@@ -559,6 +804,33 @@ async def test_list_tasks_includes_both_watchlist_and_briefing_projections(db):
 
     types = {task.type for task in tasks if isinstance(task, ScheduledTask)}
     assert types == {"watchlist_job", "briefing_job"}
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_include_projections_false_skips_the_projection_reads(db):
+    """redesign PR-2 Task 2 review, finding 2: the unified Queue's
+    `load_tasks` immediately discards every `ScheduledTask` row, so
+    `include_projections=False` must stop `list_tasks` from calling
+    `list_jobs` on either projection at all -- not just from returning
+    their rows. `list_jobs.assert_not_called()` is the counting-fake pin
+    the review asked for; the DEFAULT (`include_projections=True`, the
+    existing tests above) must keep calling both.
+    """
+    svc = SchedulingService(db=db, runtime_source="local")
+    await svc.create_reminder(_reminder_payload("Reminder"))
+
+    watchlist_projection = MagicMock(spec=WatchlistProjection)
+    briefing_projection = MagicMock(spec=BriefingProjection)
+    svc.watchlist_projection = watchlist_projection
+    svc.briefing_projection = briefing_projection
+
+    tasks = await svc.list_tasks(include_projections=False)
+
+    watchlist_projection.list_jobs.assert_not_called()
+    briefing_projection.list_jobs.assert_not_called()
+    assert len(tasks) == 1
+    assert isinstance(tasks[0], ReminderTask)
+    assert tasks[0].title == "Reminder"
 
 
 @pytest.mark.asyncio
@@ -729,3 +1001,3291 @@ def test_app_wiring_briefing_projection_is_live_not_a_frozen_none():
         app.scheduling_service.briefing_projection
         is app.scheduler_loop.queue.briefing_projection
     )
+
+
+# ---------------------------------------------------------------------------
+# review_automation_result (schedules-handoff PR-3, task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_local_only_updates_without_mutation(db):
+    result_id = db.create_automation_result(
+        "local", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "not relevant")
+
+    assert ok is True
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "dismissed"
+    assert row["review_note"] == "not relevant"
+    assert db.get_pending_mutations("local", primitive="automation_result_review") == []
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_server_mirrored_records_pending_mutation(db):
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="server:1")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "dismissed"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == result_id
+    assert pending[0]["payload"] == {
+        "server_result_id": "srv-res-1",
+        "review_state": "dismissed",
+        "review_note": "noise",
+        "idempotency_key": pending[0]["payload"]["idempotency_key"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_records_mutation_under_row_owner(db):
+    """F1 (task-23105-review): the row's own owner_id is authoritative.
+
+    The workbench can toggle the service's active owner independently of
+    which owner a given result row belongs to -- recording the pending
+    mutation under ``self.owner_id`` would strand it where the row's real
+    owner never sees it via ``get_pending_mutations``.
+    """
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == result_id
+    assert db.get_pending_mutations("local", primitive="automation_result_review") == []
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_rejects_unknown_review_state(db):
+    result_id = db.create_automation_result(
+        "local", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "bogus")
+
+    assert ok is False
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "unread"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_unknown_id_returns_false(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result("no-such-id", "dismissed")
+
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_server_mirrored_makes_a_single_db_call(db):
+    """review round 1 finding: the review write and its outbox mutation
+    must be ONE ``update_result_review(..., pending_mutation=...)`` call --
+    not a separate ``record_pending_mutation`` call after -- so the two
+    can never land in different transactions.
+    """
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="server:1")
+
+    real_update = db.update_result_review
+    calls: list[dict] = []
+
+    def _spy_update(*args, **kwargs):
+        calls.append(kwargs)
+        return real_update(*args, **kwargs)
+
+    db.update_result_review = _spy_update  # type: ignore[method-assign]
+    db.record_pending_mutation = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError(
+            "record_pending_mutation must not be called separately from "
+            "review_automation_result -- it must go through "
+            "update_result_review(pending_mutation=...)"
+        )
+    )
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    assert len(calls) == 1
+    mutation = calls[0]["pending_mutation"]
+    assert mutation["local_id"] == result_id
+    assert mutation["owner_id"] == "server:1"
+    assert mutation["payload"]["server_result_id"] == "srv-res-1"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+
+
+# ----------------------------------------------------------------------
+# preview_definition / save_definition (schedules-handoff PR-4, task 4)
+# ----------------------------------------------------------------------
+
+
+def _definition_payload(**overrides):
+    """Build a valid recurring_question authoring payload for tests."""
+    payload = {
+        "family": "recurring_question",
+        "name": "Daily standup question",
+        "description": "Asks a daily question",
+        "config": {},
+        "input": {"question": "What did you work on today?"},
+        "schedule": {"kind": "interval", "every_seconds": 3600},
+        "visibility_policy": "findings_only",
+        "notification_policy": {},
+        "approval_policy": {},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _server_definition_echo(**overrides):
+    """A `ScheduledTaskDefinitionResponse`-shaped create/update echo."""
+    item = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily standup question",
+        "lifecycle": "configured",
+        "health": "execution_unavailable",
+        "schedule": {"kind": "interval", "every_seconds": 3600},
+        "input": {"question": "What did you work on today?"},
+        "config": {},
+        "visibility_policy": {"mode": "findings_only"},
+        "notification_policy": {},
+        "approval_policy": {},
+        "version": 1,
+        "created_at": "2026-09-01T09:00:00+00:00",
+        "updated_at": "2026-09-01T09:00:00+00:00",
+    }
+    item.update(overrides)
+    return item
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_local_owner_valid(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    preview = await svc.preview_definition(_definition_payload(), "local")
+
+    assert preview.status == "valid"
+    assert preview.normalized_config["name"] == "Daily standup question"
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_local_owner_invalid(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    preview = await svc.preview_definition(_definition_payload(name=""), "local")
+
+    assert preview.status == "invalid"
+    assert any(error["field"] == "name" for error in preview.validation_errors)
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_rejects_unsupported_family(db):
+    """v1 scope guard: `agent_task` is rejected before Task 1's pure preview
+    runs, so its fabricated `family: unsupported` scope-cut error (a
+    documented gap, not real server parity) never reaches a caller through
+    this facade."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    preview = await svc.preview_definition(
+        _definition_payload(family="agent_task"), "local"
+    )
+
+    assert preview.status == "invalid"
+    assert preview.validation_errors == [
+        {
+            "field": "family",
+            "code": "unsupported",
+            "message": (
+                "Only recurring_question automations can be authored here "
+                "(agent_task authoring is not yet available)."
+            ),
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_server_owner_online(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "mode": "create",
+        "family": "recurring_question",
+        "status": "valid",
+        "normalized_config": {"name": "Daily standup question"},
+        "validation_errors": [],
+        "warnings": [],
+        "visibility_policy": {"mode": "findings_only"},
+        "schedule_preview": {"kind": "interval", "every_seconds": 3600},
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    preview = await svc.preview_definition(_definition_payload(), "server:1")
+
+    assert preview.status == "valid"
+    assert preview.id == "prev-1"
+    server_client.preview_automation_definition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_server_owner_falls_back_local_on_unreachable(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    preview = await svc.preview_definition(_definition_payload(), "server:1")
+
+    assert preview.status == "valid"  # local validation still runs offline
+    assert any(
+        warning["field"] == "_owner" and warning["code"] == "server_unreachable"
+        for warning in preview.warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_create(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(_definition_payload(), "local")
+
+    assert outcome.status == "saved"
+    assert outcome.errors == []
+    assert outcome.definition_id
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row["name"] == "Daily standup question"
+    assert row["family"] == "recurring_question"
+    assert row["owner_id"] == "local"
+    assert row["schedule"] == {"kind": "interval", "every_seconds": 3600}
+    # visibility_policy on the DB row comes from the preview's wrapped
+    # top-level field, not normalized_config's flat mode string.
+    assert row["visibility_policy"] == {"mode": "findings_only"}
+    assert row["next_run_at"]  # an interval schedule always computes one
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_create_strips_derived_resolved_sources(db):
+    """Task 6 E2E finding: a default (`all_searchable_library`) scope's
+    preview-normalized form injects a `resolved_sources` projection that
+    `normalize_recurring_question_scope` itself does not accept as input
+    (`SUPPORTED_SCOPE_FIELDS` has no such field). Persisting it verbatim
+    made every later re-normalization of this row's stored scope --
+    `automation_execution.py`'s dispatch, `automation_health.py`'s
+    sources-readable check -- report a spurious "unsupported field" error
+    and degrade every scheduled run. The stored row must not carry it."""
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        normalize_recurring_question_scope,
+    )
+
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(_definition_payload(), "local")
+
+    row = db.get_automation_definition(outcome.definition_id)
+    stored_scope = row["config"]["scope"]
+    assert "resolved_sources" not in stored_scope
+    assert stored_scope["mode"] == "all_searchable_library"
+    # And the stored value must be safe to re-normalize, the way a real
+    # scheduled dispatch or health check does.
+    _normalized, errors, _warnings = normalize_recurring_question_scope(stored_scope)
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_edit(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    created = await svc.save_definition(_definition_payload(), "local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "local",
+        definition_id=created.definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id == created.definition_id
+    row = db.get_automation_definition(created.definition_id)
+    assert row["name"] == "Updated standup question"
+    assert row["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_save_definition_local_invalid_writes_nothing(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(_definition_payload(name=""), "local")
+
+    assert outcome.status == "invalid"
+    assert any(error["field"] == "name" for error in outcome.errors)
+    assert db.list_automation_definitions(owner_id="local") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_family_guard_writes_nothing(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(family="agent_task"), "local"
+    )
+
+    assert outcome.status == "invalid"
+    assert outcome.errors[0]["field"] == "family"
+    assert db.list_automation_definitions(owner_id="local") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_unknown_definition_id_returns_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(), "local", definition_id="no-such-id"
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_online_create_mirrors_new_row(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = _server_definition_echo()
+
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row["server_id"] == "srv-def-1"
+    assert row["owner_id"] == "server:1"
+    server_client.create_automation_definition.assert_awaited_once_with("prev-1")
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_online_sends_server_vocab_schedule(db):
+    """Fix-round 1, finding 2 (task-3-review.md): the online server-owner
+    branch was sending the CLIENT-vocab schedule straight to the server's
+    preview, which passes `_validate_schedule` (kind-only) and then never
+    arms server-side. Only the network-bound copy must be translated."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = _server_definition_echo()
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    await svc.save_definition(_definition_payload(), "server:1")
+
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["schedule"] == {"kind": "interval", "seconds": 3600}
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_fallback_keeps_client_vocab_schedule(
+    db,
+):
+    """The offline-fallback leg (same payload as the test above) must NOT
+    translate: `request` also feeds the local pure preview and is queued
+    verbatim as the pending mutation's `definition_payload`, which
+    `SyncEngine` translates at push time (task 3) -- translating it here
+    too would make the queued payload lie about its own vocabulary."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert pending[0]["payload"]["definition_payload"]["schedule"] == {
+        "kind": "interval",
+        "every_seconds": 3600,
+    }
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_online_edit_adopts_existing_row(db):
+    """An edit of an already-synced row must adopt onto the SAME local
+    row, never insert a second mirror for the same definition."""
+    def_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Original", server_id="srv-def-1"
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-2",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.update_automation_definition.return_value = _server_definition_echo(
+        name="Updated standup question"
+    )
+
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "server:1",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id == def_id
+    assert len(db.list_automation_definitions(owner_id="server:1")) == 1
+    row = db.get_automation_definition(def_id)
+    assert row["name"] == "Updated standup question"
+    server_client.update_automation_definition.assert_awaited_once_with(
+        "srv-def-1", "prev-2"
+    )
+
+    # The outgoing preview request carried the local row's version, per
+    # the server's required_for_update check (Task 3's handoff note).
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["definition_version"] == 1
+    assert request["definition_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_online_preview_rejected_writes_nothing(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "status": "invalid",
+        "validation_errors": [
+            {"field": "name", "code": "required", "message": "Name is required."}
+        ],
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "invalid"
+    assert outcome.errors[0]["field"] == "name"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    server_client.create_automation_definition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_create_queues_one_mutation(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    assert outcome.definition_id
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row["owner_id"] == "server:1"
+    assert row["server_id"] is None
+    assert row["lifecycle"] == "configured"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == outcome.definition_id
+    assert pending[0]["payload"]["action"] == "create"
+    assert pending[0]["payload"]["server_definition_id"] is None
+    assert (
+        pending[0]["payload"]["definition_payload"]["family"] == "recurring_question"
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_create_is_a_single_atomic_db_call(
+    db,
+):
+    """Same atomicity pin as `review_automation_result`'s: the row write
+    and its outbox mutation must be ONE DB call -- not a separate
+    ``record_pending_mutation`` call after -- so the two can never land in
+    different transactions."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    real_create = db.create_automation_definition
+    calls: list[dict] = []
+
+    def _spy_create(*args, **kwargs):
+        calls.append(kwargs)
+        return real_create(*args, **kwargs)
+
+    db.create_automation_definition = _spy_create  # type: ignore[method-assign]
+    db.record_pending_mutation = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError(
+            "record_pending_mutation must not be called separately from "
+            "save_definition -- it must go through "
+            "create_automation_definition(pending_mutation=...)"
+        )
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    assert len(calls) == 1
+    assert calls[0]["pending_mutation"]["owner_id"] == "server:1"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_edit_queues_update_mutation(db):
+    """Final review C1: the queued `definition_version` must stay equal to
+    the version the SERVER holds (the local column is a mirror of it), and
+    an offline edit must not move that mirror -- the server checks it for
+    exact equality and a drifted value is rejected (409) forever."""
+    server_version = 7
+    db.upsert_automation_definitions_from_server(
+        "server:1",
+        [
+            _server_definition_echo(
+                id="srv-def-9", name="Original", version=server_version
+            )
+        ],
+    )
+    def_id = db.get_automation_definition_by_server_id("server:1", "srv-def-9")["id"]
+
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "server:1",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "queued"
+    assert outcome.definition_id == def_id
+    assert len(db.list_automation_definitions(owner_id="server:1")) == 1
+    row = db.get_automation_definition(def_id)
+    assert row["name"] == "Updated standup question"
+    assert row["version"] == server_version  # the mirror did not drift
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert pending[0]["payload"]["server_definition_id"] == "srv-def-9"
+    assert (
+        pending[0]["payload"]["definition_payload"]["definition_version"]
+        == server_version
+    )
+
+    # A SECOND offline edit REPLACES that mutation (pending_mutations is
+    # UNIQUE(local_id, primitive, owner_id)) -- the replacement must still
+    # carry the server's version, not a locally-bumped one.
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated again"), "server:1", definition_id=def_id
+    )
+
+    assert outcome.status == "queued"
+    assert db.get_automation_definition(def_id)["version"] == server_version
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert (
+        pending[0]["payload"]["definition_payload"]["definition_version"]
+        == server_version
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_server_rejection_is_error_not_queued(db):
+    """Final review C2: a server-side 4xx (here a 409 version conflict,
+    mapped to `ServerClientValidationError`) is deterministic -- replaying
+    it hits the identical refusal, so the save must report `error` and
+    write/queue nothing, exactly like the policy refusal it sits beside."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = (
+        ServerClientValidationError("scheduled_task_definition_version_conflict")
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "server_rejected"
+    assert "version_conflict" in outcome.errors[0]["message"]
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_commit_rejection_is_error_not_queued(db):
+    """Same as above for the COMMIT call (the preview was accepted) -- the
+    PATCH is where the real 409s live."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = ServerClientValidationError(
+        "scheduled_task_schedule_invalid"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "server_rejected"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_edit_preserves_fields_the_payload_does_not_carry(db):
+    """Final review I4: the v1 modal exposes neither `description` nor the
+    visibility/approval/retention policies (nor `input.max_tokens`), so a
+    rename must not wipe them -- in the DB row OR in the update payload
+    that goes to the server."""
+    db.upsert_automation_definitions_from_server(
+        "server:1",
+        [
+            _server_definition_echo(
+                id="srv-def-5",
+                version=3,
+                description="Digest of everything that changed",
+                visibility_policy={"mode": "metadata_only"},
+                approval_policy={"mode": "manual"},
+                config={
+                    "scope": {"mode": "all_searchable_library"},
+                    "retention_policy": {"mode": "custom", "keep_days": 30},
+                },
+                input={"question": "What changed?", "max_tokens": 4096},
+                notification_policy={"on_success": True, "channels": ["email"]},
+            )
+        ],
+    )
+    def_id = db.get_automation_definition_by_server_id("server:1", "srv-def-5")["id"]
+
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    # The v1 form's payload shape: no description, no policies, no max_tokens.
+    outcome = await svc.save_definition(
+        {
+            "family": "recurring_question",
+            "mode": "update",
+            "name": "Renamed",
+            "input": {"question": "What changed?", "provider": None, "model": None},
+            "schedule": {"kind": "interval", "every_seconds": 3600},
+            "config": {
+                "scope": {"mode": "all_searchable_library"},
+                "generation_mode": "optional",
+                "finding_policy": {"preset": "balanced_findings"},
+            },
+            "notification_policy": {"on_success": False, "on_failure": False},
+        },
+        "server:1",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "queued"
+    row = db.get_automation_definition(def_id)
+    assert row["name"] == "Renamed"
+    assert row["description"] == "Digest of everything that changed"
+    assert row["visibility_policy"] == {"mode": "metadata_only"}
+    assert row["approval_policy"] == {"mode": "manual"}
+    assert row["config"]["retention_policy"] == {"mode": "custom", "keep_days": 30}
+    assert row["input"]["max_tokens"] == 4096
+    assert row["notification_policy"]["channels"] == ["email"]
+    # The form's own fields still win over the stored ones.
+    assert row["notification_policy"]["on_success"] is False
+    assert row["input"].get("provider") is None
+
+    outgoing = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )[0]["payload"]["definition_payload"]
+    assert outgoing["description"] == "Digest of everything that changed"
+    assert outgoing["visibility_policy"] == {"mode": "metadata_only"}
+    assert outgoing["approval_policy"] == {"mode": "manual"}
+    assert outgoing["config"]["retention_policy"] == {"mode": "custom", "keep_days": 30}
+    assert outgoing["input"]["max_tokens"] == 4096
+
+
+@pytest.mark.asyncio
+async def test_save_definition_edit_still_clears_a_field_the_payload_carries(db):
+    """The merge fills OMITTED keys only -- a payload that does carry a
+    field (here `input.provider`, which the form exposes and emits as
+    `None` when blank) still clears the stored value."""
+    def_id = db.create_automation_definition(
+        "local",
+        "recurring_question",
+        "Pinned",
+        input={"question": "What changed?", "provider": "openai", "model": "gpt-5"},
+        schedule={"kind": "interval", "every_seconds": 3600},
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(
+        _definition_payload(
+            name="Pinned",
+            input={"question": "What changed?", "provider": None, "model": None},
+        ),
+        "local",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(def_id)
+    assert row["input"]["provider"] is None
+    assert row["input"]["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_save_definition_edit_merges_over_a_sql_null_json_column(db):
+    """task-4 review Finding 1: `config`/`input`/`notification_policy`
+    may be SQL NULL (Python `None`) rather than `{}` -- reachable via
+    `create_automation_definition`'s own `None -> NULL` pass-through (the
+    same shape `upsert_automation_definitions_from_server`'s INSERT path
+    used to leave before its own fix) for a definition a caller never
+    populated one of these groups on. `_merge_definition_payload`'s old
+    `isinstance(stored, dict)` gate treated NULL as "nothing to merge"
+    and skipped the branch entirely -- dropping the payload's OWN
+    incoming value for that group too, not just the (nonexistent) stored
+    one. Edits the SAME group that is NULL (`config`, via the Generation
+    row's real edit shape) to pin the exact failure mode the review
+    reproduced."""
+    def_id = db.create_automation_definition(
+        "local",
+        "recurring_question",
+        "Nully digest",
+        input={"question": "What shipped?"},
+        config=None,
+        notification_policy=None,
+        schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+    )
+    row = db.get_automation_definition(def_id)
+    assert row["config"] is None
+    assert row["notification_policy"] is None
+
+    svc = SchedulingService(db=db, runtime_source="local")
+    outcome = await svc.save_definition(
+        {
+            "family": "recurring_question",
+            "name": "Nully digest",
+            "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            "config": {"generation_mode": "required"},
+            "input": {},
+            "notification_policy": {},
+        },
+        "local",
+        definition_id=def_id,
+    )
+
+    assert outcome.status == "saved", outcome.errors
+    row = db.get_automation_definition(def_id)
+    assert row["config"]["generation_mode"] == "required"
+    assert row["input"]["question"] == "What shipped?"  # untouched group preserved
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_invalid_writes_nothing(db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(name=""), "server:1")
+
+    assert outcome.status == "invalid"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_commit_failure_falls_back_offline(db):
+    """The seam can fail AFTER a valid preview too (the commit call
+    itself) -- that must fall back to the same offline path as a preview
+    failure, not raise or silently drop the save."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_definition_missing_family_rejected_not_crashed(db):
+    """`AutomationFamily(None)` raises `ValueError` internally -- the guard
+    must catch it and reject cleanly, not propagate."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    payload = _definition_payload()
+    del payload["family"]
+
+    outcome = await svc.save_definition(payload, "local")
+
+    assert outcome.status == "invalid"
+    assert outcome.errors[0]["field"] == "family"
+    assert db.list_automation_definitions(owner_id="local") == []
+
+
+# ----------------------------------------------------------------------
+# preview_definition / save_definition fix round 1: ServerClientPolicyError
+# handling + stale-mutation clearing on a successful online save
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_server_owner_policy_denied_uses_policy_wording(db):
+    """review finding 3: a deterministic policy refusal must not be
+    reported with connectivity wording ("could not reach the server")
+    since retrying will never change the outcome."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    preview = await svc.preview_definition(_definition_payload(), "server:1")
+
+    assert preview.status == "valid"  # local validation still runs offline
+    warning = next(w for w in preview.warnings if w["field"] == "_owner")
+    assert warning["code"] == "policy_denied"
+    assert "could not reach" not in warning["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_preview_policy_denied_returns_error(db):
+    """review finding 1: a policy refusal on the preview call must report
+    status="error" and write nothing -- NOT fall back to the offline
+    queue, since a replay would hit the identical refusal and SyncEngine
+    swallows it silently (the save would be "queued" forever)."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "policy_denied"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_commit_policy_denied_returns_error(db):
+    """Same as above, but the refusal happens on the commit call (preview
+    was valid) rather than the preview call itself."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "policy_denied"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_online_success_clears_stale_offline_mutation(db):
+    """review finding 2: a successful ONLINE save must clear any pending
+    `automation_definition` mutation left queued by an earlier offline
+    save on the same row -- otherwise the next sync replays the stale
+    mutation, creating a duplicate server-side definition (never-synced
+    row) or silently reverting this save's newer edit (already-synced
+    row)."""
+    offline_client = AsyncMock()
+    offline_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=offline_client, runtime_source="server:1"
+    )
+
+    queued = await svc.save_definition(_definition_payload(), "server:1")
+    assert queued.status == "queued"
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="automation_definition"))
+        == 1
+    )
+
+    online_client = AsyncMock()
+    online_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    online_client.create_automation_definition.return_value = _server_definition_echo()
+    svc.server_client = online_client
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "server:1",
+        definition_id=queued.definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id == queued.definition_id
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    # No duplicate row: the online save adopted the SAME local row.
+    rows = db.list_automation_definitions(owner_id="server:1")
+    assert len(rows) == 1
+    assert rows[0]["server_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_targets_another_owner_without_flipping_owner_id(db):
+    """Qodo HIGH: a cross-owner save threads its owner through the call
+    instead of flipping the service's shared `owner_id` around the awaited
+    network round-trip -- concurrent workers (sync, refresh, run-now) read
+    that attribute and must never observe the temporary owner."""
+    observed: list[str] = []
+
+    class _ObservingClient:
+        notifications_service = object()
+
+        async def create_reminder(self, **payload):
+            # Stands in for any concurrent worker reading the shared owner
+            # while this call is in flight.
+            observed.append(svc.owner_id)
+            raise ServerUnavailableError("offline")
+
+    svc = SchedulingService(
+        db=db, server_client=_ObservingClient(), runtime_source="local"
+    )
+
+    task = await svc.create_reminder(
+        _reminder_payload("Server reminder"), owner_id="server:1"
+    )
+
+    assert observed == ["local"], "the active owner must stay untouched"
+    assert svc.owner_id == "local"
+    assert svc.sync_engine.owner_id == "local"
+    # The row and its queued push both land under the TARGET owner.
+    rows = db.list_reminder_tasks(owner_id="server:1")
+    assert [row["id"] for row in rows] == [task.id]
+    assert db.list_reminder_tasks(owner_id="local") == []
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "create"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_targets_another_owner_without_flipping_owner_id(db):
+    """Same threading rule on the update path."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    created = await svc.create_reminder(_reminder_payload("Server reminder"))
+    # Already known to the server, so the update takes the PATCH branch.
+    db.update_reminder_task(created.id, server_id="srv-1")
+
+    offline_client = AsyncMock()
+    offline_client.notifications_service = object()
+    offline_client.update_reminder.side_effect = ServerUnavailableError("offline")
+    svc.server_client = offline_client
+
+    await svc.update_reminder(created.id, {"title": "Renamed"}, owner_id="server:1")
+
+    assert svc.owner_id == "local"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert db.get_reminder_task(created.id)["title"] == "Renamed"
+
+
+@pytest.mark.asyncio
+async def test_reminder_owner_defaults_to_the_active_owner(db):
+    """The new parameter is optional: every pre-existing caller is unchanged."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Default owner"))
+    assert db.get_reminder_task(task.id)["owner_id"] == "local"
+
+
+# ----------------------------------------------------------------------
+# Transfer machine facade (schedules-handoff PR-5, Task 6, spec §6)
+# ----------------------------------------------------------------------
+
+
+class _FakeApp:
+    """Stands in for the app -- only `active_server_id` is read by the
+    transfer facade (`_active_server_owner_id`)."""
+
+    def __init__(self, active_server_id="1"):
+        self.active_server_id = active_server_id
+
+
+def _connected_server_client():
+    """An AsyncMock server client that reads as "a server is connected"
+    (`transfer_refusal`'s `notifications_service is not None` check)."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    return client
+
+
+def _transfer_service(db, *, server_client=None, active_server_id="1", **kwargs):
+    app = _FakeApp(active_server_id) if active_server_id is not None else None
+    kwargs.setdefault("runtime_source", "local")
+    svc = SchedulingService(
+        db=db,
+        server_client=server_client,
+        app_getter=(lambda: app) if app is not None else None,
+        **kwargs,
+    )
+    # task-3 (ruling 4): `transfer_refusal` now also gates on
+    # `server_reachable`, which only a real `refresh_server_reachability`
+    # probe sets -- these tests exercise everything ELSE `transfer_
+    # refusal` checks against an assumed-connected server, so pre-seed the
+    # same "a probe already succeeded" state `_connected_server_client()`
+    # implies, rather than making every caller await a probe just to
+    # reach the check it actually wants to test. A test that wants the
+    # unreachable-but-configured case instead sets `svc._server_reachable
+    # = False` back after calling this helper (see
+    # `test_transfer_refusal_configured_but_unreachable` below).
+    if server_client is not None:
+        svc._server_reachable = True
+    return svc
+
+
+def _make_reminder(db, **overrides):
+    kwargs = dict(
+        owner_id="local",
+        title="Reminder",
+        schedule_kind="one_time",
+        run_at="2030-01-01T00:00:00+00:00",
+    )
+    kwargs.update(overrides)
+    return db.create_reminder_task(**kwargs)
+
+
+def _make_definition(db, **overrides):
+    kwargs = dict(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily Q",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    kwargs.update(overrides)
+    return db.create_automation_definition(**kwargs)
+
+
+def _stub_health(monkeypatch, health="ready", reason=""):
+    monkeypatch.setattr(
+        scheduling_service_module,
+        "compute_local_health",
+        lambda app, row: (health, reason),
+    )
+
+
+# -- transfer_refusal ----------------------------------------------------
+
+
+def test_transfer_refusal_no_server_connection(db):
+    svc = _transfer_service(db, server_client=None)
+    row = db.get_reminder_task(_make_reminder(db))
+    for direction in ("to_server", "to_local"):
+        reason = svc.transfer_refusal(row, direction)
+        assert reason == "No server connection is configured."
+
+
+def test_transfer_refusal_configured_but_unreachable(db):
+    """task-3 (ruling 4, root-causes.md #5): a server IDENTITY being
+    configured is not proof anything ever answered it -- the three old
+    checks `_server_available`/`transfer_refusal` stopped at (client
+    object exists, an id string is set, `notifications_service` was
+    constructed) never contacted anything. `server_reachable` defaults
+    `False` until `refresh_server_reachability` actually probes and
+    succeeds; a configured-but-unreachable server must refuse with its
+    OWN reason, distinct from "not configured at all" (the UX-grammar
+    split ruling 4 calls for)."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    svc._server_reachable = False  # no probe has succeeded (yet)
+    row = db.get_reminder_task(_make_reminder(db))
+    for direction in ("to_server", "to_local"):
+        reason = svc.transfer_refusal(row, direction)
+        assert reason == "The configured server is not reachable right now."
+
+
+def test_transfer_refusal_to_server_already_server_owned(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db, owner_id="server:1", server_id="srv-1"))
+    reason = svc.transfer_refusal(row, "to_server")
+    assert reason == "This row already lives on the server."
+
+
+def test_transfer_refusal_to_server_no_active_server_identity(db):
+    svc = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    row = db.get_reminder_task(_make_reminder(db))
+    reason = svc.transfer_refusal(row, "to_server")
+    assert reason == "No server identity is configured."
+
+
+def test_transfer_refusal_to_local_not_server_owned(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db))
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "This row is not server-owned."
+
+
+def test_transfer_refusal_to_local_missing_server_id(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db, owner_id="server:1"))
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "This row is not server-owned."
+
+
+@pytest.mark.parametrize("direction", ["to_server", "to_local"])
+def test_transfer_refusal_already_in_progress(db, direction):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    if direction == "to_server":
+        row = db.get_reminder_task(
+            _make_reminder(db, transfer_state="to_server_pending")
+        )
+    else:
+        row = db.get_reminder_task(
+            _make_reminder(
+                db,
+                owner_id="server:1",
+                server_id="srv-1",
+                transfer_state="from_server_pending",
+            )
+        )
+    reason = svc.transfer_refusal(row, direction)
+    assert reason == "A transfer is already in progress on this row."
+
+
+@pytest.mark.parametrize("lifecycle", ["archived", "solved"])
+def test_transfer_refusal_lifecycle_not_transferable(db, lifecycle):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db, lifecycle=lifecycle)
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_server")
+    assert reason == f"This automation is {lifecycle} and cannot transfer."
+
+
+def test_transfer_refusal_to_local_agent_task_always_refuses(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(
+        db,
+        owner_id="server:1",
+        server_id="srv-def-1",
+        family="agent_task",
+    )
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "Agent-task automations cannot run locally yet."
+
+
+def test_transfer_refusal_to_local_recurring_question_quotes_health_reason(
+    db, monkeypatch
+):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    _stub_health(monkeypatch, health="permission_required", reason="No provider configured.")
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "No provider configured."
+
+
+def test_transfer_refusal_allows_happy_path_both_directions(db, monkeypatch):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    _stub_health(monkeypatch, health="ready")
+
+    to_server_row = db.get_reminder_task(_make_reminder(db))
+    assert svc.transfer_refusal(to_server_row, "to_server") is None
+
+    to_local_def = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    to_local_row = db.get_automation_definition(to_local_def)
+    assert svc.transfer_refusal(to_local_row, "to_local") is None
+
+
+# -- refresh_server_reachability (task-3, ruling 4) ------------------------
+
+
+def test_refresh_server_reachability_defaults_none_until_probed(db):
+    """`server_reachable` starts `None` (unprobed, final review finding
+    2) -- distinct from `False` (probed and failed) so the header can
+    tell "haven't checked" apart from "checked and failed" -- but still
+    falsy, so ruling 4's "until a probe has succeeded, the option must
+    not be offered" still holds via `_server_available`'s `bool(...)`
+    wrap."""
+    svc = SchedulingService(db=db, server_client=None)
+    assert svc.server_reachable is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_no_client_stays_false(db):
+    svc = SchedulingService(db=db, server_client=None)
+    result = await svc.refresh_server_reachability()
+    assert result is False
+    assert svc.server_reachable is False
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_succeeds_when_capabilities_probe_lands(db):
+    """Reuses the capabilities handshake's own round trip (ruling 5) as
+    the reachability probe -- any successful response, present or absent
+    capabilities alike, proves the server actually answered. Also pins
+    the Qodo fix round finding 1 cache-bypass: the explicit probe always
+    passes `force=True` so it never answers from a stale cached verdict."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.return_value = {"items": []}
+    svc = SchedulingService(db=db, server_client=client)
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True
+    assert svc.server_reachable is True
+    client.get_capabilities.assert_awaited_once_with(force=True)
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_false_when_probe_raises(db):
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = RuntimeError("connection refused")
+    svc = SchedulingService(db=db, server_client=client)
+    svc._server_reachable = True  # a prior probe had succeeded
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is False
+    assert svc.server_reachable is False, (
+        "a failed re-probe must not leave the stale 'reachable' verdict standing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_policy_denial_leaves_reachable_as_is(db):
+    """A local `ServerClientPolicyError` refuses BEFORE any network
+    attempt -- no round trip happened, so it establishes nothing new
+    about the network either way. A PRIOR reachable verdict must
+    survive it, and `server_permission_denied` must record the distinct
+    signal (final review finding 7)."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = ServerClientPolicyError(
+        "scheduler.automations.list.server denied"
+    )
+    svc = SchedulingService(db=db, server_client=client)
+    svc._server_reachable = True  # a prior probe had succeeded
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True, "a prior reachable verdict must survive a permission denial"
+    assert svc.server_reachable is True
+    assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_policy_denial_leaves_unprobed_as_unprobed(
+    db,
+):
+    """The FIRST-EVER probe hitting a policy denial establishes nothing
+    about the network either way -- `server_reachable` must stay `None`
+    (unprobed), not flip to a confident `True` or `False` it hasn't
+    earned."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = ServerClientPolicyError("denied")
+    svc = SchedulingService(db=db, server_client=client)
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is False  # bool(None) is False -- still "not confirmed"
+    assert svc.server_reachable is None
+    assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_401_proves_reachable_even_from_false(db):
+    """Qodo fix round finding 1 (ruling reversal), pin (b): a genuine
+    401/403 from the server (`ServerClientValidationError`) is the
+    server ACTUALLY ANSWERING -- that answer IS proof of network
+    reachability, so it is set `True` outright, even overriding a prior
+    `False` verdict. A reminder transfer needs no automations-list
+    permission at all -- only the automations affordance itself refuses,
+    with permission-naming copy via `server_permission_denied`, never
+    'server not reachable'."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = ServerClientValidationError("401 unauthorized")
+    svc = SchedulingService(db=db, server_client=client)
+    svc._server_reachable = False  # a prior probe had failed
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True, "a 401 answer proves the server is there, unlike a prior failure"
+    assert svc.server_reachable is True
+    assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_401_proves_reachable_even_unprobed(db):
+    """The FIRST-EVER probe landing a 401 still proves reachability --
+    unlike a policy denial, a `ServerClientValidationError` means the
+    server actually answered, so `server_reachable` becomes `True`
+    rather than staying `None`."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    client.get_capabilities.side_effect = ServerClientValidationError("403 forbidden")
+    svc = SchedulingService(db=db, server_client=client)
+
+    result = await svc.refresh_server_reachability()
+
+    assert result is True
+    assert svc.server_reachable is True
+    assert svc.server_permission_denied is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_server_reachability_bypasses_the_capabilities_cache(db):
+    """Qodo fix round finding 1, pin (a): a server that dies after an
+    earlier successful probe must be caught on the NEXT explicit probe,
+    not answered forever from `SchedulingServerClient`'s permanent
+    per-connection capabilities cache. Exercises the real
+    `SchedulingServerClient` (not a mock) so the cache-bypass wiring
+    itself is under test, not just the service's exception handling."""
+    service = MagicMock()
+    service.get_scheduled_automation_capabilities = AsyncMock(return_value={"items": []})
+    client = SchedulingServerClient(
+        notifications_service=service,
+        config=ServerClientConfig(max_retries=0, retry_delay=0),
+    )
+    svc = SchedulingService(db=db, server_client=client)
+
+    first = await svc.refresh_server_reachability()
+    assert first is True
+    assert svc.server_reachable is True
+
+    # The server dies; without a cache bypass, `get_capabilities()` would
+    # answer from the cached success forever and never notice.
+    service.get_scheduled_automation_capabilities = AsyncMock(
+        side_effect=ConnectionRefusedError("connection refused")
+    )
+
+    second = await svc.refresh_server_reachability()
+    assert second is False
+    assert svc.server_reachable is False, (
+        "the cache must not lie -- a dead server must flip reachability on the next probe"
+    )
+
+
+def test_transfer_refusal_names_permissions_not_the_network(db):
+    """`transfer_refusal`'s copy must distinguish a permission problem
+    from "not reachable" -- final review finding 7's honest-refusal
+    grammar."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    svc._server_reachable = False
+    svc._server_permission_denied = True
+    row = db.get_reminder_task(_make_reminder(db))
+
+    reason = svc.transfer_refusal(row, "to_server")
+
+    assert reason is not None
+    assert "permission" in reason.lower()
+    assert "not reachable" not in reason
+
+
+# -- transfer_warnings -----------------------------------------------------
+
+
+def test_transfer_warnings_reminder_imminent_one_time_warns(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    soon = (datetime.now(timezone.utc)).isoformat()
+    row = db.get_reminder_task(
+        _make_reminder(db, schedule_kind="one_time", run_at=soon)
+    )
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert any("5 minutes" in w for w in warnings)
+
+
+def test_transfer_warnings_reminder_distant_one_time_no_warning(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(
+        _make_reminder(db, schedule_kind="one_time", run_at="2099-01-01T00:00:00+00:00")
+    )
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert warnings == []
+
+
+def test_transfer_warnings_reminder_timeout_seconds_warns(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(
+        _make_reminder(
+            db,
+            schedule_kind="one_time",
+            run_at="2099-01-01T00:00:00+00:00",
+            timeout_seconds=30,
+        )
+    )
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert any("timeout_seconds" in w for w in warnings)
+
+
+def test_transfer_warnings_definition_imminent_one_time_warns(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    soon = datetime.now(timezone.utc).isoformat()
+    definition_id = _make_definition(
+        db, schedule={"kind": "one_time", "run_at": soon}
+    )
+    row = db.get_automation_definition(definition_id)
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert any("5 minutes" in w for w in warnings)
+
+
+def test_transfer_warnings_definition_never_names_timeout_seconds(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    row = db.get_automation_definition(definition_id)
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert warnings == []
+
+
+# -- begin_transfer_to_server ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_not_found(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    outcome = await svc.begin_transfer_to_server("reminder_task", "no-such-id")
+    assert outcome.status == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_refused_records_nothing(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert outcome.status == "refused"
+    assert outcome.reason == "This row already lives on the server."
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_reminder_happy_path(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    reminder_id = _make_reminder(db, timeout_seconds=45)
+
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert outcome.status == "pending"
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] == "to_server_pending"
+    assert row["owner_id"] == "local"  # still executes locally while queued
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    payload = pending[0]["payload"]
+    assert payload["action"] == "transfer_to_server"
+    # link_type/link_id are injected at push time (SyncEngine), not here.
+    assert "link_type" not in payload["task_payload"]
+    assert "timeout_seconds" not in payload["task_payload"]
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_definition_happy_path(db, monkeypatch):
+    _stub_health(monkeypatch, health="ready")
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+
+    outcome = await svc.begin_transfer_to_server("automation_definition", definition_id)
+
+    assert outcome.status == "pending"
+    row = db.get_automation_definition(definition_id)
+    assert row["transfer_state"] == "to_server_pending"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    payload = pending[0]["payload"]
+    assert payload["action"] == "transfer_to_server"
+    assert payload["definition_payload"]["family"] == "recurring_question"
+    assert payload["definition_payload"]["schedule"] == {
+        "kind": "interval",
+        "every_seconds": 3600,
+    }
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_no_active_identity_refuses(db):
+    svc = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    reminder_id = _make_reminder(db)
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert outcome.reason == "No server identity is configured."
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_cas_race_refuses(db):
+    """A concurrent begin (or an already-in-flight state) loses the CAS."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+    # transfer_refusal already catches this (transfer_state is set), but
+    # pin the CAS backstop directly too: force the row's state out from
+    # under transfer_refusal's own check by bypassing it.
+    monkey_row = dict(db.get_reminder_task(reminder_id))
+    monkey_row["transfer_state"] = None  # pretend the refusal gate saw a stale read
+    reason = svc.transfer_refusal(monkey_row, "to_server")
+    assert reason is None  # confirms the CAS, not the gate, is what would catch this
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert outcome.reason == "A transfer is already in progress on this row."
+
+
+# -- begin_transfer_to_local ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_not_found(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    outcome = await svc.begin_transfer_to_local("reminder_task", "no-such-id")
+    assert outcome.status == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_refused_not_a_mirror(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    outcome = await svc.begin_transfer_to_local("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert outcome.reason == "This row is not server-owned."
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_reminder_happy_path(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    mirror_id = _make_reminder(
+        db, owner_id="server:1", server_id="srv-1", schedule_kind="one_time",
+        run_at="2030-01-01T00:00:00+00:00",
+    )
+
+    outcome = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert outcome.status == "pending"
+    copy_id = outcome.row_id
+    assert copy_id is not None and copy_id != mirror_id
+
+    # Mirror untouched, still executing server-side.
+    mirror_row = db.get_reminder_task(mirror_id)
+    assert mirror_row["transfer_state"] is None
+    assert mirror_row["owner_id"] == "server:1"
+
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["transfer_state"] == "from_server_pending"
+    assert copy_row["server_id"] is None
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == mirror_id  # keyed by the MIRROR (obligation 2)
+    payload = pending[0]["payload"]
+    assert payload["action"] == "release_from_server"
+    assert payload["server_task_id"] == "srv-1"
+    assert payload["local_copy_id"] == copy_id
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_definition_happy_path(db, monkeypatch):
+    _stub_health(monkeypatch, health="ready")
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.begin_transfer_to_local("automation_definition", mirror_id)
+
+    assert outcome.status == "pending"
+    copy_row = db.get_automation_definition(outcome.row_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["transfer_state"] == "from_server_pending"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == mirror_id
+    assert pending[0]["payload"]["server_definition_id"] == "srv-def-1"
+    assert pending[0]["payload"]["local_copy_id"] == outcome.row_id
+
+
+# -- cancel_transfer ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_not_found(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    outcome = await svc.cancel_transfer("reminder_task", "no-such-id")
+    assert outcome.status == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_unattempted_to_server_pending(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    reminder_id = _make_reminder(db)
+    begin_outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    assert begin_outcome.status == "pending"
+    notified.clear()
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] is None
+    assert row["owner_id"] == "local"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_settled_definitive_failure_to_server_failed(db):
+    """A retained, definitively-failed transfer mutation (transfer_errors
+    embedded, SyncEngine's own settlement shape) is still cancelable."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_failed", expected=(None,)
+    )
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}, "transfer_errors": ["boom"]},
+    )
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_to_server_sent_too_late(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_sent", expected=(None,)
+    )
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "refused"
+    assert "reverse transfer" in outcome.reason
+    # Untouched -- still sent, not reverted.
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_no_transfer_in_progress_too_late(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert "reverse transfer" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_release_unpushed_deletes_copy(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    begin_outcome = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    copy_id = begin_outcome.row_id
+    notified.clear()
+
+    outcome = await svc.cancel_transfer("reminder_task", copy_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(copy_id) is None  # dormant copy deleted
+    assert db.get_reminder_task(mirror_id) is not None  # server unaffected
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_release_definitively_failed_no_live_mutation(db):
+    """Obligation 3: a definitively-rejected release leaves `from_server_
+    pending` with NO live mutation (SyncEngine's own reject-and-clear
+    settlement) -- cancel must key off transfer_state, not mutation
+    existence, and still recover the dormant copy."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    begin_outcome = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    copy_id = begin_outcome.row_id
+
+    # Simulate SyncEngine's settlement of a definitive release failure:
+    # the mutation is gone, but the copy stays from_server_pending (no
+    # automatic path back to armed -- Task 5's own documented concern).
+    db.delete_pending_mutation_for_record(mirror_id, "reminder_task", "server:1")
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert db.get_reminder_task(copy_id)["transfer_state"] == "from_server_pending"
+
+    outcome = await svc.cancel_transfer("reminder_task", copy_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(copy_id) is None
+
+
+# -- recover_inflight_transfers ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_definition_cas_back_to_pending(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()
+
+    assert (
+        db.get_automation_definition(definition_id)["transfer_state"]
+        == "to_server_pending"
+    )
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_found_converts_to_mirror(db):
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {
+        "items": [
+            {
+                "id": "srv-9",
+                "title": "Recovered",
+                "schedule_kind": "one_time",
+                "run_at": "2030-01-01T00:00:00+00:00",
+                "link_type": "chatbook_transfer",
+                "link_id": None,  # filled in below
+            }
+        ]
+    }
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+    server_client.list_reminders.return_value["items"][0]["link_id"] = reminder_id
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    row = db.get_reminder_task(reminder_id)
+    assert row["owner_id"] == "server:1"
+    assert row["server_id"] == "srv-9"
+    assert row["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_absent_cas_back_to_pending(db):
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {"items": []}
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] == "to_server_pending"
+    # The mutation is left in place for the normal replay to pick up.
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_offline_leaves_row_untouched(db):
+    svc = _transfer_service(db, server_client=None)  # no server connection at all
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_no_active_identity_leaves_row_untouched(
+    db,
+):
+    svc = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_list_error_leaves_row_untouched(db):
+    server_client = _connected_server_client()
+    server_client.list_reminders.side_effect = RuntimeError("offline")
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()  # must not raise
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_ignores_non_stuck_rows(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    pending_id = _make_reminder(db, transfer_state="to_server_pending")
+    armed_id = _make_reminder(db)
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_reminder_task(pending_id)["transfer_state"] == "to_server_pending"
+    assert db.get_reminder_task(armed_id)["transfer_state"] is None
+
+
+# ----------------------------------------------------------------------
+# Fix round 1 (task-6-review.md): retry leg, vanished-row cleanup,
+# refusal check order
+# ----------------------------------------------------------------------
+
+
+def test_transfer_refusal_to_server_failed_is_not_already_in_progress(db):
+    """Obligation (f): a definitively-failed transfer is retry-eligible,
+    not refused as 'already in progress'."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db, transfer_state="to_server_failed"))
+    assert svc.transfer_refusal(row, "to_server") is None
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_retries_failed_reminder_transfer(db):
+    """Obligation (f): begin on a to_server_failed row CASes back to
+    to_server_pending and replaces the retained mutation, stripping
+    transfer_errors, so a real replay fires again on the fake."""
+    server_client = _connected_server_client()
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_failed", expected=(None,)
+    )
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "stale"},
+            "transfer_errors": ["boom"],
+            "idempotency_key": "old-key",
+        },
+    )
+
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert outcome.status == "pending"
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] == "to_server_pending"
+    assert row["owner_id"] == "local"
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    payload = pending[0]["payload"]
+    assert "transfer_errors" not in payload
+    assert payload["action"] == "transfer_to_server"
+
+    # The row is genuinely eligible for a fresh push, not just re-armed
+    # locally -- drive a real sync_now() against the fake and confirm it
+    # fires.
+    server_client.create_reminder.return_value = {"id": "srv-99", "title": "Reminder"}
+    await svc.sync_now("server:1")
+    server_client.create_reminder.assert_awaited_once()
+    assert db.get_reminder_task(reminder_id)["owner_id"] == "server:1"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_retry_definition(db, monkeypatch):
+    """Same retry leg, definitions side."""
+    _stub_health(monkeypatch, health="ready")
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_failed", expected=(None,)
+    )
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {},
+            "transfer_errors": ["invalid preview"],
+        },
+    )
+
+    outcome = await svc.begin_transfer_to_server("automation_definition", definition_id)
+
+    assert outcome.status == "pending"
+    assert (
+        db.get_automation_definition(definition_id)["transfer_state"]
+        == "to_server_pending"
+    )
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert "transfer_errors" not in pending[0]["payload"]
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_vanished_still_deletes_mutation(
+    db, monkeypatch
+):
+    """Fix round 1, finding 2: a row that vanished between the scan and
+    the convert call must not leave a dangling mutation behind."""
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {
+        "items": [
+            {
+                "id": "srv-9",
+                "title": "Recovered",
+                "schedule_kind": "one_time",
+                "run_at": "2030-01-01T00:00:00+00:00",
+                "link_type": "chatbook_transfer",
+                "link_id": None,
+            }
+        ]
+    }
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+    server_client.list_reminders.return_value["items"][0]["link_id"] = reminder_id
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+    monkeypatch.setattr(db, "convert_row_to_server_mirror", lambda *a, **k: "vanished")
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+def test_transfer_refusal_checks_family_health_before_lifecycle(db):
+    """Fix round 1, finding 3: spec §6.4 order -- family/health (target-
+    cannot-execute) is checked before lifecycle, so an archived
+    agent_task mirror reports the family reason when both apply."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(
+        db,
+        owner_id="server:1",
+        server_id="srv-def-1",
+        family="agent_task",
+        lifecycle="archived",
+    )
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "Agent-task automations cannot run locally yet."
+
+
+# ---------------------------------------------------------------------------
+# Final whole-branch review fixes (2026-09-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_to_server_offline_still_drops_the_mutation(db):
+    """C2/I3: cancel keys off the mutation's OWN owner, never today's
+    active server. Offline (`active_server_id` gone) the mutation used to
+    survive the cancel forever, CAS-skipped every cycle."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    assert (
+        await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    ).status == "pending"
+
+    # The connection drops between begin and cancel.
+    offline = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    outcome = await offline.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations(primitive="reminder_task") == [], (
+        "the transfer mutation must not outlive its cancel"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_release_offline_still_drops_the_release_mutation(db):
+    """C2: the destructive half. Offline, the old cancel deleted the
+    dormant copy but left the release mutation, which then DELETED the
+    task server-side on the next reconnect -- the task ended up existing
+    nowhere."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    copy_id = (
+        await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    ).row_id
+
+    offline = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    outcome = await offline.cancel_transfer("reminder_task", copy_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(copy_id) is None
+    assert db.get_reminder_task(mirror_id) is not None
+    assert db.get_pending_mutations(primitive="reminder_task") == [], (
+        "a surviving release would delete the server task on reconnect"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_does_not_discard_an_unrelated_queued_edit(db):
+    """The mutation-keyed cancel must only claim the TRANSFER mutation:
+    a plain queued edit on the same row is the user's work, not this
+    machine's bookkeeping."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "update", "fields": {"title": "Edited"}},
+    )
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    remaining = db.get_pending_mutations(primitive="reminder_task")
+    assert [m["payload"]["action"] for m in remaining] == ["update"]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_refuses_a_second_press(db):
+    """I5: the mirror carries no `transfer_state` (only the copy does), so
+    a second press built a second copy while the second mutation REPLACED
+    the first -- stranding copy #1 dormant forever."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    first = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    second = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert first.status == "pending"
+    assert second.status == "refused"
+    assert "already in progress" in second.reason
+    dormant = [
+        row
+        for row in db.list_reminder_tasks(owner_id="local")
+        if row["transfer_state"] == "from_server_pending"
+    ]
+    assert len(dormant) == 1
+    assert dormant[0]["id"] == first.row_id
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_definition_refuses_a_second_press(db, monkeypatch):
+    """I5 on the definitions leg -- same keying, same stranded copy."""
+    monkeypatch.setattr(
+        scheduling_service_module, "compute_local_health", lambda app, row: ("ready", "")
+    )
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    first = await svc.begin_transfer_to_local("automation_definition", mirror_id)
+    second = await svc.begin_transfer_to_local("automation_definition", mirror_id)
+
+    assert first.status == "pending"
+    assert second.status == "refused"
+
+
+@pytest.mark.parametrize(
+    "state", ["to_server_pending", "to_server_sent", "from_server_pending"]
+)
+def test_transfer_lock_reason_locks_every_in_flight_state(state):
+    """I7: spec §6.3's read-only rule, one source of truth."""
+    assert SchedulingService.transfer_lock_reason({"transfer_state": state})
+
+
+@pytest.mark.parametrize("state", [None, "to_server_failed"])
+def test_transfer_lock_reason_leaves_editable_rows_alone(state):
+    """A failed transfer re-armed locally -- editing before a retry is
+    exactly what should be possible."""
+    assert SchedulingService.transfer_lock_reason({"transfer_state": state}) is None
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_refused_while_transferring(db):
+    """I7 facade layer: the create payload was snapshotted at begin time,
+    so an edit now ships pre-edit content and is then overwritten by the
+    mirror pull."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db, title="Original")
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+
+    assert await svc.update_reminder(reminder_id, {"title": "Edited"}) is None
+    assert db.get_reminder_task(reminder_id)["title"] == "Original"
+
+
+# ----------------------------------------------------------------------
+# edit_reminder_fields (redesign PR-3 task 2's reminder validation bridge)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_cron_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(
+        db, schedule_kind="recurring", run_at=None, cron="0 9 * * *", timezone="UTC"
+    )
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"cron": "not a cron"})
+
+    assert outcome.status == "error"
+    assert outcome.errors == [
+        {
+            "field": "cron",
+            "code": "invalid_cron",
+            "message": "Cron expression is invalid.",
+        }
+    ]
+    assert db.get_reminder_task(reminder_id)["cron"] == "0 9 * * *"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_timezone_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(
+        db, schedule_kind="recurring", run_at=None, cron="0 9 * * *", timezone="UTC"
+    )
+
+    outcome = await svc.edit_reminder_fields(
+        reminder_id, {"timezone": "Not/A_Real_Zone"}
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "timezone"
+    assert outcome.errors[0]["code"] == "invalid_timezone"
+    assert db.get_reminder_task(reminder_id)["timezone"] == "UTC"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_invalid_run_at_returns_field_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "not a date"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "run_at"
+    assert outcome.errors[0]["code"] == "invalid_datetime"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_valid_run_at_accepts_forgiving_local_format(db):
+    """Reuses `reminder_form.parse_forgiving_datetime` -- a naive,
+    space-separated datetime (not full ISO-8601) must parse and persist,
+    same as the create form accepts."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "2031-06-15 09:30"})
+
+    assert outcome.status == "saved"
+    assert outcome.task is not None
+    assert (outcome.task.run_at.year, outcome.task.run_at.month, outcome.task.run_at.day) == (
+        2031,
+        6,
+        15,
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_bad_schedule_kind_returns_field_error_not_raw_exception(db):
+    """Belt-and-suspenders: a bad value the pre-checks above don't cover
+    (schedule_kind isn't cron/run_at/timezone) still routes through
+    `ReminderTask`'s own model validation inside `update_reminder` -- the
+    bridge must catch that `pydantic.ValidationError` and translate it,
+    never let it escape."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    reminder_id = _make_reminder(db)
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"schedule_kind": "bogus"})
+
+    assert outcome.status == "error"
+    assert outcome.errors
+    assert outcome.errors[0]["field"] == "schedule_kind"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_locked_row_returns_row_error(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db, title="Original")
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"title": "Edited"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "_row"
+    assert outcome.errors[0]["code"] == "transfer_in_progress"
+    assert db.get_reminder_task(reminder_id)["title"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_unknown_task_id_returns_row_not_found(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.edit_reminder_fields("does-not-exist", {"title": "Edited"})
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["field"] == "_row"
+    assert outcome.errors[0]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_edit_reminder_fields_valid_edit_threads_the_rows_owner(db):
+    """PR-2 row-owner discipline: the row's OWN `owner_id` is threaded to
+    `update_reminder`, not the service's active `owner_id` -- the unified
+    list can show a row that belongs to a different owner than the
+    service's current one (same rationale as `delete_reminder`'s)."""
+    offline_client = AsyncMock()
+    offline_client.notifications_service = object()
+    offline_client.update_reminder.side_effect = ServerUnavailableError("offline")
+
+    svc = SchedulingService(db=db, server_client=offline_client, runtime_source="local")
+    reminder_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    outcome = await svc.edit_reminder_fields(reminder_id, {"title": "Renamed"})
+
+    assert outcome.status == "saved"
+    assert outcome.task is not None
+    assert outcome.task.title == "Renamed"
+    assert svc.owner_id == "local"  # never flipped
+    offline_client.update_reminder.assert_awaited_once()
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert db.get_pending_mutations("local", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_refused_while_transferring(db):
+    """I7: deleting a dormant release copy discards the only row the
+    release is about to arm."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    copy_id = (
+        await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    ).row_id
+
+    assert await svc.delete_reminder(copy_id) is False
+    assert db.get_reminder_task(copy_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_save_definition_refused_while_transferring(db):
+    """I7 on the definitions leg."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db, name="Original")
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_pending", expected=(None,)
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"),
+        owner_id="local",
+        definition_id=definition_id,
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "transfer_in_progress"
+    assert db.get_automation_definition(definition_id)["name"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_local_writes_without_a_mutation(db):
+    """M9: the missing producer. A local row has nothing to sync."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+
+    outcome = await svc.set_definition_lifecycle(definition_id, "pause")
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+    assert db.get_pending_mutations(primitive="automation_lifecycle") == []
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_server_row_records_the_replay_mutation(db):
+    """M9: a server row writes optimistically AND queues the mutation
+    `SyncEngine._push_definition_lifecycle` replays -- the leg that had no
+    producer at all before this."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-1", lifecycle="paused"
+    )
+
+    outcome = await svc.set_definition_lifecycle(definition_id, "resume")
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["lifecycle"] == "configured"
+    mutations = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
+    assert [m["payload"]["action"] for m in mutations] == ["resume"]
+    assert mutations[0]["payload"]["server_definition_id"] == "srv-def-1"
+    # Its OWN slot -- nothing lands in the shared definition primitive
+    # (Qodo findings 5+6), which is what leaves room for a queued edit.
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_rejects_unknown_action(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    outcome = await svc.set_definition_lifecycle(definition_id, "obliterate")
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "unknown_action"
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_refused_while_transferring(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_sent", expected=(None,)
+    )
+    outcome = await svc.set_definition_lifecycle(definition_id, "archive")
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "transfer_in_progress"
+
+
+# ----------------------------------------------------------------------
+# Mutation-slot COEXISTENCE: an edit and a lifecycle change queue in
+# different `pending_mutations` slots (`automation_definition` vs
+# `automation_lifecycle`), so neither destroys the other -- Qodo findings
+# 5+6, which reversed final review C1's cross-action refusal for the
+# lifecycle half. Both of C1's probes are kept, inverted: what used to be
+# refused now succeeds with BOTH mutations intact. The edit-vs-TRANSFER
+# refusal below still stands (those two DO share a slot).
+# ----------------------------------------------------------------------
+
+
+def _paused_server_definition(db):
+    """A synced, server-owned definition with a `pause` queued for sync."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily Q",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    db.update_automation_definition(
+        definition_id,
+        lifecycle="paused",
+        pending_mutation={
+            "primitive": "automation_lifecycle",
+            "owner_id": "server:1",
+            "payload": {"action": "pause", "server_definition_id": "srv-def-1"},
+        },
+    )
+    return definition_id
+
+
+def _assert_pause_survived(db, definition_id):
+    assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+    pending = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
+    assert [m["payload"]["action"] for m in pending] == ["pause"]
+
+
+@pytest.mark.asyncio
+async def test_edit_coexists_with_a_queued_pause_online(db):
+    """C1 probe 1, inverted. The edit goes through (it no longer collides
+    with anything), the echo cannot revert `lifecycle` -- `adopt_server_
+    definition_identity`'s guard reads the lifecycle slot and sees the
+    pause -- and `_clear_stale_edit_mutation` cannot reach the pause
+    either, since it only ever clears the definition slot."""
+    definition_id = _paused_server_definition(db)
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    # The echo carries the server's PRE-pause `lifecycle` -- the exact
+    # payload that used to revert the row.
+    server_client.update_automation_definition.return_value = _server_definition_echo(
+        name="Edited", lifecycle="configured"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["name"] == "Edited"
+    _assert_pause_survived(db, definition_id)
+    server_client.preview_automation_definition.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_offline_edit_coexists_with_a_queued_pause(db):
+    """C1 probe 2, inverted -- the finding-5 headline. `record_pending_
+    mutation`'s `INSERT OR REPLACE` is keyed `(local_id, primitive,
+    owner_id)`: with the pause in its own primitive, the queued edit
+    lands BESIDE it instead of overwriting it, so both replay."""
+    definition_id = _paused_server_definition(db)
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "queued"
+    _assert_pause_survived(db, definition_id)
+    queued_edits = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )
+    assert [m["payload"]["action"] for m in queued_edits] == ["update"]
+    assert queued_edits[0]["payload"]["definition_payload"]["name"] == "Edited"
+
+
+@pytest.mark.asyncio
+async def test_pause_after_an_offline_edit_keeps_both_queued(db):
+    """The MIRROR direction of finding 5 (the C1 deferral this reversal
+    closes): pausing a row that already has an offline edit queued used
+    to discard that edit's push. Order must not matter."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily Q",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    edited = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+    paused = await svc.set_definition_lifecycle(definition_id, "pause")
+
+    assert (edited.status, paused.status) == ("queued", "saved")
+    _assert_pause_survived(db, definition_id)
+    queued_edits = db.get_pending_mutations(
+        "server:1", primitive="automation_definition"
+    )
+    assert [m["payload"]["action"] for m in queued_edits] == ["update"]
+
+
+@pytest.mark.asyncio
+async def test_edit_refused_while_a_release_transfer_is_queued(db):
+    """C1's TRANSFER half stands after Qodo 5+6: a queued
+    `release_from_server` still shares the `automation_definition` slot
+    an edit would take, and the mirror row carries no `transfer_state`
+    for `transfer_lock_reason` to catch."""
+    definition_id = _paused_server_definition(db)
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "server:1",
+        {"action": "release_from_server", "server_definition_id": "srv-def-1"},
+    )
+    svc = SchedulingService(db=db, server_client=AsyncMock(), runtime_source="server:1")
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "error"
+    assert "move to this device" in outcome.errors[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_offline_edit_still_replaces_an_earlier_offline_edit(db):
+    """C1's refusal is CROSS-action only: update-over-update coalescing is
+    what `_save_definition_offline` documents and must keep working."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Original",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    first = await svc.save_definition(
+        _definition_payload(name="First"), "server:1", definition_id=definition_id
+    )
+    second = await svc.save_definition(
+        _definition_payload(name="Second"), "server:1", definition_id=definition_id
+    )
+
+    assert (first.status, second.status) == ("queued", "queued")
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["definition_payload"]["name"] == "Second"
+
+
+@pytest.mark.asyncio
+async def test_local_row_edit_is_never_refused_by_its_retained_transfer_mutation(db):
+    """A `to_server_failed` row deliberately KEEPS its transfer mutation
+    queued and stays editable (`transfer_lock_reason`'s own docstring).
+    C1's guard is scoped to server-owned rows -- the only ones whose edits
+    touch the queue at all -- so this pins that it did not turn that
+    documented affordance into a refusal."""
+    definition_id = _make_definition(db)
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "local",
+        {"action": "transfer_to_server", "transfer_errors": ["nope"]},
+    )
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_failed", expected=(None,)
+    )
+    svc = _transfer_service(db, server_client=_connected_server_client())
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited anyway"),
+        owner_id="local",
+        definition_id=definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["name"] == "Edited anyway"
+
+
+@pytest.mark.asyncio
+async def test_online_save_does_not_clear_a_lifecycle_mutation_queued_mid_flight(db):
+    """C1's second leg, still live after Qodo 5+6: a pause queued DURING
+    the online round trip must survive both the echo's `lifecycle` (the
+    adopt-identity belt withholds it) and the mirror's queue clear (which
+    only ever touches the definition slot)."""
+    definition_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Original",
+        server_id="srv-def-1",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+
+    async def _commit_then_user_pauses(*_args, **_kwargs):
+        # The user hits Pause while the PATCH is in flight.
+        db.update_automation_definition(
+            definition_id,
+            lifecycle="paused",
+            pending_mutation={
+                "primitive": "automation_lifecycle",
+                "owner_id": "server:1",
+                "payload": {
+                    "action": "pause",
+                    "server_definition_id": "srv-def-1",
+                },
+            },
+        )
+        return _server_definition_echo(name="Edited", lifecycle="configured")
+
+    server_client.update_automation_definition.side_effect = _commit_then_user_pauses
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"), "server:1", definition_id=definition_id
+    )
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(definition_id)
+    # The edit landed; the pause was neither reverted nor dequeued.
+    assert row["name"] == "Edited"
+    _assert_pause_survived(db, definition_id)
+
+
+# ----------------------------------------------------------------------
+# resolve_definition (schedules-handoff PR-6, task 2)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_local_row_marks_solved(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    result_id = db.create_automation_result(
+        "local", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "solved"
+    assert row["resolved_by"] == "local"
+    assert row["resolved_result_id"] == result_id
+    assert row["resolved_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_local_row_reopen_clears_fields(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db, resolution_state="solved")
+
+    outcome = await svc.resolve_definition(definition_id, solved=False)
+
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+    assert row["resolved_by"] is None
+    assert row["resolved_at"] is None
+    assert row["resolved_result_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_unknown_id_returns_error(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.resolve_definition("missing-id", solved=True)
+
+    assert outcome.status == "error"
+    assert "missing-id" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_online_mirrors_server_echo(db):
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.return_value = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily Q",
+        "lifecycle": "configured",
+        "resolution_state": "solved",
+        "resolved_at": "2026-09-02T00:00:00+00:00",
+        "resolved_by": "alice",
+        "resolved_result_id": "srv-res-1",
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=None)
+
+    assert outcome.status == "saved"
+    server_client.mark_automation_definition_solved.assert_awaited_once_with(
+        "srv-def-1", result_id=None
+    )
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "solved"
+    # Came from the server echo via the mirror upsert, not a local write
+    # (a local write would have stamped resolved_by="local").
+    assert row["resolved_by"] == "alice"
+    assert row["resolved_result_id"] == "srv-res-1"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_reopen_online(db):
+    server_client = AsyncMock()
+    server_client.reopen_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily Q",
+        "lifecycle": "paused",
+        "resolution_state": "open",
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-1", resolution_state="solved"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=False)
+
+    assert outcome.status == "saved"
+    server_client.reopen_automation_definition.assert_awaited_once_with("srv-def-1")
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_offline_returns_error_without_queuing(db):
+    """Plan ruling 2: unlike `set_definition_lifecycle`'s optimistic-write-
+    plus-queue pattern, there is NO offline queue for this action in v1 --
+    an unreachable seam must be an honest error, not a pending mutation."""
+    # No server_client given -> the default `SchedulingServerClient()` has
+    # no `notifications_service`, so any wrapper call raises
+    # ServerUnavailableError, exactly like a real disconnected server.
+    svc = SchedulingService(db=db, runtime_source="server:1")
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-1", resolution_state="open"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=None)
+
+    assert outcome.status == "error"
+    assert "server connection" in outcome.reason
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"  # untouched
+    assert db.get_pending_mutations(primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_missing_server_id_returns_error(db):
+    svc = SchedulingService(
+        db=db, server_client=AsyncMock(), runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1")  # no server_id set
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_translates_local_result_id_to_server_result_id(db):
+    """The facade receives Task 3's LOCAL result id (results are consumed
+    from the local mirror table) but the server has never heard of a
+    local UUID -- it must be translated to the mirrored result's
+    server_id before the network call."""
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.return_value = {
+        "id": "srv-def-1",
+        "owner_id": "server:1",
+        "family": "recurring_question",
+        "name": "Daily Q",
+        "resolution_state": "solved",
+    }
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    result_id = db.create_automation_result(
+        "server:1",
+        definition_id,
+        "run-1",
+        "finding",
+        "Found it",
+        "Summary",
+        "dk-1",
+        server_id="srv-res-1",
+    )
+
+    await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+
+    server_client.mark_automation_definition_solved.assert_awaited_once_with(
+        "srv-def-1", result_id="srv-res-1"
+    )
+
+
+# ----------------------------------------------------------------------
+# resolve_definition fix round 1 (task-2-review.md): transfer lock, an
+# unsynced result_id, and policy-vs-connectivity error wording.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_refused_while_transferring(db):
+    """I7 on the resolution leg: a same-window "mark solved" mid-transfer
+    would be shipped by a create snapshot taken before this row's
+    resolution fields existed, then silently clobbered back to "open" by
+    the first mirror pull."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_pending", expected=(None,)
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert outcome.reason == scheduling_service_module._TRANSFER_READ_ONLY_REASON
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_resolves_normally_with_null_transfer_state(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    assert db.get_automation_definition(definition_id)["transfer_state"] is None
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "saved"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_resolves_normally_with_failed_transfer_state(db):
+    """`to_server_failed` re-armed locally -- not in `IN_FLIGHT_TRANSFER_
+    STATES`, so it must stay editable, same as `transfer_lock_reason`'s
+    own documented exception."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_failed", expected=(None,)
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "saved"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_local_result_without_server_id_fails_closed(db):
+    """Low finding 1: a result that exists locally but hasn't been synced
+    up yet must not forward its LOCAL uuid to the server as if it were a
+    server result id."""
+    server_client = AsyncMock()
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    result_id = db.create_automation_result(
+        "server:1", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
+    )  # no server_id: not yet synced up
+
+    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+
+    assert outcome.status == "error"
+    assert "not been synced to the server" in outcome.reason
+    server_client.mark_automation_definition_solved.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_unknown_result_id_fails_closed(db):
+    """Same fail-closed path for a `result_id` that isn't a local row at
+    all (never `None or {}`-falls-through to forwarding the raw id)."""
+    server_client = AsyncMock()
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(
+        definition_id, solved=True, result_id="missing-result"
+    )
+
+    assert outcome.status == "error"
+    assert "not been synced to the server" in outcome.reason
+    server_client.mark_automation_definition_solved.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_policy_denial_gets_distinct_reason(db):
+    """Low finding 2: `_seam_failure_warning`'s wording split -- a
+    deterministic policy refusal reads differently from "no connection"."""
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.side_effect = ServerClientPolicyError(
+        "scheduler.automations.configure.server requires server mode."
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "will not resolve by retrying" in outcome.reason
+    assert "requires a server connection" not in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_archived_409_reports_the_server_reason(db):
+    """Live verification task 6 round 2, D9.
+
+    Releasing a definition to this device archives the server's copy, so
+    mark-solving a result that came from it returns the server's
+    non-retryable 409:
+
+        {"detail": {"code": "scheduled_task_definition_archived",
+                    "message": "Scheduled task definition is archived.",
+                    "retryable": false}}
+
+    `_call_with_retry` maps every 4xx except 404 to
+    `ServerClientValidationError` and never retries it, but the old catch
+    only special-cased the `ServerClientPolicyError` SUBCLASS, so this
+    fell through to the connectivity branch and told a plainly-connected
+    user to check their network. The reason must carry the server's own
+    explanation instead.
+    """
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.side_effect = (
+        ServerClientValidationError(
+            "API Error 409: Scheduled task definition is archived."
+        )
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "archived" in outcome.reason
+    assert "will not resolve by retrying" in outcome.reason
+    assert "requires a server connection" not in outcome.reason
+    # A refusal is never optimistically written locally.
+    assert db.get_automation_definition(definition_id)["resolution_state"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_connectivity_failure_gets_generic_reason(db):
+    server_client = AsyncMock()
+    server_client.mark_automation_definition_solved.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "requires a server connection" in outcome.reason
+    assert "will not resolve by retrying" not in outcome.reason
+
+
+# ----------------------------------------------------------------------
+# Qodo review, fix wave 2: per-owner recovery + atomic begin legs
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_skips_rows_sent_to_another_server(db):
+    """HIGH: recovery must reconcile each stuck row against the server it
+    was actually SENT to, not whichever one is connected now.
+
+    Server A's row is absent from server B's listing purely because it
+    was never sent to B. Matching it there marks a possibly-landed
+    transfer as absent, re-arms it, and duplicates the task on A at the
+    next reconnect."""
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {"items": []}
+    # Active connection is server:2; row A was sent under server:1.
+    svc = _transfer_service(db, server_client=server_client, active_server_id="2")
+
+    row_a = _make_reminder(db, title="Sent to A", transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        row_a,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+    row_b = _make_reminder(db, title="Sent to B", transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        row_b,
+        "reminder_task",
+        "server:2",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    # A is deferred verbatim: state and mutation both intact.
+    assert db.get_reminder_task(row_a)["transfer_state"] == "to_server_sent"
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+    # B is the only row reconciled against the connected server.
+    assert db.get_reminder_task(row_b)["transfer_state"] == "to_server_pending"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_skips_the_server_listing_when_all_deferred(
+    db,
+):
+    """No row belongs to the connected server -- nothing is listed and
+    nothing is touched."""
+    server_client = _connected_server_client()
+    svc = _transfer_service(db, server_client=server_client, active_server_id="2")
+    row_id = _make_reminder(db, transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        row_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    server_client.list_reminders.assert_not_awaited()
+    assert db.get_reminder_task(row_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_interleaved_double_begin_makes_one_copy(db):
+    """MEDIUM: the second `begin` is refused by the check inside the
+    copy's own transaction, not only by the caller's pre-check.
+
+    Neutering the pre-check simulates a second press arriving in the
+    window the pre-check cannot cover -- the exact window that made two
+    copies and one (replaced) mutation, stranding copy #1 forever."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    db.get_pending_mutation_for_local_id = lambda *args, **kwargs: None
+
+    first = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    second = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert first.status == "pending"
+    assert second.status == "refused"
+    copies = [
+        row
+        for row in db.list_reminder_tasks()
+        if row["transfer_state"] == "from_server_pending"
+    ]
+    assert len(copies) == 1
+    mutations = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(mutations) == 1
+    assert mutations[0]["payload"]["local_copy_id"] == copies[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_copy_and_mutation_are_one_transaction(db):
+    """A failure recording the mutation rolls the copy back with it --
+    no dormant copy that nothing names."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("crash between the copy and its mutation")
+
+    db._insert_pending_mutation_conn = _boom
+
+    with pytest.raises(RuntimeError):
+        await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert [
+        row
+        for row in db.list_reminder_tasks()
+        if row["transfer_state"] == "from_server_pending"
+    ] == []
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_state_and_mutation_are_one_transaction(db):
+    """MEDIUM: a crash between arming `to_server_pending` and queueing the
+    mutation left a read-only row that nothing would ever replay."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("crash between the CAS and its mutation")
+
+    db._insert_pending_mutation_conn = _boom
+
+    with pytest.raises(RuntimeError):
+        await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+def test_set_transfer_state_refused_cas_records_no_mutation(db):
+    """The mutation follows the CAS: a refused transition writes neither."""
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    armed = db.set_transfer_state(
+        "reminder_task",
+        reminder_id,
+        "to_server_pending",
+        expected=(None,),
+        pending_mutation={
+            "primitive": "reminder_task",
+            "owner_id": "server:1",
+            "payload": {"action": "transfer_to_server"},
+        },
+    )
+
+    assert armed is False
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_definition_server_row_gone_reports_definitive_reason(db):
+    """A 404 from the server (row deleted server-side) is a DEFINITIVE
+    refusal, not a connectivity problem -- final-review finding 3: the
+    NotFound class isn't a ValidationError subclass, so without its own
+    branch the connectivity wording would blame the network."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientNotFoundError,
+    )
+
+    client = AsyncMock()
+    client.mark_automation_definition_solved.side_effect = ServerClientNotFoundError(
+        "definition not found"
+    )
+    svc = SchedulingService(db=db, server_client=client, runtime_source="server:1")
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-404", resolution_state="open"
+    )
+
+    outcome = await svc.resolve_definition(definition_id, solved=True)
+
+    assert outcome.status == "error"
+    assert "no longer has this automation" in outcome.reason
+    assert "server connection" not in outcome.reason
+    assert db.get_automation_definition(definition_id)["resolution_state"] == "open"

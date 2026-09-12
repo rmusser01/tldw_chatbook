@@ -1,61 +1,124 @@
 # __init__.py
 # Description: RAG Search package initialization
-#
-# The new simplified RAG implementation is in the 'simplified' subdirectory
-# For backward compatibility, we re-export the main components here
+"""Lazy facade over the RAG Search package (PEP 562, task-21102).
 
-try:
-    # Try to import from the simplified implementation
-    from .simplified import (
-        EmbeddingsService,
-        RAGService,
-        RAGConfig,
-        SearchResult,
-        SearchResultWithCitations,
-        create_rag_service,
-        create_config_for_collection,
-        create_config_for_testing,
+The new simplified RAG implementation is in the ``simplified`` subdirectory;
+for backward compatibility the main components are re-exported here. The
+re-exports are resolved on FIRST ATTRIBUTE ACCESS rather than at package
+import: this ``__init__`` used to eagerly import ``.simplified`` (its whole
+service tree) and ``.chunking_service`` (the full ``Chunking`` shim +
+vendored engine, ~15k LOC), which meant that importing ANY ``RAG_Search``
+submodule -- e.g. the lightweight ``ingestion_indexing`` seam that
+``Local_Ingestion.local_file_ingestion`` needs at boot -- executed all of it.
+Guarded by ``Tests/Packaging/test_chunking_import_closure.py``.
+
+Semantics preserved from the eager version: when the underlying import fails
+(missing optional RAG dependencies), the names the eager fallback stubbed --
+and ONLY those -- degrade to stub classes whose constructors raise
+``ImportError``; every other name raises ``AttributeError`` (so a
+from-import raises ``ImportError``), exactly as when the eager fallback left
+it undefined. Feature detection depends on that split (e.g.
+``Tests/RAG/test_rag_dependencies.py``'s ``check_rag_services`` probes
+``from tldw_chatbook.RAG_Search import create_rag_service``); pinned by
+``Tests/RAG/test_rag_search_facade.py``. The failure surfaces at first use
+instead of at package import.
+"""
+
+from typing import Any
+
+#: Re-exported name -> (submodule, attribute) it resolves from.
+#: ``IndexingService`` is a backward-compatibility alias for ``RAGService``.
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "EmbeddingsService": ("simplified", "EmbeddingsService"),
+    "RAGService": ("simplified", "RAGService"),
+    "IndexingService": ("simplified", "RAGService"),
+    "RAGConfig": ("simplified", "RAGConfig"),
+    "SearchResult": ("simplified", "SearchResult"),
+    "SearchResultWithCitations": ("simplified", "SearchResultWithCitations"),
+    "create_rag_service": ("simplified", "create_rag_service"),
+    "create_config_for_collection": ("simplified", "create_config_for_collection"),
+    "create_config_for_testing": ("simplified", "create_config_for_testing"),
+    "ChunkingService": ("chunking_service", "ChunkingService"),
+}
+
+#: The names the eager version's ImportError fallback DEFINED as stubs
+#: (three stub classes plus the ``RAGService = IndexingService`` alias).
+#: Every other export was left undefined by the fallback, so on resolution
+#: failure those raise AttributeError instead of degrading to a stub.
+_STUB_ON_FAILURE = frozenset(
+    {"EmbeddingsService", "ChunkingService", "IndexingService", "RAGService"}
+)
+
+__all__ = [
+    "EmbeddingsService",
+    "ChunkingService",
+    "IndexingService",
+    "RAGService",
+    "RAGConfig",
+    "SearchResult",
+    "SearchResultWithCitations",
+    "create_rag_service",
+    "create_config_for_collection",
+    "create_config_for_testing",
+]
+
+
+def _unavailable_stub(name: str, error: ImportError) -> type:
+    """Build the stub class the eager fallback used to define at import time.
+
+    Args:
+        name: The re-exported name being resolved.
+        error: The ImportError that made the real implementation unavailable.
+
+    Returns:
+        A class whose constructor raises ``ImportError``, matching the
+        legacy stub behavior for missing RAG dependencies.
+    """
+    message = (
+        "RAG services not available. Please check dependencies. "
+        f"({name} unavailable: {error})"
     )
 
-    # Import the chunking service wrapper
-    from .chunking_service import ChunkingService
+    class _UnavailableRAGComponent:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise ImportError(message)
 
-    # For backward compatibility, create IndexingService as an alias
-    IndexingService = RAGService
+    _UnavailableRAGComponent.__name__ = name
+    _UnavailableRAGComponent.__qualname__ = name
+    return _UnavailableRAGComponent
 
-    __all__ = [
-        "EmbeddingsService",
-        "ChunkingService",
-        "IndexingService",
-        "RAGService",
-        "RAGConfig",
-        "SearchResult",
-        "SearchResultWithCitations",
-        "create_rag_service",
-        "create_config_for_collection",
-        "create_config_for_testing",
-    ]
 
-except ImportError as e:
-    # If simplified imports fail, provide stub implementations
-    import logging
+def __getattr__(name: str) -> Any:
+    """Resolve a lazy re-export on first access (PEP 562)."""
+    try:
+        submodule, attribute = _LAZY_EXPORTS[name]
+    except KeyError:
+        raise AttributeError(
+            f"module {__name__!r} has no attribute {name!r}"
+        ) from None
 
-    logger = logging.getLogger(__name__)
-    logger.error(f"Failed to import simplified RAG services: {e}")
+    try:
+        from importlib import import_module
 
-    # Provide minimal stubs to prevent import errors
-    class EmbeddingsService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("RAG services not available. Please check dependencies.")
+        value = getattr(import_module(f".{submodule}", __name__), attribute)
+    except ImportError as e:
+        import logging
 
-    class ChunkingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("RAG services not available. Please check dependencies.")
+        logging.getLogger(__name__).error(
+            f"Failed to import simplified RAG services: {e}"
+        )
+        if name not in _STUB_ON_FAILURE:
+            # The eager fallback left this name undefined: keep raising so a
+            # from-import surfaces ImportError (feature-detection contract).
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(RAG dependencies unavailable: {e})"
+            ) from e
+        value = _unavailable_stub(name, e)
 
-    class IndexingService:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("RAG services not available. Please check dependencies.")
+    globals()[name] = value  # cache: subsequent accesses skip __getattr__
+    return value
 
-    RAGService = IndexingService
 
-    __all__ = ["EmbeddingsService", "ChunkingService", "IndexingService"]
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))

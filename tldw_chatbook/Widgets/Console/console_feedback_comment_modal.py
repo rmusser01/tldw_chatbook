@@ -47,7 +47,7 @@ class ConsoleFeedbackCommentModal(SafeModalDismissMixin, ModalScreen[str | None]
     abandon the feedback entirely.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleFeedbackCommentModal {
         align: center middle;
     }

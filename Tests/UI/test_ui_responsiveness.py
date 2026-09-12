@@ -158,6 +158,20 @@ def test_app_does_not_schedule_heartbeat_when_responsiveness_monitor_is_disabled
     assert scheduled == []
 
 
+def _refuse_set_interval(*_args, **_kwargs):
+    """task-21133: `_schedule_footer_status_updates` arms no interval of its own.
+
+    The DB-size interval belongs to `DBStatusManager.start_periodic_updates`
+    (stubbed in these doubles); the only `App.set_interval` call this method
+    ever made was the 10 s token-count timer, whose consumer surface
+    task-17653 had already removed. Raising here rather than recording makes
+    a resurrected interval a hard failure instead of a count nobody reads.
+    """
+    raise AssertionError(
+        "_schedule_footer_status_updates must not arm an App-level interval"
+    )
+
+
 def test_footer_status_scheduling_records_stable_timer_names():
     from tldw_chatbook import app as app_module
 
@@ -175,20 +189,18 @@ def test_footer_status_scheduling_records_stable_timer_names():
             )
         ),
         update_db_sizes=lambda: None,
-        update_token_count_display=lambda: None,
         call_after_refresh=lambda callback: callback,
         set_timer=lambda delay, callback: scheduled_once.append((delay, callback)),
-        set_interval=lambda interval, callback: scheduled_periodic.append(
-            ("token", interval, callback)
-        ),
-        _token_count_update_timer=None,
+        set_interval=_refuse_set_interval,
     )
 
     app_module.TldwCli._schedule_footer_status_updates(fake_app)
 
-    assert monitor.snapshot().active_timers == 2
-    assert len(scheduled_once) == 2
-    assert len(scheduled_periodic) == 2
+    assert monitor.snapshot().active_timers == 1
+    assert sorted(monitor._active_timers) == ["footer-db-size-periodic"]
+    assert len(scheduled_once) == 1
+    assert scheduled_once[0][1] is fake_app.update_db_sizes
+    assert scheduled_periodic == [("db", 120)]
 
 
 def test_footer_status_scheduling_tolerates_screen_without_footer():
@@ -224,13 +236,9 @@ def test_footer_status_scheduling_tolerates_screen_without_footer():
             )
         ),
         update_db_sizes=lambda: None,
-        update_token_count_display=lambda: None,
         call_after_refresh=lambda callback: callback,
         set_timer=lambda delay, callback: scheduled_once.append((delay, callback)),
-        set_interval=lambda interval, callback: scheduled_periodic.append(
-            ("token", interval, callback)
-        ),
-        _token_count_update_timer=None,
+        set_interval=_refuse_set_interval,
         _db_size_status_widget=object(),
     )
 
@@ -238,31 +246,28 @@ def test_footer_status_scheduling_tolerates_screen_without_footer():
 
     assert errors == []
     assert fake_app._db_size_status_widget is None
-    assert len(scheduled_once) == 2
-    assert len(scheduled_periodic) == 2
-    assert monitor.snapshot().active_timers == 2
+    assert len(scheduled_once) == 1
+    assert scheduled_periodic == [("db", 120)]
+    assert monitor.snapshot().active_timers == 1
 
 
 def test_app_stops_footer_status_timers_and_diagnostics():
+    """Quit/unmount clears the footer timer's diagnostic entry (task-21133).
+
+    A stale ``footer-token-periodic`` entry left behind here would be
+    reported as a live timer in every later stall record, so the retirement
+    has to reach the diagnostics too, not only the scheduling site.
+    """
     from tldw_chatbook import app as app_module
-
-    stopped = []
-
-    class FakeTimer:
-        def stop(self):
-            stopped.append(True)
 
     app = app_module.TldwCli.__new__(app_module.TldwCli)
     app.ui_responsiveness_monitor = UIResponsivenessMonitor(enabled=True)
     app.ui_responsiveness_monitor.record_timer_created("footer-db-size-periodic")
-    app.ui_responsiveness_monitor.record_timer_created("footer-token-periodic")
-    app._token_count_update_timer = FakeTimer()
 
     app_module.TldwCli._stop_footer_status_timers(app)
 
-    assert stopped == [True]
-    assert app._token_count_update_timer is None
     assert app.ui_responsiveness_monitor.snapshot().active_timers == 0
+    assert not hasattr(app, "_token_count_update_timer")
 
 
 def test_console_transcript_sync_timer_updates_responsiveness_monitor():

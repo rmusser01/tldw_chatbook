@@ -9,18 +9,21 @@ approvals, persistence).
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-import sqlite3
 import threading
 import time
 
 import pytest
 from loguru import logger
 
+import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
+    LocalProviderTerminal,
+    LocalToolExposure,
+    LocalToolProvider,
 )
 from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDB,
@@ -33,12 +36,94 @@ from tldw_chatbook.MCP.local_server_tools import (
     _local_agent_tool_registrations,
     build_server_local_provider,
 )
-from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
+from tldw_chatbook.MCP.permission_store import (
+    EffectiveToolState,
+    MCPPermissionStore,
+    definition_hash,
+)
 from tldw_chatbook.MCP.server import TldwMCPServer, _describe_local_tools
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from Tests.DB.test_subscriptions_db_briefing_provenance_migration import _build_v1
 
 
 BUILTIN_TOOL_NAMES = [descriptor["name"] for descriptor in _describe_local_tools()]
 TASK_TOOL_NAMES = {"todo_create", "todo_update", "todo_get", "todo_list"}
+
+
+def test_standalone_workspace_root_keeps_configured_and_cwd_fallback(
+    monkeypatch, tmp_path
+):
+    import tldw_chatbook.config as config
+
+    configured = tmp_path / "configured"
+    process_cwd = tmp_path / "cwd"
+    configured.mkdir()
+    process_cwd.mkdir()
+    monkeypatch.chdir(process_cwd)
+    monkeypatch.setattr(
+        config,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            str(configured)
+            if (section, key) == ("console", "workspace_root")
+            else default
+        ),
+    )
+    assert local_server_tools.resolve_server_workspace_root() == configured.resolve()
+
+    monkeypatch.setattr(config, "get_cli_setting", lambda *_args, **_kwargs: "")
+    assert local_server_tools.resolve_server_workspace_root() == process_cwd.resolve()
+
+
+class RecordingWorkspaceExecutor:
+    """Protocol-shaped executor fake for MCP admission/effect tests."""
+
+    def __init__(self, result="hello world\n"):
+        self.result = result
+        self.calls = []
+
+    def execute(self, operation, arguments, *, intent):
+        self.calls.append((operation, dict(arguments), intent))
+        return self.result
+
+
+def _provider_with_recording_executor(monkeypatch, workspace, store):
+    executor = RecordingWorkspaceExecutor()
+    monkeypatch.setattr(
+        local_tool_provider,
+        "WorkspaceToolExecutor",
+        lambda workspace_root: executor,
+    )
+    return build_server_local_provider(workspace, store), executor
+
+
+def _pin_runtime_source(monkeypatch, source):
+    """Pin the runtime source the composed watchlists service will read.
+
+    The seam is ``local_server_tools.load_default_runtime_source_state`` --
+    the owner-module loader that ``build_server_local_provider`` injects as
+    ``runtime_source_loader=`` (TASK-18609). It used to be a
+    ``RuntimeSourceStateStore`` constructed in-module, and these tests went
+    on patching that vanished name for weeks (TASK-19569): four of them
+    errored at the monkeypatch line, and the two that passed
+    ``raising=False`` installed a never-read attribute and failed
+    downstream on a scrubbed ``ToolResult`` instead.
+
+    ``source`` may be a literal ``"local"``/``"server"`` or a zero-arg
+    callable, so a test can flip the source between calls. The loader
+    returns a real ``RuntimeSourceState`` -- the production shape, which
+    exercises ``WatchlistsToolService._runtime_source``'s attribute branch
+    rather than the bare-string convenience branch the old fakes used.
+
+    Deliberately NOT ``raising=False``: if this name is renamed or removed
+    again, every caller must fail loudly at the patch line.
+    """
+    resolve = source if callable(source) else (lambda: source)
+    monkeypatch.setattr(
+        local_server_tools,
+        "load_default_runtime_source_state",
+        lambda: RuntimeSourceState(active_source=resolve()),
+    )
 
 
 def _context():
@@ -70,11 +155,160 @@ def _grant(store, provider, name):
     )
 
 
-def test_granted_tool_executes(workspace, store):
-    provider = build_server_local_provider(workspace, store)
+def test_hub_local_factory_filters_shared_descriptors_and_wires_runtime_seams(
+    workspace,
+):
+    resolved = EffectiveToolState(state="allow", origin="tool")
+
+    def resolve_state(_hub):
+        return resolved
+
+    def approve_once(_pending):
+        return {}
+
+    handle = local_server_tools.build_hub_local_provider(
+        workspace,
+        resolve_state=resolve_state,
+        approval_callback=approve_once,
+    )
+    try:
+        provider = handle.provider
+        names = {entry.name for entry in provider.list_catalog()}
+        expected = {
+            spec.name
+            for spec in LocalToolProvider(workspace_root=workspace).specs_for_exposure(
+                LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+            )
+        }
+
+        assert names == expected
+        assert TASK_TOOL_NAMES.isdisjoint(names)
+        assert {
+            "watchlists_search_items",
+            "watchlists_get_item",
+            "watchlists_get_briefing",
+        }.isdisjoint(names)
+        assert provider._resolve_state is resolve_state
+        assert provider._resolve_state(provider.hub_tool_for("fs_read")) is resolved
+        assert provider._approval_callback is approve_once
+        assert provider._kill_switch() is False
+        assert provider._record_decision is None
+        assert provider._result_redaction_root == workspace.resolve()
+        assert handle.authority.canonical_root == workspace.resolve()
+    finally:
+        handle.close()
+
+
+def test_hub_local_factory_uses_the_central_validated_root(
+    monkeypatch, workspace, tmp_path
+):
+    from tldw_chatbook.Utils import path_validation
+
+    validated_root = tmp_path / "validated-workspace"
+    validated_root.mkdir()
+    calls = []
+
+    def validate_path(user_path, base_directory, **kwargs):
+        calls.append((user_path, base_directory, kwargs))
+        return validated_root.resolve()
+
+    monkeypatch.setattr(path_validation, "validate_path", validate_path)
+
+    with local_server_tools.build_hub_local_inspection_provider(
+        workspace,
+        resolve_state=lambda _hub: EffectiveToolState(state="allow", origin="tool"),
+    ) as handle:
+        assert handle.authority.canonical_root == validated_root.resolve()
+        assert handle.provider._result_redaction_root == validated_root.resolve()
+
+    assert calls == [
+        (
+            workspace,
+            workspace,
+            {"redact_paths": True, "allow_hidden": True},
+        )
+    ]
+
+
+def test_hub_local_dispatch_guard_stops_immediately_before_handler(
+    monkeypatch, workspace
+):
+    executor = RecordingWorkspaceExecutor()
+    monkeypatch.setattr(
+        local_tool_provider,
+        "WorkspaceToolExecutor",
+        lambda _workspace_root: executor,
+    )
+    guard_calls = []
+    handle = local_server_tools.build_hub_local_provider(
+        workspace,
+        resolve_state=lambda _hub: EffectiveToolState(state="allow", origin="tool"),
+        approval_callback=None,
+        dispatch_guard=lambda: guard_calls.append(True) and False,
+    )
+    try:
+        detail = handle.provider.invoke_detailed("fs_read", {"path": "hello.txt"})
+    finally:
+        handle.close()
+
+    assert guard_calls == [True]
+    assert executor.calls == []
+    assert detail.result.ok is False
+    assert detail.dispatch_started is True
+    assert detail.provider_terminal is LocalProviderTerminal.RAISED
+
+
+def test_hub_local_handle_closes_opened_lazy_database_once_on_exception(
+    monkeypatch, workspace
+):
+    instances = []
+
+    class Candidate:
+        def __init__(self):
+            self.close_calls = 0
+
+        def assert_agent_read_ready(self):
+            return None
+
+        def close(self):
+            self.close_calls += 1
+
+    def construct_database(_path, _client_id="default", *, read_only=False):
+        assert read_only is True
+        candidate = Candidate()
+        instances.append(candidate)
+        return candidate
+
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: workspace / "subscriptions.db",
+    )
+
+    handle = local_server_tools.build_hub_local_provider(
+        workspace,
+        resolve_state=lambda _hub: EffectiveToolState(state="allow", origin="tool"),
+        approval_callback=None,
+    )
+    with pytest.raises(RuntimeError, match="body failed"):
+        with handle:
+            assert handle.resolver() is handle.resolver()
+            raise RuntimeError("body failed")
+
+    handle.close()
+    assert len(instances) == 1
+    assert instances[0].close_calls == 1
+
+
+def test_granted_tool_executes(monkeypatch, workspace, store):
+    provider, executor = _provider_with_recording_executor(
+        monkeypatch, workspace, store
+    )
     _grant(store, provider, "fs_read")
     r = provider.invoke("local:fs_read", {"path": "hello.txt"})
     assert r.ok and "hello world" in r.content
+    assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
 
 
 def test_default_ask_fails_closed_with_external_refusal(workspace, store):
@@ -158,16 +392,19 @@ def test_deny_state_refuses(workspace, store):
     assert not r.ok and r.error == LOCAL_DENY_REFUSAL
 
 
-def test_resolve_state_reads_store_fresh_per_call(workspace, store):
+def test_resolve_state_reads_store_fresh_per_call(monkeypatch, workspace, store):
     # Operator changes take effect immediately: grant -> executes, revoke
     # -> fails closed, all against the same composed provider.
-    provider = build_server_local_provider(workspace, store)
+    provider, executor = _provider_with_recording_executor(
+        monkeypatch, workspace, store
+    )
     _grant(store, provider, "fs_read")
     assert provider.invoke("local:fs_read", {"path": "hello.txt"}).ok
     hub = provider.hub_tool_for("fs_read")
     store.set_tool_state(hub.server_key, hub.name, None)  # operator revokes
     r = provider.invoke("local:fs_read", {"path": "hello.txt"})
     assert not r.ok and r.error == EXTERNAL_NO_CALLBACK_REFUSAL
+    assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
 
 
 def test_session_task_tools_absent_from_external_catalog(workspace, store):
@@ -190,30 +427,22 @@ def test_watchlists_registration_is_storage_lazy_and_server_mode_never_resolves_
         path_calls += 1
         raise AssertionError("server mode must not resolve the subscriptions path")
 
-    class ServerRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "server"
-
     monkeypatch.setattr(
         local_server_tools,
         "get_subscriptions_db_path",
         fail_path_resolution,
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", ServerRuntimeStore, raising=False
-    )
+    _pin_runtime_source(monkeypatch, "server")
     provider = build_server_local_provider(workspace, store)
     provider.list_catalog()
-    provider.load_schema("local:watchlists_search_items")
-    provider.load_schema("local:watchlists_get_item")
+    provider.load_schema("local:watchlists_list_sources")
+    assert "watchlists_get_briefing" not in {
+        entry.name for entry in provider.list_catalog()
+    }
     assert path_calls == 0
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
 
-    result = provider.invoke("local:watchlists_search_items", {})
+    result = provider.invoke("local:watchlists_list_sources", {})
 
     assert result.ok
     assert json.loads(result.content) == {
@@ -236,13 +465,6 @@ def test_watchlists_first_local_call_opens_one_read_only_database(
     path_calls = 0
     constructions = []
 
-    class LocalRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
-
     real_database = SubscriptionsDB
 
     def resolve_path():
@@ -254,23 +476,17 @@ def test_watchlists_first_local_call_opens_one_read_only_database(
         constructions.append((path, client_id, read_only))
         return real_database(path, client_id, read_only=read_only)
 
-    monkeypatch.setattr(
-        local_server_tools, "get_subscriptions_db_path", resolve_path, raising=False
-    )
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore, raising=False
-    )
-    monkeypatch.setattr(
-        local_server_tools, "SubscriptionsDB", construct_database, raising=False
-    )
+    monkeypatch.setattr(local_server_tools, "get_subscriptions_db_path", resolve_path)
+    _pin_runtime_source(monkeypatch, "local")
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
 
     provider = build_server_local_provider(workspace, store)
     assert path_calls == 0
     assert constructions == []
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
 
-    first = provider.invoke("local:watchlists_search_items", {})
-    second = provider.invoke("local:watchlists_search_items", {})
+    first = provider.invoke("local:watchlists_list_sources", {})
+    second = provider.invoke("local:watchlists_list_sources", {})
 
     assert json.loads(first.content)["status"] == "ok"
     assert json.loads(second.content)["status"] == "ok"
@@ -303,11 +519,8 @@ def test_watchlists_lazy_resolver_closes_failure_and_retries(monkeypatch, tmp_pa
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: tmp_path / "subscriptions.db",
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "SubscriptionsDB", construct_database, raising=False
-    )
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
     resolver = local_server_tools._LazyWatchlistsDBResolver()
 
     with pytest.raises(SubscriptionsDBReadError):
@@ -345,8 +558,8 @@ def test_watchlists_lazy_resolver_blocks_replacement_until_failed_close_succeeds
         def close(self):
             raise AssertionError("successful candidate remains process-owned")
 
-        def search_items_for_agent(self, **_kwargs):
-            return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+        def list_sources_for_agent(self, **_kwargs):
+            return {"items": [], "has_more": False}
 
         def get_source_collection_memberships(self, _source_ids):
             return {}
@@ -360,32 +573,23 @@ def test_watchlists_lazy_resolver_blocks_replacement_until_failed_close_succeeds
         constructions.append(candidate)
         return candidate
 
-    class LocalRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
-
     monkeypatch.setattr(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: tmp_path / "subscriptions.db",
     )
     monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore
-    )
+    _pin_runtime_source(monkeypatch, "local")
     provider = build_server_local_provider(workspace, store)
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
     records: list[str] = []
     sink_id = logger.add(lambda message: records.append(str(message)))
 
     try:
-        first = provider.invoke("local:watchlists_search_items", {})
-        second = provider.invoke("local:watchlists_search_items", {})
+        first = provider.invoke("local:watchlists_list_sources", {})
+        second = provider.invoke("local:watchlists_list_sources", {})
         assert constructions == [failed]
-        third = provider.invoke("local:watchlists_search_items", {})
+        third = provider.invoke("local:watchlists_list_sources", {})
     finally:
         logger.remove(sink_id)
 
@@ -430,11 +634,8 @@ def test_watchlists_lazy_resolver_concurrent_first_calls_retain_one_instance(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: tmp_path / "subscriptions.db",
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "SubscriptionsDB", construct_database, raising=False
-    )
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
     resolver = local_server_tools._LazyWatchlistsDBResolver()
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -452,32 +653,21 @@ def test_watchlists_unready_database_is_bounded_and_keeps_other_tools(
 ):
     database_path = tmp_path / "subscriptions.db"
     if storage_state == "pre_migration":
-        with sqlite3.connect(database_path) as connection:
-            connection.execute("CREATE TABLE legacy_only (id INTEGER PRIMARY KEY)")
+        _build_v1(database_path)
         before = database_path.read_bytes()
     else:
         before = None
-
-    class LocalRuntimeStore:
-        def __init__(self, _path):
-            pass
-
-        def load(self):
-            return "local"
 
     monkeypatch.setattr(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: database_path,
-        raising=False,
     )
-    monkeypatch.setattr(
-        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore, raising=False
-    )
+    _pin_runtime_source(monkeypatch, "local")
     provider = build_server_local_provider(workspace, store)
-    _grant(store, provider, "watchlists_search_items")
+    _grant(store, provider, "watchlists_list_sources")
 
-    result = provider.invoke("local:watchlists_search_items", {})
+    result = provider.invoke("local:watchlists_list_sources", {})
 
     payload = json.loads(result.content)
     assert payload["status"] == "feature_unavailable"
@@ -498,13 +688,12 @@ def test_watchlists_external_ask_refuses_before_storage_resolution(
         local_server_tools,
         "get_subscriptions_db_path",
         lambda: (_ for _ in ()).throw(AssertionError("must not resolve storage")),
-        raising=False,
     )
     provider = build_server_local_provider(workspace, store)
 
-    result = provider.invoke("local:watchlists_search_items", {})
+    result = provider.invoke("local:watchlists_list_sources", {})
 
-    assert result == ToolResult(ok=False, error=EXTERNAL_NO_CALLBACK_REFUSAL)
+    assert result == ToolResult.blocked(EXTERNAL_NO_CALLBACK_REFUSAL)
 
 
 # -- _local_agent_tool_registrations (pure builder, no mcp package needed) --
@@ -514,8 +703,10 @@ def _registrations(provider):
     return {r.name: r for r in _local_agent_tool_registrations(provider)}
 
 
-def test_granted_tool_registration_handler_executes(workspace, store):
-    provider = build_server_local_provider(workspace, store)
+def test_granted_tool_registration_handler_executes(monkeypatch, workspace, store):
+    provider, executor = _provider_with_recording_executor(
+        monkeypatch, workspace, store
+    )
     _grant(store, provider, "fs_read")
     regs = _registrations(provider)
     assert "fs_read" in regs
@@ -526,6 +717,43 @@ def test_granted_tool_registration_handler_executes(workspace, store):
     result = reg.handler({"path": "hello.txt"})
     assert isinstance(result, ToolResult)
     assert result.ok and "hello world" in result.content
+    assert executor.calls == [("fs_read", {"path": "hello.txt"}, "read")]
+
+
+def test_console_only_watchlists_tools_are_never_externally_registered(
+    workspace, store
+):
+    """Persistent Allows cannot widen Console-only descriptor exposure."""
+    console_provider = LocalToolProvider(workspace_root=workspace)
+    for name in (
+        "watchlists_search_items",
+        "watchlists_get_item",
+        "watchlists_get_briefing",
+    ):
+        _grant(store, console_provider, name)
+    provider = build_server_local_provider(workspace, store)
+
+    registrations = _registrations(provider)
+    assert {
+        "watchlists_search_items",
+        "watchlists_get_item",
+        "watchlists_get_briefing",
+    }.isdisjoint(registrations)
+    assert all(
+        not provider.invoke(f"local:{name}", {}).ok
+        for name in (
+            "watchlists_search_items",
+            "watchlists_get_item",
+            "watchlists_get_briefing",
+        )
+    )
+    assert {
+        "watchlists_list_sources",
+        "watchlists_list_collections",
+        "watchlists_list_briefings",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+    } <= set(registrations)
 
 
 def test_ask_state_handler_returns_tool_result(workspace, store):
@@ -534,7 +762,7 @@ def test_ask_state_handler_returns_tool_result(workspace, store):
     result = _registrations(provider)["fs_write"].handler(
         {"path": "x.txt", "content": "y"}
     )
-    assert result == ToolResult(ok=False, error=EXTERNAL_NO_CALLBACK_REFUSAL)
+    assert result == ToolResult.blocked(EXTERNAL_NO_CALLBACK_REFUSAL)
 
 
 def test_deny_state_handler_returns_tool_result(workspace, store):
@@ -542,7 +770,7 @@ def test_deny_state_handler_returns_tool_result(workspace, store):
     hub = provider.hub_tool_for("fs_glob")
     store.set_tool_state(hub.server_key, hub.name, "deny")
     result = _registrations(provider)["fs_glob"].handler({"pattern": "*.py"})
-    assert result == ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
+    assert result == ToolResult.blocked(LOCAL_DENY_REFUSAL)
 
 
 def test_kill_switch_handler_returns_tool_result(workspace, store):
@@ -550,7 +778,7 @@ def test_kill_switch_handler_returns_tool_result(workspace, store):
     _grant(store, provider, "fs_read")
     store.set_kill_switch(True)
     result = _registrations(provider)["fs_read"].handler({"path": "hello.txt"})
-    assert result == ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
+    assert result == ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
 
 
 def test_session_task_tools_absent_from_external_registrations(workspace, store):
@@ -602,24 +830,18 @@ async def test_flag_on_registers_local_tool_names(monkeypatch, tmp_path):
     assert "fs_write" in names
     assert "git_status" in names
     assert "web_fetch" in names
-    assert "watchlists_search_items" in names
-    assert "watchlists_get_item" in names
+    assert "watchlists_search_items" not in names
+    assert "watchlists_get_item" not in names
+    assert "watchlists_get_briefing" not in names
+    assert {
+        "watchlists_list_sources",
+        "watchlists_list_collections",
+        "watchlists_list_briefings",
+        "watchlists_get_operations_status",
+        "watchlists_get_operation_status",
+    } <= names
     assert "todo_write" not in names
     assert TASK_TOOL_NAMES.isdisjoint(names)
-
-    provider = build_server_local_provider(
-        tmp_path, MCPPermissionStore(tmp_path / "mcp_permissions.json")
-    )
-    expected = {
-        name: provider.load_schema(f"local:{name}").parameters
-        for name in ("watchlists_search_items", "watchlists_get_item")
-    }
-    published = {
-        descriptor["name"]: descriptor["inputSchema"]
-        for descriptor in await server.mcp.list_tools(_context())
-        if descriptor["name"] in expected
-    }
-    assert published == expected
 
 
 @pytest.mark.asyncio

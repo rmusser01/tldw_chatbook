@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/UI/test_library_skills_reader.py::test_skills_mount_three_retained_roles_and_default_to_overview",
+  "status": "PASS"
+}

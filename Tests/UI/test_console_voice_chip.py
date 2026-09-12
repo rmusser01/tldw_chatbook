@@ -25,12 +25,10 @@ class ComposerApp(App):
 class ProductionCssComposerApp(ComposerApp):
     """Mount the composer with the generated production stylesheet."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [
+        str(Path(__file__).resolve().parents[2] / "tldw_chatbook/css" / name)
+        for name in ("tldw_cli_modular.tcss", "screen_agentic_console.tcss")
+    ]
 
 
 def _visible(widget) -> bool:
@@ -224,17 +222,19 @@ async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
         mic = composer.query_one("#console-dictation")
         idle_action_width = actions.region.width
         idle_mic_width = mic.region.width
-        assert all(_visible(widget) for widget in presentation)
+        visibility_before = tuple(_visible(widget) for widget in presentation)
+        assert all(visibility_before[:3])
 
         composer.sync_dictation_state("starting")
         composer.set_voice_preparing_message(message)
         await pilot.pause()
         chip = composer.query_one("#console-voice-status", Static)
 
-        assert message in _painted(chip)
+        assert "Local transcription busy — queued." in _painted(chip)
+        assert str(chip.tooltip) == message
         assert _visible(chip)
         assert all(not _visible(widget) for widget in presentation)
-        assert idle_action_width == 25
+        assert idle_action_width == 33
         assert actions.region.width == idle_action_width
         assert mic.region.width == idle_mic_width
         assert actions.region.right <= composer.region.right <= app.size.width
@@ -245,13 +245,14 @@ async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
         # An ordinary control-bar refresh must not erase the busy status.
         composer.sync_dictation_state("starting")
         await pilot.pause()
-        assert message in _painted(chip)
+        assert "Local transcription busy — queued." in _painted(chip)
+        assert str(chip.tooltip) == message
 
         composer.sync_dictation_state("idle")
         await pilot.pause()
         assert chip.styles.width.value == 0
         assert _painted(chip) == ""
-        assert all(_visible(widget) for widget in presentation)
+        assert tuple(_visible(widget) for widget in presentation) == visibility_before
 
 
 @pytest.mark.asyncio
@@ -308,7 +309,7 @@ async def test_busy_presentation_suppresses_and_restores_staged_attachment():
         assert _visible(indicator)
         assert _visible(clear_button)
         assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
-        assert actions.region.width == 29
+        assert actions.region.width == 37
 
         composer.set_voice_status(
             STATE_PREPARING,
@@ -321,7 +322,7 @@ async def test_busy_presentation_suppresses_and_restores_staged_attachment():
 
         assert not _visible(indicator)
         assert not _visible(clear_button)
-        assert actions.region.width == 25
+        assert actions.region.width == 33
         assert "2 files" in str(indicator.renderable)
         assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
 
@@ -340,13 +341,13 @@ async def test_busy_presentation_suppresses_and_restores_staged_attachment():
         assert _visible(indicator)
         assert _visible(clear_button)
         assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
-        assert actions.region.width == 29
+        assert actions.region.width == 37
 
         composer.set_pending_attachment_label(None)
         await pilot.pause()
         assert not _visible(indicator)
         assert not _visible(clear_button)
-        assert actions.region.width == 25
+        assert actions.region.width == 33
 
 
 @pytest.mark.asyncio
@@ -363,8 +364,9 @@ async def test_production_css_busy_status_stays_meaningful_at_narrow_width():
 
         chip = composer.query_one("#console-voice-status", Static)
         painted = _painted(chip)
-        assert painted.startswith("Local trans")
-        assert painted.endswith("…")
+        assert painted == "Queued"
+        assert str(chip.tooltip) == "Local transcription busy — dictation will run next."
+        assert composer.query_one("#console-dictation").region.right <= app.size.width
         assert _visible(chip)
         assert chip.region.x + chip.region.width <= composer.region.right
 

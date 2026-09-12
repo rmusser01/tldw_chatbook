@@ -65,6 +65,7 @@ from Tests.UI.test_console_launch_wake import (
     _settle as _launch_settle,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from Tests.UI.app_factory import attach_chachanotes_db
 
 
 WAKE_REPLY = "GATE-WAKE-REPLY"
@@ -96,6 +97,7 @@ class _CountingStallGateway(_StallingWakeGateway):
 def _build_console_app(tmp_path):
     """A real app with real DBs and a recording provider gateway."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _CountingStallGateway()
@@ -508,6 +510,7 @@ async def test_a_restart_mid_commit_never_re_announces_more_than_once(tmp_path):
     """
     # -- process one: die between acceptance and the stamp -----------------
     app = _build_test_app()
+    attach_chachanotes_db(app)
     marks = _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False

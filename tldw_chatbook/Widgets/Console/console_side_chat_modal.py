@@ -67,7 +67,7 @@ SIDE_CHAT_WORKER_GROUP = "console-side-chat"
 class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
     """Ephemeral side chat about a quoted transcript selection."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSideChatModal {
         align: center middle;
     }

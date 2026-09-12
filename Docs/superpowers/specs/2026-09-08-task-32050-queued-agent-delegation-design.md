@@ -2,7 +2,7 @@
 
 - Date: 2026-09-08
 - Status: Proposed; written design ready for user review. No application implementation is included.
-- Design task: [TASK-32050](../../../backlog/tasks/task-32050%20-%20Specify-direct-delegation-of-queued-Console-prompts.md)
+- Design task: [TASK-32472](../../../backlog/tasks/task-32050%20-%20Specify-direct-delegation-of-queued-Console-prompts.md)
 - Decision: [ADR-137](../../../backlog/decisions/137-queued-console-agent-delegation.md)
 - Existing contracts: [ADR-046](../../../backlog/decisions/046-visible-bounded-console-prompt-queue.md), [ADR-069](../../../backlog/decisions/069-console-project-instruction-local-state-and-preflight.md), [ADR-134](../../../backlog/decisions/134-fleet-admission-and-automatic-work-budgets.md), [ADR-135](../../../backlog/decisions/135-fleet-completion-delivery-and-crash-recovery.md).
 

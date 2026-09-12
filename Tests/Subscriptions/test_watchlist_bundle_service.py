@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -29,6 +31,209 @@ def test_name_collision_is_case_insensitive_and_suffixes(service):
     third = service.create("UNSORTED")
     assert second["name"] == "unsorted (2)"
     assert third["name"] == "UNSORTED (3)"
+
+
+@pytest.mark.parametrize(
+    ("policy", "outcome", "expected_name"),
+    [
+        ("return_existing", "existing", "Security"),
+        ("auto_suffix", "created", "security (2)"),
+    ],
+)
+def test_create_with_sources_applies_explicit_collision_policy(
+    service, db, policy, outcome, expected_name
+):
+    existing = service.create("Security", description="keep")
+    original_source = db.add_subscription(
+        name="Original", type="rss", source="https://feeds.example/original"
+    )
+    requested_source = db.add_subscription(
+        name="Requested", type="rss", source="https://feeds.example/requested"
+    )
+    service.add_source(existing["id"], original_source)
+
+    result = service.create_with_sources(
+        "security",
+        description="replace",
+        tags=["new"],
+        source_ids=[requested_source],
+        if_exists=policy,
+    )
+
+    assert result["outcome"] == outcome
+    assert result["watchlist"]["name"] == expected_name
+    if policy == "return_existing":
+        assert result["watchlist"]["description"] == "keep"
+        assert service.list_sources(existing["id"]) == [original_source]
+    else:
+        assert service.list_sources(result["watchlist"]["id"]) == [requested_source]
+
+
+def test_create_with_sources_conflict_leaves_existing_unchanged(service, db):
+    existing = service.create("Security", description="keep")
+    source_id = db.add_subscription(
+        name="Requested", type="rss", source="https://feeds.example/requested"
+    )
+
+    with pytest.raises(ValueError, match="already exists"):
+        service.create_with_sources(
+            "security",
+            description="replace",
+            tags=["new"],
+            source_ids=[source_id],
+            if_exists="conflict",
+        )
+
+    assert service.list_watchlists() == [existing]
+    assert service.list_sources(existing["id"]) == []
+
+
+@pytest.mark.parametrize(
+    ("existing_name", "requested_name"),
+    [("ÄI", "äi"), ("Straße", "STRASSE")],
+)
+@pytest.mark.parametrize("policy", ["conflict", "return_existing", "auto_suffix"])
+def test_create_with_sources_uses_unicode_casefold_for_every_collision_policy(
+    service, existing_name, requested_name, policy
+):
+    existing = service.create(existing_name)
+
+    if policy == "conflict":
+        with pytest.raises(ValueError, match="already exists"):
+            service.create_with_sources(
+                requested_name,
+                description=None,
+                tags=None,
+                source_ids=[],
+                if_exists=policy,
+            )
+        assert service.list_watchlists() == [existing]
+        return
+
+    result = service.create_with_sources(
+        requested_name,
+        description=None,
+        tags=None,
+        source_ids=[],
+        if_exists=policy,
+    )
+
+    if policy == "return_existing":
+        assert result["outcome"] == "existing"
+        assert result["watchlist"] == existing
+    else:
+        assert result["outcome"] == "created"
+        assert result["watchlist"]["name"] == f"{requested_name} (2)"
+
+
+def test_create_with_sources_rolls_back_collection_when_source_is_missing(service):
+    with pytest.raises(KeyError, match="source"):
+        service.create_with_sources(
+            "Atomic",
+            description=None,
+            tags=None,
+            source_ids=[999_999],
+            if_exists="conflict",
+        )
+
+    assert service.list_watchlists() == []
+
+
+def test_create_with_sources_rolls_back_collection_when_membership_insert_fails(
+    service, db
+):
+    source_id = db.add_subscription(
+        name="Blocked", type="rss", source="https://feeds.example/blocked"
+    )
+    db.conn.execute(
+        "CREATE TRIGGER reject_watchlist_membership "
+        "BEFORE INSERT ON watchlist_sources "
+        "BEGIN SELECT RAISE(ABORT, 'blocked membership'); END"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="blocked membership"):
+        service.create_with_sources(
+            "Atomic",
+            description=None,
+            tags=None,
+            source_ids=[source_id],
+            if_exists="conflict",
+        )
+
+    assert service.list_watchlists() == []
+
+
+def test_create_with_sources_accepts_100_memberships_and_rejects_101(service, db):
+    source_ids = [
+        db.add_subscription(
+            name=f"Source {index}",
+            type="rss",
+            source=f"https://feeds.example/{index}",
+        )
+        for index in range(101)
+    ]
+
+    result = service.create_with_sources(
+        "Maximum",
+        description=None,
+        tags=None,
+        source_ids=source_ids[:100],
+        if_exists="conflict",
+    )
+
+    assert result["membership_count"] == 100
+    with pytest.raises(ValueError, match="at most 100"):
+        service.create_with_sources(
+            "Too many",
+            description=None,
+            tags=None,
+            source_ids=source_ids,
+            if_exists="conflict",
+        )
+    assert [row["name"] for row in service.list_watchlists()] == ["Maximum"]
+
+
+def test_update_sources_is_atomic_and_rejects_missing_sources(service, db):
+    watchlist = service.create("Security")
+    keep = db.add_subscription(name="Keep", type="rss", source="https://feeds.example/keep")
+    remove = db.add_subscription(name="Remove", type="rss", source="https://feeds.example/remove")
+    service.add_source(watchlist["id"], keep)
+    service.add_source(watchlist["id"], remove)
+
+    with pytest.raises(KeyError, match="source"):
+        service.update_sources(
+            watchlist["id"], add_ids=[999_999], remove_ids=[remove]
+        )
+
+    assert service.list_sources(watchlist["id"]) == [keep, remove]
+
+    result = service.update_sources(watchlist["id"], add_ids=[], remove_ids=[remove])
+    assert result["added"] == 0
+    assert result["removed"] == 1
+    assert service.list_sources(watchlist["id"]) == [keep]
+
+
+def test_update_sources_rolls_back_add_when_later_remove_fails(service, db):
+    watchlist = service.create("Security")
+    remove = db.add_subscription(
+        name="Remove", type="rss", source="https://feeds.example/remove"
+    )
+    add = db.add_subscription(
+        name="Add", type="rss", source="https://feeds.example/add"
+    )
+    service.add_source(watchlist["id"], remove)
+    db.conn.execute(
+        "CREATE TRIGGER reject_watchlist_membership_delete "
+        "BEFORE DELETE ON watchlist_sources "
+        "BEGIN SELECT RAISE(ABORT, 'blocked removal'); END"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="blocked removal"):
+        service.update_sources(
+            watchlist["id"], add_ids=[add], remove_ids=[remove]
+        )
+
+    assert service.list_sources(watchlist["id"]) == [remove]
 
 
 def test_rename_also_avoids_collision(service):

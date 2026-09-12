@@ -950,6 +950,7 @@ class MediaDetailResponse(BaseModel):
 
 
 class ReadingUpdateRequest(BaseModel):
+    expected_revision: int | None = Field(default=None, gt=0)
     status: str | None = None
     favorite: bool | None = None
     tags: list[str] | None = None
@@ -1150,6 +1151,7 @@ class ReadingItem(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     read_at: str | None = None
+    revision: int = Field(default=1, ge=1)
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)

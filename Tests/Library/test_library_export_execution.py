@@ -24,7 +24,7 @@ from loguru import logger
 
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
-from tldw_chatbook.Library.library_export_scope import ExportScope
+from tldw_chatbook.Library.library_export_scope import ExportPreview, ExportScope
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryEntryReconcileResult,
     LibraryScreen,
@@ -164,8 +164,12 @@ def test_prompt_memory_database_forces_inline_count_resolution():
         return LibraryEntryReconcileResult.APPLIED
 
     fake = SimpleNamespace(
-        _library_export_scope=scope,
-        _library_export_counts_request_id=0,
+        # Task 4 cleanup: the screen's flat `_library_export_<field>` shim
+        # is gone -- `_start_library_export_counts_worker`'s body now reads
+        # `self._export_state.<field>`, so this fake nests its export
+        # fields under `_export_state` (recipe §11's "unbound fake-self"
+        # retarget precedent).
+        _export_state=SimpleNamespace(scope=scope, counts_request_id=0),
         _library_snapshot_state_generation=7,
         _library_entry_route_key=lambda: route_key,
         app_instance=SimpleNamespace(
@@ -178,6 +182,9 @@ def test_prompt_memory_database_forces_inline_count_resolution():
             "notes": 0,
             "prompts": 2,
         },
+        # task-32353: the counts helper's sibling, which the worker calls
+        # for the contents/size preview beside the counts.
+        _compute_library_export_preview=lambda *_args: ExportPreview(),
         _apply_library_export_counts=apply_counts,
         _run_library_export_counts_worker=lambda *_args: pytest.fail(
             "memory-backed Prompt counts must stay on the owner thread"
@@ -190,7 +197,15 @@ def test_prompt_memory_database_forces_inline_count_resolution():
         (
             scope,
             {"media": 0, "conversations": 0, "notes": 0, "prompts": 2},
-            {"generation": 7, "route_key": route_key, "request_id": 1},
+            {
+                "generation": 7,
+                "route_key": route_key,
+                "request_id": 1,
+                # task-32353: a Prompts scope has no media to size, so the
+                # sibling preview read lands empty -- and never touches the
+                # poison media source to find that out.
+                "preview": ExportPreview(),
+            },
         )
     ]
 
@@ -351,12 +366,19 @@ class _FakeExportService:
         return {"chatbook_id": 1, **kwargs}
 
 
-def _payload(**overrides):
+def _payload(tmp_path, **overrides):
+    """Build one export payload writing inside an isolated ``tmp_path``.
+
+    PR #2568 review: this used to hard-code ``/tmp/out.zip``, which the
+    artifact-readback assertions below silently depended on NOT existing --
+    a real ``/tmp/out.zip`` on the machine running the suite would have
+    fed them a stranger's zip.
+    """
     base = {
         "name": "Export",
         "description": "",
         "content_selections": {ContentType.MEDIA: ["1"]},
-        "output_path": "/tmp/out.zip",
+        "output_path": str(tmp_path / "out.zip"),
         "media_quality": "thumbnail",
         "include_media": True,
     }
@@ -364,34 +386,43 @@ def _payload(**overrides):
     return base
 
 
-def test_export_via_service_calls_export_then_create_in_order_on_success():
+def test_export_via_service_calls_export_then_create_in_order_on_success(tmp_path):
+    export_path = str(tmp_path / "out.zip")
     service = _FakeExportService(
         export_result={
             "success": True,
             "message": "ok",
-            "path": "/tmp/out.zip",
+            "path": export_path,
             "dependency_info": {"auto_included": [1, 2]},
         }
     )
 
     outcome = LibraryScreen._run_library_export_via_service(
-        service, _payload(), name="Export", description="desc"
+        service, _payload(tmp_path), name="Export", description="desc"
     )
 
     assert service.calls == ["export_chatbook", "create_chatbook"]
     assert outcome == {
         "success": True,
         "message": "ok",
-        "path": "/tmp/out.zip",
+        "path": export_path,
         "dependency_info": {"auto_included": [1, 2]},
         "registry_recorded": True,
         "cancelled": False,
+        # task-32232 AC#4: the artifact's own facts ride back with the
+        # outcome. This fake service never writes a zip -- and ``tmp_path``
+        # guarantees nothing else did either -- so the readback yields
+        # nothing and the receipt degrades to its path-only form rather
+        # than inventing counts.
+        "item_count": None,
+        "size_bytes": None,
     }
-    assert service.create_kwargs[0]["file_path"] == "/tmp/out.zip"
+    assert not (tmp_path / "out.zip").exists()
+    assert service.create_kwargs[0]["file_path"] == export_path
     assert service.create_kwargs[0]["tags"] == ["library-export"]
 
 
-def test_export_via_service_never_calls_create_chatbook_when_export_fails():
+def test_export_via_service_never_calls_create_chatbook_when_export_fails(tmp_path):
     service = _FakeExportService(
         export_result={
             "success": False,
@@ -402,7 +433,7 @@ def test_export_via_service_never_calls_create_chatbook_when_export_fails():
     )
 
     outcome = LibraryScreen._run_library_export_via_service(
-        service, _payload(), name="Export", description="desc"
+        service, _payload(tmp_path), name="Export", description="desc"
     )
 
     assert service.calls == ["export_chatbook"]  # create_chatbook never ran
@@ -411,14 +442,14 @@ def test_export_via_service_never_calls_create_chatbook_when_export_fails():
     assert outcome["registry_recorded"] is False
 
 
-def test_export_via_service_reports_success_even_when_registry_recording_raises():
+def test_export_via_service_reports_success_even_when_registry_recording_raises(tmp_path):
     """The zip succeeded -- a registry-recording failure afterward must not
     flip the overall outcome to failure (the artifact genuinely exists on
     disk); only ``registry_recorded`` reflects the bookkeeping miss."""
     service = _FakeExportService(create_error=RuntimeError("disk full"))
 
     outcome = LibraryScreen._run_library_export_via_service(
-        service, _payload(), name="Export", description="desc"
+        service, _payload(tmp_path), name="Export", description="desc"
     )
 
     assert service.calls == ["export_chatbook", "create_chatbook"]
@@ -426,7 +457,7 @@ def test_export_via_service_reports_success_even_when_registry_recording_raises(
     assert outcome["registry_recorded"] is False
 
 
-def test_export_via_service_wraps_export_chatbook_exception_as_failure():
+def test_export_via_service_wraps_export_chatbook_exception_as_failure(tmp_path):
     class _RaisingService:
         async def export_chatbook(
             self, request_data, *, progress_callback=None, cancel_check=None
@@ -434,7 +465,7 @@ def test_export_via_service_wraps_export_chatbook_exception_as_failure():
             raise RuntimeError("boom")
 
     outcome = LibraryScreen._run_library_export_via_service(
-        _RaisingService(), _payload(), name="Export", description="desc"
+        _RaisingService(), _payload(tmp_path), name="Export", description="desc"
     )
 
     assert outcome["success"] is False

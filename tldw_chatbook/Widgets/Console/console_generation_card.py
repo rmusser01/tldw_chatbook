@@ -13,9 +13,9 @@ ephemeral browse state, then hands them to
 INSTEAD of the plain ``"image"`` row for any message present in that
 mapping -- see ``console_transcript.py``'s ``_transcript_rows``.
 
-Browsing/keep controls (the action row that lets a reader step between
-variants or promote one to canonical) are a later task; this module renders
-state only.
+Browsing, keep, view, and save controls live on this card so generated-image
+operations stay next to the media they affect. General message actions remain
+in the selected message row.
 """
 
 from __future__ import annotations
@@ -28,11 +28,12 @@ from PIL import Image as PILImage
 from rich.table import Table
 from rich_pixels import Pixels
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
+from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
     PIXELS_MAX_LINES,
@@ -45,6 +46,11 @@ from tldw_chatbook.Chat.console_image_view import (
 #: circular import.
 CARD_BORDER_COLOR = "#6f7782"
 CARD_TITLE = "Image Generation"
+_CARD_ACTION_LABELS = {
+    "keep": "Keep",
+    "toggle-image-view": "View",
+    "save-image": "Save",
+}
 
 
 @dataclass(frozen=True)
@@ -65,9 +71,9 @@ class ConsoleGenerationCardSpec:
         variant_count: Total number of generated variants for this message.
         meta: Generation metadata for the browsed variant
             (``message.generation_metadata[browsed_index]``).
-        mode: Inline image render mode for the browsed variant
-            ("pixels" or "graphics" -- a card is never "hidden"; the
-            screen simply omits hidden-mode messages from the spec map).
+        mode: Inline image render mode for the browsed variant. ``hidden``
+            keeps a minimal card with only its View control so the user can
+            cycle back to a rendered mode.
         pixels: Prebuilt ``rich_pixels.Pixels`` for "pixels" mode, or
             ``None`` when not yet decoded or mode is "graphics".
         pil: Decoded PIL image for "graphics" mode, or ``None`` when not
@@ -78,7 +84,7 @@ class ConsoleGenerationCardSpec:
     browsed_index: int
     variant_count: int
     meta: GenerationVariantMeta
-    mode: Literal["pixels", "graphics"]
+    mode: Literal["pixels", "graphics", "hidden"]
     pixels: "Pixels | None" = None
     pil: "PILImage.Image | None" = None
 
@@ -264,19 +270,80 @@ class ConsoleGenerationCard(Vertical):
     ``ConsoleTranscript._build_row_widget``/``_update_row_widget``.
     """
 
-    def __init__(self, spec: ConsoleGenerationCardSpec) -> None:
+    def __init__(
+        self,
+        spec: ConsoleGenerationCardSpec,
+        *,
+        actions: tuple[ConsoleMessageAction, ...] | None = None,
+    ) -> None:
         super().__init__(
             id=f"console-generation-card-{spec.message_id}",
             classes="console-generation-card",
         )
         self.spec = spec
+        resolved_actions = (
+            actions if actions is not None else self._default_actions(spec)
+        )
+        self.actions = (
+            tuple(
+                action
+                for action in resolved_actions
+                if action.action_id == "toggle-image-view"
+            )
+            if spec.mode == "hidden"
+            else resolved_actions
+        )
         self.border_title = CARD_TITLE
         self.styles.border = ("round", CARD_BORDER_COLOR)
 
     def compose(self) -> ComposeResult:
-        yield _generation_card_image_widget(self.spec)
-        yield Static(
-            generation_card_details_table(self.spec),
-            id=f"console-generation-card-details-{self.spec.message_id}",
-            classes="console-generation-card-details",
+        if self.spec.mode != "hidden":
+            yield _generation_card_image_widget(self.spec)
+            yield Static(
+                generation_card_details_table(self.spec),
+                id=f"console-generation-card-details-{self.spec.message_id}",
+                classes="console-generation-card-details",
+            )
+        if self.actions:
+            buttons = []
+            for action in self.actions:
+                button = Button(
+                    _CARD_ACTION_LABELS.get(action.action_id, action.label),
+                    id=f"console-message-action-{action.action_id}-{self.spec.message_id}",
+                    classes="console-media-card-action",
+                    disabled=not action.enabled,
+                )
+                button.console_action_id = action.action_id
+                button.console_message_id = self.spec.message_id
+                if action.disabled_reason:
+                    button.tooltip = action.disabled_reason
+                buttons.append(button)
+            yield Horizontal(*buttons, classes="console-media-card-actions")
+
+    @staticmethod
+    def _default_actions(
+        spec: ConsoleGenerationCardSpec,
+    ) -> tuple[ConsoleMessageAction, ...]:
+        actions: list[ConsoleMessageAction] = []
+        if spec.variant_count > 1:
+            actions.extend(
+                (
+                    ConsoleMessageAction(
+                        "variant-previous", "<", enabled=spec.browsed_index > 0
+                    ),
+                    ConsoleMessageAction(
+                        "variant-next",
+                        ">",
+                        enabled=spec.browsed_index < spec.variant_count - 1,
+                    ),
+                )
+            )
+        if spec.browsed_index:
+            actions.append(ConsoleMessageAction("keep", "Keep"))
+        actions.extend(
+            (
+                ConsoleMessageAction("toggle-image-view", "View"),
+                ConsoleMessageAction("save-image", "Save"),
+            )
         )
+        return tuple(actions)

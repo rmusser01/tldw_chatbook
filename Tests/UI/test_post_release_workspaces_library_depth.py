@@ -150,7 +150,16 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert not screen.query("#library-workspaces-collections-membership")
         assert not screen.query("#library-workspaces-import-export")
         handoff_row = screen.query_one("#library-workspaces-handoff", Static)
-        assert handoff_row.renderable.plain == "Handoff · 2 eligible, ● 2 blocked"
+        # task-32230 AC#2: the "●" glyph named neither the blocker nor the
+        # remedy. The two blocked rows here (a note and a conversation, both
+        # in Workspace B) share one reason code, so the row can say "in
+        # another workspace"; they differ in TYPE, and only the conversation
+        # reader has a "Link to workspace" header button (PR #2581 review),
+        # so the remedy is the one both of them actually support.
+        assert handoff_row.renderable.plain == (
+            "Handoff · 2 eligible · 2 blocked · in another workspace · "
+            "Copy or link them into this workspace"
+        )
         assert "Collections: browse and organize; staging is read-only" not in visible
         assert "Import/Export: copy or reference sources" not in visible
         assert (
@@ -270,7 +279,11 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         )
         assert active_workspace_row.renderable.plain == "Active · Workspace 1"
         assert "Create local workspace" in visible
-        assert "Server sync WIP · local only" in visible
+        # task-32357 AC#1: same two facts, said in the reader's terms.
+        assert (
+            "Everything here is stored on this machine · syncing to a server "
+            "isn't available yet." in visible
+        )
 
 
 @pytest.mark.asyncio
@@ -684,6 +697,9 @@ async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate()
     same session had handed off before the foreign item appeared.
     """
     from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+    from tldw_chatbook.Library.library_conversation_reader_state import (
+        ConversationReaderState,
+    )
 
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService(
@@ -738,6 +754,16 @@ async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate()
             source_id="chat-local",
         )
         screen._selected_conversation_handoff_payload = lambda: payload
+        screen._conversations_state.freshness = "fresh"
+        screen._conversations_state.reader_state = ConversationReaderState(
+            selected_id="chat-local",
+            selected_version=1,
+            loaded_id="chat-local",
+            loaded_version=1,
+            loaded_generation=0,
+            generation=0,
+            complete=True,
+        )
         staged: list = []
         app.open_chat_with_handoff = (
             lambda p, action_label="": staged.append((p, action_label))

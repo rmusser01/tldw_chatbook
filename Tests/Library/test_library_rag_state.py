@@ -9,6 +9,7 @@ from tldw_chatbook.Library import library_rag_state as _rag_state_module
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_FALLBACK_TOP_K,
+    LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
@@ -39,7 +40,6 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         conversations=0,
         prompts=0,
         workspaces=0,
-        collections=0,
         selected=("notes", "media"),
     )
 
@@ -52,7 +52,6 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         "conversations",
         "prompts",
         "workspaces",
-        "collections",
     )
     assert scope.option_by_type("notes").label == "Notes"
     assert scope.option_by_type("notes").count_label == "2 sources"
@@ -70,7 +69,6 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         conversations=0,
         prompts=0,
         workspaces=0,
-        collections=0,
     )
 
     assert empty_scope.has_available_sources is False
@@ -854,7 +852,6 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
             "media": 0,
             "conversations": 0,
             "workspaces": 0,
-            "collections": 0,
         },
         query="What changed?",
     )
@@ -1589,6 +1586,23 @@ class TestLibraryRagResultRowScoreKind:
         assert row.score_kind == "hybrid_fusion"
         assert row.vector_score is None
 
+    @pytest.mark.parametrize(
+        "vector_score",
+        (True, False, float("nan"), float("inf"), float("-inf"), 10**309, -(10**309)),
+    )
+    def test_hybrid_row_rejects_untrusted_vector_score(self, vector_score):
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "provenance": {"hybrid_fusion": {"vector_score": vector_score}},
+            }
+        )
+
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score is None
+        assert library_rag_all_matches_weak((row,)) is False
+
     def test_reranker_channel_is_read_from_provenance(self):
         row = LibraryRagResultRow.from_result(
             {"title": "A", "score": 7.5, "provenance": {"_final_score_kind": "reranker"}}
@@ -2083,7 +2097,7 @@ class TestLibraryRagEmptyStateQuietCopy:
 def test_scope_source_type_map_is_a_superset_of_the_semantic_source_type_map() -> None:
     """`_SCOPE_SOURCE_TYPE_MAP` must agree with `_SEMANTIC_SOURCE_TYPE_MAP`
     on every key the semantic map defines -- the semantic map is
-    deliberately NARROWER (it omits prompts/workspaces/collections, which
+    deliberately NARROWER (it omits prompts/workspaces, which
     have no semantic-index seam at all, per its own module comment), never
     disagreeing on a shared key."""
     scope_map = _rag_state_module._SCOPE_SOURCE_TYPE_MAP
@@ -2101,12 +2115,13 @@ def test_scope_source_type_map_is_a_superset_of_the_semantic_source_type_map() -
         )
 
 
-def test_scope_source_type_map_matches_open_source_type_map_except_prompt() -> None:
+def test_scope_source_type_map_matches_open_source_type_map_except_prompts() -> None:
     """`_SCOPE_SOURCE_TYPE_MAP` and `_OPEN_SOURCE_TYPE_MAP` agree on every
-    shared key EXCEPT "prompt": `_OPEN_SOURCE_TYPE_MAP` deliberately keeps
-    it singular (`_open_library_item_by_id`'s dispatch key), while
-    `_SCOPE_SOURCE_TYPE_MAP` canonicalizes it to the plural "prompts"
-    scope-toggle key -- the one documented, intentional divergence. This
+        shared key EXCEPT the singular/plural prompt aliases:
+        `_OPEN_SOURCE_TYPE_MAP` deliberately keeps both singular
+        (`_open_library_item_by_id`'s dispatch key), while
+        `_SCOPE_SOURCE_TYPE_MAP` canonicalizes both to the plural "prompts"
+        scope-toggle key. This
     asserts that ACTUAL delta rather than forcing false identity between
     the two maps."""
     scope_map = _rag_state_module._SCOPE_SOURCE_TYPE_MAP
@@ -2117,10 +2132,10 @@ def test_scope_source_type_map_matches_open_source_type_map_except_prompt() -> N
         "Expected both maps to define 'prompt' -- the documented divergence "
         "this test pins no longer applies if either map dropped it."
     )
-    for raw_source_type in shared_keys - {"prompt"}:
+    for raw_source_type in shared_keys - {"prompt", "prompts"}:
         assert open_map[raw_source_type] == scope_map[raw_source_type], (
             "_OPEN_SOURCE_TYPE_MAP and _SCOPE_SOURCE_TYPE_MAP disagree on "
-            f"{raw_source_type!r} outside the documented 'prompt' divergence."
+                f"{raw_source_type!r} outside the documented prompt divergence."
         )
     assert open_map["prompt"] == "prompt"  # _open_library_item_by_id's dispatch key
     assert scope_map["prompt"] == "prompts"  # the plural scope-toggle key
@@ -2178,18 +2193,28 @@ def test_named_but_uncredentialed_provider_shows_the_real_remedy() -> None:
 
     assert state.run_action.enabled is False
     assert "Select a provider/model" not in state.run_action.disabled_reason
-    assert "ANTHROPIC_API_KEY" in state.run_action.disabled_reason
-    assert "api_settings.anthropic" in state.run_action.disabled_reason
+    # task-32236 turned the SURFACED half of this into the Media reader's
+    # one sentence: the user is told what is missing and where to fix it,
+    # once. The env var and the TOML table -- accurate, but a second remedy
+    # for one missing key -- moved into the structured record, which is now
+    # logged instead of painted. The owner and the "not Console controls"
+    # half of I1 are unchanged.
+    assert state.run_action.disabled_reason == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
+    assert "ANTHROPIC_API_KEY" not in state.run_action.disabled_reason
+    assert "api_settings.anthropic" not in state.run_action.disabled_reason
     assert "Console controls" not in state.recovery_copy
     assert "Owner: LLM provider credential." in state.recovery_copy
     assert "ANTHROPIC_API_KEY" in state.recovery_copy
 
 
 def test_credential_remedy_is_markup_escaped_for_its_rendering_sinks() -> None:
-    """The remedy embeds a TOML table name in brackets, and both sinks --
-    the run button's tooltip and the blocked callout / recovery `Static`s
-    -- render Rich markup, which would swallow `[api_settings.anthropic]`
-    and leave a sentence pointing at nothing.
+    """The remedy embeds a TOML table name in brackets, so it is escaped
+    before it is stored.
+
+    Since task-32236 its only sink is the logged record (the panel paints
+    the one-sentence reason instead), but the sanitizer still runs over it
+    -- dropping it would let a config-sourced string through unescaped the
+    day something renders `recovery_copy` again.
     """
     state = LibraryRagQueryState.from_values(
         query="summarize the policy",
@@ -2198,7 +2223,8 @@ def test_credential_remedy_is_markup_escaped_for_its_rendering_sinks() -> None:
         provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
     )
 
-    assert r"\[api_settings.anthropic]" in state.run_action.disabled_reason
+    assert r"\[api_settings.anthropic]" in state.recovery_copy
+    assert "api_settings" not in state.run_action.disabled_reason
 
 
 def test_credential_remedy_cannot_make_a_blocked_state_look_ready() -> None:
@@ -2241,7 +2267,13 @@ def test_panel_state_threads_the_credential_remedy_into_query_state() -> None:
         provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
     )
 
-    assert "ANTHROPIC_API_KEY" in panel.query_state.run_action.disabled_reason
+    # task-32236: what has to survive the panel layer is the BLOCKED state
+    # and its one remedy sentence; the credential detail rides the record.
+    assert (
+        panel.query_state.run_action.disabled_reason
+        == LIBRARY_RAG_NO_PROVIDER_BLOCKED_REASON
+    )
+    assert "ANTHROPIC_API_KEY" in panel.query_state.recovery_copy
 
 
 # --------------------------------------------------------------------------

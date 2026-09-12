@@ -413,6 +413,7 @@ class LocalAudioProcessor:
         use_adaptive_chunking: bool = False,
         use_multi_level_chunking: bool = False,
         chunk_language: Optional[str] = None,
+        chunk_template: Optional[Dict[str, Any]] = None,
         diarize: bool = False,
         vad_use: bool = False,
         timestamp_option: bool = True,
@@ -454,6 +455,11 @@ class LocalAudioProcessor:
             use_adaptive_chunking: Whether to enable adaptive chunk sizing.
             use_multi_level_chunking: Whether to emit multiple chunk levels.
             chunk_language: Optional language hint for chunking.
+            chunk_template: Optional pre-resolved chunking-template dict
+                (task 10, spec §9.2 -- the widened audio/video ingest seam;
+                the video path forwards the same name through ``**kwargs``).
+                Its chunk-stage options merge under the scalar chunking
+                arguments at the shared chunk site.
             diarize: Whether to request speaker diarization.
             vad_use: Whether to request voice activity detection.
             timestamp_option: Whether to request transcript timestamps.
@@ -521,6 +527,7 @@ class LocalAudioProcessor:
                         use_adaptive_chunking=use_adaptive_chunking,
                         use_multi_level_chunking=use_multi_level_chunking,
                         chunk_language=chunk_language,
+                        chunk_template=chunk_template,
                         diarize=diarize,
                         vad_use=vad_use,
                         timestamp_option=timestamp_option,
@@ -761,6 +768,10 @@ class LocalAudioProcessor:
                     overlap=kwargs.get("chunk_overlap", 200),
                     language=kwargs.get("chunk_language")
                     or kwargs.get("transcription_language", "en"),
+                    # (task 10, spec §9.2) the widened audio/video seam: the
+                    # pre-resolved template rides through to the chunking
+                    # service (video's ``**kwargs`` path lands here too).
+                    template=kwargs.get("chunk_template"),
                 )
                 result["chunks"] = chunks
                 logger.debug(f"Chunking completed: {len(chunks)} chunks created")
@@ -1068,6 +1079,7 @@ class LocalAudioProcessor:
         max_size: int = 500,
         overlap: int = 200,
         language: str = "en",
+        template: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Chunk text using the chunking service."""
         # ChunkingService.chunk_text takes flat keyword arguments
@@ -1075,12 +1087,19 @@ class LocalAudioProcessor:
         # Passing one positionally put a dict where chunk_size is expected and
         # every audio/video ingest died in chunking with
         # "'<=' not supported between instances of 'dict' and 'int'" (task-840).
-        chunks = self.chunking_service.chunk_text(
-            text,
-            chunk_size=max_size,
-            chunk_overlap=overlap,
-            method=method,
-        )
+        # (task 10) The ``template`` kwarg is forwarded ONLY when set: the
+        # no-template call stays byte-identical to today's four-kwarg shape,
+        # so any duck-typed chunking service predating the kwarg (and the
+        # task-840 characterization pin) keeps working when no template is
+        # in play.
+        chunk_kwargs: Dict[str, Any] = {
+            "chunk_size": max_size,
+            "chunk_overlap": overlap,
+            "method": method,
+        }
+        if template is not None:
+            chunk_kwargs["template"] = template
+        chunks = self.chunking_service.chunk_text(text, **chunk_kwargs)
         # It returns dicts carrying 'text' plus real character offsets, not bare
         # strings; the previous wrapping nested the whole dict under another
         # "text" key. Carry the offsets through rather than dropping them: the

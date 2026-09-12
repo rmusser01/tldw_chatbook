@@ -1,4 +1,6 @@
-import threading, time, json
+import threading
+import time
+import json
 import Tests.Chat.test_console_agent_bridge as T
 
 
@@ -17,15 +19,21 @@ def test_probe_two_children(tmp_path):
     store = T.ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=T.ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(session.id, role=T.ConsoleMessageRole.ASSISTANT, content="")
-    bridge = T.ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    assistant = store.append_message(
+        session.id, role=T.ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = T.ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
     captured = {}
     bridge._teardown_fleet_service = lambda cid, svc: captured.setdefault("svc", svc)
     result = {}
     marks = []
 
     def do_run():
-        result["outcome"] = T._run(bridge, store, session, assistant.id, conversation_id="conv-two-children")
+        result["outcome"] = T._run(
+            bridge, store, session, assistant.id, conversation_id="conv-two-children"
+        )
         marks.append(("run_returned", time.monotonic()))
 
     runner = threading.Thread(target=do_run)
@@ -47,6 +55,11 @@ def test_probe_two_children(tmp_path):
             if snap and all(h.status != "running" for h in snap):
                 break
             time.sleep(0.0005)
-        marks.append(("ms_until_all_terminal", round((time.monotonic() - t0) * 1000, 2)))
-    out = [(m[0], (round((m[1]-t_start)*1000, 2) if isinstance(m[1], float) else m[1])) for m in marks]
+        marks.append(
+            ("ms_until_all_terminal", round((time.monotonic() - t0) * 1000, 2))
+        )
+    out = [
+        (m[0], (round((m[1] - t_start) * 1000, 2) if isinstance(m[1], float) else m[1]))
+        for m in marks
+    ]
     print("PROBE2", json.dumps(out))

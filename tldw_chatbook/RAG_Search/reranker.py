@@ -44,6 +44,7 @@ except ImportError:
 from ..Chat.Chat_Functions import chat_api_call
 from ..Metrics.metrics_logger import log_counter, log_histogram, timeit
 from tldw_chatbook.Internal_Prompts import get_internal_prompt, safe_substitute
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from .simplified.vector_store import SearchResult, SearchResultWithCitations
 
 
@@ -449,7 +450,18 @@ class BaseReranker(ABC):
                 elif "text" in response:
                     return response["text"]
                 else:
-                    logger.warning(f"Unexpected response format: {response}")
+                    # TASK-21700. This used to dump the whole provider
+                    # response dict, whose values are the model's text about
+                    # the user's query and documents. What the line is named
+                    # for -- "unexpected FORMAT" -- is answered by the keys
+                    # alone, and the keys are provider vocabulary, not user
+                    # content. Found by this task's census
+                    # (Tests/RAG_Search/test_rag_diagnostic_privacy.py), not
+                    # by the greps that preceded it.
+                    response_keys = sorted(str(key) for key in response)
+                    logger.warning(
+                        f"Unexpected reranker response format; keys={response_keys}"
+                    )
                     return str(response)
             else:
                 return str(response)
@@ -612,8 +624,23 @@ class PointwiseReranker(BaseReranker):
             )
 
         except (json.JSONDecodeError, ValueError, KeyError) as e:
+            # TASK-21700. This printed 200 characters of the model's reply at
+            # ERROR. That reply is user content by derivation: the prompt
+            # above hands the model the user's query, the document title, and
+            # 500 characters of the document body, and a malformed reply is
+            # usually prose *about* those. `{e}` is kept and given its type --
+            # a JSONDecodeError already names the character position and what
+            # it expected, which is the structural fact this line is read for.
+            # `chars` and `response_fp` add what the truncation used to imply
+            # but never actually showed: how long the reply was, and whether
+            # every failing result came back with the SAME bad body (one
+            # broken prompt template) or a different one each time (a flaky
+            # model).
             logger.error(
-                f"Failed to parse LLM response: {e}, Response: {response[:200]}"
+                f"Failed to parse LLM reranker response "
+                f"({type(e).__name__}: {e}); "
+                f"chars={len(response)}, "
+                f"response_fp={content_fingerprint(response)}"
             )
             # Return original score on parse error, unstamped: nothing
             # usable came back, so this row was not rescored (note-b).

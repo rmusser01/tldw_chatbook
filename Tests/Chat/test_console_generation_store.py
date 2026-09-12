@@ -176,9 +176,7 @@ def test_pending_attachment_identity_never_enters_generation_persistence_rows(
     persisted = fake_persistence.created_messages[-1]
     assert "attachment_id" not in persisted
     assert all("attachment_id" not in row for row in persisted["attachments"])
-    assert all(
-        "attachment_id" not in row for row in persisted["generation_metadata"]
-    )
+    assert all("attachment_id" not in row for row in persisted["generation_metadata"])
 
 
 @pytest.mark.integration
@@ -218,16 +216,21 @@ def test_merge_persisted_generation_message_is_exact_idempotent_and_isolated(tmp
         assert first.image_mime_type == "image/png"
         assert first.attachments == second.attachments
         assert first.generation_metadata == (_meta(41),)
-        assert sum(
-            node.persisted_message_id == generated.id
-            for node in reader._nodes_by_session[reader_session.id].values()
-        ) == 1
+        assert (
+            sum(
+                node.persisted_message_id == generated.id
+                for node in reader._nodes_by_session[reader_session.id].values()
+            )
+            == 1
+        )
         assert reader.get_message(unrelated.id) == unrelated_before
     finally:
         db.close_connection()
 
 
-def test_keep_swaps_in_memory_and_calls_persistence(store_with_session, fake_persistence):
+def test_keep_swaps_in_memory_and_calls_persistence(
+    store_with_session, fake_persistence
+):
     store, sid = store_with_session
     msg = store.append_generation_message(
         sid,
@@ -236,7 +239,10 @@ def test_keep_swaps_in_memory_and_calls_persistence(store_with_session, fake_per
         persist=True,
     )
     store.keep_generation_variant(sid, msg.id, position=1)
-    assert msg.image_data == b"b" and [m.seed for m in msg.generation_metadata] == [2, 1]
+    assert msg.image_data == b"b" and [m.seed for m in msg.generation_metadata] == [
+        2,
+        1,
+    ]
     assert fake_persistence.kept == [(msg.id, 1)]  # persistence op invoked
 
 
@@ -253,7 +259,9 @@ def test_keep_with_byteless_memory_does_not_null(store_with_session, fake_persis
         msg, tuple(replace(a, data=None) for a in msg.attachments)
     )
     store.keep_generation_variant(sid, msg.id, position=1)
-    assert fake_persistence.kept == [(msg.id, 1)]  # narrow op used; NO full-list rewrite call
+    assert fake_persistence.kept == [
+        (msg.id, 1)
+    ]  # narrow op used; NO full-list rewrite call
     assert not getattr(fake_persistence, "full_rewrites", [])
 
 
@@ -367,9 +375,7 @@ def test_append_variant_rejects_non_generation_message(store_with_session):
     """Precondition guard: append_generation_variant must reject plain messages."""
     store, sid = store_with_session
     # Create a plain message (no generation_metadata)
-    msg = store.append_message(
-        sid, role="assistant", content="plain text"
-    )
+    msg = store.append_message(sid, role="assistant", content="plain text")
 
     with pytest.raises(ValueError, match="requires a generation message"):
         store.append_generation_variant(
@@ -393,8 +399,15 @@ def test_append_variant_position_drift_raises_error(store_with_session):
     class FaultyPersistence(FakeGenerationPersistence):
         def append_message_attachment(self, *args, **kwargs):
             # Return wrong position (99 instead of expected 1)
-            self.appended.append((args[0], kwargs.get("data"), kwargs.get("mime_type"),
-                                 kwargs.get("display_name", ""), kwargs.get("generation_metadata")))
+            self.appended.append(
+                (
+                    args[0],
+                    kwargs.get("data"),
+                    kwargs.get("mime_type"),
+                    kwargs.get("display_name", ""),
+                    kwargs.get("generation_metadata"),
+                )
+            )
             return 99  # Intentionally wrong
 
     store.persistence = FaultyPersistence()
@@ -419,9 +432,8 @@ def test_persist_generation_message_rejects_null_bytes(store_with_session):
 
     # Manually corrupt the attachment data to None (simulating a caller bug)
     from dataclasses import replace as dc_replace
-    msg.attachments = (
-        dc_replace(msg.attachments[0], data=None),
-    )
+
+    msg.attachments = (dc_replace(msg.attachments[0], data=None),)
 
     # Now try to persist it; should fail with ValueError
     with pytest.raises(ValueError, match="has no bytes"):

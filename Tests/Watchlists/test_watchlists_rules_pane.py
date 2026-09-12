@@ -63,7 +63,7 @@ def sample_rules():
 @pytest.mark.asyncio
 async def test_rules_pane_renders_table_and_toolbar():
     app = RulesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(RulesPane)
         assert pane.query_one("#rules-refresh-button", Button)
         assert pane.query_one("#rules-new-button", Button)
@@ -74,7 +74,7 @@ async def test_rules_pane_renders_table_and_toolbar():
 async def test_rules_pane_carries_one_line_of_guidance_when_empty():
     """TASK-2313, AC#4: matching Runs/Notifications' identical fix."""
     app = RulesPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(RulesPane)
         assert pane.rules == [], "precondition: nothing seeded"
         hint = pane.query_one("#rules-empty-state", Static)

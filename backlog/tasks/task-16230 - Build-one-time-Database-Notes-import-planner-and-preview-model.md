@@ -16,7 +16,7 @@ references:
   - Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md
   - backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md
   - >-
-    backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md
+    backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md
 priority: high
 ---
 
@@ -41,7 +41,7 @@ Establish the read-only planning boundary for importing individual files or one 
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+ADR paths: `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`, `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 Reason: This task implements the already-approved one-time import ownership, hierarchy, matching, and independent content/membership decision boundaries without changing storage, sync policy, or service contracts.
 
 1. Define frozen preview-domain models for source selection, classifications, actions, parsed note payloads, proposed memberships, matches, collision decisions, bounds, and aggregate plans.
@@ -100,7 +100,7 @@ Verification on 2026-08-14:
   uncertain/uncertain, override, and direct-construction paths without exposing note
   identifiers in errors.
 
-ADR required: no. ADR-059 and ADR-060 remain the governing ownership, privacy,
+ADR required: no. ADR-059 and ADR-073 remain the governing ownership, privacy,
 matching, hierarchy, and update-safety decisions. The Windows path/handle incident
 and its native sharing/nonzero-identity follow-up were recorded in
 `backlog/docs/lessons-testing-evidence.md`.
@@ -116,7 +116,7 @@ lesson. No unrelated production files were changed.
 - [x] #2 The implementation plan was followed or deviations are documented in Implementation Notes.
 - [x] #3 Focused unit and integration tests cover the new planner behavior and pass.
 - [x] #4 Relevant static analysis and formatting checks pass.
-- [x] #5 The approved design and ADR-059/ADR-060 remain the governing documentation; no new ADR is required.
+- [x] #5 The approved design and ADR-059/ADR-073 remain the governing documentation; no new ADR is required.
 - [x] #6 The final diff has been self-reviewed for privacy, path safety, bounded resource use, and regressions.
 - [x] #7 Implementation Notes summarize the approach, decisions, tests, and modified files.
 - [x] #8 Any reusable lesson discovered by the task is recorded with its incident evidence, or the notes state that none was needed.

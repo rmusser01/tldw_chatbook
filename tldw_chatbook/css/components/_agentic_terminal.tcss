@@ -55,17 +55,10 @@
     background: $ds-surface-raised;
 }
 
-/* F-054/F-057: these two badges carry whole SENTENCES (the inspector's
-   empty-state explainer, the servers-mode aggregate summary), not one-word
-   chips -- they must wrap at narrow widths instead of clipping mid-word.
-   ID selectors beat the `.ds-status-badge` class rule above on
-   specificity; every other `.ds-status-badge` consumer keeps the fixed
-   height. `width: 1fr` is required alongside: the class rule's
-   `width: auto` would otherwise size the badge to its content's natural
-   width (no wrap at all -- the line just overflows its pane). Kept in
-   lockstep with the matching overrides in MCPInspector.DEFAULT_CSS and
-   MCPServersMode.DEFAULT_CSS, which cover the bare test harnesses that
-   never load this bundle. */
+/* F-054/F-057: sentence badges must wrap. ID rules override the fixed
+   .ds-status-badge size; 1fr avoids intrinsic-width overflow. Keep these
+   overrides in sync with MCPInspector/MCPServersMode.DEFAULT_CSS for
+   standalone harnesses. */
 #mcp-inspector-state,
 #mcp-overview-summary {
     width: 1fr;
@@ -136,6 +129,10 @@
    siblings in that row. */
 .library-toolbar-count {
     width: auto;
+    /* task-32227 (critique #9 row 26): the count sat flush against the next
+       action's focus border ("2 selected┃ Select all"). One cell, in the one
+       declaration every canvas's counter already shares. */
+    margin: 0 1 0 0;
 }
 
 ConsoleSettingsModal {
@@ -143,9 +140,9 @@ ConsoleSettingsModal {
 }
 
 #console-settings-modal {
-    width: 92;
+    width: 120;
     max-width: 95%;
-    height: 90%;
+    height: 94%;
     max-height: 95%;
     overflow: hidden;
     scrollbar-size: 1 1;
@@ -154,6 +151,12 @@ ConsoleSettingsModal {
     padding: 1 2;
 }
 
+/* TASK-31665 AC#15: visible scrollbar thumb. `$ds-grid-line` on a
+   `$ds-surface-panel` track measured 1.01:1 -- a scroller advertising a fold
+   it cannot show a position for. `$ds-text-muted` is the app's established
+   thumb token, generated per theme polarity; `scrollbar-color-active` keeps
+   the accent so a drag still reads as a drag. Applied to five more scrollers
+   below (same rationale). */
 #console-settings-body {
     height: 1fr;
     min-height: 0;
@@ -161,14 +164,21 @@ ConsoleSettingsModal {
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
 .console-settings-modal-section {
     height: auto;
     margin: 1 0 0 0;
+}
+
+#console-settings-provider-model-section,
+#console-settings-connection {
+    width: 100%;
+    min-width: 0;
+    height: auto;
 }
 
 .console-settings-primary-section {
@@ -178,22 +188,26 @@ ConsoleSettingsModal {
 }
 
 .console-settings-modal-row {
+    width: 100%;
+    min-width: 0;
     height: auto;
     min-height: 1;
 }
 
 .console-settings-modal-label {
-    width: 16;
-    min-width: 16;
-    max-width: 16;
-    height: 1;
-    min-height: 1;
+    width: 23;
+    min-width: 10;
+    max-width: 23;
+    height: auto;
+    min-height: 3;
     content-align: left middle;
+    text-wrap: wrap;
 }
 
 .console-settings-control {
     width: 1fr;
     min-width: 0;
+    max-width: 75%;
 }
 
 ConsoleSettingsModal Input {
@@ -308,16 +322,110 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 .console-settings-modal-actions {
-    height: 1;
-    min-height: 1;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 3;
     margin: 1 0 0 0;
     align-horizontal: right;
 }
 
+#console-settings-connection-actions {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+#console-settings-model-custom {
+    width: 18;
+    min-width: 18;
+    max-width: 18;
+}
+
+#console-settings-model-discover {
+    width: 31;
+    min-width: 31;
+    max-width: 31;
+}
+
+#console-settings-readiness-panel,
+#console-settings-model-discover-scope,
+#console-settings-model-discover-status,
+#console-settings-readiness,
+#console-settings-generation-confirmation,
+#console-settings-generation-consent-copy,
+#console-settings-generation-test-status {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    text-wrap: wrap;
+}
+
+.console-settings-view-tab {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+.console-settings-view-tab.console-settings-view-active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.console-settings-action-scope,
+.console-settings-disabled-reason {
+    height: auto;
+    min-height: 1;
+    content-align: right middle;
+}
+
+.console-settings-action-scope {
+    color: $ds-text-muted;
+}
+
+.console-settings-scope {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-wrap: wrap;
+}
+
+.console-settings-disabled-reason {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
 #console-settings-cancel,
-#console-settings-save {
-    width: 12;
+#console-settings-save,
+#console-settings-save-default {
+    width: auto;
     min-width: 12;
+    height: 1;
+    min-height: 1;
+}
+
+#console-settings-save-default {
+    min-width: 29;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-connection-actions,
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-actions {
+    layout: vertical;
+    height: auto;
+    align-horizontal: left;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-connection-actions > .console-settings-modal-label {
+    display: none;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     height: 1;
     min-height: 1;
 }
@@ -615,6 +723,7 @@ PromptVariablesDialog {
     text-overflow: clip;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #prompt-variables-scroll {
     width: 100%;
     height: 1fr;
@@ -626,7 +735,8 @@ PromptVariablesDialog {
     overflow-y: auto;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -929,6 +1039,7 @@ ConsoleRunLogModal {
     overflow-x: hidden;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {
     width: 100%;
@@ -936,13 +1047,13 @@ ConsoleRunLogModal {
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
 /* Narrow-width compact workbench (task-1342), following the personas
-   precedent (personas-workbench-compact): at <=90 cols the 3:6:2 split
+   precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
    leaves slivers, so the category pane becomes a fixed-width sidebar, the
    inspector pane and its divider drop out, and the detail pane takes the
    rest. The search help/status rows hide so category rows stay visible at
@@ -1081,6 +1192,7 @@ ConsoleRunLogModal {
     border: none;
 }
 
+#library-file-notes-rail,
 #library-rail {
     border: solid $ds-column-line;
     background: $ds-surface-panel;
@@ -1102,9 +1214,674 @@ ConsoleRunLogModal {
     background: $ds-surface-panel;
 }
 
-#library-conversations-canvas {
+/* Adaptive readers keep the ordinary narrow shell's edge-to-edge canvas
+   without inheriting the legacy library-notes-compact descendant rules. */
+#library-shell-grid.library-adaptive-compact {
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
+#library-shell-grid.library-adaptive-compact #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+#library-emergency-return {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+.library-adaptive-reader-shell {
+    width: 1fr;
+    min-width: 0;
     height: 100%;
     min-height: 0;
+}
+
+.library-adaptive-reader-shell > .library-adaptive-reader-work {
+    width: 1fr;
+    min-width: 0;
+}
+
+/* No width here (task-31952 AC#1). Every mounted grip sets its width as an
+   INLINE style from the resolved layout's `grip_width` -- the same number the
+   resolver held back for it -- and an inline style outranks this rule, so the
+   `width/min-width/max-width: 5` fallback that used to sit here was dead for
+   every destination and a second, stale answer for the four on one cell. */
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {
+    height: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: none !important;
+    content-align: center middle;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+    tint: transparent;
+    outline: none;
+}
+
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:hover,
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip.-active {
+    background: $ds-surface-raised;
+    tint: transparent;
+}
+
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:hover {
+    color: $ds-text-primary;
+}
+
+/* task-31276: no focus outline here. The grip is as TALL AS THE SHELL (5
+   columns wide then, one on the four readers that opted in since task-31633
+   AC#2 and task-31951), so an outline can
+   only ever paint its top and bottom rows -- and the top row sits on the
+   Reader's identity line, where such a rule reads as a rendering artifact at
+   the pane join, not as focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
+   because focus lands here after ANY Reader recompose: Escape out of the
+   Find bar, a mode-tab click, More). Fourth widget bitten by an outline
+   painting over content rather than around it, after TASK-1160
+   (DataTable), TASK-2300 (SelectOverlay) and task-31221 (the media type
+   chooser). Focus stays visible the sanctioned way: the arrow glyph
+   recolours to the accent and goes bold. */
+/* task-32053 fix round 1 (controller ruling): recolouring the arrow and
+   bolding it is still a COLOUR-family change -- critique #8 measured focus
+   as invisible here, and a 1-cell-wide grip has no room for a glyph cue.
+   `reverse` inverts the whole grip as a block, which reads at a glance and
+   survives monochrome, without the outline this rule deliberately refuses
+   (task-31276: an outline on a shell-tall grip paints over the Reader's
+   identity line and reads as a rendering artifact). */
+.library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {
+    background: $ds-surface-raised;
+    color: $ds-action-focus;
+    text-style: bold reverse;
+    tint: transparent;
+    outline: none;
+}
+
+#library-collections-reader-shell #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+}
+
+#library-collections-scopes {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+.library-collections-scope-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left middle;
+}
+
+.library-collections-scope-row:focus,
+#library-collections-more-saved-searches:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-more-saved-searches {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    color: $ds-text-muted;
+    content-align: left middle;
+}
+
+#library-collections-items,
+#library-collections-work {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    background: $ds-surface-panel;
+}
+
+#library-collections-items {
+    padding: 0;
+}
+
+#library-collections-work {
+    padding: 0 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#library-collections-items-toolbar,
+#library-collections-page-toolbar,
+#library-collections-primary-toolbar,
+#library-collections-mode-toolbar,
+#library-collections-archive-receipt {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+}
+
+#library-collections-items-toolbar > Button,
+#library-collections-sort-toolbar > Button,
+#library-collections-page-toolbar > Button,
+#library-collections-primary-toolbar > Button,
+#library-collections-secondary-toolbar > Button,
+#library-collections-mode-toolbar > Button,
+#library-collections-archive-receipt > Button {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0 1;
+}
+
+#library-collections-filter {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-filter:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-quick-capture-form,
+#library-collections-filters-form {
+    width: 100%;
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-capture-url,
+#library-collections-capture-title,
+#library-collections-capture-tags,
+#library-collections-filter-domain,
+#library-collections-filter-tags,
+#library-collections-filter-date-from,
+#library-collections-filter-date-to,
+#library-collections-highlight-quote,
+#library-collections-highlight-note,
+#library-collections-linked-note-id {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-highlight-quote {
+    height: 5;
+    min-height: 3;
+}
+
+#library-collections-capture-note {
+    width: 100%;
+    min-width: 0;
+    height: 5;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-capture-url:focus,
+#library-collections-capture-title:focus,
+#library-collections-capture-tags:focus,
+#library-collections-capture-note:focus,
+#library-collections-filter-domain:focus,
+#library-collections-filter-tags:focus,
+#library-collections-filter-date-from:focus,
+#library-collections-filter-date-to:focus,
+#library-collections-highlight-quote:focus,
+#library-collections-highlight-note:focus,
+#library-collections-linked-note-id:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-items-scroll {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+.library-collections-item-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left top;
+}
+
+.library-collections-item-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+#library-collections-page-stale,
+#library-collections-page-error,
+#library-collections-page-loading,
+#library-collections-items-empty,
+#library-collections-reader-loading,
+#library-collections-reader-error,
+#library-collections-reader-empty {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#library-collections-page-error,
+#library-collections-reader-error,
+#library-collections-hard-delete-copy {
+    color: $ds-status-error;
+}
+
+#library-collections-page-range,
+#library-collections-reader-identity,
+#library-collections-reader-byline {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+#library-collections-reader-title {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+    margin: 1 0 0 0;
+}
+
+#library-collections-read-body,
+#library-collections-info-body {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+    padding-bottom: 1;
+    color: $ds-text-primary;
+}
+
+#library-collections-freeform-note {
+    width: 100%;
+    min-width: 0;
+    height: 6;
+    min-height: 4;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-primary-toolbar {
+    margin-top: 1;
+    padding-bottom: 1;
+    border-bottom: solid $ds-grid-line;
+}
+
+#library-collections-mode-toolbar {
+    margin: 1 0 0 0;
+}
+
+#library-collections-primary-toolbar > Button:focus,
+#library-collections-secondary-toolbar > Button:focus,
+#library-collections-mode-toolbar > Button:focus,
+#library-collections-page-toolbar > Button:focus,
+#library-collections-items-toolbar > Button:focus,
+#library-collections-sort-toolbar > Button:focus,
+#library-collections-archive-receipt > Button:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-summarize,
+#library-collections-listen,
+#library-collections-save-offline,
+#library-collections-retry-extraction,
+#library-collections-hard-delete,
+#library-collections-legacy-recovery,
+#library-collections-capture-save,
+#library-collections-capture-cancel,
+#library-collections-capture-refresh,
+#library-collections-capture-retry-confirm,
+#library-collections-capture-retry-back,
+#library-collections-filters-apply,
+#library-collections-filters-clear,
+#library-collections-highlight-save,
+#library-collections-freeform-note-save,
+#library-collections-linked-note-save,
+#library-collections-legacy-recovery-export,
+#library-collections-legacy-recovery-close,
+.library-collections-highlight-delete,
+.library-collections-linked-note-unlink {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    border: none;
+}
+
+#library-collections-capture-save:focus,
+#library-collections-capture-cancel:focus,
+#library-collections-capture-refresh:focus,
+#library-collections-capture-retry-confirm:focus,
+#library-collections-capture-retry-back:focus,
+#library-collections-filters-apply:focus,
+#library-collections-filters-clear:focus,
+#library-collections-highlight-save:focus,
+#library-collections-freeform-note-save:focus,
+#library-collections-linked-note-save:focus,
+#library-collections-legacy-recovery-export:focus,
+#library-collections-legacy-recovery-close:focus,
+.library-collections-highlight-delete:focus,
+.library-collections-linked-note-unlink:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-action-status,
+#library-collections-action-content,
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning,
+#library-collections-legacy-recovery-heading,
+#library-collections-legacy-recovery-content,
+.library-collections-highlight-entry,
+.library-collections-linked-note-entry {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-collections-action-status,
+#library-collections-legacy-recovery-heading {
+    margin-top: 1;
+    text-style: bold;
+}
+
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning {
+    margin: 0 0 1 0;
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+#library-collections-action-content,
+#library-collections-legacy-recovery-content {
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+#library-collections-legacy-recovery-inspector {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    padding: 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-hard-delete-copy {
+    width: 100%;
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 1;
+    border: tall $ds-status-error;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note-heading,
+#library-collections-linked-notes-heading {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-collections-highlights-empty,
+#library-collections-linked-notes-empty,
+#library-collections-media-provenance {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+#library-collections-archive-receipt {
+    margin-top: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+#library-conversations-reader-shell #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+}
+
+#library-conversation-reader {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 0 1;
+    background: $ds-surface-panel;
+}
+
+.library-conversation-reader-modes,
+.library-conversation-reader-actions {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    margin: 0 0 1 0;
+}
+
+/* task-32056: the actions row now sits directly under Read/Info, so the
+   two read as one header block rather than two unrelated groups. */
+.library-conversation-reader-modes {
+    margin: 0;
+}
+
+/* task-32056 fix round 1: the blocked reason wraps instead of riding in a
+   Button label, which Textual truncates to one line -- at 100 columns the
+   reader pane is ~43 cells and clipped it mid-word. */
+.library-conversation-reader-block-reason {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    padding: 0 1;
+}
+
+.library-conversation-reader-modes > Button,
+.library-conversation-reader-actions > Button {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0 1;
+}
+
+#library-conversation-reader-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+#library-conversation-reader-find {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-conversation-reader-find:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-conversation-reader-messages,
+#library-conversation-reader-info-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+#library-conversation-reader-messages {
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+.library-conversation-reader-message {
+    width: 100%;
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    border-left: solid $ds-grid-line;
+    color: $ds-text-primary;
+}
+
+.library-conversation-reader-message:focus {
+    outline: none;
+    border-left: solid $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+#library-conversation-reader-info-body {
+    color: $ds-text-primary;
+}
+
+/* Reader toolbars can be as narrow as 50 columns while Items remains open.
+   Textual Button's default 16-column minimum pushed More and Info beyond the
+   painted Reader at that width even though both widgets stayed mounted. Keep
+   these compact, label-sized rows fully reachable without changing their
+   text or focus geometry. task-31633 AC#3 added the More disclosure's own
+   row: its four labels only fit the narrow Reader as label-sized buttons. */
+#library-media-reader-primary-toolbar > Button,
+#library-media-reader-mode-toolbar > Button,
+#library-media-reader-more-actions > Button {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+}
+
+#library-hub-attention {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-hub-attention-copy {
+    width: 1fr;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-hub-attention-action {
+    width: auto;
+    min-width: 8;
+}
+
+#library-conversations-canvas {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+#library-conversations-canvas > .ds-toolbar {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* task-32042: content-width actions keep full labels in narrow selection rows;
+   min-width: 0 lifts Button's 16-cell floor. */
+#library-conversations-canvas > .ds-toolbar > .library-toolbar-count,
+#library-conversations-canvas > .ds-toolbar > .library-canvas-action {
+    width: auto;
+    min-width: 0;
 }
 
 #library-conversations-list {
@@ -1120,8 +1897,9 @@ ConsoleRunLogModal {
 }
 
 .library-source-pager {
-    width: 100%;
+    width: 1fr;
     min-width: 0;
+    max-width: 100%;
     height: auto;
     min-height: 0;
 }
@@ -1137,8 +1915,9 @@ ConsoleRunLogModal {
 }
 
 .library-source-pager-controls {
-    width: 100%;
+    width: 1fr;
     min-width: 0;
+    max-width: 100%;
     height: auto;
     align: center middle;
 }
@@ -1195,12 +1974,28 @@ ConsoleRunLogModal {
     text-style: bold underline;
 }
 
+/* task-32359 (critique #10, B D9): the active destination and the focused
+   row rendered identically -- bold + underline over rgb(25,68,102) vs
+   rgb(28,70,102), three RGB units apart and colour-only. The rail had no
+   `:focus` rule of its own and fell back to the Button default. Focus
+   everywhere else on this screen is a SHAPE -- the house `█` left bar
+   (task-31983) -- so the rail stops being the exception: `-selected` above
+   keeps the background treatment, focus adds the bar. The bar replaces the
+   row's 1-column left padding (`padding: 0 1` -> `0 1 0 0`) so the label
+   neither shifts nor is clipped, and `outline: none` suppresses the generic
+   `*:focus{outline:solid}` fallback (core/_reset.tcss). */
+.library-rail-row:focus {
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* Flashcards-due emphasis on the create-flashcards rail row. Bright uses an
    accent text color (not a background fill) so the row stands out without
    reading as selected -- real selection is `.library-rail-row-selected`'s
    background treatment below, and this row must stay visually distinct from
    that state. Dim uses the muted text color already used for rail hints
-   elsewhere in this file (e.g. #library-notes-sync-status) so a zero-due
+   elsewhere in this file so a zero-due
    state reads as quiet. */
 .library-rail-row-due-bright {
     color: $ds-action-focus;
@@ -1234,6 +2029,21 @@ ConsoleRunLogModal {
     text-style: bold underline;
 }
 
+/* task-31983 (critique #6 P1, AC#4): the conversations canvas had NO
+   dedicated `:focus` rule, so a focused row fell back to the generic
+   `*:focus{outline:solid}` and (like the media list) read the same as the
+   `-selected` background. Same focus-only left-edge cue as
+   `.library-media-row:focus` -- border replaces the 1-col left padding so
+   the label holds; `outline: none` suppresses the generic fallback. */
+.library-conversation-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* task-4025: the Trash view's rows share the media list's row contract
    verbatim (one comma-joined rule, not a forked copy) -- the trash rows
    keep their OWN class only so `_focus_library_list_entry`'s
@@ -1243,7 +2053,11 @@ ConsoleRunLogModal {
     min-width: 0;
     height: 2;
     min-height: 2;
-    margin: 0 0 1 0;
+    /* task-31633 (critique #5 P1): NO bottom margin. It bought a blank third
+       row per item, so a 52-row terminal listed eleven of fifteen seeded
+       items. The title/meta rhythm and the `▸` marker separate the items;
+       the compact override below has always been margin-free. */
+    margin: 0;
     padding: 0 1;
     text-align: left;
     content-align: left middle;
@@ -1263,14 +2077,24 @@ ConsoleRunLogModal {
 /* task-2856 AC1/AC4: entering the Media list now parks real DOM focus on
    the first row and Up/Down move it between rows -- previously this class
    had no dedicated ``:focus`` rule at all and fell back to the generic
-   ``*:focus{outline:solid}`` (core/_reset.tcss). Same readable contract
-   ``.library-media-row-selected`` above already uses; `outline: none`
-   suppresses the generic fallback so this is the only cue (never
-   `outline: heavy`, which eats a compact row's label -- round-3 lesson). */
+   ``*:focus{outline:solid}`` (core/_reset.tcss). `outline: none` suppresses
+   the generic fallback (never `outline: heavy`, which eats a compact row's
+   label -- round-3 lesson).
+   task-31983 (critique #6 P1): `-selected` above uses this SAME background,
+   so focus and selection were indistinguishable -- the row the keyboard was
+   ON looked exactly like the open row and arrow-nav read as a dead key. The
+   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
+   cue `-selected` does NOT carry, so the two stay distinct even when a row
+   is both focused AND selected (arrow onto the open row). The left edge
+   replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
+   label neither shifts nor is clipped and the row never jumps focus<->blur --
+   the house focus convention ($ds-control-edge comment, _variables.tcss). */
 .library-media-row:focus, .library-media-trash-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -1292,13 +2116,78 @@ ConsoleRunLogModal {
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Notes list now parks DOM focus on the first row and
-   Up/Down move it between rows. */
+   Up/Down move it between rows. task-31983: same focus-only border-left cue
+   (padding compensates so the label holds), distinct from any selection. */
 .library-notes-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
+
+/* The adaptive Items pane has its own border and horizontal padding. Size
+   the Notes canvas and its scroll owner from the remaining content box;
+   `100%`/auto otherwise adds that inset back and clips the final two cells. */
+#library-notes-canvas,
+#library-notes-list {
+    width: 1fr;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
+   Select" 48 cells wide -- wider than the list pane itself, so Select, the
+   Title sort option and the delete receipt's Undo were painted past the
+   pane edge. The compact stage already sized these to their content; the
+   ordinary stage does the same now, since the pane is never wide enough to
+   justify a 16-cell "New". */
+#library-notes-canvas .library-canvas-action {
+    width: auto;
+    min-width: 0;
+}
+
+/* ...except the branch pagers, which are full-width rows carrying wrapped
+   range/status copy, not toolbar buttons. The rule above outranks
+   `.library-notes-tree-pager` on specificity, so it has to say so here
+   (review round 1). */
+#library-notes-canvas .library-notes-tree-pager {
+    width: 100%;
+    max-width: 100%;
+}
+
+/* task-32144: a Trash row's title takes the width its Restore button leaves,
+   so a long title ellipsizes rather than pushing that button off the pane --
+   the same shape the delete receipt's copy uses below. */
+.library-notes-trash-row-copy {
+    width: 1fr;
+    min-width: 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    padding: 0 1 0 0;
+}
+
+/* task-32123: the receipt's copy owns its own row above the two recovery
+   actions, so a title too long for the pane ends in an ellipsis instead of
+   pushing Undo off the edge. */
+#library-notes-delete-receipt-copy {
+    width: 1fr;
+    min-width: 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* task-32127: the browse and transfer toolbars share one row. Each keeps
+   its own id (and its compact-stage rules); the trailing group takes the
+   leftover width so the raised toolbar background spans the row. */
+#library-notes-action-rows {
+    layout: horizontal;
+    height: auto;
+    width: 1fr;
+    min-width: 0;
+}
+
 .library-notes-folder-row {
     width: 100%;
     min-width: 0;
@@ -1315,10 +2204,14 @@ ConsoleRunLogModal {
     color: $ds-text-primary;
 }
 
+/* task-31983: same focus-only border-left cue; this row is height 1, so the
+   padding swap (0 1 -> 0 1 0 0) keeps the single label cell intact. */
 .library-notes-folder-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -1326,6 +2219,29 @@ ConsoleRunLogModal {
     height: 1;
     min-height: 1;
     margin: 0;
+}
+
+.library-notes-tree-pager {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: wrap;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
+.library-notes-tree-pager:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 .library-notes-tree-connected {
@@ -1364,6 +2280,22 @@ ConsoleRunLogModal {
     color: $ds-text-primary;
 }
 
+/* task-32052 AC#2: entering the New-note canvas now parks focus on Blank
+   note and Up/Down walk the templates, so these rows need the same
+   focus-only left-edge cue the other Library list rows carry
+   (.library-notes-row:focus, task-31983). The border replaces the row's
+   1-column left padding so the label never shifts or is clipped, and
+   `outline: none` suppresses the generic `*:focus{outline:solid}`
+   fallback (the task-2041 label-eating trap on a compact row). */
+.library-notes-create-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
+    outline: none;
+}
+
 /* Same look as .library-notes-row: prompts list rows (library_prompts_canvas.py). */
 .library-prompt-row {
     width: 100%;
@@ -1383,11 +2315,14 @@ ConsoleRunLogModal {
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Prompts list now parks DOM focus on the first row
-   and Up/Down move it between rows. */
+   and Up/Down move it between rows. task-31983: same focus-only border-left
+   cue (padding compensates so the label holds), distinct from selection. */
 .library-prompt-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    border-left: thick $ds-action-focus;
+    padding: 0 1 0 0;
     outline: none;
 }
 
@@ -1452,6 +2387,14 @@ LibraryFileNotesGitPanel Button:disabled {
     background: $surface-darken-1;
 }
 
+.file-notes-git-commit-error,
+#file-notes-save-status.-error {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $ds-status-error-readable;
+    background: $error-darken-3;
+}
+
 /* TASK-15509: Session Git previously redeclared a fixed focus palette inside
    widget DEFAULT_CSS, masking theme-level design-system overrides. Keep a
    built-in semantic fallback in the widget for isolated mounting, then let
@@ -1512,8 +2455,33 @@ a deliberate $ds-grid-line frame on the raised surface instead of the
 near-invisible Textual default border (which read as a borderless void
 with stray left-edge border fragments), and padding 0 1 so the full
 "Search Library…" placeholder still fits at 100 columns. */
-#library-search-input {
+/* task-32069: the box shares its row with a "x" clear button now, so it
+   takes the remaining width rather than the whole row (which squeezed the
+   button to zero cells and painted nothing where the affordance should be). */
+#library-rail-search-row {
+    height: 3;
     width: 100%;
+}
+
+#library-search-clear {
+    width: 3;
+    min-width: 3;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    /* task-32212 (critique #9 row 9): this 3 is only honoured because
+       `LibraryRail.compose` zeroes the button's `line_pad` inline --
+       Textual's `Button` defaults to `line-pad: 1`, whose two flanking
+       cells made a 3-cell box paint 5 and shoved the rail's frame two
+       columns right. `line-pad: 0` cannot be written here: Textual's
+       `_process_integer` rejects a literal 0. See library_rail.py. */
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-search-input {
+    width: 1fr;
     height: 3;
     min-height: 3;
     margin: 0 0 1 0;
@@ -1521,6 +2489,32 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: tall $ds-grid-line;
     background: $ds-surface-raised;
     color: $ds-text-primary;
+}
+
+/* task-32220 (critique #9 row 17): at the 22-column compact rail the heading
+   was cut mid-word to "Navigati". AC#1 accepts an ellipsis; the label keeps
+   its full word wherever it fits. */
+#library-rail-heading-label {
+    text-overflow: ellipsis;
+}
+
+/* task-32219 (critique #9 row 16): the rail's "there is more below" line.
+   `dock: bottom` is load-bearing -- a cue that scrolls with the content is
+   only ever on screen once you have scrolled to the bottom, where there is
+   nothing left to announce (proven live at 235x52 with the first,
+   un-docked version). Docked means the row is RESERVED out of the
+   scrollable viewport (`textual/_arrange.py` shrinks the layout region by
+   the dock spacing and grows `scroll_spacing` by it) -- which is exactly
+   why `_sync_fold_cue` discounts its own row when deciding whether the
+   rail still overflows. Nothing becomes unreachable; it costs one notch
+   of scroll. The background keeps the row opaque against the panel. */
+#library-rail-fold-cue {
+    dock: bottom;
+    height: 1;
+    width: 100%;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
 }
 
 #library-conversations-filter {
@@ -1541,14 +2535,29 @@ with stray left-edge border fragments), and padding 0 1 so the full
     content-align: left middle;
 }
 
-/* LIB-19: Database mode's placement sentence, relating it to Files/Sync --
-   same muted one-line treatment as #library-notes-sync-purpose below and
-   #file-notes-purpose (library_file_notes_workspace.py). */
+/* Supporting Database-mode placement copy below the pinned authority row. */
 #library-notes-database-purpose {
     width: 100%;
     height: auto;
     color: $ds-text-muted;
     margin: 0 0 1 0;
+}
+
+#library-notes-authority {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+#file-notes-authority {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    max-height: 2;
+    color: $ds-text-muted;
+    text-wrap: wrap;
+    overflow: hidden hidden;
 }
 
 #library-notes-filter {
@@ -1686,6 +2695,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* Skills list canvas (library_skills_canvas.py, Task 3): same look as the
    prompts list's header/filter/empty/row siblings above -- visual parity,
    not a separate design. */
+.library-skills-list-mode {
+    overflow-y: hidden;
+}
+
+#library-skills-list {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 .library-skill-row {
     width: 100%;
     min-width: 0;
@@ -1765,7 +2792,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-skills-empty {
     width: 100%;
-    height: auto;
+    height: 1fr;
     min-height: 1;
     margin: 0 0 1 0;
     color: $ds-text-muted;
@@ -1915,26 +2942,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold;
 }
 
-/* Bounded editor: a bare TextArea in this scrolling canvas defaults to
-   height:1fr, which would balloon to fill available space and crowd out
-   the keywords/meta/action row beneath it. height:auto with a floor and a
-   generous ceiling keeps short notes compact while long notes scroll
-   inside the field itself instead of pushing the rest of the editor off
-   screen. */
+/* task-32217 (critique #9 density rule): the Body is the primary content
+   box of this pane and takes the pane. The old ceiling (`height: auto`,
+   `max-height: 20`) was written when the keywords, meta line and action
+   row still sat BELOW the TextArea and it had to leave them room; they
+   moved into the Info region, so `#library-note-editor-region` ends at
+   this field and the ceiling only bought blank pane. Measured live at
+   235x52 on the seeded profile: a 3-line note got a 12-row box with 18
+   empty rows under it, and the compact stage had already been given
+   `1fr` for the same reason (see the `.library-notes-compact` rules). */
 #library-note-body {
-    height: auto;
-    min-height: 12;
-    max-height: 20;
+    height: 1fr;
+    min-height: 6;
     margin: 0 0 1 0;
 }
 
-/* The read-only Markdown preview takes the TextArea's place one-for-one.
-   The focusable wrapper is its sole scroll owner; Markdown grows naturally
-   inside it so keyboard paging can reach the complete document. */
+/* The read-only Markdown preview takes the TextArea's place one-for-one,
+   so it takes the same height. The focusable wrapper is its sole scroll
+   owner; Markdown grows naturally inside it so keyboard paging can reach
+   the complete document. */
 #library-note-preview-region {
-    height: auto;
-    min-height: 12;
-    max-height: 20;
+    height: 1fr;
+    min-height: 6;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     overflow-y: auto;
@@ -2150,9 +3179,34 @@ with stray left-edge border fragments), and padding 0 1 so the full
 /* TASK-202: the prompt editor owns two rows. The only vertical scroll owner
    is the content row; the action area measures to its controls below it. This
    prevents a tall editor from pushing its completion controls past the canvas. */
-#library-prompts-canvas {
+#library-prompts-canvas,
+#library-prompt-work-pane {
     height: 1fr;
     min-height: 0;
+    min-width: 0;
+}
+
+/* Disabled labels carry a visible marker, so the two management actions
+   must share the retained Items width instead of keeping intrinsic widths. */
+#library-prompts-selection-management-actions {
+    width: 100%;
+    min-width: 0;
+}
+
+#library-prompts-selection-management-actions > .library-canvas-action,
+#library-shell-grid.library-notes-compact #library-prompts-selection-management-actions > .library-canvas-action {
+    width: 1fr;
+    min-width: 0;
+}
+
+#library-prompts-delete-receipt-actions {
+    width: 100%;
+    min-width: 0;
+}
+
+#library-prompts-delete-receipt-actions > .library-canvas-action {
+    width: 1fr;
+    min-width: 0;
 }
 
 #library-prompt-editor-shell {
@@ -2205,94 +3259,6 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #library-prompt-actions-lifecycle .library-media-action-danger {
     margin: 0 0 0 4;
-}
-
-/* Notes sync panel: section header matches the create view's group-label
-   grammar; the folder Input matches the filter box's field look; status/
-   activity are muted like the note editor's meta line. */
-#library-notes-sync-header {
-    width: 100%;
-    text-style: bold;
-    color: $ds-text-primary;
-    margin: 0 0 1 0;
-}
-
-/* Purpose line: one-line explainer directly under the header, dim like the
-   note editor's meta line. */
-#library-notes-sync-purpose {
-    width: 100%;
-    height: auto;
-    color: $ds-text-muted;
-    margin: 0 0 1 0;
-}
-
-/* Dim lowercase label above the folder Input, same muted tier as the
-   activity log directly below it. */
-#library-notes-sync-folder-label {
-    width: 100%;
-    height: auto;
-    color: $ds-text-muted;
-}
-
-#library-notes-sync-folder {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-    margin: 0 0 1 0;
-    padding: 0 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#library-notes-sync-folder:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* Starts the direction/conflict/auto-sync settings group right after
-   Browse…, visually separating "where" (folder) from "how" (options). */
-#library-notes-sync-direction {
-    margin-top: 1;
-}
-
-/* Separates the primary action from the settings group above it. Accent
-   treatment mirrors .console-action-primary (the project's live "primary
-   action button" convention) so Sync now reads as the one button that
-   matters on this panel. */
-#library-notes-sync-run {
-    margin-top: 1;
-    background: $ds-action-focus 35%;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-#library-notes-sync-status {
-    width: 100%;
-    height: auto;
-    min-height: 1;
-    margin: 1 0 0 0;
-    color: $ds-text-muted;
-}
-
-/* Failed status gets the standard $ds-status-error color -- status is the
-   headline, so a failure must read as unambiguously bad. */
-#library-notes-sync-status.library-notes-sync-status-failed {
-    color: $ds-status-error;
-}
-
-/* Activity is the log, status is the headline -- one muted tier dimmer
-   than #library-notes-sync-status so the hierarchy is visible even though
-   both are "muted" text. */
-#library-notes-sync-activity {
-    width: 100%;
-    height: auto;
-    min-height: 1;
-    margin: 0 0 1 0;
-    color: $ds-text-disabled;
 }
 
 /* Ingest canvas: local-file ingest form + job queue. Mirrors the notes
@@ -2404,7 +3370,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin-bottom: 0;
 }
 
-/* Accent treatment mirrors #library-notes-sync-run / .console-action-primary
+/* Accent treatment mirrors .console-action-primary
    (the project's live "primary action button" convention) so Start ingest
    reads as the one button that matters on this canvas. */
 #library-ingest-start {
@@ -2515,6 +3481,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-31981: the always-visible reason line under a blocked Generate
+   (Reader Analysis pane) or Analyze (select mode) -- mirrors the Export
+   gate's inline "No destination chosen" line so a keyboard-first user
+   reads WHY the action is off, not just a hover tooltip. */
+.library-media-action-reason {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
 .library-export-field {
     width: 100%;
     height: 3;
@@ -2575,13 +3552,59 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-28025: in the 3-column reader layout the Items panel is a narrow
+   fixed column (~38 cols), and the browse/bulk toolbars overflowed it --
+   Trash/Select rendered past the panel border, invisible and unclickable
+   (live 2026-09-02). Mirror the conversations canvas fix: the toolbar
+   fills the panel and its actions share the width (1fr, min-width:0) so
+   every control stays on-screen instead of clipping off the right edge. */
+#library-media-canvas > .ds-toolbar {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* task-31270 (critique #4 P1): the delete / dismiss receipts are two rows
+   (copy, then Undo · Dismiss) at full width. A single content-width
+   Horizontal clipped Undo to "Und" at the Items pane's real width (live
+   2026-09-04) -- the one recovery control was unreadable exactly where it
+   renders. Same multi-row grammar as the toolbars (task-30043). */
+#library-media-canvas .library-media-receipt {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
+    width: 100%;
+    height: auto;
+}
+#library-media-canvas .library-media-receipt > .library-media-receipt-actions {
+    width: 100%;
+    height: auto;
+}
+
+/* task-30043 (critique 2026-09-03 P1) supersedes task-28025's 1fr squeeze:
+   sharing the row width chopped every label to fragments (``t so E Tr R
+   Se``) and collapsed disabled bulk actions to bare "○" markers at the
+   pane's 40-col floor. The canvas now switches to a multi-row grammar
+   below its measured narrow threshold (library_media_canvas.py's
+   _resolve_narrow_actions), so buttons keep their CONTENT width (auto,
+   with min-width 0 lifting Textual Button's 16-cell floor -- six floors
+   alone would overflow any pane under 96 cols) and every label stays a
+   readable word; each row's label sum is budgeted to fit the 40-col
+   floor, which is what keeps task-28025's fit contract true. */
+#library-media-canvas > .ds-toolbar > .library-canvas-action,
+#library-media-canvas > .ds-toolbar > .library-toolbar-count {
+    width: auto;
+    min-width: 0;
+}
+
 /* task-14900: Media list|preview side by side above the screen's one
    measured width regime. The workbench Horizontal (Collections'
    `#library-collections-workbench` grammar) splits its panes 1fr|1fr by
    default; the `library-notes-compact` class -- which the Library screen
    already maintains on `#library-canvas` at compose time and on every
    measured `on_resize` crossing of LIBRARY_NOTES_COMPACT_BREAKPOINT --
-   flips it back to today's stacked flow. In the wide split each pane owns
+   switches it to the dense preview-free list. In the wide split each pane owns
    its own vertical scroll, which is the point: no more scrolling the whole
    canvas between list and preview while the right half sits blank. */
 #library-media-workbench {
@@ -2628,30 +3651,40 @@ with stray left-edge border fragments), and padding 0 1 so the full
     display: none;
 }
 
-/* Below the breakpoint: the preserved stacked layout, byte-equivalent to
-   the pre-task-14900 geometry (auto heights, full width, no pane scroll
-   owners, no placeholder). */
-#library-canvas.library-notes-compact #library-media-workbench {
+/* Below the breakpoint Media becomes a dense list: the mounted preview is
+   removed from paint/focus participation by the canvas, while the list owns
+   the remaining height and keeps its pager pinned below the row scroller. */
+#library-shell-grid.library-notes-compact #library-media-workbench {
     layout: vertical;
-    height: auto;
+    height: 1fr;
+    min-height: 0;
 }
 
-#library-canvas.library-notes-compact #library-media-list {
+#library-shell-grid.library-notes-compact #library-media-list {
     width: 100%;
+    height: 100%;
+    min-height: 0;
     margin: 0;
     padding: 0;
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-media-preview {
-    width: 100%;
-    height: auto;
-    margin: 0;
-    padding: 0;
-    overflow-y: hidden;
+#library-shell-grid.library-notes-compact #library-media-row-scroll {
+    height: 1fr;
+    min-height: 0;
 }
 
-#library-canvas.library-notes-compact #library-media-detail-empty {
+#library-shell-grid.library-notes-compact .library-media-row {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#library-shell-grid.library-notes-compact #library-media-preview {
+    display: none;
+}
+
+#library-shell-grid.library-notes-compact #library-media-detail-empty {
     display: none;
 }
 
@@ -2661,26 +3694,18 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 100%;
     text-style: bold;
     color: $ds-text-primary;
-    margin: 0 0 1 0;
+    /* task-31277 (critique #4 P2): no bottom margin. It bought separation
+       from a byline row that is now composed only when the item HAS an
+       author or URL, so on every other item it paid one blank row of the
+       reading surface for nothing -- and a byline reads better hugging
+       the title it belongs to anyway. */
+    margin: 0;
 }
 
 #library-media-viewer-meta {
     width: 100%;
     color: $ds-text-muted;
     margin: 0 0 1 0;
-}
-
-/* Section headers: bold + a thin top rule so Content / Analysis / Highlights
-   read as real section boundaries the eye can find without reading. */
-#library-media-viewer-content-title,
-#library-media-viewer-analysis-title,
-#library-media-viewer-highlights-title {
-    width: 100%;
-    text-style: bold;
-    color: $ds-text-primary;
-    border-top: solid $ds-grid-line;
-    padding: 1 0 0 0;
-    margin: 1 0 1 0;
 }
 
 #library-media-content-search {
@@ -2710,30 +3735,22 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
-/* task-15774: while a search is ACTIVE, the whole search-controls block
-   (box + match count + Prev/Next) docks to the top of the scrolling viewer
-   -- the find-bar convention, and the same pinned-edge chrome idiom as
-   #library-ingest-commit-bar's dock: bottom. In flow, the stack above the
-   controls (Back, title, metadata, section header) exceeds an 80x24
-   viewport, so the match count and Prev/Next sat below the fold exactly
-   while the user was operating them. Dock-on-active keeps them painted at
-   every size and scroll position; an inactive search keeps the in-flow
-   layout, so no space is stolen when nobody is searching. The raised
-   background + bottom rule stop scrolled content bleeding through the
-   pinned bar; the collapsed child margins keep the bar to 6 rows of a
-   24-row terminal instead of 8. */
-#library-media-content-search-controls.-library-media-search-active {
-    dock: top;
-    width: 100%;
-    background: $ds-surface-raised;
-    border-bottom: solid $ds-grid-line;
-}
-
+/* task-31276 (critique #4 P2) retires task-15774's dock-on-active. That
+   rule moved the whole controls block to the top of the viewer the moment
+   a query was submitted, so Enter teleported the bar out from under the
+   mode row and shoved the Reader header (identity line, Back, title) down
+   six rows -- the bar the user was typing into jumped away from the caret.
+   Its premise is gone too: task-31237 made the viewer itself stop
+   scrolling (the content box owns the overflow), so the chrome above the
+   bar no longer scrolls out from under it and nothing bleeds through.
+   The class stays: it still collapses the active bar's child margins,
+   keeping it to 6 rows of a 24-row terminal instead of 8. */
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search,
 #library-media-content-search-controls.-library-media-search-active #library-media-content-search-status {
     margin: 0;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #library-media-viewer {
     height: 100%;
     overflow-y: auto;
@@ -2744,8 +3761,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
        visible width so long lines wrap. */
     overflow-x: hidden;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -2755,17 +3772,209 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 100%;
 }
 
-#library-media-viewer-content {
-    /* Bounded so short content stays compact and long content scrolls inside
-       this region; height:1fr here ballooned the pane and split the sections.
-       max-height is generous so typical content shows in full (only long
-       transcripts engage the inner scroll), reducing nested-scroll friction. */
+/* Task 21665: an eligible local original is an additive reading aid. Keep it
+   bounded inside the Reader's existing scroll surface; the complete stored
+   text remains directly below it and owns its own established scroll region. */
+#library-media-image-preview {
+    width: 100%;
     height: auto;
     max-height: 18;
+    overflow: hidden;
+    align: center middle;
+    border: solid $ds-grid-line;
+    margin: 0 0 1 0;
+}
+
+#library-media-image-preview-status {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+#library-media-image-preview-toggle,
+#library-media-image-preview-retry {
+    width: auto;
+    margin: 0 0 1 0;
+}
+
+/* task-31221. The third widget bitten by core/_reset.tcss's
+   ``*:focus { outline: solid }`` fallback, after TASK-1160 (DataTable) and
+   TASK-2300 (SelectOverlay, components/_lists.tcss) -- read TASK-2300's
+   block for the mechanics; this is its raw-OptionList sibling. The media
+   type chooser opens at option-count height and the screen focuses it
+   immediately, so the outline's top+bottom rows overwrote the FIRST and
+   LAST options outright: with the common two-option catalogue the chooser
+   rendered as a bare box with nothing in it and selection was blind
+   (root-caused live 2026-09-03 via painted-text probes -- every REGION
+   measured correct while the paint was covered, which is why no geometry
+   assertion ever caught it). Focus stays visible the sanctioned way: the
+   highlighted-option recolour already says which option is current. */
+#library-media-type-choices:focus {
+    outline: none;
+}
+
+/* task-31235: the sort chooser became the type chooser's OptionList twin
+   (its horizontal strip clipped options off-pane), so it inherits the same
+   focus-outline suppression -- at option-count height the outline's
+   top+bottom rows would overwrite "Newest" and "Title Z-A". */
+#library-media-sort-choices:focus {
+    outline: none;
+}
+
+/* task-31222: the Read-mode wrapper held only a heading yet defaulted to
+   1fr, inserting a blank band above the Find bar while the content sat in
+   a fixed 18-row box below -- the Reader's product got ~1/3 of its pane. */
+#library-media-reader-mode-read {
+    height: auto;
+}
+
+/* task-31276: a bare Horizontal defaults to height:1fr, so this one-row
+   Rendered|Raw toggle claimed the reader's whole remaining height (12 rows
+   at 80x24, 18 once the Find bar mounted) and pushed the reading surface --
+   and, once task-15774's dock was retired, the Find bar's match count and
+   Prev/Next -- below the fold. The same unstyled-1fr-wrapper trap task-31222
+   fixed one level up on #library-media-reader-mode-read. */
+#library-media-content-mode-strip {
+    height: auto;
+}
+
+#library-media-viewer-content {
+    /* task-31237 (evolves task-31222's 75vh cap into a true fill): the
+       content box takes exactly the pane's remaining height -- 75vh could
+       overrun the remainder (double scroll: viewer AND box) or undershoot
+       it (a stranded blank band below the reading surface, critique #3
+       P2). With the 31222 height:auto wrappers above it in place, 1fr now
+       resolves against the viewer's viewport remainder, so chrome stays
+       pinned and overflow belongs to this box's own scroll (measured:
+       viewer virtual == container at 200x52 with a 300-line document; the
+       pre-31222 balloon came from the then-unstyled 1fr mode wrapper, not
+       from 1fr here). */
+    height: 1fr;
     min-height: 3;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     padding: 0 1;
+}
+
+#library-media-reader-mode-analysis {
+    /* task-32217 (critique #9 density rule) reverses task-31237's fill FOR
+       THIS TAB ONLY -- see the sibling rule below for why. This wrapper
+       takes the pane (explicit 1fr, not the unstyled default 31222 warned
+       about) and, crucially, scrolls: it is the ONE thing that changed
+       reachability, because the action row now lives in its scrolled flow
+       instead of being clipped at the pane edge.
+
+       There are TWO scrollers for a long analysis, not one. Measured on a
+       400-line analysis (235x52 / 100x30 / 60x24): this wrapper carries
+       only the last 4-5 rows (virt 45 vs h 41, 25 vs 20, 19 vs 14 --
+       max_scroll_y 4/5/5), which is exactly the overhang of the action row
+       and its reason line; the analysis TEXT is scrolled by the inner
+       virtualized view (#library-media-viewer-content-text, virt 400 vs
+       h 39/18/12 -- max_scroll_y 361/382/388), which paints its own
+       scrollbar. The wheel bubbles from the inner view to this wrapper
+       once the inner view bottoms out (Textual stops the event only when
+       an inner scroll actually moved), so reading to the end of the text
+       and then continuing brings the actions on screen; focusing the
+       button scrolls it into view the same way. Verified live at 235x52:
+       wheeling reached paragraph 119, the box's bottom border, then
+       "Edit analysis / ○ Regenerate". */
+    height: 1fr;
+    overflow-y: auto;
+}
+
+#library-media-reader-mode-analysis #library-media-viewer-content {
+    /* Analysis is the one tab with an action row BELOW the content box, so
+       31237's 1fr fill pinned "Edit analysis" / "Generate" to the pane
+       floor: measured at 235x52, a 2-line analysis got a 37-row box and
+       its actions at y=47 against a content top of y=9 -- 33 rows of empty
+       bordered box between the text and the controls that act on it. The
+       box now hugs its text and the actions follow it directly.
+
+       `max-height: 1fr` was tried first and does NOT work here: Textual
+       resolves fr in max-height against the whole container, not the
+       post-auto remainder, so the box took all 41 rows and pushed the
+       action row one line past the pane (measured: edit.bottom 51 vs
+       viewer.bottom 50). Hence the wrapper scroll above.
+
+       `auto` hugs only while the text FITS. Past that the box fills the
+       pane exactly as 1fr did (measured, 400-line analysis: h 41/20/14 at
+       235x52/100x30/60x24, i.e. the whole pane) because
+       VirtualizedRawContent._apply_height_cap caps its child at the
+       parent's content height. That is fine and intended: the short case is
+       the one 32217 is about, and in the long case the wrapper's scroll is
+       what carries the actions on screen.
+
+       Read keeps 1fr -- nothing sits under its box there, so hugging would
+       only re-open the stranded blank band 31237 closed (critique #3 P2). */
+    height: auto;
+    /* Belt-and-braces only: this declaration is INERT today. Analysis always
+       composes the body in raw mode, and LibraryMediaContentBody._apply_mode_
+       overflow sets overflow_y="hidden" INLINE for raw, which outranks the
+       stylesheet (measured: the box's _inline_styles already has the rule).
+       It is kept so the box still cannot become a third scroller if that
+       mode mapping ever changes -- but it is NOT what fixed reachability;
+       the wrapper's `height: 1fr` + `overflow-y: auto` above is. */
+    overflow-y: hidden;
+}
+
+/* task-31277 (critique #4 P2, AC#4): the reading measure. The bodies used
+   the whole pane, so prose ran ~150 cells at 235 columns against DESIGN.md's
+   65-75. The cap is on the TEXT bodies only -- #library-media-viewer-content
+   keeps its full width so its border still spans the pane. */
+#library-media-viewer-content-text,
+#library-media-viewer-content-markdown {
+    max-width: 92;
+}
+
+/* task-31635 (critique #5 item 14): Textual's ``MarkdownH1`` DEFAULT_CSS is
+   ``content-align: center middle``, so a document's own title floated to the
+   middle of the 92-cell reading measure while every other line -- H2s
+   included -- began at its left edge; the heading read as a detached banner
+   rather than as the first line of the text it introduces. Scoped to the
+   Library Reader's Markdown body, so every other Markdown surface in the app
+   keeps Textual's default. */
+#library-media-viewer-content-markdown MarkdownH1 {
+    content-align: left middle;
+}
+
+/* task-31272 (critique #4, B cap_57): F6's first Reader stop IS this box
+   (``_MEDIA_WORKBENCH_FOCUS_TARGETS``), but nothing on screen said so --
+   a keyboard user could not tell the scroll keys had somewhere to land.
+   The cue tints the border the box ALREADY draws: an outline would paint
+   over the first and last TEXT rows of the document (the task-31221
+   lesson, third widget bitten by ``*:focus { outline: solid }``), and a
+   border on the inner ScrollView would cost two rows of reading surface.
+   ``:focus-within`` covers both modes: Raw focuses the inner ScrollView,
+   Rendered focuses this container itself (Textual's ``has_focus_within``
+   is true for the node itself as well as its descendants). */
+#library-media-viewer-content:focus-within {
+    /* task-31634: HEAVY, not a recoloured solid. Critique #5 measured the
+       old cue as colour-only -- 1.01:1 -> 6.96:1 on byte-identical ``┌──┐``
+       glyphs -- so a monochrome or colour-blind reader got no signal that
+       F6 had landed, while buttons on the same screen change glyphs. Heavy
+       swaps the glyphs (``┏━━┓``) at the same one-cell border cost, so the
+       state is visible in a plain-text capture and no reading row moves. */
+    border: heavy $accent;
+}
+
+#library-media-viewer-content:focus,
+#library-media-viewer-content-text:focus {
+    outline: none;
+}
+
+#library-media-viewer-content-text {
+    /* task-22500: the widget sets its own height from the wrap index,
+       bounded by the room its parent actually has (the parent's max-height
+       is an OUTER bound, so its border rows are not available to us);
+       width must fill so the index is built at the real render width
+       (task-31277 caps that width; the index is rebuilt from the widget's
+       own scrollable content region, so the cap is what it indexes at). */
+    width: 100%;
+    /* The reader wraps, so horizontal scrolling has nothing to reach. A
+       horizontal scrollbar here would also shrink the render width below
+       the width the wrap index was built at, truncating every row. */
+    overflow-x: hidden;
 }
 
 #library-media-edit-form {
@@ -2787,6 +3996,27 @@ with stray left-edge border fragments), and padding 0 1 so the full
 .library-media-action-danger {
     margin: 0 0 0 4;
     color: $ds-text-muted;
+}
+
+/* task-31980 (critique #6 P2): the Reader's More strip zeroes every button's
+   margin (`#library-media-reader-more-actions > Button` above, (1,0,1)), which
+   also swallows the danger class's own left margin. Restore it id-scoped
+   (1,1,0 beats that) so "Move to trash" reads apart from the neutral actions
+   -- mirrors the RAG-profile delete-button separation (`margin-left: 2`). */
+#library-media-reader-more-actions > .library-media-action-danger {
+    margin: 0 0 0 2;
+}
+
+/* task-31980 (critique #6 P2): the permanent-delete confirmation's commit
+   button read in ordinary body ink one cell from a fully-styled Cancel -- the
+   most destructive control was the least-marked. This is a DELIBERATE
+   confirmation (Cancel focused, "This cannot be undone." above it), so the
+   commit takes the readable $error role and reads as destructive. The id
+   selector (1,0,0) beats `.library-canvas-action`'s $ds-text-primary; the
+   >=3-cell gap off Cancel is set inline in the canvas. Readable token, not the
+   3.06:1 `$ds-status-error`, per the a11y contrast rule (see TASK-31664). */
+#library-media-trash-delete-confirm {
+    color: $ds-status-error-readable;
 }
 
 /* Each highlight is an indented card so its quote, meta, and delete read as
@@ -2827,6 +4057,36 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold;
 }
 
+/* TASK-31745 / final review I3: the "Rename speakers" legend is one label +
+   one Input per speaker, `max_speakers` ships at 8, and Textual's default
+   Input is 3 rows plus a border -- so an 8-speaker meeting squeezed the
+   transcript body beside it down to about 3 rows. Bound the section and
+   flatten its rows to one line each. ID/class-keyed only (no ancestor-scoped
+   bare type), so ADR-097's fast-path ratchet is untouched. */
+#library-media-speaker-legend {
+    max-height: 12;
+    overflow-y: auto;
+}
+
+Input.library-media-speaker-input {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+/* Borderless rows still need a visible focus state (the reader's other
+   Inputs get theirs from a border-colour change, which is gone here). */
+Input.library-media-speaker-input:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 #library-media-highlight-add-collapsible {
     height: auto;
     margin: 0 0 1 0;
@@ -2851,10 +4111,26 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold;
 }
 
+/* task-32350 (critique #10 P1): the applied-scope line under the Media
+   header. Quiet by design -- it is a statement of fact, not an action.
+   `1fr`, not `auto`: this line is long (a filter term and a sort label),
+   and an auto-width Static pushed its own Clear Button off the pane edge
+   once the Reader narrowed Items (live-verified at 235x52). The squeeze
+   lands on the Static, which ellipsises; the compact Button keeps its
+   natural width, so task-4023's zero-width-Button hazard is not in play. */
+.library-media-scope-line {
+    color: $ds-text-muted;
+    width: 1fr;
+    height: 1;
+    padding: 0 1 0 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 #console-workspace-grid {
     height: $ds-console-workspace-grid-height;
     min-height: 20;
-    padding: 0 1;
+    padding: 0;
     margin: 0;
     overflow: hidden;
     border-top: solid $ds-grid-line;
@@ -2892,6 +4168,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
        rule (1,2,0) beats that density rule (0,2,0). */
     display: block;
     width: 1fr;
+    min-width: 0;
     height: 1;
     min-height: 1;
     text-wrap: nowrap;
@@ -2917,9 +4194,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #console-control-bar {
-    height: $ds-console-control-bar-height;
-    min-height: $ds-console-control-bar-height;
-    max-height: $ds-console-control-bar-height;
+    height: auto;
+    min-height: 1;
+    max-height: 2;
     padding: 0 1;
     margin: 0;
     border: none;
@@ -2938,9 +4215,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align: left middle;
 }
 
-#console-auto-speak-row,
-#console-auto-speak-control {
-    width: auto;
+#console-auto-speak-row {
+    width: 100%;
     min-width: 0;
     height: 1;
     min-height: 1;
@@ -2949,31 +4225,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align: left middle;
 }
 
-#console-auto-speak-label {
-    width: auto;
-    height: 1;
-    margin-right: 1;
+#console-speech-controls,
+#console-auto-speak-control,
+#console-hands-free-control {
+    width:auto;height:1;min-height:1;max-height:1;layout:horizontal;align:left middle;
 }
 
-#console-auto-speak {
-    width: 8;
-    min-width: 8;
-    max-width: 8;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    padding: 0;
-    margin: 0 1 0 0;
-    border: none;
+#console-speech-controls {margin:0 2 0 0;}
+
+#console-auto-speak-label,
+#console-hands-free-label {width:auto;height:1;margin-right:1;}
+
+#console-auto-speak,
+#console-hands-free-switch {
+    width:5;min-width:5;max-width:5;height:1;min-height:1;max-height:1;
+    padding:0;margin:0;border:none;
 }
+
+#console-auto-speak {margin-right:1;}
 
 #console-auto-speak-retry,
 #console-auto-speak-resume {
-    width: auto;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0 1 0 0;
+    width:auto;height:1;min-height:1;max-height:1;margin:0 1 0 0;
 }
 
 #console-status-chips {
@@ -3069,6 +4342,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-wrap: nowrap;
 }
 
+#console-cost-chip {
+    max-width: 100%;
+}
+
+/* The policy label has two independent axes (or an explicit unavailable
+   state), so it needs more room than ordinary metadata chips. */
+#console-library-chip {
+    max-width: 48;
+}
+
 .console-chip-dim {
     color: $ds-text-muted;
 }
@@ -3156,7 +4439,16 @@ with stray left-edge border fragments), and padding 0 1 so the full
     width: 1fr;
     min-width: 0;
     height: 100%;
-    min-height: 20;
+    /* TASK-24605: was `min-height: 20`. On a 24-row terminal the rail is
+       allotted 13 rows, so a 20-row minimum made it lay out its children
+       against 20 and then clip to 13 -- and the child that fell off the
+       bottom was the fold hint, the LAST one. Measured live at 80x24: the
+       body overflowed (scrollbar painted) while the hint reported
+       display=True and appeared nowhere, which is exactly the state the
+       fold convention exists to prevent. The floor now sits below what the
+       smallest supported terminal actually yields, so the rail sizes to its
+       real box and the hint stays inside it. */
+    min-height: 12;
 }
 
 #console-staged-context-tray,
@@ -3169,8 +4461,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #console-staged-context-tray {
     height: auto;
-    min-height: 3;
-    max-height: 6;
+    min-height: 0;
 }
 
 #console-session-context,
@@ -3211,6 +4502,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0 1;
     color: $ds-text-muted;
     background: $ds-surface-panel;
+}
+
+/* TASK-31429 (rail colour grammar): the line that NAMES the active chat
+   takes the active hue; the same Static's "No active …" placeholder keeps
+   the muted id rule above. id+class so it outranks that id rule. */
+#console-workspace-selected-conversation.console-workspace-selected-conversation-active {
+    color: $ds-active-fg;
 }
 
 /* The row is 3 rows tall so the bordered Input inside it can show its value:
@@ -3265,10 +4563,37 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-primary;
 }
 
+/* TASK-31429 (rail colour grammar): a row's fleet run-marker state colours
+   its text with the same status tokens the Inspector rows use. Ordered
+   BEFORE `-selected` (equal specificity, last wins) so the selected row
+   keeps the active hue whatever its marker. */
+.console-workspace-conversation-row-running {
+    color: $ds-status-running;
+}
+
+.console-workspace-conversation-row-needs-approval {
+    color: $ds-status-approval-required;
+}
+
+.console-workspace-conversation-row-finished-ok {
+    color: $ds-status-ready;
+}
+
+.console-workspace-conversation-row-finished-failed {
+    color: $ds-status-error-readable;
+}
+
+.console-workspace-conversation-row-subagent-unseen {
+    color: $ds-status-info;
+}
+
+/* TASK-31429: selection is a foreground hue (primary = what you are in),
+   no longer the focus tint -- so "which chat am I in" and "where is
+   keyboard focus" read as two different signals. Focus rules below still
+   paint the focus tint on top when the selected row is focused. */
 .console-workspace-conversation-row-selected {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+    color: $ds-active-fg;
+    text-style: bold;
 }
 
 .console-conversation-browser-section-header {
@@ -3324,10 +4649,10 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #console-left-rail:focus {
     outline: none;
-    border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #console-left-rail-body {
     width: 100%;
     min-width: 0;
@@ -3349,8 +4674,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -3384,6 +4709,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0;
 }
 
+/* TASK-31663 AC#4: the thumb measured 1.01:1 against its own track. It must
+   clear the 3:1 non-text floor and nothing in the surface family does on
+   this theme ($ds-column-line 1.28:1, $panel-lighten-3 2.16:1), so it takes
+   $ds-text-muted -- the app's other established thumb token, generated per
+   theme polarity. See TASK-31663 notes. */
 #console-inspector-rail-body {
     width: 100%;
     min-width: 0;
@@ -3394,15 +4724,157 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
+}
+
+#console-send-authority-summary {
+    width: 100%;
+    min-width: 0;
+    height: 6;
+    min-height: 6;
+    max-height: 6;
+    padding: 0 1;
+    overflow: hidden;
+}
+
+/* TASK-31663 AC#5: constrained-height form. At 80x24 a six-row block left a
+   THREE-row scroll body, too short for the Environment section; two rows
+   makes it seven. `ConsoleInspectorRail._sync_authority_summary_density`
+   pins the SAME numbers inline (inline wins in Textual) -- keep them in
+   step. `console-` prefix keeps this out of the boot bundle. */
+#console-send-authority-summary.console-authority-compact {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+}
+
+#console-send-authority-summary:focus {
+    outline: heavy $ds-action-focus;
+}
+
+#console-send-authority-heading {
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.console-send-authority-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-inspector-more,
+#console-inspector-more-body {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+#console-inspector-more-toggle {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    text-align: left;
 }
 
 #console-main-column {
     width: 13fr;
     min-width: 60;
     padding: 0;
+}
+
+ConsoleTerminalWorkspace#console-main-column {
+    layout: grid;
+    grid-size: 6;
+    grid-columns: 1fr 1fr 1fr 1fr 1fr 1fr;
+    grid-rows: auto auto auto auto 1fr auto auto auto;
+    grid-gutter: 0;
+    width: 13fr;
+    min-width: 60;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    background: $ds-surface-panel;
+}
+
+#console-terminal-danger,
+#console-terminal-access,
+#console-terminal-open-settings,
+#console-terminal-arm,
+#console-terminal-metadata,
+#console-terminal-viewport,
+#console-terminal-status {
+    column-span: 6;
+}
+
+#console-terminal-danger,
+#console-terminal-access,
+#console-terminal-metadata,
+#console-terminal-status {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-terminal-danger {
+    background: $ds-status-error 20%;
+    color: $ds-status-error;
+    text-style: bold;
+}
+
+#console-terminal-access,
+#console-terminal-metadata,
+#console-terminal-status {
+    color: $ds-text-muted;
+}
+
+ConsoleTerminalWorkspace Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: center middle;
+}
+
+ConsoleTerminalWorkspace Button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+#console-terminal-viewport {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-terminal-viewport:focus {
+    outline: solid $ds-action-focus;
 }
 
 #console-right-rail {
@@ -3415,10 +4887,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #console-session-context,
 #console-workspaces-context,
 #console-workspace-context,
-#console-right-rail,
-#console-run-inspector,
-#console-transcript-region {
+#console-run-inspector {
     border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+#console-right-rail,
+#console-transcript-region {
     background: $ds-surface-panel;
 }
 
@@ -3450,7 +4925,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 100%;
     min-height: 20;
     padding: 0;
-    border: solid $ds-grid-line;
+    border: none;
     background: $ds-surface-panel;
 }
 
@@ -3465,9 +4940,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: transparent;
 }
 
+/* TASK-24700: TASK-24605 lowered the OPEN rail's floor from 20 to 12 because
+   a 24-row terminal allots it 13 and a 20-row minimum made it lay out
+   against 20 and clip -- but it left this, the COLLAPSED form, at 20. The
+   collapsed handle is the rail's shipping default state, so the half that
+   users meet first kept the defect the fix was written for. Same floor as
+   the rail it stands in for. */
 .console-inspector-rail-handle {
     height: 100%;
-    min-height: 20;
+    min-height: 12;
     max-height: 100%;
     background: $ds-surface-panel;
 }
@@ -3525,7 +5006,49 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold underline;
 }
 
-.console-workspace-conversation-row Button:focus {
+/* Keep focused search one row. */
+#console-switcher-query,
+#console-switcher-query:focus {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    outline: none;
+    padding: 0;
+}
+
+#console-switcher-query:focus,
+.console-switcher-mode-current,
+.console-switcher-result-candidate {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+#console-switcher-query:focus {
+    border-left: thick $ds-action-focus;
+    text-style: bold;
+}
+
+#console-switcher-modal {
+    border: tall $ds-grid-line;
+    border-title-color: $ds-text-primary;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-switcher-scope,
+#console-switcher-selected-detail,
+#console-switcher-page-status,
+#console-switcher-hints {
+    color: $ds-text-muted;
+}
+
+.console-switcher-result-error {
+    border-left: solid $ds-status-error;
+}
+
+/* TASK-31429: the row IS the Button; class+pseudo beats selected/run hues. */
+.console-workspace-conversation-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -3576,10 +5099,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     content-align: left middle;
 }
 
+/* TASK-25715: the Context header and the Inspector's group heading are one
+   shared band -- same background, colour and padding -- and a contract test
+   pins them together. #2220/TASK-24609 moved the Inspector side to `padding:
+   0` so its headings start in the same column as the rows they label, which
+   silently broke the band from the other side.
+
+   Context follows the Inspector rather than the reverse. Re-indenting the
+   Inspector heading would restore the band by re-opening the heading/row
+   misalignment TASK-24609 fixed, and padding its ROWS instead was already
+   measured and rejected there: it costs each row a column and wrapped two
+   live-work rows at the rail's 46-column width. Dropping this indent costs
+   the Context header nothing -- the raised background still spans the full
+   row -- and gives the section title one more column, which the 27-column
+   rail can use. The border-top rule and the 2-row minimum are deliberate
+   (TASK-23193) and stay. */
 .console-rail-section-header {
     height: auto;
     min-height: 2;
     border-top: solid $ds-column-line;
+    padding: 0;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
     content-align: center middle;
 }
 
@@ -3610,37 +5151,234 @@ with stray left-edge border fragments), and padding 0 1 so the full
 .console-rail-section-body {
     height: auto;
     min-height: 0;
-    padding: 0 1 1 1;
+    padding: 0 0 0 1;
+    margin-bottom: 1;
 }
 
-/* TASK-15110 (owner ruling: cap sections, scroll inside). With every
-   section expanded the left rail's virtual height ran ~3x its viewport and
-   Conversations started ~20 rows below the fold with no cue. Each section
-   body now takes a fixed share of the rail viewport and scrolls its own
-   overflow -- every section HEADER stays on-screen at any rail height, and
-   the internal scrollbar is the cue the outer scroll never had. 20% x 4
-   sections + 4 header rows fits the ~29-row body at 160x48; taller
-   terminals scale the share. Scoped to the LEFT rail: the Inspector and
-   Library rails share this class but not the overflow problem. Gutter kept
-   stable for the same width-stability contract as the rail body's own
-   scrollbar (TASK-1191). */
-#console-left-rail-body .console-rail-section-body {
-    max-height: 20%;
-    overflow-y: auto;
+#console-character-avatar-frame {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    align: center middle;
+}
+
+/* TASK-31244: Character rows are compact, cell-clipped peers inside the
+   section's existing bounded viewport. The widget itself introduces no
+   additional scroll owner. */
+#console-character-context {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+#console-character-search {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+}
+
+.console-character-group,
+.console-character-row,
+.console-character-action,
+#console-character-query-handoff,
+#console-character-retry,
+#console-character-open-roleplay {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0;
+    text-align: left;
+    content-align: left middle;
+    text-overflow: ellipsis;
+}
+
+.console-character-group:focus,
+.console-character-row:focus,
+.console-character-action:focus,
+#console-character-retry:focus,
+#console-character-open-roleplay:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+#console-character-context .console-character-search-row {
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+}
+
+.console-character-empty,
+#console-character-loading,
+#console-character-error,
+#console-character-unavailable-reason {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    text-overflow: ellipsis;
+}
+
+#console-character-context .console-character-row.-opening {
+    text-style: italic;
+}
+
+/* Shared direct-section body. The owner applies the measured content-row
+   allocation inline; no CSS ceiling may override a smaller Context grant. */
+ConsoleBoundedSection {
+    height: auto;
+    min-height: 0;
+}
+
+.console-bounded-section-viewport {
+    height: auto;
+    min-height: 0;
     overflow-x: hidden;
-    /* The reserved gutter REPLACES the body's right padding rather than
-       adding to it -- the session rows' width contract (12-col label +
-       10-col value + chrome) spends the rail's full 30 columns, and an
-       extra reserved column re-clipped the Workspace value (caught by
-       test_session_rows_fit_inside_the_rail). The gutter column doubles
-       as the right margin; the scrollbar draws in it only on overflow. */
-    padding-right: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    /* TASK-31663 AC#4: the SECTION-inner bar, same invisible thumb as the
+       outer scroller above -- fixing only one would leave the rail's two
+       scrollbars disagreeing about whether they can be seen. */
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+/* TASK-24702: was `$ds-action-focus 12%`. Measured live by parsing the
+   terminal's own SGR stream, that blend renders (31,55,74) -- 1.35:1
+   against the rail background and 1.11:1 against the pinned card. WCAG's
+   minimum for a non-text UI indicator is 3:1, so the focus cue was
+   effectively invisible; at 80x24, 5 of 12 Tab stops showed nothing at all.
+   Raised here, in the shared convention, rather than only on the two
+   containers TASK-24612 added -- every consumer of this rule had the same
+   problem, and fixing only the new selectors would have left the rail's
+   sections quieter than its containers. */
+.console-bounded-section-viewport:focus,
+.console-bounded-section-viewport:focus-within {
+    background: $ds-action-focus 45%;
+}
+
+/* TASK-24612: the Inspect rail's Tab cycle contains two CONTAINERS as well
+   as its controls -- the outer scroller and the rail root. Both are focus
+   targets on purpose (the scroller so the keyboard can scroll it, the root
+   because it is the pane F6 lands on, `right_rail.can_focus = True` at
+   compose), but neither had a `:focus` rule of its own. A measured focus
+   walk found their entire visible indication was a single frame glyph and,
+   for a nested viewport, a lit scrollbar column. The bounded-section
+   viewport above already models the right treatment; these now share it, so
+   a keyboard user can see which region holds focus rather than inferring it
+   from one recoloured border cell. `:focus` only -- NOT `:focus-within`:
+   these two contain every other stop in the rail, so tinting them whenever
+   a descendant has focus would leave the whole rail permanently tinted and
+   destroy the signal it is meant to carry. */
+/* TASK-24702: a LEFT EDGE, not a background tint and not a full outline.
+   Three measurements decided this.
+
+   1. A tint cannot carry the cue here. `$ds-action-focus 12%` measured
+      1.35:1 against the rail ground and 1.11:1 against the pinned card;
+      45% reaches ~1.74:1; even a fully opaque accent is only 3.77:1 on this
+      near-black theme. To clear WCAG's 3:1 non-text floor a tint has to be
+      ~85-90% opaque -- a solid block behind the text, not a tint.
+   2. A full outline DOES clear it (3.77:1 / 3.01:1) and is what DESIGN.md
+      prescribes -- the pinned authority summary already proves it works,
+      one widget away. But `outline` paints over the widget's own edge
+      cells, and at 80x24 this scroller's body is THREE rows; a top and
+      bottom border would claim two of them.
+   3. A one-column left edge costs one column instead of two rows, clears
+      the same 3.77:1 because it is the same colour, and is already the
+      house pattern -- DESIGN.md's dense-form convention flips exactly this
+      edge to `thick $ds-action-focus` on focus. The rail is 33 columns at
+      120 and narrower; a column is affordable where two of three rows is
+      not. */
+#console-inspector-rail-body:focus,
+#console-right-rail:focus {
+    outline-left: thick $ds-action-focus;
+}
+
+/* TASK-31663 AC#1/AC#2: the rail's Button focus carrier. Seven ring stops
+   painted identical text focused and unfocused (background swap only,
+   1.68:1) and a tint cannot reach 3:1 on this theme, so the cue must change
+   CELLS. Lossless: every rail Button already paints a leading space.
+   Class-keyed, NOT `#console-right-rail Button` -- that form taxed every
+   Button in the app (test_textual_css_fastpath.py's ratchet). Coverage and
+   losslessness pinned by test_console_inspector_focus_carriers.py. */
+Button.console-rail-focus-carrier:focus {
+    outline-left: thick $ds-action-focus;
+}
+
+/* The COLLAPSED rail's handle -- the shipping default state, and before this
+   rule focusing it changed nothing at all. RIGHT edge, measured not
+   stylistic: the shell clips this button's leading pad, so col 0 carries the
+   "◂" of "◂ Inspect" while the last column is always blank. A left edge would
+   paint "█ Inspect". See TASK-31663 notes. */
+#console-inspector-rail-open:focus {
+    outline-right: thick $ds-action-focus;
+}
+
+/* Inspector ROWS are deliberately absent above: the `*:focus` fallback in
+   `css/core/_reset.tcss` already gives them corner brackets on their own
+   padding -- a cue deliberately DISTINCT from the `█` column the focused
+   scroller paints. An `outline-left: thick` here was dead code (a 1-2 line
+   row has no middle line to paint on). See TASK-31663 notes. */
+
+/* The rail's SCROLLER stop. Textual paints children OVER a container's own
+   strips, so the body's edge shows only in inter-section gaps -- none at
+   80x24. The section body's `padding-left: 1` is the innermost free column.
+   Accepted cost: `outline-left` is a `BoxProperty` forcing
+   `refresh(layout=True)`, so scroller focus enter/leave relayouts each
+   section body; investigated as a flake cause and CLEARED twice. */
+#console-workspace-tree {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
     scrollbar-color: $ds-grid-line;
     scrollbar-color-hover: $ds-grid-line;
     scrollbar-color-active: $ds-action-focus;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-workspace-tree:focus {
+    /* TASK-28226: this tree can be only two rows tall. The global four-sided
+       focus outline overpaints both rows after an action menu restores focus;
+       the focus-specific cursor below supplies the content-safe high-contrast
+       cue while this tint reinforces which compact region owns focus. */
+    outline: none;
+    background: $ds-action-focus 12%;
+}
+
+#console-workspace-tree > .tree--cursor {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
+}
+
+#console-workspace-tree:focus > .tree--cursor {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.console-bounded-section-hint {
+    display: none;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+    text-style: italic;
 }
 
 .console-model-section-line {
@@ -3657,7 +5395,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 .console-model-section-value {
     width: 1fr;
     min-width: 10;
-    color: $ds-text-primary;
+    color: $ds-value-fg;
 }
 
 #console-model-section-provider .console-model-section-value,
@@ -3673,12 +5411,34 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 #console-model-section-recovery {
-    color: $ds-status-blocked;
+    /* TASK-31429: this line is READ, not glanced -- readable error variant
+       (design-language rule: readable beats decorative). */
+    color: $ds-status-error-readable;
 }
 
 .console-agent-section-line {
     height: 1;
     color: $ds-text-primary;
+}
+
+/* TASK-31429 (rail colour grammar): the Agent status line's run status
+   (`apply_console_agent_status_state`) maps to the same status tokens the
+   Inspector's fleet rows already use; idle/unavailable carry no class. */
+.console-agent-section-status-running {
+    color: $ds-status-running;
+}
+
+.console-agent-section-status-done {
+    color: $ds-status-ready;
+}
+
+.console-agent-section-status-stuck {
+    color: $ds-status-warning;
+}
+
+.console-agent-section-status-error,
+.console-agent-section-status-cancelled {
+    color: $ds-status-error-readable;
 }
 
 .console-agent-section-steps {
@@ -3697,6 +5457,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
     color: $ds-status-running;
     text-style: dim;
+}
+
+.console-pinned-terminal-action {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-authority-local;
+    text-align: left;
+    content-align: left middle;
+}
+
+.console-pinned-terminal-action:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .console-agent-drilldown-back {
@@ -3739,9 +5521,31 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0;
 }
 
+/* TASK-24606: this used to be `height: 0` -- the authored reason for a
+   disabled action was mounted and then collapsed to nothing. It is now a
+   real row. Muted because it is secondary to the action it explains, but
+   NOT dimmed: DESIGN.md's Legible Disabled Rule documents `dim` compounding
+   with an alpha token to below 3:1, and this line is the only place several
+   restrictions are explained at all. */
 .console-inspector-disabled-reason {
-    height: 0;
-    min-height: 0;
+    height: auto;
+    min-height: 1;
+    padding: 0 0 0 1;
+    color: $ds-text-muted;
+}
+
+/* TASK-24606 + the Legible Disabled Rule. Textual's `Button:disabled` adds
+   `text-style: bold dim` AND `color: auto 50%`, and a widget's own
+   DEFAULT_CSS cannot beat it -- both sit in the same tier, where `Button`
+   wins for a `Button`. The override therefore lives here, in the app
+   stylesheet, and states a colour bright enough to survive that halving.
+   `text-style: none` does NOT clear Textual's `dim` (measured), so the
+   colour has to carry it. Disabled must still read as clearly quieter than
+   enabled, which it does: enabled inspector actions render at full
+   `$ds-text-primary` on the action background. */
+Button.console-inspector-action:disabled {
+    color: $ds-text-primary;
+    text-opacity: 100%;
 }
 
 /* PR2b Task 3: the reusable Inspector-style section component (header +
@@ -3800,10 +5604,20 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0 0 0 1;
 }
 
+/* TASK-31662: one line per row unless its pair needs two (see
+   `ConsoleInspectorSectionRow`). A floor of `2` left 25% of the Environment
+   section's row-lines blank. */
 .console-inspector-section-row {
     height: auto;
-    min-height: 2;
+    min-height: 1;
     padding: 0 1;
+}
+
+/* The one-line form's inner row: primary (1fr) + secondary (auto), the
+   same split the section header uses for title + summary. */
+.console-inspector-section-row-line {
+    width: 100%;
+    height: 1;
 }
 
 .console-inspector-section-row:focus {
@@ -3817,10 +5631,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-overflow: ellipsis;
 }
 
+/* TASK-31665 AC#9: no `text-style: dim` -- it DOUBLE-dimmed an already-muted
+   token to 3.42:1 (AA fail) where sibling muted strings paint 5.91:1. `dim`
+   is a real second step (~65% fg retained), not a no-op. */
 .console-inspector-section-row-secondary {
     height: 1;
     color: $ds-text-muted;
-    text-style: dim;
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
@@ -3830,33 +5646,57 @@ with stray left-edge border fragments), and padding 0 1 so the full
    built via f-string interpolation in console_inspector_section.py, which
    is out of scope for test_css_class_coverage_contract.py by design (its
    docstring: "f-strings ... are out of scope"); these rules are shipped
-   for real styling, not to satisfy that contract. */
-.console-inspector-section-row-running > .console-inspector-section-row-primary {
+   for real styling, not to satisfy that contract.
+
+   DESCENDANT, not child (`>`), since TASK-31662: the one-line form nests
+   the primary in `.console-inspector-section-row-line`, so `>` silently
+   dropped the status colour for every row sharing a line. */
+.console-inspector-section-row-running .console-inspector-section-row-primary {
     color: $ds-status-running;
 }
 
-.console-inspector-section-row-done > .console-inspector-section-row-primary {
+.console-inspector-section-row-done .console-inspector-section-row-primary {
     color: $ds-status-ready;
 }
 
-.console-inspector-section-row-error > .console-inspector-section-row-primary {
-    color: $ds-status-error;
+/* TASK-31664 (a11y): this text must be READ (a failing-check name), so it
+   takes the READABLE token. $ds-status-error is $error at 3.06:1 (AA fail);
+   $ds-status-error-readable is the per-theme $text-error. */
+.console-inspector-section-row-error .console-inspector-section-row-primary {
+    color: $ds-status-error-readable;
 }
 
-.console-inspector-section-row-blocked > .console-inspector-section-row-primary {
-    color: $ds-status-blocked;
+/* The row the critique measured at 2.53:1 carries status="blocked", NOT
+   "error", so the rule above never reached it. Both are must-be-READ states
+   and deliberately share one readable token. See TASK-31664 notes. */
+.console-inspector-section-row-blocked .console-inspector-section-row-primary {
+    color: $ds-status-error-readable;
 }
 
+/* TASK-31665 AC#5: no top margin. With the section's own bottom margin the
+   tail button floated between two blank lines, "orphaned ~28 lines from its
+   data"; flush under the last row makes its owner unambiguous. */
 .console-inspector-section-view-all {
     width: 100%;
     height: 1;
     min-height: 1;
-    margin: 1 0 0 0;
+    margin: 0;
 }
 
 .console-live-work-source-readiness {
     height: auto;
     min-height: 0;
+    margin: 0;
+}
+
+#console-live-work-section,
+#console-live-work-header,
+#console-pending-launch-card {
+    height: auto;
+    min-height: 0;
+}
+
+#console-live-work-section {
     margin: 1 0 0 0;
 }
 
@@ -3874,7 +5714,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 .console-settings-summary {
     height: auto;
-    min-height: 9;
+    min-height: 0;
     padding: 0 1;
 }
 
@@ -3899,12 +5739,20 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align: left middle;
 }
 
+/* TASK-24609: this declared neither weight nor colour, and the
+   `destination-section` class it also carries has no rule in scope inside
+   the rail, so "Session Settings" rendered identically to the eight
+   `.console-settings-row` lines it heads and the section boundary was
+   invisible. Same treatment as `.console-rail-section-title`, which is the
+   one heading style every section title in this rail should share. */
 .console-settings-title {
     width: 1fr;
     min-width: 0;
     height: 1;
     min-height: 1;
     max-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
 }
 
 .console-settings-row {
@@ -3939,8 +5787,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #console-transcript-region {
     padding: 0 1;
-    border: round $ds-column-line;
+    border: none;
     background: $ds-surface-panel;
+}
+
+#console-left-rail.console-edge-region-focused #console-context-rail-collapse,
+#console-context-rail-handle.console-edge-region-focused #console-context-rail-open,
+#console-right-rail.console-edge-region-focused #console-inspector-rail-collapse,
+#console-inspector-rail-handle.console-edge-region-focused #console-inspector-rail-open {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* TASK-17651: the composer is a dense-form one-row field (task-1586
@@ -3959,7 +5816,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
        footer below. Not the TASK-17650 phantom: both rows are pinned by the
        single-separator contract test. Compact mode drops them. */
     margin: 1 0;
-    layout: horizontal;
+    layout: vertical;
     align: left middle;
     border: none;
     border-left: solid $ds-control-edge;
@@ -3997,6 +5854,35 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align: left middle;
 }
 
+#console-prompt-improvement-recovery {
+    display: none;
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: right middle;
+}
+
+#console-prompt-improvement-status {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    color: $ds-status-ready;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+#console-prompt-improvement-undo {
+    width: 8;
+    min-width: 8;
+}
+
+#console-prompt-improvement-review {
+    width: 16;
+    min-width: 16;
+}
+
 #console-native-composer.console-composer-collapsed {
     height: 1;
     min-height: 1;
@@ -4028,6 +5914,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-overflow: ellipsis;
     text-wrap: nowrap;
     color: $ds-text-muted;
+}
+
+#console-raw-cli-status.console-raw-cli-danger,
+#console-composer-collapsed-status.console-raw-cli-danger {
+    color: $ds-status-error-readable;
+    text-style: bold;
 }
 
 #console-collapsed-stop-generation {
@@ -4157,6 +6049,44 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-height: 0;
 }
 
+/* task-32287: the inline task-card surface (ChatTaskCards) hugs its cards.
+   As a plain Container it kept Textual's `height: 1fr` default and took a
+   full share of the session column next to `#console-transcript-surface`
+   below -- 17 rows at 200x50 for an 11-row card (blank rows above the
+   transcript), and only 6 rows at 80x24, where it CLIPPED the approval
+   card's Approve-all/Submit/Deny-all bar out of the compositor entirely
+   (the bar's own coordinates rendered the transcript's empty state). The
+   surface is `display: none` whenever no card is pending, so `auto` costs
+   the transcript nothing until an agent actually asks for something. */
+#console-task-surface {
+    height: auto;
+}
+
+/* task-32287 review: and so do the sibling cards that share the surface.
+   With the surface `auto`, a child left on Textual's `height: 1fr` default
+   resolves that fraction against the whole offered box instead of the
+   surface's content, so each of these rendered 50 rows in a 50-row harness
+   -- the ballooning simply moved down a level. The two skill cards need
+   their button rows named as well (`Horizontal`, also unstyled, also
+   `1fr`): a `1fr` grandchild re-inflates an `auto` parent exactly as
+   `#approval-batch-actions` did. ChatQuestionCard is absent
+   here on purpose: it already ships `height: auto; max-height: 24` in its
+   own BUNDLED_CSS and measures 14 rows in that same harness. */
+/* #skill-install-buttons/#skill-script-buttons are the button rows INSIDE
+   SkillInstallConfirmCard/SkillScriptConfirmCard, not scoped to the Console
+   card ids above -- the same two cards are also mounted, under different
+   outer ids (#buddy-install/#buddy-script), inside
+   BuddyConversationModal (buddy_conversation_modal.py). The id selectors
+   here are deliberately global so both hosts get the fix; verified green
+   in the Buddy modal too. */
+#chat-resume-panel,
+#chat-skill-install-card,
+#chat-skill-script-card,
+#skill-install-buttons,
+#skill-script-buttons {
+    height: auto;
+}
+
 #console-transcript-surface {
     height: 1fr;
     min-height: 0;
@@ -4175,12 +6105,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 1fr;
     min-height: 0;
     padding: 0 1;
-    /* TASK-17651: the transcript's own frame is gone at every size (the
-       compact-mode drop from TASK-2154.1 generalized): the region frame
-       still surrounds it, and the workbench closes at the grid's bottom
-       border — the bottom stack's single separator. Keyboard focus is
-       carried by the region's column lines, recolored by the same
-       inline focus painter the rails use (TASK-359). */
+    /* TASK-20937.3: neither the transcript nor its region owns a frame
+       edge. The workbench grid closes the surface at top/bottom, while
+       Context and Inspect own the two interior dividers. */
     border: none;
     background: $ds-surface-panel;
     color: $ds-text-primary;
@@ -4209,6 +6136,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: none;
 }
 
+#console-transcript-region.console-transcript-region-focused #console-transcript-title {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 #console-native-tab-strip,
 .console-session-tab-strip {
     height: 1;
@@ -4224,6 +6157,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
    is hidden because the strip is a single row tall. */
 #console-native-tab-strip {
     scrollbar-size-horizontal: 0;
+}
+
+/* TASK-28028: 1-cell ‹ › hints at the strip row's edges, shown only while
+   tabs are hidden past that edge (display toggled from Python). */
+#console-tab-overflow-left,
+#console-tab-overflow-right {
+    color: $ds-text-muted;
+    text-style: none;
+    background: transparent;
 }
 
 .console-session-tab,
@@ -4270,7 +6212,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #console-native-transcript:focus {
     /* TASK-17651: no border in either state (stable geometry, zero rows).
-       The focused-pane indicator is the region's inline column recolor.
+       TASK-20937.3 puts the non-color pane cue on the stable title row;
+       the scrollbar recolor remains a secondary color cue.
        The global *:focus outline (core/_reset.tcss) would overpaint the
        outermost transcript CONTENT rows now that no border absorbs it —
        the reset's own documented DataTable pattern: opt out, recolor. */
@@ -4295,6 +6238,228 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0;
     background: $ds-surface-panel;
     color: $ds-text-primary;
+}
+
+/* TASK-19426: one causal Assistant turn owns its activity disclosures,
+   final answer, and adjuncts. The left-edge ownership accent is singular;
+   nested activity rows stay quiet so they read as evidence inside the turn
+   rather than as neighboring transcript cards. */
+.console-assistant-turn {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1 1 1;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.-dark-mode .console-assistant-turn {
+    border-left: tall $ds-chat-assistant-accent-dark;
+}
+
+.-light-mode .console-assistant-turn {
+    border-left: tall $ds-chat-assistant-accent-light;
+}
+
+.console-assistant-turn > .console-message-header,
+.console-assistant-activity-stack,
+.console-assistant-adjunct-stack {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+.console-assistant-turn > .console-message-header {
+    height: 1;
+    min-height: 1;
+}
+
+.console-assistant-activity-stack {
+    padding: 0 1;
+}
+
+.console-assistant-turn > .console-transcript-message {
+    width: 100%;
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+/* Selection belongs to the answer, not its entire ownership surface. */
+.console-assistant-turn > .console-transcript-message-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+.console-activity-disclosure {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-activity-header {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    overflow: hidden;
+}
+
+.console-activity-label {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    overflow: hidden;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+.console-activity-status {
+    width: 9;
+    min-width: 9;
+    max-width: 9;
+    height: 1;
+    min-height: 1;
+    text-align: right;
+    text-style: bold;
+}
+
+.console-activity-status-success {
+    background: $ds-status-ready 10%;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-blocked {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+}
+
+/* task-32279: the three narrowed refusal states. They share the blocked
+   tint on purpose -- which authority refused is carried by the WORD, never
+   by colour -- and each widens the standard nine-cell column to fit that
+   word, the same way the proprietary-thinking state below already does. */
+.console-activity-status-denied,
+.console-activity-status-blocked_off {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+    width: 15;
+    min-width: 15;
+    max-width: 15;
+}
+
+.console-activity-status-blocked_kill_switch {
+    background: $ds-status-blocked 16%;
+    color: $ds-text-primary;
+    width: 23;
+    min-width: 23;
+    max-width: 23;
+}
+
+.console-activity-status-failed {
+    background: $ds-status-error 16%;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-done {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-live {
+    background: $ds-status-running 12%;
+    color: $ds-text-primary;
+}
+
+.console-activity-status-stopped,
+.console-activity-status-unavailable {
+    background: $ds-status-warning 12%;
+    color: $ds-text-primary;
+}
+
+/* The proprietary-thinking state is the only status longer than the
+   standard nine-cell column. Preserve its literal non-color cue instead of
+   clipping the header to a warning tint and midpoint. */
+.console-activity-status-unavailable {
+    width: 13;
+    min-width: 13;
+    max-width: 13;
+}
+
+/* These height-one headers opt out of the global outline because it would
+   paint over their only content row. Text + background + underline provide
+   the non-color focus cue without changing geometry in either theme. */
+.console-activity-header:focus {
+    outline: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.console-activity-header-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.console-activity-header:focus > .console-activity-status,
+.console-activity-header-selected > .console-activity-status {
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-style: bold underline;
+}
+
+.console-activity-disclosure-selected > .console-activity-action-stack {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+.console-activity-action-stack {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    padding: 0 1;
+}
+
+.console-activity-detail-stack {
+    width: 1fr;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    margin: 0 1 1 1;
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.console-activity-disclosure-expanded > .console-activity-detail-stack {
+    background: $ds-surface-panel;
+}
+
+.console-activity-detail-stack .console-transcript-message {
+    width: 100%;
+    height: auto;
+    padding: 0;
+    background: transparent;
+}
+
+.console-activity-detail-stack .console-transcript-tool-diff {
+    padding: 0 0 0 2;
+}
+
+.console-thinking-detail {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    text-wrap: wrap;
 }
 
 .console-transcript-message-roleplay-user,
@@ -4438,9 +6603,10 @@ Button.console-message-speech-action:focus {
     color: $ds-chat-assistant-accent-light;
 }
 
-/* TASK-1990.1: flavor assistant / character prose without rewriting Markdown.
-   Quoted speech, emphasis-as-action, and strong emphasis are Content component
-   spans; labels and Markdown structure continue to carry meaning without color. */
+/* TASK-1990.1/TASK-22454: flavor assistant / character prose without rewriting
+   Markdown. Quoted speech, quoted inner thought, emphasis-as-action, and strong
+   emphasis are Content component spans; visible delimiters, text styles, labels,
+   and Markdown structure continue to carry meaning without color. */
 .-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
 .-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
     color: $ds-chat-rp-speech-dark;
@@ -4449,6 +6615,18 @@ Button.console-message-speech-action:focus {
 .-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-speech,
 .-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-speech {
     color: $ds-chat-rp-speech-light;
+}
+
+.-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-thought,
+.-dark-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-thought {
+    color: $ds-chat-rp-thought-dark;
+    text-style: italic;
+}
+
+.-light-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-thought,
+.-light-mode .console-transcript-message-immersive-character .console-roleplay-markdown-block > .console-rp-thought {
+    color: $ds-chat-rp-thought-light;
+    text-style: italic;
 }
 
 .-dark-mode .console-transcript-message-immersive-assistant .console-roleplay-markdown-block > .console-rp-action,
@@ -4492,6 +6670,7 @@ Button.console-message-speech-action:focus {
 }
 
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-thought,
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
 .console-transcript-message-failed.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-text-primary;
@@ -4517,6 +6696,7 @@ Button.console-message-speech-action:focus {
 }
 
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-speech,
+.console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-thought,
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-action,
 .console-transcript-message-selected.console-transcript-message-markdown .console-roleplay-markdown-block > .console-rp-strong {
     color: $ds-focus-fg;
@@ -4758,6 +6938,200 @@ VideoPlayerScreen .video-player-frame {
     text-style: bold;
 }
 
+/* TASK-26042: read-only Workspace Files modal.  The modal's rows are pinned;
+   only the tree and safe viewer scroll.  At compact widths it deliberately
+   becomes full-screen, so there is no misleading visible backdrop target. */
+ConsoleWorkspaceFilesModal {
+    align: center middle;
+}
+
+#console-workspace-files-modal {
+    width: 110;
+    max-width: 96%;
+    height: 34;
+    max-height: 90%;
+    padding: 1 2;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-workspace-files-pinned,
+#console-workspace-files-contract,
+#console-workspace-files-attention,
+#console-workspace-files-status {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    overflow: hidden;
+}
+
+#console-workspace-files-fold {
+    display: none;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    overflow: hidden;
+}
+
+#console-workspace-files-binding-row,
+#console-workspace-files-filter-row,
+#console-workspace-files-actions {
+    height: 3;
+    min-height: 3;
+    width: 100%;
+}
+
+.console-workspace-files-binding {
+    width: auto;
+    max-width: 1fr;
+    margin-right: 1;
+}
+
+.console-workspace-files-binding.-selected {
+    background: $ds-action-focus;
+    color: $ds-text-primary;
+}
+
+#console-workspace-files-filter {
+    width: 1fr;
+    min-width: 16;
+}
+
+#console-workspace-files-filter-row Button,
+#console-workspace-files-actions Button {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
+}
+
+#console-workspace-files-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 10;
+}
+
+#console-workspace-files-tree,
+#console-workspace-files-viewer {
+    height: 100%;
+    min-width: 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+#console-workspace-files-tree {
+    width: 42%;
+    min-width: 28;
+    margin-right: 1;
+}
+
+#console-workspace-files-viewer {
+    width: 1fr;
+    padding: 0 1;
+}
+
+.console-workspace-files-entry,
+.console-workspace-files-file {
+    width: 100%;
+    min-width: 0;
+}
+
+.console-workspace-files-path {
+    color: $ds-text-muted;
+    text-style: bold;
+}
+
+#console-workspace-files-preview {
+    height: auto;
+    color: $ds-text-primary;
+}
+
+ConsoleWorkspaceFilesModal.-fullscreen #console-workspace-files-modal {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border: none;
+    padding: 0 1;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-body {
+    height: 1fr;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-tree {
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-viewer {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-tree {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-viewer {
+    display: block;
+    width: 100%;
+}
+
+#console-workspace-files-back-to-files {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-back-to-files {
+    display: block;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions Button {
+    min-width: 0;
+    width: 1fr;
+}
+
+/* Keep the two stage/visit exits legible in the one-row compact strip. */
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions #console-workspace-files-back {
+    width: 17;
+    min-width: 17;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions #console-workspace-files-back-to-files {
+    width: 15;
+    min-width: 15;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-modal {
+    height: 100%;
+    max-height: 100%;
+    padding: 0 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-fold {
+    display: block;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-body {
+    min-height: 0;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-binding-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions {
+    height: 1;
+    min-height: 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row Button,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
+    height: 1;
+    min-height: 1;
+}
+
 ConsoleCitationSourcesModal {
     align: center middle;
 }
@@ -4849,15 +7223,42 @@ ConsoleCitationSourcesModal {
 }
 
 .console-transcript-action-button {
-    width: auto;
-    min-width: 5;
-    height: 3;
-    min-height: 3;
-    padding: 0 1;
-    border: none;
+    width: auto !important;
+    min-width: 4 !important;
+    height: 3 !important;
+    min-height: 3 !important;
+    padding: 0 !important;
+    border: none !important;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+.console-media-card-actions {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    background: $ds-surface-raised;
+}
+
+.console-media-card-action {
+    width: auto !important;
+    min-width: 5 !important;
+    height: 1 !important;
+    min-height: 1 !important;
+    padding: 0 1 !important;
+    border: none !important;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-media-card-action:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 .console-transcript-action-button:focus {
@@ -4882,13 +7283,19 @@ ConsoleCitationSourcesModal {
     margin: 0;
 }
 
+/* TASK-31429 (rail colour grammar): quiet key, coloured value -- the label
+   drops its bold so it no longer competes with the value it introduces. */
 .console-workspace-status-label {
     color: $ds-text-muted;
-    text-style: bold;
 }
 
 .console-workspace-status-value {
-    color: $ds-text-primary;
+    color: $ds-value-fg;
+}
+
+/* The workspace you are IN is identity, not a setting: active hue. */
+#console-active-workspace-value {
+    color: $ds-active-fg;
 }
 
 .console-workspace-empty-copy {
@@ -4909,16 +7316,41 @@ ConsoleCitationSourcesModal {
 }
 
 .console-workspace-action-row {
+    /* The fixed tray reserves one cell for its native-scroll sibling's
+       scrollbar lane; keep the compact strip inside the tray clip. */
+    width: 99%;
+    max-width: 100%;
     height: auto;
     min-height: 1;
     /* TASK-2154.3 (LY-07): the rail IA spec's 12-col left indent (buttons
        aligned under the value column) assumed a ~35-col rail. The real rail
        renders at 24-30 cols, so the indent left only 3-6 cells for the
-       buttons -- Switch clipped to "Switc", RAG Scope to "RAG S"/"RA", and
+       buttons -- Switch clipped to "Switc", the former RAG Scope label to
+       "RAG S"/"RA", and
        New rendered past the rail clip (invisible but clickable). Left-align
-       the rows: Switch + New = 13 cells and RAG Scope = 11 both fit the
+       the rows: Switch + New = 13 cells and RAG = 5 both fit the
        23-cell content width at the rail's 30-col minimum. */
     margin: 0;
+}
+
+.console-workspace-context-action-row {
+    width: 99%;
+    max-width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#console-workspace-tree-selection-context {
+    width: 99%;
+    max-width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
 }
 
 .console-workspace-action {
@@ -4931,6 +7363,30 @@ ConsoleCitationSourcesModal {
        labels so both fit the row. */
     min-width: 5;
     width: auto;
+}
+
+#console-workspace-search {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+}
+
+#console-workspace-tree-star {
+    width: 100%;
+    min-width: 6;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#console-workspace-search-status {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 #console-transcript-empty-state,
@@ -5017,13 +7473,6 @@ ConsoleCitationSourcesModal {
     layers: console-workbench console-setup-overlay;
 }
 
-/* TASK-346: at small terminal heights (<35 rows) the header banner is
-   dropped so the transcript+composer core loop stays on screen instead of
-   the composer being silently clipped off the bottom. */
-#console-shell.-console-compact #console-workbench-header {
-    display: none;
-}
-
 /* task-18812 / ADR-071: focus mode. The -focus class lives on the
    ChatScreen itself (MainNavigationBar is composed by BaseAppScreen as a
    sibling of #console-shell, so #console-shell-rooted selectors cannot
@@ -5035,31 +7484,6 @@ ChatScreen.-focus MainNavigationBar {
 
 ChatScreen.-focus #console-workbench-header {
     display: none;
-}
-
-/* TASK-2154.1 (LY-10): while the rule above hides the header badge, the
-   control-bar stand-in carries the same Ready/Running/Blocked identity.
-   Display itself is Python-driven (ChatScreen._sync_console_compact_status_marker)
-   so harness apps without this bundle behave identically; only the status
-   colors live here. */
-#console-compact-status-marker {
-    width: auto;
-    padding: 0 1;
-    text-style: bold;
-}
-
-#console-compact-status-marker.status-ready {
-    color: $ds-status-ready;
-}
-
-#console-compact-status-marker.status-running,
-#console-compact-status-marker.status-loading {
-    color: $ds-status-running;
-}
-
-#console-compact-status-marker.status-blocked,
-#console-compact-status-marker.status-error {
-    color: $ds-status-blocked;
 }
 
 /* TASK-2154.1 (LY-09): at 60x18 the transcript body shrinks to a single row;
@@ -5083,10 +7507,8 @@ ChatScreen.-focus #console-workbench-header {
     margin-bottom: 0;
 }
 
-/* TASK-2154.1 (LY-09): the transcript's own frame costs two rows; at 60x18
-   that leaves ZERO content rows, so the empty-state line can never paint.
-   Compact mode drops the inner frame (the region frame still surrounds the
-   transcript) and gives the rows to the content. */
+/* TASK-2154.1 (LY-09): keep the historical compact override explicit so
+   neither focus nor compact mode can resurrect the removed transcript frame. */
 #console-shell.-console-compact #console-native-transcript,
 #console-shell.-console-compact #console-native-transcript:focus {
     border: none;
@@ -5295,19 +7717,84 @@ ChatScreen.-focus #console-workbench-header {
 
 #console-staged-context-title {
     width: 1fr;
+    height: 1;
+    min-height: 1;
     text-style: bold;
 }
 
 #console-staged-context-count {
     width: auto;
+    height: 1;
+    min-height: 1;
     text-align: right;
     color: $ds-text-muted;
 }
 
 .console-staged-source-row {
     height: auto;
-    min-height: 2;
-    margin: 1 0 0 0;
+    min-height: 1;
+    margin: 0;
+}
+
+.console-staged-source-primary {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    text-align: left;
+    background: transparent;
+    color: $ds-text-primary;
+}
+
+.console-staged-source-primary:hover,
+.console-staged-source-primary:focus {
+    border: none;
+    background: $ds-action-focus 18%;
+    text-style: bold;
+}
+
+.console-staged-source-primary-ready { color: $ds-status-ready; }
+.console-staged-source-primary-warning { color: $ds-status-warning; }
+.console-staged-source-primary-listed { color: $ds-status-paused; }  /* TASK-32330: muted tone for listed-not-sent rows */
+.console-staged-source-primary-blocked { color: $ds-status-blocked; }
+
+.console-staged-source-detail {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+.console-staged-source-detail Static {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+.console-staged-source-snippet {
+    color: $ds-text-primary;
+}
+
+.console-staged-source-authority,
+.console-staged-source-freshness,
+.console-staged-source-action-copy {
+    color: $ds-text-muted;
+}
+
+.console-staged-source-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    background: transparent;
+    color: $ds-action-focus;
 }
 
 .console-staged-source-name {
@@ -5325,7 +7812,77 @@ ChatScreen.-focus #console-workbench-header {
 .console-staged-source-status.running { color: $ds-status-running; }
 .console-staged-source-status.blocked { color: $ds-status-blocked; }
 
+/* TASK-24608: run-inspector rows carry the same status vocabulary the tray
+   above uses, and until now NOTHING in the repo defined any of these -- the
+   class was built by f-string, swapped on every in-place update, and covered
+   by passing tests while painting exactly nothing. The visible cost was on
+   the rows whose TEXT does not repeat the status: "Approvals: 3 pending"
+   carries status "blocked" and was pixel-identical to "Approvals: 0 pending".
+   Colour is reinforcement only here -- every row still reads as blocked from
+   its own words -- so this follows The Label Before Color Rule rather than
+   becoming the sole carrier. `muted` is the normalizer's fallback and stays
+   at the default row colour deliberately: an unrecognised status must not
+   borrow the authority of a measured one. */
+.console-inspector-row-ready { color: $ds-status-ready; }
+.console-inspector-row-running { color: $ds-status-running; }
+.console-inspector-row-blocked { color: $ds-status-blocked; }
+.console-inspector-row-muted { color: $ds-text-muted; }
+
+/* TASK-24700: the OUTER fold hint ("more sections below") had no rule at all
+   while the LOCAL one (.console-bounded-section-hint) is muted + italic, so
+   the more important of the two indicators painted as plain body text and
+   read louder than the less important one. Same treatment, minus the
+   `display: none` -- this hint's visibility is owned by the rail's fold
+   reconcile, not by CSS. */
+.console-inspector-outer-scroll-hint {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-style: italic;
+}
+
+/* TASK-24701: second wave of the TASK-24608 defect -- classes attached in
+   Python with no rule behind them. This one is the worst of the set: it
+   carries a Library operation's `error_summary`, so a FAILED retained write
+   rendered in the same colour as a successful one. */
+.console-library-activity-error {
+    height: auto;
+    min-height: 1;
+    color: $ds-status-error;
+}
+
+.console-library-activity-action,
+.console-library-activity-source-ref {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+/* Subsection labels inside the Selected turn block. Quieter than a section
+   heading, louder than a body row -- they were previously indistinguishable
+   from the rows they label. */
+.console-selected-turn-subsection {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-muted;
+}
+
+/* TASK-24609: rows start in the same column as the heading that labels
+   them. The first attempt gave ROWS `padding: 0 0 0 1` to meet the heading.
+   That was wrong in a way only the geometry tests caught: it costs every
+   inspector row one column of content width, and at the rail's 46-column
+   measured width two live-work rows wrapped that had previously fit, moving
+   the bounded section's row demand from 20 to 22. The heading gives up its
+   indent instead -- alignment for free, and the raised background still
+   spans the full row. */
+.console-inspector-group-heading {
+    padding: 0;
+}
+
 #console-staged-context-empty {
+    height: auto;
+    min-height: 1;
     color: $ds-text-muted;
 }
 
@@ -5421,26 +7978,28 @@ ChatScreen.-focus #console-workbench-header {
     margin: 1 0 0 0;
 }
 
-/* TASK-18060 task 5 / TASK-19192: cross-turn "Changed files" section --
-   sibling of the Scope row above, run inspector below. Width lives here
-   (the sibling id-rule convention: #console-retrieval-scope-row,
-   #console-staged-context-tray) instead of inline at the right_rail mount
-   site; height/min-height come from the widget's own DEFAULT_CSS, and the
-   margin/padding rhythm from the shared .console-inspector-context-section
-   class added at mount. */
-#console-changed-files-section {
-    width: 100%;
-    min-width: 0;
-}
-
+/* TASK-24607: the row above is capped at `max-height: 1`, so a label that
+   wraps loses its second line silently -- at 120 columns the label is
+   allotted 11 cells, "Scope: everything" wrapped at the space, and the rail
+   painted a bare "Scope:" two rows below the authority block's full
+   "Scope: Everything available". Elide instead of wrapping, matching
+   `.console-settings-row`, which already declares both of these. */
 .console-retrieval-scope-label {
     width: 1fr;
     min-width: 0;
     color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
+/* TASK-24607: `width: auto` alone does not shrink a Textual Button -- its
+   DEFAULT_CSS carries `min-width: 16`, so this 7-glyph "Narrow…" claimed 16
+   of the row's 30 cells and left the label 11, which is what forced the
+   wrap. Sizing to content gives the label 20 and "Scope: everything" fits
+   whole at every supported width. */
 .console-retrieval-scope-action {
     width: auto;
+    min-width: 0;
     margin-left: 1;
 }
 
@@ -5450,6 +8009,29 @@ ChatScreen.-focus #console-workbench-header {
 }
 
 
+/* Meetings rail: the voice rows (TASK-31826). Class-keyed on purpose -- an
+   `#id Button` rule would be an ancestor-scoped bare-type subject, which the
+   Perf Guard CSS ratchet counts.
+
+   A Textual container defaults to `height: 1fr`, so these blocks split the
+   rail's leftover rows between them and collapsed to one row (the offer's
+   three answer buttons were clipped out of the compositor entirely at
+   100x30 -- review C1). Sizing them to their content instead lets the rail's
+   VerticalScroll do the work. */
+.meetings-rail-block,
+.meetings-rail-actions {
+    height: auto;
+}
+
+/* Same treatment `.console-retrieval-scope-action` needed (TASK-24607):
+   `width: auto` alone does not shrink a Button, its DEFAULT_CSS carries
+   `min-width: 16`. Four 16-column buttons need 65 columns; the rail is half
+   a workbench, so "Import…" was clipped to one column at 100 (review I4). */
+.meetings-rail-button {
+    width: auto;
+    min-width: 0;
+}
+
 #artifacts-workbench,
 #personas-workbench,
 #watchlists-workbench,
@@ -5458,7 +8040,8 @@ ChatScreen.-focus #console-workbench-header {
 #acp-workbench,
 #skills-workbench,
 #settings-workbench,
-#evals-workbench {
+#evals-workbench,
+#meetings-workbench {
     height: 1fr;
     /* Must stay below the worst-case available height at small terminal
        sizes, otherwise content overflows and the footer status bar
@@ -6148,9 +8731,150 @@ _CredentialClearModal {
     background: $ds-surface-panel;
 }
 
+/* RAW CLI DANGER GATE START */
+.settings-raw-cli-danger {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 1;
+    border: solid $surface-lighten-2;
+    background: $surface;
+}
+
+.settings-raw-cli-danger.settings-raw-cli-armed {
+    border: solid $error;
+    background: $error 10%;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state,
+.settings-raw-cli-disclosure,
+#settings-raw-cli-immediate {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state {
+    color: $error;
+    text-style: bold;
+}
+
+.settings-raw-cli-disclosure {
+    color: $text;
+    margin: 0 0 1 0;
+}
+
+#settings-raw-cli-permitted {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-raw-cli-action-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+#settings-raw-cli-immediate {
+    color: $text-muted;
+}
+
+#settings-shell Button#settings-raw-cli-arm {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold;
+}
+
+#settings-shell Button#settings-raw-cli-arm:focus,
+#settings-shell Button#settings-raw-cli-arm:hover,
+#settings-shell Button#settings-raw-cli-arm:hover:focus {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold underline;
+}
+
+/* App-tier Legible Disabled: Textual's Button dimming compounds with the
+   theme's disabled opacity. The label itself states the recovery action,
+   while the inert surface remains visibly distinct and above the measured
+   3:1 disabled-label contrast floor. */
+#settings-shell Button#settings-raw-cli-arm:disabled,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover:focus {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
+    border: none;
+    outline: none;
+}
+/* RAW CLI DANGER GATE END */
+
 #settings-advanced-config-card {
     height: 1fr;
     min-height: 0;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+#settings-advanced-config-actions {
+    grid-size: 2;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: 2;
+}
+
+#settings-advanced-config-actions Button {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0;
+}
+
+#settings-advanced-guide {
+    height: auto;
+    max-height: 8;
+    overflow-y: auto;
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
+#settings-advanced-guide Button {
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+#settings-advanced-config-validation-status,
+#settings-advanced-config-result {
+    height: auto;
+    max-height: 3;
+    overflow-y: auto;
 }
 
 .settings-secondary-card {
@@ -6225,7 +8949,7 @@ _CredentialClearModal {
 
 #settings-advanced-config-editor {
     height: 1fr;
-    min-height: 10;
+    min-height: 5;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
 }
@@ -6249,6 +8973,47 @@ _CredentialClearModal {
 
 #settings-imagegen-editor {
     height: auto;
+}
+
+/* Web Search shares the Settings detail pane's scrolling document. */
+#settings-web-search-panel,
+#settings-web-search-fields {
+    width: 100%;
+    height: auto;
+}
+
+#settings-web-search-panel Select {
+    width: 100%;
+    margin: 0;
+}
+
+#settings-web-search-panel Button {
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    margin: 0 1;
+    padding: 0 1;
+}
+
+#settings-web-search-panel Link {
+    margin: 0 1;
+    height: auto;
+}
+
+#settings-web-search-panel .settings-compact-input {
+    width: 100%;
+}
+
+#settings-web-search-compact-actions {
+    display: none;
+    height: auto;
+}
+
+.settings-workbench-compact #settings-web-search-compact-actions {
+    display: block;
 }
 
 /* Settings > Speech & TTS: the Settings detail pane is the single scroll
@@ -6706,69 +9471,6 @@ ListItem.personas-library-row.is-active.-highlight {
     outline: none;
 }
 
-#library-collection-form Input {
-    height: 3;
-    min-height: 3;
-    padding: 0 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#library-collection-form Input:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-#library-collection-actions {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
-    align: left middle;
-}
-
-#library-collection-actions Button {
-    height: 1;
-    min-height: 1;
-    margin-right: 1;
-    padding: 0 1;
-    border: none;
-    background: transparent;
-    color: $ds-text-primary;
-    content-align: left middle;
-    text-style: none;
-}
-
-#library-collection-actions Button:focus {
-    border: none;
-    background: transparent;
-    color: $ds-focus-fg;
-    outline: none;
-    text-style: bold underline;
-}
-
-/* task-4023 AC#1 (RC-07): the ID-scoped Button rule above (1,0,1)
-   outranks the shared `Button.library-source-action:disabled` escape
-   (0,2,1) for color/background, so this container needs its own
-   disabled variant at (1,1,1). Measured 2.30:1 before (the three
-   compounding dimmers over `$ds-text-primary`); `$ds-text-muted` on
-   this row's own surface clears the 3:1 floor while staying plainly
-   dimmer than the enabled `$ds-text-primary` label beside it. The
-   background stays transparent to match this row's resting/focus
-   convention -- the "○" label marker (library_disabled_action_label)
-   is the structural inert cue here. */
-#library-collection-actions Button:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    border: none;
-    background: transparent;
-    color: $ds-text-muted;
-    text-style: none;
-}
-
 /* Regression fix: #library-canvas (this panel's parent) and this panel's
  * own body never scrolled, so once the Query/Scope/Results/History regions'
  * combined natural height exceeded the fixed canvas box, whatever fell
@@ -6953,6 +9655,16 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold;
 }
 
+/* task-32053 AC#4: Run painted byte-identically focused and blurred (the
+   generic `*:focus{outline:solid}` cannot paint around a 1-row button).
+   Same heavy SIDE rails the compact canvas actions use (task-3302 MI-05):
+   they land on the button's own `padding: 0 1` cells, so the label
+   survives and the dimensions never change on focus/blur. */
+#library-rag-run-query:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+}
+
 #library-rag-run-query:disabled {
     background: $ds-surface-raised;
     color: $ds-text-disabled;
@@ -6981,9 +9693,26 @@ ListItem.personas-library-row.is-active.-highlight {
     border-bottom: solid $ds-grid-line;
 }
 
+/* task-32053 AC#1 (critique #8 row 4): the card was reachable in five Tabs
+ * from the query box, but the ONLY cue was this border-colour swap -- a
+ * colour-only signal, against the house rule, and the reason two live
+ * reviewers read the cards as unreachable and the keys as inert. The left
+ * edge becomes the house `thick` block bar (`█`, same non-colour cue as
+ * `.library-media-row:focus`/`.library-notes-row:focus`, task-31983);
+ * `thick` occupies the same single cell `solid` already reserved, so
+ * nothing shifts on focus/blur. */
 .library-rag-result-card:focus {
     border: solid $ds-focus-accent;
     border-bottom: solid $ds-focus-accent;
+    border-left: thick $ds-focus-accent;
+    /* Load-bearing, and the reason the card LOOKED colour-only: the generic
+     * `*:focus { outline: solid $ds-focus-accent }` fallback
+     * (core/_reset.tcss) paints its edges OVER this widget's own border
+     * cells, so every edge -- including this one -- came out as the
+     * outline's `│` recoloured to the accent, and the border rule above was
+     * never visible at all. Every sibling row rule already suppresses it
+     * for exactly this reason (`.library-media-row:focus`, task-2856). */
+    outline: none;
 }
 
 /* task-7 PR-2 leftover: this title Static used to draw its own
@@ -7062,6 +9791,48 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-status-warning 30%;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* task-14 / spec AC 47 (chunking-template parity): the recovery-action
+ * class gained a second consumer -- the re-chunk control
+ * (#library-rag-rechunk-legacy), which is DISABLED mid-run by the panel
+ * -- and its state set is completed here so both buttons define
+ * rest/hover/focus/disabled from $ds-* tokens. Hover deepens the warning
+ * tint rather than letting the generic `Button:hover` swap in
+ * `$surface-lighten-1` (which would erase the "this is a recovery
+ * action" colour); (0,2,0) beats `Button:hover`'s (0,1,1) per property. */
+.library-rag-recovery-action:hover {
+    background: $ds-status-warning 45%;
+}
+
+/* Structural focus cue, the task-3302 side-rail recipe
+ * (`Button.library-canvas-action:focus` above): typed selector so
+ * (0,2,1) plus later-in-bundle position beats both `Button:focus`
+ * (0,1,1) and `Button:hover:focus` (0,2,1, earlier module), keeping the
+ * rails visible while hovered too. Rails land on the button's own edge
+ * cells, so dimensions never change on focus/blur (the non-obscuring
+ * focus contract). */
+Button.library-rag-recovery-action:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+}
+
+/* Legible Disabled (TASK-1801/DESIGN.md), the task-4023 RC-07 Library
+ * recipe: three dimmers compound on a disabled Button (the theme's
+ * `text-disabled: auto 38%`, Textual's own `bold dim` + `color:
+ * auto 50%`, and _buttons.tcss's `Button:disabled { opacity: 50% }`).
+ * The re-chunk run disables this button for its whole batch, so the
+ * label must stay readable next to the live "Re-chunking…" summary
+ * line. Neutralise every layer, state a colour, let the darkened
+ * surface carry "inert" -- same selectors/specificity as the
+ * `Button.library-canvas-action:disabled` escape. */
+Button.library-rag-recovery-action:disabled,
+Button.library-rag-recovery-action:disabled:hover {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $ds-text-muted;
+    background: $surface-darken-1;
 }
 
 .library-rag-console-action {
@@ -7494,17 +10265,15 @@ Button.mcp-callout {
     width: 28;
 }
 
-/* TASK-14807: the bundle carries an app-wide Checkbox width/height rule
-   for legacy conversation forms. Widget DEFAULT_CSS cannot outrank a
-   CSS_PATH rule, so keep this Tools-mode escape in the source bundle: a
-   compact, readable toggle with one content row instead of a full-width
-   border-only box. The adjacent Enabled/Disabled word remains the primary
-   state label. */
-MCPToolsMode #mcp-tools-local-enabled {
-    width: 8;
-    height: auto;
-    min-height: 1;
-}
+/* task-32286: the TASK-14807 `MCPToolsMode #mcp-tools-local-enabled`
+   Checkbox width/height escape hatch that used to live here is retired --
+   the master control is now a toggle Button (mcp_tools_mode.py's
+   `_local_tools_toggle_label()`, matching `mcp_servers_mode._gate_button()`
+   since task-32284), which sizes to its own label (Button's own
+   DEFAULT_CSS `width: auto`) and needs no bundle override. The app-wide
+   unscoped `Checkbox { width: 100%; height: 2; }` rule this escape hatch
+   was fighting was itself retired in TASK-18960, so nothing was left for
+   it to win against. */
 
 /* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
    (mcp_servers_mode.py) -- without an explicit height override here too,
@@ -7651,6 +10420,19 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     width: 20;
 }
 
+/* task-32287: the card's body and its action bar hug their content too.
+   Both were unstyled -- `#approval-batch-body` is a Container and
+   `#approval-batch-actions` a Horizontal, so both defaulted to `height:
+   1fr` and expanded to fill the card, which (despite `.ds-approval-card`'s
+   own `height: auto`) therefore took whatever its parent offered: a
+   ONE-row batch measured 46 lines in a 50-row harness, with the ten-plus
+   blank rows between the action bar and the bottom border the 2026-09-10
+   live pass reported. */
+#approval-batch-body,
+#approval-batch-actions {
+    height: auto;
+}
+
 /* The Console MCP batch-approval card's per-row layout
    (`ChatApprovalCard.set_batch()`, chat_approval_card.py -- T5 deferred
    this CSS to T9's phase gate). This card carries no `DEFAULT_CSS` of its
@@ -7701,10 +10483,11 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
     min-height: 1;
     width: 1fr;
 }
-/* TASK-1846 AC#2: `.approval-row` is now a Vertical of two lines --
-   header, arguments, and `.approval-row-controls` each on their own FULL
-   width line. Before the split all four shared one Horizontal, and the
-   controls' 26 + 14 + 14 = 54 fixed cells left the arguments 10 cells at 80
+/* TASK-1846 AC#2: `.approval-row` is now a Vertical -- header, arguments,
+   and `.approval-row-controls` each on their own FULL width line (plus, since
+   task-32278, the reason and scope lines below).
+   Before the split all four shared one Horizontal, and the
+   controls' 27 + 14 + 14 = 55 fixed cells left the arguments 10 cells at 80
    columns: `{"path":"~/` of `{"path":"~/notes/secrets.md"}`. Since
    TASK-1861 the card offers one decision per TARGET, so that clipped text
    was the decision.
@@ -7729,8 +10512,39 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 .approval-row-args {
     width: 1fr;
 }
+.approval-row-full-command {
+    width: 1fr;
+    height: 6;
+    min-height: 3;
+}
+.approval-row-raw-label,
+.approval-row-raw-metadata,
+.approval-row-raw-warning,
+.approval-row-raw-scope {
+    width: 1fr;
+    height: auto;
+}
+/* task-32278: the label area is this width MINUS 8 cells of Textual chrome
+   (`SelectCurrent`: `border: tall` 1+1, `padding: 0 2` 2+2, `.arrow`
+   `width: 1` with `padding: 0 0 0 1`). The closed Select does not
+   ellipsize -- `SelectCurrent` is `height: auto` and its `Static#label`
+   wraps -- so a label one cell over grows the control instead of clipping:
+   "Always allow this exact input" measured FOUR lines tall at width 26.
+   The labels are short now (longest: "Always · these args", 19); 27 is
+   19 + 8, and `Tests/UI/test_chat_approval_card.py` reads this number back
+   out of this file so the two cannot drift apart again. */
 .approval-row-decision {
-    width: 26;
+    width: 27;
+}
+/* task-32278: the row's reason line (why this is asking -- the visible
+   replacement for the old header tooltip) and its scope line (what the
+   selected decision commits to, and where to undo it). Both carry full
+   sentences, so they get the same explicit `1fr` share as the header and
+   args lines above rather than a `width: auto` that overflows the row. */
+.approval-row-reason,
+.approval-row-scope {
+    width: 1fr;
+    height: auto;
 }
 /* Fleet-UX expert review F5 (task-1234): single-row cards additionally
    mount two compact fast-path buttons after the decision Select --
@@ -8002,6 +10816,14 @@ ConsolePromptsModal {
     min-height: 0;
 }
 
+/* The editor follows a host status row inside a bounded Vertical. Use the
+   remaining fraction instead of its standalone 100% height so its actions
+   stay above the modal footer. */
+#console-prompts-editor {
+    height: 1fr;
+    min-height: 0;
+}
+
 /* The legacy app-wide Checkbox rule fixes every checkbox at width: 100% and
    height: 2, leaving no content row inside Textual's tall border. Keep the
    shared Prompt editor's lane choices intrinsic and paintable. */
@@ -8178,9 +11000,39 @@ PromptBlockEditor #prompt-editor-lane-options Checkbox {
     min-height: 0;
 }
 
-#console-prompts-improve-mode Button {
+#console-prompts-improve-mode Button,
+#console-prompts-recipe-mode Button {
     width: 100%;
     margin: 1 0 0 0;
+}
+
+#console-prompts-recipe-outcome-description,
+#console-prompts-recipe-saved-description,
+#console-prompts-recipe-blank-description {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#console-prompts-recipe-save-confirmation-panel {
+    display: none;
+    width: 100%;
+    height: auto;
+    padding: 0 1 1 1;
+    border: round $ds-status-ready;
+    background: $ds-status-ready 8%;
+}
+
+#console-prompts-recipe-save-confirmation {
+    width: 100%;
+    height: auto;
+    color: $ds-text-primary;
+}
+
+#console-prompts-open-saved-recipe {
+    width: 100%;
+    height: 3;
 }
 
 ConsolePromptsModal.-narrow #console-prompts-modal {
@@ -8256,6 +11108,21 @@ ImageGenSettingsPanel Checkbox.-on > .toggle--button {
    The Console states every temporary-chat restriction on a disabled row, so
    an illegible disabled label voids that whole convention. Disabled stays
    plainly dimmer than enabled (12.63:1) so the state is still obvious. */
+/* TASK-25825: six actions previously cost ~30 rows -- `height: 3` plus a
+   trailing `margin-bottom: 1` on every row -- and every label was centred,
+   so the list scanned badly and occluded the transcript to present very
+   little. The trailing gap also pushed each disabled row's explanatory
+   reason a blank line away from the row it explains, weakening exactly the
+   association that reason exists to make.
+
+   Declared HERE and not in the modal's DEFAULT_CSS for the reason the
+   sibling `:disabled` rule below is: Button's own rules outrank a modal's
+   DEFAULT_CSS, where an identical rule measured no change. */
+.console-composer-menu-item {
+    text-align: left;
+    margin: 0;
+}
+
 .console-composer-menu-item:disabled {
     text-style: none;
     text-opacity: 1;
@@ -8563,19 +11430,13 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 #library-note-heading,
 #library-note-title-row,
 #library-note-context-keywords-row,
-#library-notes-create-heading,
-#library-notes-sync-heading,
-#library-notes-sync-folder-row,
-#library-notes-sync-direction-row,
-#library-notes-sync-conflict-row,
-#library-notes-sync-actions {
+#library-notes-create-heading {
     layout: vertical;
     height: auto;
     min-height: 0;
 }
 
-#library-notes-create-viewport,
-#library-notes-sync-viewport {
+#library-notes-create-viewport {
     height: 1fr;
     min-height: 0;
     overflow-y: auto;
@@ -8591,7 +11452,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact {
+#library-shell-grid.library-notes-compact #library-canvas {
     padding: 0;
     margin: 0;
     border: none;
@@ -8599,8 +11460,10 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-canvas {
-    width: 100%;
+#library-shell-grid.library-notes-compact #library-notes-canvas,
+#library-shell-grid.library-notes-compact #library-note-work-pane {
+    width: 1fr;
+    max-width: 100%;
     height: 100%;
     min-height: 0;
     padding: 0;
@@ -8609,7 +11472,18 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-header {
+#library-shell-grid.library-notes-compact #library-notes-authority,
+#library-shell-grid.library-notes-compact #library-note-work-authority {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    margin: 0;
+    padding: 0 1;
+    text-wrap: wrap;
+    overflow: hidden hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-header {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -8619,7 +11493,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter-row {
+#library-shell-grid.library-notes-compact #library-notes-filter-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -8627,13 +11501,13 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter-label {
+#library-shell-grid.library-notes-compact #library-notes-filter-label {
     width: 8;
     height: 1;
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter {
+#library-shell-grid.library-notes-compact #library-notes-filter {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -8642,13 +11516,13 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact #library-notes-browse-actions,
-#library-canvas.library-notes-compact #library-notes-sort-choices,
-#library-canvas.library-notes-compact #library-notes-transfer-actions,
-#library-canvas.library-notes-compact #library-notes-selection-actions,
-#library-canvas.library-notes-compact #library-note-primary-actions,
-#library-canvas.library-notes-compact #library-note-conflict-actions,
-#library-canvas.library-notes-compact #library-note-delete-actions {
+#library-shell-grid.library-notes-compact #library-notes-browse-actions,
+#library-shell-grid.library-notes-compact #library-notes-sort-choices,
+#library-shell-grid.library-notes-compact #library-notes-transfer-actions,
+#library-shell-grid.library-notes-compact #library-notes-selection-actions,
+#library-shell-grid.library-notes-compact #library-note-primary-actions,
+#library-shell-grid.library-notes-compact #library-note-conflict-actions,
+#library-shell-grid.library-notes-compact #library-note-delete-actions {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -8656,7 +11530,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact .library-canvas-action {
+#library-shell-grid.library-notes-compact .library-canvas-action {
     width: auto;
     min-width: 0;
     height: 1;
@@ -8667,7 +11541,21 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact #library-notes-status-row {
+/* Branch continuations are list rows, not toolbar actions. Keep their full
+   status and recovery copy visible when the compact toolbar geometry above
+   collapses ordinary actions to one line. */
+#library-shell-grid.library-notes-compact #library-notes-list Button.library-notes-tree-pager {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-height: 1;
+    max-height: 100%;
+    margin: 0;
+    text-wrap: wrap;
+    overflow-x: hidden;
+}
+
+#library-shell-grid.library-notes-compact #library-notes-status-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -8676,7 +11564,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-status {
+#library-shell-grid.library-notes-compact #library-notes-status {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -8686,11 +11574,11 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-filter-clear {
+#library-shell-grid.library-notes-compact #library-notes-filter-clear {
     width: auto;
 }
 
-#library-canvas.library-notes-compact #library-notes-selection-status {
+#library-shell-grid.library-notes-compact #library-notes-selection-status {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -8698,7 +11586,9 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-notes-list {
+#library-shell-grid.library-notes-compact #library-notes-list {
+    width: 1fr;
+    max-width: 100%;
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -8707,7 +11597,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-empty {
+#library-shell-grid.library-notes-compact #library-notes-empty {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -8716,7 +11606,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-heading {
+#library-shell-grid.library-notes-compact #library-note-heading {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -8725,12 +11615,11 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-editor-title,
-#library-canvas.library-notes-compact #library-note-preview-title,
-#library-canvas.library-notes-compact #library-note-context-title,
-#library-canvas.library-notes-compact #library-note-loading-title,
-#library-canvas.library-notes-compact #library-notes-create-header,
-#library-canvas.library-notes-compact #library-notes-sync-header {
+#library-shell-grid.library-notes-compact #library-note-editor-title,
+#library-shell-grid.library-notes-compact #library-note-preview-title,
+#library-shell-grid.library-notes-compact #library-note-context-title,
+#library-shell-grid.library-notes-compact #library-note-loading-title,
+#library-shell-grid.library-notes-compact #library-notes-create-header {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -8741,7 +11630,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-note-editor-region {
+#library-shell-grid.library-notes-compact #library-note-editor-region {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -8749,7 +11638,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-y: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-title-row {
+#library-shell-grid.library-notes-compact #library-note-title-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -8757,16 +11646,15 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-title-label,
-#library-canvas.library-notes-compact #library-note-context-keywords-label {
+#library-shell-grid.library-notes-compact #library-note-title-label,
+#library-shell-grid.library-notes-compact #library-note-context-keywords-label {
     width: 10;
     height: 1;
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-note-title,
-#library-canvas.library-notes-compact #library-note-context-keywords,
-#library-canvas.library-notes-compact #library-notes-sync-folder {
+#library-shell-grid.library-notes-compact #library-note-title,
+#library-shell-grid.library-notes-compact #library-note-context-keywords {
     width: 1fr;
     height: 1;
     min-height: 1;
@@ -8775,7 +11663,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     border: none;
 }
 
-#library-canvas.library-notes-compact #library-note-body-label {
+#library-shell-grid.library-notes-compact #library-note-body-label {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -8783,7 +11671,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-note-body {
+#library-shell-grid.library-notes-compact #library-note-body {
     height: 1fr;
     min-height: 0;
     max-height: 100%;
@@ -8791,7 +11679,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-preview-region {
+#library-shell-grid.library-notes-compact #library-note-preview-region {
     height: 1fr;
     min-height: 0;
     max-height: 100%;
@@ -8800,7 +11688,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-preview-body {
+#library-shell-grid.library-notes-compact #library-note-preview-body {
     height: auto;
     min-height: 0;
     margin: 0;
@@ -8810,17 +11698,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-context-status {
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-    padding: 0 1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-}
-
-#library-canvas.library-notes-compact #library-note-context-region {
+#library-shell-grid.library-notes-compact #library-note-context-region {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -8829,22 +11707,29 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-context-region .destination-section,
-#library-canvas.library-notes-compact #library-note-context-meta,
-#library-canvas.library-notes-compact #library-note-context-region > .library-canvas-action {
+/* task-32142 fix round 1 escalated minor: #library-note-preview-body-title
+   (the Preview title) carries `.destination-section` like Info's
+   Properties/Reuse & Export/Danger headers, but no selector reached it --
+   the class was inert there in both sizes. Grouped into the SAME rule its
+   Info siblings already use, rather than inventing a new style nothing
+   else in this canvas has. */
+#library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
+#library-shell-grid.library-notes-compact #library-note-preview-region .destination-section,
+#library-shell-grid.library-notes-compact #library-note-context-meta,
+#library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action {
     height: 1;
     min-height: 1;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-context-keywords-row {
+#library-shell-grid.library-notes-compact #library-note-context-keywords-row {
     layout: horizontal;
     height: 1;
     min-height: 1;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-status {
+#library-shell-grid.library-notes-compact #library-note-status {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -8854,7 +11739,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status {
+#library-shell-grid.library-notes-compact .library-note-validation #library-note-status {
     height: 2;
     min-height: 2;
     max-height: 2;
@@ -8862,22 +11747,22 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: clip;
 }
 
-#library-canvas.library-notes-compact #library-note-transfer-status,
-#library-canvas.library-notes-compact #library-note-context-transfer-status {
+#library-shell-grid.library-notes-compact #library-note-transfer-status,
+#library-shell-grid.library-notes-compact #library-note-context-transfer-status {
     display: none;
     height: 0;
     min-height: 0;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-conflict-region {
+#library-shell-grid.library-notes-compact #library-note-conflict-region {
     height: 3;
     min-height: 3;
     max-height: 3;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-conflict-copy {
+#library-shell-grid.library-notes-compact #library-note-conflict-copy {
     height: 2;
     min-height: 2;
     max-height: 2;
@@ -8885,14 +11770,14 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     padding: 0 1;
 }
 
-#library-canvas.library-notes-compact #library-note-delete-confirmation {
+#library-shell-grid.library-notes-compact #library-note-delete-confirmation {
     height: 2;
     min-height: 2;
     max-height: 2;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-delete-confirm-copy {
+#library-shell-grid.library-notes-compact #library-note-delete-confirm-copy {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -8902,7 +11787,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-create-heading {
+#library-shell-grid.library-notes-compact #library-notes-create-heading {
     layout: horizontal;
     height: 1;
     min-height: 1;
@@ -8910,7 +11795,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-notes-create-viewport {
+#library-shell-grid.library-notes-compact #library-notes-create-viewport {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -8919,40 +11804,23 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-sync-heading {
-    layout: horizontal;
-    height: 1;
-    min-height: 1;
-    max-height: 1;
-    margin: 0;
-}
-
-#library-canvas.library-notes-compact #library-notes-sync-viewport {
-    height: 1fr;
-    min-height: 0;
-    margin: 0;
-    padding: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-canvas.library-notes-compact #library-note-load-state {
+#library-shell-grid.library-notes-compact #library-note-load-state {
     width: 100%;
-    height: 100%;
+    height: 1fr;
     min-height: 0;
     margin: 0;
     padding: 0;
     overflow: hidden;
 }
 
-#library-canvas.library-notes-compact #library-note-load-heading {
+#library-shell-grid.library-notes-compact #library-note-load-heading {
     height: 1;
     min-height: 1;
     max-height: 1;
     margin: 0;
 }
 
-#library-canvas.library-notes-compact #library-note-loading {
+#library-shell-grid.library-notes-compact #library-note-loading {
     height: 1;
     min-height: 1;
     max-height: 1;
@@ -8962,7 +11830,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-note-loading-viewport {
+#library-shell-grid.library-notes-compact #library-note-loading-viewport {
     height: 1fr;
     min-height: 0;
     margin: 0;
@@ -8970,47 +11838,359 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     overflow-x: hidden;
 }
 
-#library-canvas.library-notes-compact #library-notes-sync-purpose,
-#library-canvas.library-notes-compact #library-notes-sync-folder-row,
-#library-canvas.library-notes-compact #library-notes-sync-direction-row,
-#library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-#library-canvas.library-notes-compact #library-notes-sync-actions,
-#library-canvas.library-notes-compact #library-notes-sync-status {
+/* TASK-19010: lasting Notes sync inherits the retained Neon Workbench canvas.
+   Authority/status and the nearest valid action stay fixed; setup, review, and
+   recovery effects share one bounded scroll owner at the 60x20 floor. */
+.library-notes-lasting-sync-canvas {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    padding: 0 1;
+    overflow: hidden;
+}
+
+#notes-sync-authority,
+#notes-sync-roots-authority,
+.library-notes-lasting-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    max-height: 2;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+#notes-sync-body,
+#notes-sync-roots-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+}
+
+#notes-sync-pinned-actions,
+#notes-sync-roots-pinned-actions {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    max-height: 3;
+    background: $surface-darken-1;
+}
+
+#notes-sync-fold-hint,
+#notes-sync-disconnect-copy,
+.library-disabled-reason {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    max-height: 2;
+    color: $text-muted;
+    background: $surface-darken-1;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+.library-notes-sync-review-row,
+.library-notes-sync-root-row,
+.library-notes-sync-root-actions {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.library-notes-sync-attention-actions {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+}
+
+.library-notes-sync-conflict-choices,
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    overflow: hidden;
+}
+
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+.notes-sync-conflict-view,
+.library-notes-sync-attention-actions > .notes-sync-conflict-choice {
+    width: 100%;
+    min-width: 0;
+}
+
+.notes-sync-conflict-choice.is-selected {
+    background: $accent 18%;
+    text-style: bold;
+}
+
+.notes-sync-conflict-title,
+.notes-sync-conflict-path,
+.notes-sync-conflict-effect,
+.notes-sync-conflict-selected {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+.notes-sync-conflict-path,
+.notes-sync-conflict-effect,
+.notes-sync-conflict-selected {
+    color: $text-muted;
+}
+
+.notes-sync-comparison-diff {
+    width: 100%;
+    min-width: 0;
+    height: 8;
+    min-height: 4;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+.notes-sync-receipt-actions,
+.notes-sync-history-actions {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+.notes-sync-receipt-actions > Button,
+.notes-sync-history-actions > Button {
+    min-width: 0;
+}
+
+.notes-sync-history-page {
+    width: auto;
+    min-width: 6;
+    height: 1;
+    content-align: left middle;
+}
+
+.library-notes-sync-root-status {
+    color: $text-muted;
+}
+
+.library-notes-sync-root-actions > Button {
+    width: 100%;
+}
+
+.library-notes-sync-attention-actions > Button {
+    width: 100%;
+}
+
+#library-shell-grid.library-notes-compact .library-notes-lasting-sync-canvas {
+    padding: 0;
+}
+
+#library-shell-grid.library-notes-compact #notes-sync-authority,
+#library-shell-grid.library-notes-compact #notes-sync-roots-authority,
+#library-shell-grid.library-notes-compact .library-notes-lasting-status,
+#library-shell-grid.library-notes-compact #notes-sync-fold-hint {
     height: 1;
     min-height: 1;
     max-height: 1;
-    margin: 0;
-    overflow-x: hidden;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
-#library-canvas.library-notes-compact #library-notes-sync-activity {
+/* task-32217 (critique #9 row 14): the screen-wide density rule.
+   A pane with nothing open gives its columns to its sibling. The horizontal
+   half is not CSS -- it is the resolver's own empty-work-pane branch
+   (Utils/adaptive_reader_state.py, the ``reader_has_item`` block Media and
+   Notes already used); Prompts, Skills, Collections and Conversations now
+   pass that flag, so no per-canvas width rule can drift from it. The
+   vertical half (a primary content box takes the pane's remaining height,
+   its actions directly beneath) is already shipped for the surfaces this
+   branch owns: #library-prompt-editor-content and
+   #library-media-viewer-content both carry `height: 1fr` above. The note
+   editor's Body box (#library-note-body) is the one clause still bounded,
+   and it belongs to the Notes branch of this wave.
+
+   The landing is the third case: at 235 columns it painted a ten-line hub
+   across ~190 cells, so its lines ran far past a readable measure. Capped
+   here rather than given invented content -- what the hub should GROW is a
+   product decision this wave does not own. */
+#library-landing-canvas {
+    max-width: 96;
+}
+
+/* Governed Console exchange capture surfaces (ADR-089). */
+#console-library-access {
+    width: 76;
+    max-width: 96%;
+    height: 34;
+    max-height: 96%;
+    min-width: 0;
+}
+
+#console-library-access-body {
+    height: 1fr;
+    min-height: 0;
+    max-height: 24;
+    scrollbar-gutter: stable;
+}
+
+.console-library-access-actions {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+}
+
+#console-library-access .console-library-access-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    margin-right: 1;
+}
+
+#console-rag-settings {
+    width: 64;
+    max-width: 96%;
+    height: 20;
+    max-height: 96%;
+    min-width: 0;
+}
+
+#console-rag-settings-body {
+    height: 1fr;
+    min-height: 0;
+    scrollbar-gutter: stable;
+}
+
+.console-rag-settings-item-scope {
     height: auto;
-    min-height: 1;
-    margin: 0;
-    overflow-x: hidden;
+    color: $text-muted;
+    margin-bottom: 1;
 }
 
-#library-canvas.library-notes-compact #library-notes-sync-folder-row,
-#library-canvas.library-notes-compact #library-notes-sync-direction-row,
-#library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-#library-canvas.library-notes-compact #library-notes-sync-actions {
-    layout: horizontal;
+.console-rag-settings-sources {
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: 1 1;
+    height: 2;
 }
 
-#library-canvas.library-notes-compact #library-notes-sync-folder-label,
-#library-canvas.library-notes-compact #library-notes-sync-direction-label,
-#library-canvas.library-notes-compact #library-notes-sync-conflict-label {
-    width: 11;
+.console-rag-settings-actions {
     height: 1;
     min-height: 1;
-    padding: 0 1;
+    max-height: 1;
 }
 
-#library-canvas.library-notes-compact #library-notes-sync-direction-choices,
-#library-canvas.library-notes-compact #library-notes-sync-conflict-choices {
+#console-rag-settings .console-rag-settings-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    padding: 0;
+    margin-right: 1;
+}
+
+#console-inspector-policy-status {
+    height: auto;
+    color: $text-muted;
+}
+
+ConsoleCapturePolicyDialog,
+ConsoleExchangeExportDialog {
+    align: center middle;
+}
+
+#capture-policy-dialog,
+#exchange-export-dialog {
+    width: 76;
+    max-width: 96%;
+    height: 22;
+    max-height: 96%;
+    border: tall $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+#capture-policy-title,
+#exchange-export-title {
+    height: 1;
+    text-style: bold;
+}
+
+#capture-policy-body,
+#exchange-export-body {
+    height: 1fr;
+    scrollbar-gutter: stable;
+}
+
+#capture-policy-scopes,
+#capture-policy-details,
+#exchange-export-profiles,
+#exchange-export-destinations {
+    height: auto;
+}
+
+#capture-policy-effective,
+#capture-policy-reason,
+#capture-policy-count,
+#capture-policy-status,
+#exchange-export-profile-copy,
+#exchange-export-full-reason,
+#exchange-export-status {
+    height: auto;
+}
+
+#capture-policy-reason,
+#exchange-export-full-reason {
+    color: $warning;
+}
+
+#capture-policy-actions,
+#exchange-export-actions {
+    height: 3;
+    min-height: 3;
+    align-horizontal: right;
+}
+
+#capture-policy-actions Button,
+#exchange-export-actions Button {
+    min-width: 10;
+    margin-left: 1;
+}
+
+#capture-policy-status.-error,
+#exchange-export-status.-error {
+    color: $error;
+}
+
+#exchange-export-path {
+    height: 3;
+}
+
+/* Buddy transcripts scroll the complete decision card. A 1fr batch body
+   inside the auto-height card collapses and clips its controls at 60x20. */
+BuddyConversationModal #approval-batch-body {
+    height: auto;
+}
+BuddyConversationModal .approval-row-decision {
     width: 1fr;
-    height: 1;
-    min-height: 1;
-    margin: 0;
-    overflow-x: hidden;
+    min-width: 10;
 }

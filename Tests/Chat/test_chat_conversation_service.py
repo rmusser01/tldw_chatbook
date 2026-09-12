@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,7 +10,17 @@ import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.citation_legacy_migration import LegacyCitationReadState
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    InputError,
+)
+from tldw_chatbook.Library.library_conversation_reader_state import (
+    ConversationReaderState,
+    select_conversation,
+    settle_conversation_continuation,
+    settle_conversation_page,
+)
 
 
 @dataclass
@@ -31,6 +41,10 @@ class FakeDB:
     child_messages: dict[tuple[str, tuple[str, ...], str], list[dict[str, Any]]] = (
         field(default_factory=dict)
     )
+    tree_rows: dict[tuple[str, str], list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
+    images_by_message_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     latest_message: dict[str, dict[str, Any] | None] = field(default_factory=dict)
     messages_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     messages_by_conversation: dict[tuple[str, int, int, str], list[dict[str, Any]]] = (
@@ -210,6 +224,32 @@ class FakeDB:
         return self.child_messages.get(
             (conversation_id, tuple(parent_ids), order_by_timestamp), []
         )
+
+    def get_message_tree_rows_for_conversation(
+        self,
+        conversation_id,
+        order_by_timestamp="ASC",
+        include_deleted_conversation=False,
+    ):
+        self.calls.append(
+            (
+                "get_message_tree_rows_for_conversation",
+                (conversation_id,),
+                {
+                    "order_by_timestamp": order_by_timestamp,
+                    "include_deleted_conversation": include_deleted_conversation,
+                },
+            )
+        )
+        return self.tree_rows.get((conversation_id, order_by_timestamp), [])
+
+    def get_message_images_by_ids(self, message_ids):
+        self.calls.append(("get_message_images_by_ids", (tuple(message_ids),), {}))
+        return {
+            message_id: dict(self.images_by_message_id[message_id])
+            for message_id in message_ids
+            if message_id in self.images_by_message_id
+        }
 
     def get_message_by_id(self, message_id):
         self.calls.append(("get_message_by_id", (message_id,), {}))
@@ -511,6 +551,67 @@ def test_list_conversations_scope_all_passes_through_without_workspace_filter():
     ][-1]
     assert deleted_only_call[2]["deleted_only"] is True
     assert deleted_only_call[2]["include_deleted"] is False
+
+
+def test_list_conversations_passes_multiple_workspace_ids_to_database():
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    service.list_conversations(
+        scope_type="all",
+        workspace_ids=("ws-roleplay", "ws-research"),
+        limit=50,
+        offset=0,
+    )
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
+    assert search_call[2]["workspace_ids"] == ("ws-roleplay", "ws-research")
+
+
+def test_list_conversations_passes_global_scope_union_to_database():
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    service.list_conversations(
+        scope_type="all",
+        workspace_ids=("ws-default",),
+        include_global_scope=True,
+        limit=50,
+        offset=0,
+    )
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
+    assert search_call[2]["workspace_ids"] == ("ws-default",)
+    assert search_call[2]["include_global_scope"] is True
+
+
+def test_list_conversations_passes_per_term_workspace_unions_to_database():
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    service.list_conversations(
+        query="Roleplay Tavern",
+        scope_type="all",
+        query_terms=("Roleplay", "Tavern"),
+        query_workspace_ids_by_term=(("ws-roleplay",), ("ws-roleplay",)),
+        query_include_global_scope_by_term=(False, False),
+        limit=50,
+        offset=0,
+    )
+
+    search_call = [call for call in db.calls if call[0] == "search_conversations_page"][
+        -1
+    ]
+    assert search_call[2]["query_terms"] == ("Roleplay", "Tavern")
+    assert search_call[2]["query_workspace_ids_by_term"] == (
+        ("ws-roleplay",),
+        ("ws-roleplay",),
+    )
+    assert search_call[2]["query_include_global_scope_by_term"] == (False, False)
 
 
 def test_list_conversations_retains_the_exact_ordinary_page_envelope():
@@ -1018,9 +1119,11 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
                 "version": 1,
             }
         },
-        root_counts={"conv-1": 2},
-        root_messages={
-            ("conv-1", 50, 0, "ASC"): [
+        # TASK-22206: the tree is assembled from ONE conversation-scoped
+        # fetch (timestamp order, roots and children interleaved) instead of
+        # the old per-parent query fan-out.
+        tree_rows={
+            ("conv-1", "ASC"): [
                 {
                     "id": "msg-root-1",
                     "conversation_id": "conv-1",
@@ -1047,14 +1150,6 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
                     "is_selected_variant": None,
                     "total_variants": None,
                 },
-            ]
-        },
-        child_messages={
-            (
-                "conv-1",
-                ("msg-root-1",),
-                "ASC",
-            ): [
                 {
                     "id": "msg-child-1",
                     "conversation_id": "conv-1",
@@ -1067,7 +1162,7 @@ def test_get_conversation_tree_wraps_root_and_child_rows():
                     "variant_number": 2,
                     "is_selected_variant": 1,
                     "total_variants": 2,
-                }
+                },
             ]
         },
     )
@@ -1313,21 +1408,41 @@ class TestLibraryConversationSeams:
     arguments untouched and echoes the list/search envelope shape shared by
     the other Library domains (items/total/offset/limit)."""
 
-    def test_list_delegates_and_echoes_pagination(self):
+    def test_message_projection_preserves_an_already_string_timestamp(self):
+        db = object.__new__(CharactersRAGDB)
+
+        item = db._library_message_item(
+            {
+                "id": "message-1",
+                "sender": "user",
+                "timestamp": "preserve-this-timestamp",
+                "version": 1,
+                "total_chars": 4,
+                "text": "body",
+            },
+            char_start=0,
+        )
+
+        assert item["timestamp"] == "preserve-this-timestamp"
+
+    @pytest.mark.parametrize("archive_scope", ["active", "archived", "all"])
+    def test_list_delegates_and_echoes_pagination(self, archive_scope):
         class FakeLibraryDB:
             def __init__(self):
                 self.calls = []
 
-            def list_library_conversations_page(self, *, limit, offset):
-                self.calls.append(("list", limit, offset))
+            def list_library_conversations_page(self, *, limit, offset, archive_scope):
+                self.calls.append(("list", limit, offset, archive_scope))
                 return {"items": [{"id": "conv-1"}], "total": 7}
 
         db = FakeLibraryDB()
         service = ChatConversationService(db)
 
-        result = service.list_library_conversations(limit=3, offset=6)
+        result = service.list_library_conversations(
+            limit=3, offset=6, archive_scope=archive_scope
+        )
 
-        assert db.calls == [("list", 3, 6)]
+        assert db.calls == [("list", 3, 6, archive_scope)]
         assert result == {
             "items": [{"id": "conv-1"}],
             "total": 7,
@@ -1335,21 +1450,24 @@ class TestLibraryConversationSeams:
             "limit": 3,
         }
 
-    def test_search_delegates_and_echoes_pagination(self):
+    @pytest.mark.parametrize("archive_scope", ["active", "archived", "all"])
+    def test_search_delegates_and_echoes_pagination(self, archive_scope):
         class FakeLibraryDB:
             def __init__(self):
                 self.calls = []
 
-            def search_library_conversations_page(self, *, query, limit, offset):
-                self.calls.append(("search", query, limit, offset))
+            def search_library_conversations_page(self, *, query, limit, offset, archive_scope):
+                self.calls.append(("search", query, limit, offset, archive_scope))
                 return {"items": [{"id": "conv-2", "matched_fields": ["title"]}], "total": 1}
 
         db = FakeLibraryDB()
         service = ChatConversationService(db)
 
-        result = service.search_library_conversations(query="needle", limit=5, offset=10)
+        result = service.search_library_conversations(
+            query="needle", limit=5, offset=10, archive_scope=archive_scope
+        )
 
-        assert db.calls == [("search", "needle", 5, 10)]
+        assert db.calls == [("search", "needle", 5, 10, archive_scope)]
         assert result == {
             "items": [{"id": "conv-2", "matched_fields": ["title"]}],
             "total": 1,
@@ -1428,3 +1546,290 @@ class TestLibraryConversationSeams:
             )
         finally:
             db.close_connection()
+
+    def test_real_service_pages_are_bounded_exact_and_chronological(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "paged"})
+            message_ids = [
+                db.add_message(
+                    {
+                        "conversation_id": conv_id,
+                        "sender": "user",
+                        "content": f"body-{index}",
+                    }
+                )
+                for index in range(5)
+            ]
+
+            first = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=2, max_chars=4
+            )
+            middle = service.get_library_conversation_messages(
+                conv_id, message_offset=2, message_limit=2, max_chars=4
+            )
+            last = service.get_library_conversation_messages(
+                conv_id, message_offset=4, message_limit=2, max_chars=4
+            )
+            tiny = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=1, max_chars=4
+            )
+            repeated_first = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=2, max_chars=4
+            )
+
+            assert [
+                first["message_offset"],
+                middle["message_offset"],
+                last["message_offset"],
+            ] == [0, 2, 4]
+            assert [
+                first["message_total"],
+                middle["message_total"],
+                last["message_total"],
+                tiny["message_total"],
+            ] == [5, 5, 5, 5]
+            messages = first["messages"] + middle["messages"] + last["messages"]
+            assert [message["id"] for message in messages] == message_ids
+            assert [message["text"] for message in messages] == ["body"] * 5
+            assert all(message["returned_chars"] <= 4 for message in messages)
+            assert all(message["revision"] for message in messages)
+            assert [
+                (message["id"], message["revision"])
+                for message in repeated_first["messages"]
+            ] == [(message["id"], message["revision"]) for message in first["messages"]]
+            assert first["version"] == middle["version"] == last["version"] == 1
+            assert (
+                first["message_epoch"]
+                == middle["message_epoch"]
+                == last["message_epoch"]
+            )
+            assert all(
+                isinstance(message["timestamp"], str) and message["timestamp"]
+                for message in messages
+            )
+            assert last["has_more"] is False
+        finally:
+            db.close_connection()
+
+    def test_real_service_epoch_rejects_interleaved_page_and_preserves_iso_timestamp(
+        self, tmp_path
+    ):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "interleaved"})
+            first_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "user",
+                    "content": "old first",
+                    "timestamp": "2026-08-24T12:00:00Z",
+                }
+            )
+            db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "assistant",
+                    "content": "second",
+                    "timestamp": "2026-08-24T12:01:00Z",
+                }
+            )
+            first_page = service.get_library_conversation_messages(
+                conv_id, message_offset=0, message_limit=1
+            )
+            pending, request = select_conversation(
+                ConversationReaderState(), conv_id, version=1
+            )
+            request = replace(request, message_limit=1)
+            partial = settle_conversation_page(pending, request, first_page)
+            assert partial.messages[0].timestamp == "2026-08-24T12:00:00Z"
+
+            db.update_message(first_id, {"content": "edited first"}, 1)
+            second_page = service.get_library_conversation_messages(
+                conv_id, message_offset=1, message_limit=1
+            )
+            mixed = settle_conversation_page(
+                partial,
+                replace(request, message_offset=1, message_limit=1),
+                second_page,
+            )
+
+            assert first_page["message_epoch"] != second_page["message_epoch"]
+            assert mixed is partial
+            assert not mixed.complete and not mixed.loaded_actions_eligible
+        finally:
+            db.close_connection()
+
+    def test_real_service_epoch_rejects_interleaved_continuation(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "continuation epoch"})
+            message_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "user",
+                    "content": "prefix and suffix",
+                }
+            )
+            first_page = service.get_library_conversation_messages(
+                conv_id, message_limit=1, max_chars=7
+            )
+            pending, request = select_conversation(
+                ConversationReaderState(), conv_id, version=1
+            )
+            partial = settle_conversation_page(pending, request, first_page)
+
+            db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "assistant",
+                    "content": "interleaving message",
+                }
+            )
+            continuation = service.get_library_conversation_messages(
+                conv_id,
+                message_id=message_id,
+                char_start=7,
+                max_chars=100,
+            )
+            mixed = settle_conversation_continuation(partial, request, continuation)
+
+            assert first_page["message_epoch"] != continuation["message_epoch"]
+            assert mixed is partial
+            assert not mixed.complete and not mixed.loaded_actions_eligible
+        finally:
+            db.close_connection()
+
+    def test_real_service_epoch_ignores_local_usage_and_metadata(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "local adjuncts"})
+            message_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "assistant",
+                    "content": "stable transcript",
+                }
+            )
+            before = service.get_library_conversation_messages(conv_id)
+
+            assert db.update_message_usage_local(message_id, '{"total_tokens": 3}')
+            assert db.update_message_metadata_local(
+                message_id, '{"interrupted": false}'
+            )
+            after = service.get_library_conversation_messages(conv_id)
+
+            assert before["message_epoch"] == after["message_epoch"]
+            assert before["messages"] == after["messages"]
+        finally:
+            db.close_connection()
+
+    def test_real_service_long_message_continuations_reassemble_once(self, tmp_path):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            conv_id = db.add_conversation({"title": "long"})
+            content = "0123456789" * 4 + "tail"
+            message_id = db.add_message(
+                {
+                    "conversation_id": conv_id,
+                    "sender": "user",
+                    "content": content,
+                }
+            )
+            assembled = ""
+            revisions = set()
+            while len(assembled) < len(content):
+                detail = service.get_library_conversation_messages(
+                    conv_id,
+                    message_id=message_id,
+                    char_start=len(assembled),
+                    max_chars=7,
+                )
+                message = detail["messages"][0]
+                assert message["char_start"] == len(assembled)
+                assert 0 < message["returned_chars"] <= 7
+                revisions.add(message["revision"])
+                assembled += message["text"]
+
+            assert assembled == content
+            assert revisions == {detail["messages"][0]["revision"]}
+            assert detail["message_total"] == 1
+            assert detail["messages"][0]["has_more"] is False
+        finally:
+            db.close_connection()
+
+    def test_real_service_empty_missing_deleted_and_unavailable_behavior(
+        self, tmp_path
+    ):
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(db)
+            empty_id = db.add_conversation({"title": "empty"})
+
+            empty = service.get_library_conversation_messages(empty_id, message_limit=1)
+
+            assert empty["message_total"] == 0
+            assert empty["messages"] == []
+            assert empty["has_more"] is False
+            assert service.get_library_conversation_messages("missing") is None
+
+            db.soft_delete_conversation(empty_id, expected_version=1)
+            assert service.get_library_conversation_messages(empty_id) is None
+
+            unavailable_id = db.add_conversation({"title": "unavailable"})
+            with db.transaction() as conn:
+                conn.execute("DROP TABLE messages")
+            with pytest.raises(CharactersRAGDBError):
+                service.get_library_conversation_messages(unavailable_id)
+        finally:
+            db.close_connection()
+
+
+def test_list_conversations_character_scope_filters_before_pagination(tmp_path):
+    """TASK-32309 (review finding 1): ``character_scope`` is applied by the
+    storage query, so character conversations neither occupy page slots nor
+    count toward the page total.
+
+    Args:
+        tmp_path: Temporary directory for the real SQLite database backing
+            the service under test.
+    """
+    db = CharactersRAGDB(tmp_path / "character-scope.sqlite", "test-client")
+    try:
+        character_id = db.add_character_card({"name": "Scope Character"})
+        service = ChatConversationService(db)
+        character_conversation = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+        service.create_conversation(title="Generic chat")
+        service.create_conversation(title="Another generic chat")
+
+        generic = service.list_conversations(
+            scope_type="global", character_scope="generic", limit=2
+        )
+        character = service.list_conversations(
+            scope_type="global", character_scope="character", limit=2
+        )
+        unfiltered = service.list_conversations(scope_type="global", limit=10)
+
+        assert [item["id"] for item in generic["items"]] == [
+            item["id"]
+            for item in unfiltered["items"]
+            if item["id"] != character_conversation
+        ]
+        assert generic["pagination"]["total"] == 2
+        assert [item["id"] for item in character["items"]] == [
+            character_conversation
+        ]
+        assert character["pagination"]["total"] == 1
+        assert unfiltered["pagination"]["total"] == 3
+    finally:
+        db.close_connection()

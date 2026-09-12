@@ -59,6 +59,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCallExecuting,
     ToolCallFinished,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     format_steering_message,
@@ -264,7 +265,9 @@ def make_deps(call_model, *, invoke=None, cancel=None, drain=None, on_record=Non
         invoke_tool=invoke or (lambda call: ToolResult(ok=True, content="42")),
         spawn=lambda task: ToolResult(ok=True, content="sub done"),
         find_tools=lambda query: [],
-        load_schemas=lambda ids: [CALC],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
+            accepted=(CALC,)
+        ),
         should_cancel=cancel or (lambda: False),
         clock=lambda: 0.0,
         drain_mailbox=drain,
@@ -965,14 +968,23 @@ def test_only_the_threaded_fleet_child_is_wired_for_drain(db, monkeypatch):
         for prompt, drain in recorded
         if prompt.startswith(SUBAGENT_PROMPT_PREFIX)
     ]
-    assert primary_drains == [None]
+    # TASK-25903 updated this contract: the primary is now wired too -- to
+    # its USER-steering mailbox (steer_primary), a different producer from
+    # the child's coordinator mailbox. What this test still pins is that the
+    # fleet child gets its own drain and that they are distinct objects.
+    assert len(primary_drains) == 1 and primary_drains[0] is not None
     assert len(child_drains) == 1 and child_drains[0] is not None
+    assert primary_drains[0] is not child_drains[0]
 
 
 def test_inline_children_and_their_primary_stay_unwired(db, monkeypatch):
     """CHARACTERIZATION PIN (not a red -- current behavior is already
     correct): the inline path has no handle and so no mailbox; wiring a
-    drain there would be the regression this test exists to catch."""
+    drain there would be the regression this test exists to catch.
+
+    TASK-25903: the PRIMARY half of the old assertion is superseded -- a
+    primary now carries its user-steering drain -- so this pins only that
+    the INLINE CHILD stays unwired."""
     recorded = []
     real_loop = agent_service.run_agent_loop
 
@@ -999,4 +1011,8 @@ def test_inline_children_and_their_primary_stay_unwired(db, monkeypatch):
 
     assert outcome.status == RUN_DONE and outcome.final_text == "final answer"
     assert len(recorded) == 2  # primary + one inline child
-    assert recorded == [None, None]
+    primary_drain, inline_child_drain = recorded
+    assert primary_drain is not None, "the primary's user-steering drain"
+    assert inline_child_drain is None, (
+        "an inline child has no handle and must stay unwired"
+    )

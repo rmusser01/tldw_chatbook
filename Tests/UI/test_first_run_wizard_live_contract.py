@@ -43,7 +43,7 @@ from copy import deepcopy
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from textual.widgets import (
@@ -55,7 +55,6 @@ from textual.widgets import (
     RadioButton,
     RadioSet,
     Static,
-    Switch,
 )
 
 from Tests.UI.app_factory import _build_test_app
@@ -85,6 +84,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
+    STEP_RAG,
+    STEP_SPEECH,
     STEP_SUMMARY,
     STEP_TOOLS,
     STEP_VOICE,
@@ -97,6 +98,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    _PICKER_MODEL_LIMIT,
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
@@ -109,11 +111,21 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
 )
 
 
+#: Ceiling for a settle wait, not a performance assertion (TASK-24652).
+#: These helpers return the instant their condition holds, so a larger ceiling
+#: costs a green run nothing -- it only widens the headroom before a loaded
+#: machine is mistaken for a stuck UI. The old 10s default was too tight for a
+#: full sweep: ~890 Textual harnesses share one process, and five different
+#: tests each failed once with "condition was not met within 10.0s" (or an
+#: equivalent settle) while passing alone and on pristine dev.
+_SETTLE_TIMEOUT_SECONDS = 30.0
+
+
 async def _wait_until(
     pilot,
     condition: Callable[[], bool],
     *,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float = _SETTLE_TIMEOUT_SECONDS,
     interval_seconds: float = 0.05,
 ) -> None:
     deadline = time.monotonic() + timeout_seconds
@@ -332,9 +344,12 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # Dismissed back onto whatever was underneath (Home), not
-            # navigated anywhere -- Exit setup carries no exit route.
-            assert app.current_tab == "home"
+            # TASK-31813: Exit setup now LANDS THE USER ON THE CONSOLE
+            # workbench instead of stranding them on the Home screen the
+            # wizard was pushed over. This is the integration pin: the
+            # cancellation flows through the real mounted-wizard callback
+            # boundary into the real navigation system.
+            await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
 
             # The started flag is persisted by a `@work(thread=True)` worker
             # fired from FirstRunSetupWizard.on_mount(). Poll for the flag
@@ -1008,7 +1023,6 @@ def _attempted_full_appearance_resume_config():
                     "provider_value": "openai",
                 },
                 "model": {"model_id": "gpt-resume-test"},
-                "notes": {"auto_sync_enabled": True},
                 "appearance": {
                     "theme": "textual-light",
                     "splash_card": "",
@@ -1198,8 +1212,8 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
                 == "gpt-resume-test"
             )
             notes_step = container.steps[container._step_index_for_id(STEP_NOTES)]
-            assert notes_step.get_step_data() == {"auto_sync_enabled": True}
-            assert notes_step.query_one("#setup-notes-enable", Switch).value is True
+            assert notes_step.get_step_data() == {}
+            assert not notes_step.query("#setup-notes-enable")
 
             appearance_step = container.steps[
                 container._step_index_for_id(STEP_APPEARANCE)
@@ -1601,31 +1615,69 @@ def test_first_run_result_callback_keeps_same_tab_context_navigation():
     assert message.screen_context == {"category": "providers-models"}
 
 
-def test_first_run_result_callback_remounts_same_tab_home_after_completion():
+@pytest.mark.asyncio
+async def test_first_run_result_callback_remounts_same_tab_home_after_completion():
+    """Await Home remount before scheduling the deferred catalog decision."""
     from tldw_chatbook.app import TldwCli
+
+    events: list[str] = []
+    worker_coroutines = []
+
+    async def record_navigation(_message) -> None:
+        await asyncio.sleep(0)
+        events.append("navigation-complete")
+
+    def record_schedule(**_kwargs) -> None:
+        events.append("catalog-scheduled")
+
+    def capture_worker(work, **kwargs) -> None:
+        worker_coroutines.append(work)
+        assert kwargs == {
+            "group": "first-run-exit-navigation",
+            "exclusive": True,
+            "exit_on_error": False,
+        }
 
     receiver = SimpleNamespace(
         current_tab=TAB_HOME,
-        post_message=MagicMock(),
-        _schedule_startup_model_catalog_refresh=MagicMock(),
+        handle_screen_navigation=AsyncMock(side_effect=record_navigation),
+        _schedule_startup_model_catalog_refresh=MagicMock(
+            side_effect=record_schedule
+        ),
+        post_message=MagicMock(
+            side_effect=AssertionError("completed navigation must use its worker")
+        ),
+        run_worker=capture_worker,
     )
-    TldwCli._handle_first_run_wizard_result(
-        receiver,
-        {
-            "completed": True,
-            "exit_route": TAB_HOME,
-            "exit_context": None,
-        },
-    )
+    try:
+        TldwCli._handle_first_run_wizard_result(
+            receiver,
+            {
+                "completed": True,
+                "exit_route": TAB_HOME,
+                "exit_context": None,
+            },
+        )
 
-    receiver._schedule_startup_model_catalog_refresh.assert_called_once_with(
-        after_setup_completion=True
-    )
-    receiver.post_message.assert_called_once()
-    message = receiver.post_message.call_args.args[0]
-    assert isinstance(message, NavigateToScreen)
-    assert message.screen_name == TAB_HOME
-    assert message.screen_context == {}
+        assert len(worker_coroutines) == 1
+        receiver.handle_screen_navigation.assert_not_awaited()
+        receiver._schedule_startup_model_catalog_refresh.assert_not_called()
+
+        await worker_coroutines[0]
+
+        receiver.handle_screen_navigation.assert_awaited_once()
+        message = receiver.handle_screen_navigation.await_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_HOME
+        assert message.screen_context == {}
+        receiver._schedule_startup_model_catalog_refresh.assert_called_once_with(
+            after_setup_completion=True
+        )
+        assert events == ["navigation-complete", "catalog-scheduled"]
+        receiver.post_message.assert_not_called()
+    finally:
+        for worker in worker_coroutines:
+            worker.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1698,6 +1750,7 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 "tools",
                 "notes",
                 "appearance",
+                "protect-keys",
             ]
 
             # Exit via "Explore Home" (TAB_HOME) to prove the app is
@@ -1760,9 +1813,10 @@ async def _open_rerun_wizard_from_settings(pilot):
 
 async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWizardContainer":
     # Quick track is pre-selected; walk welcome -> provider -> model ->
-    # voice -> summary without picking anything (every step is skip-safe).
+    # voice -> protect -> summary without picking anything (every step is
+    # skip-safe; TASK-21148 keeps Protect on the track even keyless).
     container = wizard_screen.query_one(SetupWizardContainer)
-    for _ in range(4):
+    for _ in range(5):
         previous_step = container.current_step
         _press(wizard_screen, "#wizard-next")
         await _wait_until(pilot, lambda: container.current_step != previous_step)
@@ -1858,7 +1912,6 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
-    navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
@@ -1872,20 +1925,15 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
                 == "Start chatting",
             )
 
-            navigation_messages.clear()
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # Dismiss pops back to Settings first; the exit_route is applied
-            # via a separately-queued NavigateToScreen message (same race
-            # noted in test_back_next_mashing_... above) -- wait for the
-            # final tab rather than racing the first screen-stack pop.
             await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
             assert app.current_tab == TAB_CHAT
-            assert len(navigation_messages) == 1
-            assert navigation_messages[0].screen_name == TAB_CHAT
-            assert navigation_messages[0].screen_context == {}
+            assert isinstance(app.screen, ChatScreen)
+            assert app.screen.is_mounted
 
 
 @pytest.mark.asyncio
@@ -2091,7 +2139,13 @@ async def test_palette_setup_wizard_action_wires_result_callback(
             provider.handle_setup_wizard_action("run_setup_wizard")
             await pilot.pause(0.2)
 
-            assert captured.get("callback") == app.handle_first_run_wizard_result, (
+            # TASK-31813: re-entry wires an adapter around the app-level
+            # result callback (cancel returns to the caller's screen; the
+            # boot wizard's cancel now routes to the Console). Identity is
+            # pinned by BEHAVIOR: a None result reaches the handler with
+            # cancel_to_console=False, a dict result flows through too.
+            callback = captured.get("callback")
+            assert callable(callback), (
                 "palette re-entry must wire the app-level result callback, "
                 "same as the Settings button and the auto-offer path"
             )
@@ -2173,23 +2227,24 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
 
             step = container.steps[voice_index]
             assert isinstance(step, VoiceSetupStep)
-            assert step.virtual_size.height > step.container_size.height
 
-            controls = (
-                step.query_one("#setup-voice-endpoint", Input),
-                step.query_one("#setup-voice-auth"),
-                step.query_one("#setup-voice-model", Input),
-                step.query_one("#setup-voice-voice", Input),
+            # TASK-21148 (UAT V-1/V-2): the try-it controls lead the step;
+            # plumbing lives under the Advanced disclosure. The primary
+            # controls must be reachable immediately, the advanced ones
+            # after expanding — at every size, including 80x24.
+            primary_controls = (
                 step.query_one("#setup-voice-sample", Input),
                 step.query_one("#setup-voice-test", Button),
                 step.query_one("#setup-voice-default", Checkbox),
             )
-            assert all(control.region.width > 0 for control in controls)
-            assert all(control.region.right <= size[0] for control in controls)
+            from textual.widgets import Collapsible as _Collapsible
 
-            for control in controls:
-                control.focus()
-                await pilot.pause(0.2)
+            advanced = step.query_one("#setup-voice-advanced", _Collapsible)
+            assert advanced.collapsed, "plumbing starts folded away"
+            assert all(c.region.width > 0 for c in primary_controls)
+            assert all(c.region.right <= size[0] for c in primary_controls)
+
+            def _assert_reachable(control) -> None:
                 assert control.region.y >= 0
                 assert control.region.bottom <= size[1]
                 assert control in app.screen._compositor.visible_widgets, (
@@ -2198,6 +2253,26 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
                     f"viewport={step.container_size}, virtual={step.virtual_size}, "
                     f"offset={step.scroll_offset}"
                 )
+
+            for control in primary_controls:
+                control.focus()
+                await pilot.pause(0.2)
+                _assert_reachable(control)
+
+            advanced.collapsed = False
+            await pilot.pause(0.3)
+            advanced_controls = (
+                step.query_one("#setup-voice-endpoint", Input),
+                step.query_one("#setup-voice-auth"),
+                step.query_one("#setup-voice-model", Input),
+                step.query_one("#setup-voice-voice", Input),
+            )
+            assert all(c.region.width > 0 for c in advanced_controls)
+            assert all(c.region.right <= size[0] for c in advanced_controls)
+            for control in advanced_controls:
+                control.focus()
+                await pilot.pause(0.2)
+                _assert_reachable(control)
 
             for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
                 button = app.screen.query_one(selector, Button)
@@ -2346,12 +2421,22 @@ async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_vie
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
-async def test_summary_three_actions_visible_and_focused_on_full_track(
+async def test_summary_five_actions_visible_and_focused_on_full_track(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     size: tuple[int, int],
 ) -> None:
-    """Summary keeps exactly three actions visible, unique, and focused."""
+    """Summary keeps all five actions visible, unique, and focused.
+
+    Qodo review on PR #2538 (task-32140): the Summary actions row is a
+    single non-wrapping Horizontal, so once task-32072 (4 buttons) and
+    task-32140 (5 buttons) both landed, "Explore Home" and "Review
+    settings" were pushed entirely off the 80-column viewport -- the
+    original 3-button version of this test never caught it because it
+    only asserted an exact 3-id list. This version checks every current
+    action is on-screen and unclipped at the wizard's two supported
+    sizes.
+    """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
@@ -2398,12 +2483,20 @@ async def test_summary_three_actions_visible_and_focused_on_full_track(
             await pilot.pause(0.2)
 
             exit_chat = app.screen.query_one("#setup-exit-chat", Button)
+            exit_library = app.screen.query_one("#setup-exit-library", Button)
+            exit_notes = app.screen.query_one("#setup-exit-library-notes", Button)
             exit_home = app.screen.query_one("#setup-exit-home", Button)
             exit_settings = app.screen.query_one("#setup-exit-settings", Button)
             assert [
                 button.id
                 for button in app.screen.query(".setup-summary-actions Button")
-            ] == ["setup-exit-chat", "setup-exit-home", "setup-exit-settings"]
+            ] == [
+                "setup-exit-chat",
+                "setup-exit-library",
+                "setup-exit-library-notes",
+                "setup-exit-home",
+                "setup-exit-settings",
+            ]
             assert app.focused is exit_chat
             assert container.query_one("#wizard-next", Button).display is False
             assert container.query_one("#wizard-cancel", Button).display is False
@@ -2413,6 +2506,8 @@ async def test_summary_three_actions_visible_and_focused_on_full_track(
             )
             for button, label in (
                 (exit_chat, "Review provider setup"),
+                (exit_library, "Add your first document"),
+                (exit_notes, "Write your first note"),
                 (exit_home, "Explore Home"),
                 (exit_settings, "Review settings"),
             ):
@@ -2432,6 +2527,8 @@ async def test_summary_three_actions_visible_and_focused_on_full_track(
                     "compositor never painted it"
                 )
             assert "Review provider setup" in rendered_text
+            assert "Add your first document" in rendered_text
+            assert "Write your first note" in rendered_text
             assert "Explore Home" in rendered_text
             assert "Review settings" in rendered_text
 
@@ -2501,7 +2598,7 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
                     and not disk[0].disabled
                 )
 
-            await _wait_until(pilot, _speech_actions_ready, timeout_seconds=10.0)
+            await _wait_until(pilot, _speech_actions_ready)
 
             install_button = app.screen.query_one("#setup-speech-install", Button)
             disk_button = app.screen.query_one("#setup-speech-use-from-disk", Button)
@@ -2768,7 +2865,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(100, 24)) as pilot:
+        async with app.run_test(size=(100, 18)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
             )
@@ -2783,31 +2880,37 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
             provider_step = container.steps[container.current_step]
             assert isinstance(provider_step, ProviderStep)
 
-            async def discover_many():
-                return tuple(
+            provider_step.select_provider("llama_cpp")
+            provider_step.query_one(
+                "#setup-provider-auth-toggle", Collapsible
+            ).collapsed = False
+            # Render the detected-endpoint rows DIRECTLY -- they are what
+            # pushes the key Input past the 18-row viewport. The previous
+            # arrangement pressed the Detect button and paused 0.2s, but the
+            # detect worker never delivers the injected servers in this
+            # harness, so the "genuine overflow" precondition only held
+            # through transient mid-layout state that a ~1ms shift in the
+            # discovery worker's completion path (task-31741) tipped over.
+            # Direct render makes the overflow deterministic and settled.
+            provider_step._render_detection_results(
+                tuple(
                     DiscoveredLocalServer(
                         "llama_cpp", f"http://127.0.0.1:{8080 + index}"
                     )
                     for index in range(8)
                 )
-
-            provider_step._local_discover = discover_many
-            provider_step.select_provider("llama_cpp")
-            provider_step.query_one(
-                "#setup-provider-auth-toggle", Collapsible
-            ).collapsed = False
-            provider_step.query_one("#setup-provider-detect", Button).press()
+            )
             await pilot.pause(0.2)
 
             key_input = app.screen.query_one("#setup-provider-api-key", Input)
             region_before = key_input.region
             fits_before = (
                 region_before.y >= 0
-                and region_before.bottom <= 24
+                and region_before.bottom <= 18
                 and region_before.right <= 100
             )
             assert not fits_before, (
-                "test assumption broken: key Input already fits at 100x24 "
+                "test assumption broken: key Input already fits at 100x18 "
                 f"without any scroll ({region_before}) -- this test needs "
                 "genuine overflow to prove the scroll-into-view fix"
             )
@@ -2817,7 +2920,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 
             region_after = key_input.region
             assert region_after.width > 0 and region_after.height > 0
-            assert region_after.y >= 0 and region_after.bottom <= 24, (
+            assert region_after.y >= 0 and region_after.bottom <= 18, (
                 f"key Input still clipped after focusing it: {region_after}"
             )
             assert region_after.right <= 100
@@ -2830,7 +2933,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
                 button = app.screen.query_one(widget_id, Button)
                 region = button.region
                 assert region.width > 0 and region.height > 0
-                assert region.right <= 100 and region.bottom <= 24
+                assert region.right <= 100 and region.bottom <= 18
 
 
 # ---------------------------------------------------------------------------
@@ -3024,3 +3127,890 @@ def test_setup_wizard_constructs_before_base_init_sets_app_instance():
     app_instance = SimpleNamespace(app_config={})
     wizard = SetupWizardContainer(app_instance)
     assert wizard.app_instance is app_instance
+
+
+# ---------------------------------------------------------------------------
+# TASK-22281 / UAT F-1: cold full-track entry to Speech must keep keyboard
+# input alive. SpeechSetupStep's first on_show schedules a
+# refresh(recompose=True); show_step's focus fix then targets a child of the
+# pre-recompose tree, and the recompose detaches the focused widget. Textual
+# 8.2.8 leaves app.focused on the detached node, so every subsequent key
+# event (ctrl+n / ctrl+b / escape / tab, even the app palette) dispatches
+# into a dead message pump and the wizard soft-locks until the process is
+# killed. This walks the exact cold path and asserts both the mechanism
+# (focus stays attached through the first-show recompose) and the behavior
+# (a real ctrl+b key event still navigates).
+# ---------------------------------------------------------------------------
+
+
+def _current_step_id(container: SetupWizardContainer) -> "str | None":
+    step = container.steps[container.current_step]
+    return step.config.id if step.config else None
+
+
+@pytest.mark.asyncio
+async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 50)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            app.screen.query_one("#setup-track-full", RadioButton).value = True
+            await pilot.pause()
+            for expected in (
+                STEP_PROVIDER,
+                STEP_MODEL,
+                STEP_VOICE,
+                STEP_RAG,
+                STEP_SPEECH,
+            ):
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda expected=expected: _current_step_id(container) == expected,
+                )
+            # Let the first-show lazy load's recompose land before checking —
+            # the orphaning happens on that recompose, not on arrival.
+            await pilot.pause(0.3)
+            focused = app.focused
+            assert focused is not None, "focus lost entering Speech cold"
+            assert focused.is_attached and focused.display, (
+                f"focus orphaned on detached widget {focused!r} (F-1 soft-lock)"
+            )
+            # The mechanism assertion above is necessary but not sufficient —
+            # prove a real key event still reaches the wizard's bindings.
+            await pilot.press("ctrl+b")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_RAG
+            )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21140: step-commit failures render on the pinned error strip in the
+# wizard chrome (visible at any terminal size — the old per-step tail Static
+# sat below the fold of overflowing steps), and the strip clears on the next
+# successful step change.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            strip = app.screen.query_one("#setup-step-error-pinned", Static)
+            assert strip.has_class("hidden"), "strip must start hidden (UAT W-1)"
+
+            async def failing_commit():
+                return False, "Boom failed."
+
+            welcome = container.steps[0]
+            monkeypatch.setattr(welcome, "commit", failing_commit)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: "Boom failed." in str(strip.renderable)
+            )
+            assert not strip.has_class("hidden")
+            # Honest affordances only — no phantom "Skip this step" control.
+            assert "Skip this step" not in str(strip.renderable)
+            assert _current_step_id(container) == STEP_WELCOME
+
+            async def passing_commit():
+                return True, ""
+
+            monkeypatch.setattr(welcome, "commit", passing_commit)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+            assert strip.has_class("hidden")
+            assert str(strip.renderable) == ""
+
+
+# ---------------------------------------------------------------------------
+# TASK-21141 (UAT K-3): the app-wide .error-message blanket rule
+# (border: round + padding + margin in _wizards.tcss) must never reach the
+# password dialog's error line. In the real app it inflated the error to ~7
+# rows and pushed Cancel/Submit past the container clip — functional but
+# invisible buttons. Widget-level tests can't catch this (no app
+# stylesheet), so this pins it against the real app.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from textual.widgets import Input as _Input
+
+    from tldw_chatbook.Widgets.password_dialog import PasswordDialog
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            app.push_screen(PasswordDialog(mode="setup"))
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, PasswordDialog)
+                and bool(app.screen.query("#password-input")),
+            )
+            dialog = app.screen
+            dialog.query_one("#password-input", _Input).value = "a"
+            dialog.query_one("#confirm-input", _Input).value = "a"
+            dialog.query_one("#submit-button", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: dialog.query_one("#error-message", Static).has_class(
+                    "visible"
+                ),
+            )
+            error = dialog.query_one("#error-message", Static)
+            # With the real stylesheet loaded, the error must stay one line —
+            # the blanket rule's border/padding is what ate the buttons.
+            assert error.region.height <= 2, (
+                f"error inflated to {error.region.height} rows — blanket "
+                ".error-message rule reached the dialog again"
+            )
+            for button_id in ("#cancel-button", "#submit-button"):
+                button = dialog.query_one(button_id, Button)
+                assert button.region.height > 0, f"{button_id} clipped (K-3)"
+            await pilot.press("escape")
+            await _wait_until(
+                pilot, lambda: not isinstance(app.screen, PasswordDialog)
+            )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21142 (UAT N-1/N-2/N-8): the wizard keyboard model.
+#   N-8 — arrowing a wizard radio group SELECTS (selection follows
+#         highlight); "Down then Next" must never silently keep Quick.
+#   N-1 — Enter advances: from a radio group, and from step Inputs (except
+#         the provider key field, whose Enter launches the probe).
+#   N-2 — Tab from step content reaches Next before any abandon action.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_arrow_selection_follows_highlight_on_track_radio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            radio = app.screen.query_one("#setup-track-choice")
+            radio.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            welcome = container.steps[0]
+            assert welcome.chosen_track() == TRACK_FULL, (
+                "Down must select, not merely highlight (UAT N-8)"
+            )
+            await pilot.press("up")
+            await pilot.pause()
+            assert welcome.chosen_track() == TRACK_QUICK
+
+
+@pytest.mark.asyncio
+async def test_enter_advances_from_track_radio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            app.screen.query_one("#setup-track-choice").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+
+
+@pytest.mark.asyncio
+async def test_tab_from_step_content_reaches_next_before_cancel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            next_button = app.screen.query_one("#wizard-next", Button)
+            await _wait_until(pilot, lambda: not next_button.disabled)
+            app.screen.query_one("#setup-track-choice").focus()
+            await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app.focused is not None and app.focused.id == "wizard-next", (
+                f"Tab landed on {app.focused!r} — the abandon action must not "
+                "be the first stop after step content (UAT N-2)"
+            )
+
+
+@pytest.mark.asyncio
+async def test_enter_in_model_fallback_input_advances(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from textual.widgets import Input as _Input
+
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            for expected in (STEP_PROVIDER, STEP_MODEL):
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda expected=expected: _current_step_id(container) == expected,
+                )
+            fallback = app.screen.query_one("#setup-model-custom", _Input)
+            fallback.focus()
+            await pilot.pause()
+            fallback.value = "some-model"
+            await pilot.press("enter")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_VOICE
+            )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21144 (UAT P-6/P-7/P-8): local-provider probe feedback. The UAT
+# "silent Detect/Test" incident decomposed into the F-1 focus soft-lock
+# eating the presses plus the status Static sitting at the panel's bottom,
+# below the fold at 40-row terminals. These pin the feedback contract:
+# selecting a local provider reports its reachability unprompted, Test
+# always ends in a visible verdict, and the status renders adjacent to the
+# controls it reports on.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_local_provider_probe_feedback_is_visible_and_adjacent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 45)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+            provider = next(
+                s for s in container.steps if isinstance(s, ProviderStep)
+            )
+            provider.select_provider("llama_cpp")
+            status = provider.query_one("#setup-provider-probe-status", Static)
+            # P-7: selection alone produces reachability feedback (nothing
+            # listens on the endpoint in this environment).
+            await _wait_until(
+                pilot, lambda: str(status.renderable) != ""
+            )
+            # P-6: Test always ends in a visible verdict.
+            provider.query_one("#setup-provider-test", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: str(status.renderable).startswith(("✗", "✓")),
+            )
+            # Adjacency: the status renders above the auth collapsible, next
+            # to the connection controls — not at the panel's bottom.
+            auth = provider.query_one("#setup-provider-auth-toggle")
+            test_button = provider.query_one("#setup-provider-test", Button)
+            assert status.region.y >= test_button.region.y
+            assert status.region.y <= auth.region.y or not auth.display
+            # P-8: buttons are labeled by outcome.
+            assert str(provider.query_one("#setup-provider-detect", Button).label) == (
+                "Find local servers"
+            )
+            assert str(test_button.label) == "Test connection"
+
+
+# ---------------------------------------------------------------------------
+# TASK-21145 (UAT H-3): app.run_setup_wizard is the action behind the
+# Console composer's setup-blocked link. It must open the wizard re-run and
+# never stack a second copy.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_setup_wizard_action_opens_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _prepare_clean_environment(monkeypatch, tmp_path)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause(0.3)
+            assert type(app.screen).__name__ != "FirstRunSetupWizard"
+            app.action_run_setup_wizard()
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            app.action_run_setup_wizard()
+            await pilot.pause(0.3)
+            wizards = [
+                screen
+                for screen in app.screen_stack
+                if type(screen).__name__ == "FirstRunSetupWizard"
+            ]
+            assert len(wizards) == 1, "action must never stack a second wizard"
+
+
+# ---------------------------------------------------------------------------
+# TASK-23089 (Qodo review, PR #2158): the encoding defect was invisible to
+# every mocked test, because httpx.MockTransport never compresses and a 401
+# returns before the body is read. This drives the real ProviderStep UI
+# against a real local HTTP peer that content-negotiates the way
+# api.openai.com does, so the identity-encoding contract is covered through
+# the flow a user actually takes rather than at the function that changed.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingModelsServer:
+    """A real HTTP peer that gzips when offered, like api.openai.com does."""
+
+    def __init__(self, model_ids: "list[str]") -> None:
+        import http.server
+        import json as _json
+        import threading
+
+        self.accept_encodings: list[str] = []
+        payload = _json.dumps(
+            {"data": [{"id": model_id} for model_id in model_ids]}
+        ).encode("utf-8")
+        recorder = self.accept_encodings
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - stdlib callback name
+                accept = self.headers.get("Accept-Encoding", "")
+                recorder.append(accept)
+                body = payload
+                extra = []
+                # The bounded reader streams raw bytes and rejects any
+                # non-identity encoding, so a caller that forgets to ask for
+                # identity fails here exactly as it did against the real API.
+                if "gzip" in accept.casefold():
+                    import gzip as _gzip
+
+                    body = _gzip.compress(payload)
+                    extra.append(("Content-Encoding", "gzip"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                for name, value in extra:
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:  # noqa: D102 - silence stdlib
+                return
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base_url = f"http://127.0.0.1:{self._server.server_port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "_RecordingModelsServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pressing Test must not advertise gzip to a content-negotiating peer.
+
+    Live incident: httpx advertised "gzip, deflate" by default,
+    api.openai.com honored it, and the bounded raw reader rejected the
+    compressed body -- so a *valid* key reported "unreachable: connection
+    error". This asserts the header on the wire from a real server's point
+    of view, through the step's own button, which is the only vantage point
+    that would have caught it: the unit tests assert the same contract but
+    against httpx.MockTransport, which never compresses.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state via
+            ``_build_fresh_wizard_app``.
+        tmp_path: Pytest fixture providing the throwaway profile directory
+            the fresh wizard app is built against.
+    """
+    with _RecordingModelsServer([f"model-{index}" for index in range(128)]) as server:
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(140, 45)) as pilot:
+                await _wait_until(
+                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                )
+                container = app.screen.query_one(SetupWizardContainer)
+                await _wait_until(pilot, lambda: container.can_proceed)
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+                )
+
+                provider = next(
+                    s for s in container.steps if isinstance(s, ProviderStep)
+                )
+                provider.select_provider("llama_cpp")
+                await pilot.pause(0.3)
+                provider.query_one("#setup-provider-endpoint", Input).value = (
+                    server.base_url
+                )
+                await pilot.pause(0.3)
+
+                status = provider.query_one("#setup-provider-probe-status", Static)
+                provider.query_one("#setup-provider-test", Button).press()
+                await _wait_until(
+                    pilot,
+                    lambda: bool(server.accept_encodings)
+                    and str(status.renderable).startswith(("✗", "✓")),
+                )
+
+    assert server.accept_encodings, "the step never reached the models endpoint"
+    assert all(
+        "gzip" not in encoding.casefold() for encoding in server.accept_encodings
+    ), (
+        "a request advertised gzip; the bounded raw reader rejects compressed "
+        f"bodies and the step reports a live peer as unreachable: "
+        f"{server.accept_encodings}"
+    )
+    assert str(status.renderable).startswith("✓"), (
+        "a reachable, gzip-capable peer must verify as reachable, not fail "
+        f"the way the live incident did: {status.renderable!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-23091 (Qodo review, PR #2171): the category helper is unit-tested, but
+# the two _load_models handoff branches that consume it are what actually
+# render copy. Without wizard-level coverage a wiring revert would put
+# "Couldn't reach the server" back in front of users while every unit test
+# stayed green.
+# ---------------------------------------------------------------------------
+
+
+def _recorded_auth_failure_result():
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider="openai",
+        provider_list_key="openai",
+        endpoint_fingerprint="https://api.openai.com/v1",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+        ),
+    )
+
+
+@pytest.mark.parametrize("handoff", ["models_mapping", "outcome_unavailable"])
+@pytest.mark.asyncio
+async def test_model_step_renders_auth_copy_on_both_handoff_branches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, handoff: str
+) -> None:
+    """A rejected key must read as a rejected key on either handoff path.
+
+    Both _load_models branches previously hardcoded the generic category, so
+    a 401 rendered as "Couldn't reach the server ... Check it's running" --
+    pointing away from the fix, which lives one step Back. This drives the
+    real wizard to the Model step and asserts the rendered radio copy, so
+    reverting either call site fails here even though the helper's own unit
+    tests would still pass.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state and,
+            for the second branch, to force the outcome-unavailable path.
+        tmp_path: Pytest fixture providing the throwaway profile directory.
+        handoff: Which _load_models branch to exercise.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 45)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+            )
+
+            provider = next(s for s in container.steps if isinstance(s, ProviderStep))
+            outcome = _recorded_auth_failure_result()
+
+            def _fake_begin(provider_draft, *, sync_live_credential=True):
+                # Stand in for the network at the exact seam where selection
+                # and commit start discovery, recording what a real 401
+                # leaves behind: a failed discovery whose typed outcome says
+                # "credentials". Installed BEFORE select_provider, which
+                # kicks off a real discovery worker of its own -- otherwise
+                # this test would do genuine network work and depend on its
+                # timing rather than isolating the handoff.
+                draft = (
+                    provider._effective_provider_draft()
+                    if isinstance(provider_draft, str) or provider_draft is None
+                    else provider_draft
+                )
+                key = provider._model_discovery_key(draft)
+                if key is None:
+                    return
+                provider._selected_discovery_key = key
+                provider._selected_discovery_state = "failed"
+                provider._selected_provider_outcomes = {key: outcome}
+                provider._selected_provider_models = {key: []}
+                container._first_run_provider_discovery_owner = provider
+                container._first_run_selected_provider_outcomes = {}
+                if handoff == "models_mapping":
+                    # Branch 1: models handed off, empty, owner failed.
+                    container._first_run_selected_provider_models = {key: []}
+                else:
+                    # Branch 2: nothing handed off and no typed outcome comes
+                    # back, so the owner's recorded state is the only source.
+                    container._first_run_selected_provider_models = {}
+
+            monkeypatch.setattr(
+                provider, "_begin_selected_provider_discovery", _fake_begin
+            )
+            if handoff != "models_mapping":
+
+                async def _no_outcome(*_args, **_kwargs):
+                    return None
+
+                monkeypatch.setattr(
+                    provider, "_outcome_from_selected_discovery", _no_outcome
+                )
+
+            provider.select_provider("openai")
+            await pilot.pause(0.3)
+            # A credential is required for the step to commit at all, and
+            # entering it is what re-keys the discovery commit then records.
+            provider.query_one("#setup-provider-api-key", Input).value = "rejected-key"
+            await pilot.pause(0.3)
+
+            _press(app.screen, "#wizard-next")
+            await _wait_until(
+                pilot,
+                lambda: _current_step_id(container) == STEP_MODEL,
+            )
+            model_step = container.steps[container.current_step]
+            # The placeholder is a non-empty label too, so waiting on
+            # "any text" can read the loading state and pass by accident.
+            await _wait_until(
+                pilot,
+                lambda: (
+                    (labels := [
+                        str(button.label)
+                        for button in model_step.query(
+                            "#setup-model-choice RadioButton"
+                        )
+                    ])
+                    and all("loading models" not in label for label in labels)
+                ),
+            )
+            rendered = " ".join(
+                str(button.label)
+                for button in model_step.query("#setup-model-choice RadioButton")
+            )
+
+    assert "Authentication failed" in rendered, (
+        f"a rejected key rendered as something else on the {handoff!r} branch: "
+        f"{rendered!r}"
+    )
+    assert "Check it's running" not in rendered, (
+        "the generic server-unreachable copy is the exact wrong advice for a "
+        f"401: {rendered!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-23090: the catalog-size defects were caught by a manual live walk, not
+# by the suite. This drives the real ProviderStep -> ModelStep handoff against
+# a real local HTTP peer so a bound that trims or rejects a production-sized
+# catalog between discovery and the rendered picker fails here instead.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_production_sized_catalog_reaches_the_model_picker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A 128-model catalog must survive discovery and reach the picker.
+
+    Pins two of the three live-key defects through the real handoff, both
+    confirmed by reverting them:
+
+    * the wizard's typed-result bound -- reverting it to 100 fails here,
+      which is the defect that rendered "Couldn't reach the server" for a
+      valid key;
+    * the discovery module's identity encoding -- removing that header
+      fails here as ``invalid_response``, because the peer compresses.
+
+    It also pins ModelStep's own handoff: the assertion is on
+    ``_discovered_model_ids``, the full set the step produced, because the
+    rendered picker is capped at ``_PICKER_MODEL_LIMIT`` and would hide any
+    trim that kept the first 20.
+
+    It does NOT pin the settings_endpoint_probe encoding fix: this path
+    never presses Test, so the probe module is not exercised. That one is
+    covered by
+    ``test_provider_test_button_requests_identity_encoding_from_a_real_peer``.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate config/HOME state.
+        tmp_path: Pytest fixture providing the throwaway profile directory.
+    """
+    catalog_size = 128
+    newest_model = "gpt-5.4-pro"
+    model_ids = [f"model-{index}" for index in range(catalog_size - 1)]
+    model_ids.append(newest_model)  # newest last, as the real API orders them
+
+    with _RecordingModelsServer(model_ids) as server:
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+        # The app snapshots [providers] into providers_models at init, and
+        # its catalog loader reads that attribute -- a fresh test app has an
+        # empty snapshot, which discovery reports as "no matching provider
+        # model list in [providers]" before it ever issues a request.
+        from tldw_chatbook.config import get_cli_providers_and_models
+
+        app.providers_models = get_cli_providers_and_models()
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(140, 45)) as pilot:
+                await _wait_until(
+                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                )
+                container = app.screen.query_one(SetupWizardContainer)
+                await _wait_until(pilot, lambda: container.can_proceed)
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+                )
+
+                provider = next(
+                    s for s in container.steps if isinstance(s, ProviderStep)
+                )
+                provider.select_provider("llama_cpp")
+                await pilot.pause(0.4)
+                provider.query_one("#setup-provider-endpoint", Input).value = (
+                    server.base_url
+                )
+                await pilot.pause(0.4)
+
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot,
+                    lambda: _current_step_id(container) == STEP_MODEL,
+                )
+                model_step = container.steps[container.current_step]
+                for _ in range(60):
+                    await pilot.pause(0.5)
+                    labels = [
+                        str(b.label)
+                        for b in model_step.query("#setup-model-choice RadioButton")
+                    ]
+                    if labels and all("loading models" not in x for x in labels):
+                        break
+                outcomes = dict(provider._selected_provider_outcomes)
+                handed_off_ids = model_step._discovered_model_ids
+
+    # The boundary that used to reject: a production-sized catalog must come
+    # back as a success with every model, not as an error the step renders as
+    # "Couldn't reach the server".
+    assert len(outcomes) == 1
+    outcome = next(iter(outcomes.values()))
+    assert outcome.status == "success", (
+        f"a {catalog_size}-model catalog did not survive discovery: "
+        f"{outcome.status} / {getattr(outcome.error, 'kind', None)}"
+    )
+    assert len(outcome.models) == catalog_size
+    assert outcome.models[-1].model_id == newest_model, (
+        "the newest model is missing; a trim drops it first"
+    )
+
+    # The boundary that actually matters for a trim: what ModelStep produced
+    # when it consumed that outcome, before the picker's bounded slice. The
+    # rendered list cannot stand in for this -- the picker shows only
+    # _PICKER_MODEL_LIMIT entries, so any trim that keeps the first 20 is
+    # invisible there.
+    assert len(handed_off_ids) == catalog_size, (
+        f"ModelStep's handoff produced {len(handed_off_ids)} of {catalog_size} "
+        "ids -- a bound between discovery and the picker trimmed the catalog"
+    )
+    assert handed_off_ids[-1] == newest_model, (
+        "the newest model is missing from the handoff; a trim drops it first"
+    )
+
+    # ...and the step renders a real choice list rather than a failure row.
+    assert labels, "the picker rendered nothing"
+    assert not any("Couldn't reach" in label for label in labels), (
+        f"a reachable peer with a full catalog rendered as a failure: {labels}"
+    )
+    assert labels[0].startswith("model-0"), labels[:3]
+    assert len(labels) == _PICKER_MODEL_LIMIT, (
+        f"the picker's bounded slice changed: {len(labels)} rows"
+    )
+
+    # Identity encoding on the discovery request, asserted from the
+    # server's point of view. Note this covers the discovery module's
+    # header, not settings_endpoint_probe's -- see the docstring.
+    assert server.accept_encodings and all(
+        "gzip" not in encoding.casefold() for encoding in server.accept_encodings
+    ), server.accept_encodings
+
+
+# ---------------------------------------------------------------------------
+# task-31741 (release UAT): Escape on the Provider step after a failed model
+# discovery. Live walkthrough on a loaded machine read as "Esc is dead":
+# two Escapes produced no visible change while the footer Exit button worked.
+# Reproduction on idle and loaded CPUs showed the key was never dead -- the
+# first Escape opens the Exit-setup dialog and a second press >0.5s later
+# silently dismisses it again. Under heavy load the dialog can take seconds
+# to PAINT, while `_SettlingGuardedConfirmationDialog`'s settle clock started
+# at on_mount -- so a user's (or a UAT harness's) "is this thing on?" second
+# press landed after the wall-clock grace and reverted a dialog nobody had
+# ever seen. Two pins:
+#   1. the faithful key-driven sequence keeps Escape working (and focus
+#      attached -- the TASK-22281 orphan mechanism must not regress here);
+#   2. a second Escape arriving before the dialog has ever painted must be
+#      absorbed, no matter how much wall-clock time mount-to-press ate.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_failure_keeps_escape_exit_alive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Real Enter/Enter/Escape walk: discovery fails, Escape still exits."""
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(235, 52)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            await pilot.press("enter")
+
+            def _on_provider() -> bool:
+                step = container.steps[container.current_step]
+                return step.config is not None and step.config.id == STEP_PROVIDER
+
+            await _wait_until(pilot, _on_provider)
+            # The real Enter-driven flow: Enter selects the preselected
+            # provider row, which launches the (failing -- no key, no
+            # server) selected-provider discovery worker for real.
+            await pilot.press("enter")
+            status = app.screen.query_one("#setup-provider-probe-status", Static)
+            await _wait_until(
+                pilot,
+                lambda: "Couldn't discover models" in str(status.renderable),
+            )
+            # task-31741 Bug B: this exact state hard-blocks Next on the
+            # missing key, so the failure copy must not promise continuing.
+            assert "continue anyway" not in str(status.renderable).lower(), (
+                f"blocked state still promises continuing: {status.renderable!r}"
+            )
+            focused = app.focused
+            assert focused is not None, "focus lost after failed discovery"
+            assert focused.is_attached and focused.display, (
+                f"focus orphaned on detached widget {focused!r} -- every"
+                " subsequent key (incl. Escape) would dispatch into a dead"
+                " message pump (TASK-22281 mechanism)"
+            )
+            await pilot.press("escape")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, _SettlingGuardedConfirmationDialog),
+            )
+
+
+@pytest.mark.asyncio
+async def test_escape_cannot_dismiss_an_exit_dialog_that_never_painted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The settle clock must anchor to first paint, not to on_mount.
+
+    Models the loaded-machine condition from the live walkthrough: the
+    dialog is mounted but the render pipeline has not delivered its first
+    frame (here: the settle callback never runs). However much wall-clock
+    time passes, a second Escape must be absorbed -- dismissing a dialog
+    the user has never seen reads as "Escape does nothing", twice.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    original_call_after_refresh = _SettlingGuardedConfirmationDialog.call_after_refresh
+
+    def _swallow_settle(self, callback, *args, **kwargs):
+        if getattr(callback, "__name__", "") == "_mark_settled":
+            return None  # the choked pipeline never delivers the frame
+        return original_call_after_refresh(self, callback, *args, **kwargs)
+
+    monkeypatch.setattr(
+        _SettlingGuardedConfirmationDialog, "call_after_refresh", _swallow_settle
+    )
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.press("escape")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, _SettlingGuardedConfirmationDialog),
+            )
+            dialog = app.screen
+            # Any wall-clock grace has long elapsed on the loaded machine.
+            dialog._escape_grace_seconds = 0.0
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, _SettlingGuardedConfirmationDialog), (
+                "a second Escape dismissed a dialog that never painted --"
+                " to the user, Escape did nothing twice (task-31741)"
+            )

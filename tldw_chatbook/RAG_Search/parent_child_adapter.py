@@ -434,7 +434,6 @@ def chunk_text_with_structure(
     parent_size_multiplier: int = DEFAULT_PARENT_SIZE_MULTIPLIER,
     preserve_structure: bool = True,
     clean_artifacts: bool = True,
-    serialize_tables: bool = True,
 ) -> List[StructuredChunk]:
     """Structure-aware chunking returning legacy ``StructuredChunk`` objects.
 
@@ -452,8 +451,6 @@ def chunk_text_with_structure(
         preserve_structure: Ignored (structure is always preserved by the
             engine's hierarchical path).
         clean_artifacts: Ignored (the engine sanitizes input internally).
-        serialize_tables: Ignored (the deleted bespoke table serialization
-            went with ``DocumentStructureParser``).
 
     Returns:
         List of StructuredChunk objects in document order.

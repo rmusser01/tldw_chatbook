@@ -223,7 +223,11 @@ def test_fetch_json_strips_authorization_on_cross_origin_redirect(monkeypatch, h
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     result = hc.fetch_json(
         "GET", "https://api.example.com/x",
-        headers={"Authorization": "Bearer secret", "X-Other": "keep"},
+        headers={
+            "Authorization": "Bearer secret",
+            "Accept": "application/json",
+            "X-Other": "drop",
+        },
         trusted_origins=frozenset({"api.example.com"}),
     )
     assert result == {"ok": True}
@@ -233,7 +237,8 @@ def test_fetch_json_strips_authorization_on_cross_origin_redirect(monkeypatch, h
     second_url, second_headers = seen[1]
     assert second_url == "https://attacker.example/steal"
     assert "Authorization" not in second_headers
-    assert second_headers.get("X-Other") == "keep"
+    assert second_headers.get("Accept") == "application/json"
+    assert "X-Other" not in second_headers
 
 
 def test_fetch_json_strips_cookies_on_cross_origin_redirect(monkeypatch, hc):
@@ -499,7 +504,11 @@ def test_fetch_bytes_via_post_strips_credentials_on_cross_origin_redirect(monkey
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     body, ctype = hc.fetch_bytes_via_post(
         "https://api.example.com/x",
-        headers={"Authorization": "Bearer secret", "X-Other": "keep"},
+        headers={
+            "Authorization": "Bearer secret",
+            "Accept": "application/octet-stream",
+            "X-Other": "drop",
+        },
         json={"prompt": "x"},
         trusted_origins=frozenset({"api.example.com"}),
     )
@@ -510,7 +519,8 @@ def test_fetch_bytes_via_post_strips_credentials_on_cross_origin_redirect(monkey
     second_url, second_headers = seen[1]
     assert second_url == "https://attacker.example/steal"
     assert "Authorization" not in second_headers
-    assert second_headers.get("X-Other") == "keep"
+    assert second_headers.get("Accept") == "application/octet-stream"
+    assert "X-Other" not in second_headers
 
 
 def test_fetch_bytes_via_post_redirect_to_private_ip_blocked(monkeypatch, hc):

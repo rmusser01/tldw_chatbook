@@ -82,6 +82,12 @@ def fake_ytdlp(monkeypatch, tmp_path: Path):
     _Module.YoutubeDL = _construct  # type: ignore[assignment]
     monkeypatch.setattr(video_processing, "yt_dlp", _Module, raising=False)
     monkeypatch.setattr(video_processing, "YT_DLP_AVAILABLE", True)
+    # (TASK-19556) The download seam now consults the egress policy before
+    # yt-dlp, which for the `example.com` URL these tests use would mean a
+    # real DNS lookup -- and an offline machine would fail them for the
+    # wrong reason. These tests are about cookie handling; the guard itself
+    # is owned by Tests/Local_Ingestion/test_video_egress_guard.py.
+    monkeypatch.setattr(video_processing, "check_url_or_raise", lambda *a, **k: None)
     return _FakeYoutubeDL.constructions
 
 

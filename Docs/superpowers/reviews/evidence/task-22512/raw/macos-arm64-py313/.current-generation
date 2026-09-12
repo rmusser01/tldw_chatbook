@@ -1,0 +1,31 @@
+{
+  "files": [
+    {
+      "name": "macos-arm64-py313-artifacts.json",
+      "sha256": "26e8ddbf4784bbb1dd78cb3cb090d5f9e3aa009922beebe57e871c636f567a28"
+    },
+    {
+      "name": "macos-arm64-py313-environment-bash.json",
+      "sha256": "2d5551fe54e03f44c8d8cb077fc61835a94ac2c5256cfb0e91edd4718d00e57b"
+    },
+    {
+      "name": "macos-arm64-py313-environment-default.json",
+      "sha256": "58a70848015d835b0becd355314755e8cebe37497792fba6732453d8b5b6e50e"
+    },
+    {
+      "name": "macos-arm64-py313-environment-zsh.json",
+      "sha256": "191e3f42a0a6cdad5a1eafbf91003eaeaa8fd881993042db0c2d7b8daa4e5958"
+    },
+    {
+      "name": "macos-arm64-py313-pyte.json",
+      "sha256": "00e3c647a440034961a5dd6e4ad4162c82ff948fb4c7689baadd013467343cca"
+    },
+    {
+      "name": "macos-arm64-py313-pywinpty.json",
+      "sha256": "9cb976174aa7fb3ad0888493839a2076212f5115e782a2116818e563d658deb5"
+    }
+  ],
+  "generation_id": "158028b2fab44117a4358f2a6d8f93e9",
+  "row_id": "macos-arm64-py313",
+  "schema_version": 1
+}

@@ -144,7 +144,7 @@ async def test_production_ingest_alias_uses_library_owner_and_public_cancellatio
         assert type(title_input) is Input
         title_input.value = "TASK-905 transient form value"
         await pilot.pause()
-        assert library._library_ingest_form.title == "TASK-905 transient form value"
+        assert library._ingest_state.form.title == "TASK-905 transient form value"
 
         app.post_message(NavigateToScreen("chat"))
         for _ in range(400):
@@ -173,7 +173,7 @@ async def test_production_ingest_alias_uses_library_owner_and_public_cancellatio
         )
         assert type(returned_title) is Input
         assert returned_title.value == ""
-        assert returned_library._library_ingest_form.title == ""
+        assert returned_library._ingest_state.form.title == ""
 
         job = app.library_ingest_jobs.submit(
             source_path="https://example.invalid/task-905.pdf",

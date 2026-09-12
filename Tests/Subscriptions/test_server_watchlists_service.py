@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 import tldw_chatbook.Subscriptions.server_watchlists_service as watchlists_module
-from tldw_chatbook.Subscriptions import ServerWatchlistsService
+from tldw_chatbook.Subscriptions import ServerWatchlistsService, WatchlistScopeService
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
@@ -182,6 +182,69 @@ class FakeWatchlistsClient:
     async def delete_watchlist_alert_rule(self, rule_id):
         self.calls.append(("delete_watchlist_alert_rule", rule_id))
         return {"deleted": True, "rule_id": rule_id}
+
+
+def test_server_watchlists_service_publishes_create_form_source_types():
+    assert ServerWatchlistsService.CREATE_FORM_SOURCE_TYPES == (
+        "rss",
+        "site",
+        "forum",
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_watchlists_service_rejects_invalid_type_before_dispatch():
+    client = FakeWatchlistsClient()
+    service = ServerWatchlistsService(client=client)
+
+    with pytest.raises(
+        ValueError,
+        match="Only rss, site, and forum watchlist sources are supported in this slice",
+    ):
+        await service.create_source(
+            name="Playlist",
+            url="https://example.com/playlist",
+            source_type="playlist",
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_type", ("rss", "site", "forum"))
+async def test_scope_service_routes_server_create_form_source_types_without_signature_error(
+    source_type,
+):
+    client = FakeWatchlistsClient()
+    scope = WatchlistScopeService(
+        local_service=None,
+        server_service=ServerWatchlistsService(client=client),
+    )
+
+    await scope.create_watch_item(
+        runtime_backend="server",
+        payload={
+            "name": "Source",
+            "url": "https://example.com/source",
+            "source_type": source_type,
+            "active": False,
+            "tags": ["news"],
+        },
+    )
+
+    assert client.calls == [
+        (
+            "create_watchlist_source",
+            {
+                "name": "Source",
+                "url": "https://example.com/source",
+                "source_type": source_type,
+                "active": False,
+                "tags": ["news"],
+                "settings": {},
+            },
+        )
+    ]
 
 
 class FakeClientProvider:

@@ -1,0 +1,1677 @@
+{
+  "cases": [
+    {
+      "category": "repository",
+      "delegated": {
+        "answer": "Note on method: the bulk-reader delegation failed twice (`spawn_subagent` returned \"Task description cannot be empty\"), so I read both files directly with `fs_read` instead. Full contents of both files were retrieved, so the citations below are verified against the sources.\n\n## TTL values\n\n| Case | TTL | Source |\n|---|---|---|\n| Ordinary projects | **900 seconds** (15 min) | `repo/leases.py:2` |\n| Atlas | **1800 seconds** (30 min) | `repo/leases.py:3` |\n| Renewal requests | **600 seconds** (10 min) cap | `repo/leases.py:4` |\n\n## Implementation (`repo/leases.py`)\n\nThe whole policy is four constants plus one function:\n\n```python\nDEFAULT_TTL_SECONDS = 900                                  # line 2\nPROJECT_TTL_SECONDS = {\"atlas\": 1800}                      # line 3\nRENEWAL_CAP_SECONDS = 600                                  # line 4\n\ndef ttl_seconds(project: str, *, renewal: bool = False) -> int:   # line 6\n    ttl = PROJECT_TTL_SECONDS.get(project, DEFAULT_TTL_SECONDS)   # line 7\n    if renewal:                                                    # line 8\n        return min(ttl, RENEWAL_CAP_SECONDS)                       # line 9\n    return ttl                                                     # line 10\n```\n\n- **Ordinary projects**: `PROJECT_TTL_SECONDS.get(project, DEFAULT_TTL_SECONDS)` (line 7) returns the default 900s for any project not in the override table.\n- **Atlas**: it is the sole entry in the override table (line 3), so it gets 1800s at initial acquisition.\n- **Renewals**: when the keyword-only `renewal=True` flag is set, line 9 returns `min(ttl, 600)`.\n\n## The renewal exception\n\nRenewal is distinguished from initial acquisition by the `*, renewal: bool = False` keyword-only parameter (line 6) \u2014 there is no separate function or exception-handling block; the \"exception\" is purely the branch at lines 8\u20139.\n\nThe practical effect: **renewals are capped at 600 seconds regardless of project**, so Atlas's 1800s boost applies only to the initial lease. A renewal for Atlas yields `min(1800, 600) = 600`, identical to a renewal for an ordinary project. Per-line behavior:\n\n- Ordinary project, initial: 900\n- Atlas, initial: 1800\n- Ordinary project, renewal: `min(900, 600)` = 600\n- Atlas, renewal: `min(1800, 600)` = 600\n\nThe notes confirm the intent \u2014 `repo/lease-notes.md:4`: \"Renewal does not extend the initial project allowance.\"\n\n## A trap to avoid\n\n`repo/lease-notes.md:2` states: \"The original proposal used 1200 seconds everywhere. That proposal was rejected.\" So 1200s is *not* the answer for any case; line 3 of the notes (\"The constants in leases.py are the implemented policy\") directs you back to the constants above.",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000147,
+              "output_cost": 0.001452,
+              "total": 0.001832,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 9535,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 330,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 105
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000343,
+              "output_cost": 0.000616,
+              "total": 0.001209,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 4955,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 140,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 245
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0003,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000235,
+              "output_cost": 0.000493,
+              "total": 0.001028,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 5026,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1152,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 112,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 168
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000333,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000106,
+              "output_cost": 0.000436,
+              "total": 0.000875,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 4776,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1280,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 99,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 76
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000349,
+              "cache_write_cost": 0.0,
+              "input_cost": 6.3e-05,
+              "output_cost": 0.000198,
+              "total": 0.00061,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 3092,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1344,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 45,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 45
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000349,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000119,
+              "output_cost": 0.000902,
+              "total": 0.00137,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 6,
+            "latency_ms": 7622,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1344,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 205,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 85
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000366,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000228,
+              "output_cost": 0.000198,
+              "total": 0.000792,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 7,
+            "latency_ms": 3225,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1408,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 45,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 163
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000399,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000164,
+              "output_cost": 0.005082,
+              "total": 0.005645,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 8,
+            "latency_ms": 27614,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1536,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 1155,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 117
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "a7fc2d76877d4812bf195c8370dd7867",
+        "runtime_status": "done",
+        "status": "non_delegating",
+        "status_reasons": [
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "tool_reads": [
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_glob"
+          },
+          {
+            "path": "repo/leases.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/lease-notes.md",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": 0.013361,
+        "worker_output": ""
+      },
+      "direct": {
+        "answer": "## TTL values\n\n| Case | TTL | Source |\n|---|---|---|\n| Ordinary projects | **900 seconds** | `DEFAULT_TTL_SECONDS = 900` (repo/leases.py:2), applied via `.get(project, DEFAULT_TTL_SECONDS)` (repo/leases.py:7) |\n| Atlas | **1800 seconds** | `PROJECT_TTL_SECONDS = {\"atlas\": 1800}` (repo/leases.py:3), selected by the same lookup on line 7 |\n| Renewal requests | **600 seconds** | `RENEWAL_CAP_SECONDS = 600` (repo/leases.py:4), applied by `return min(ttl, RENEWAL_CAP_SECONDS)` (repo/leases.py:9) |\n\n## The renewal exception\n\n`ttl_seconds` first resolves the project's normal TTL, then overrides it when `renewal=True`:\n\n```python\ndef ttl_seconds(project: str, *, renewal: bool = False) -> int:\n    ttl = PROJECT_TTL_SECONDS.get(project, DEFAULT_TTL_SECONDS)\n    if renewal:\n        return min(ttl, RENEWAL_CAP_SECONDS)\n    return ttl\n```\n(repo/leases.py:6-10)\n\nThe `min(ttl, RENEWAL_CAP_SECONDS)` means renewals are capped at 600s regardless of project allowance:\n\n- Ordinary project renewal: `min(900, 600)` = **600s**\n- Atlas renewal: `min(1800, 600)` = **600s** \u2014 Atlas's 1800s initial allowance does **not** carry over to renewals.\n\nThis is the exception's intent, per the notes: \"Renewal does not extend the initial project allowance.\" (repo/lease-notes.md:4) In other words, the generous per-project TTL (e.g., Atlas's 1800s) applies only to the initial lease; a renewal is treated as a shorter extension and can never exceed the 600s cap.\n\n## Historical note (not current policy)\n\nAn earlier design proposed \"1200 seconds everywhere,\" but it \"was rejected,\" and the notes confirm that \"The constants in leases.py are the implemented policy.\" (repo/lease-notes.md:2-3) So 1200s is not citable as current behavior \u2014 only the constants above are.",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000183,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000164,
+              "output_cost": 0.000154,
+              "total": 0.000501,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 4866,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 704,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 35,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 117
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000119,
+              "output_cost": 0.000101,
+              "total": 0.00042,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 2400,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 23,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 85
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000216,
+              "cache_write_cost": 0.0,
+              "input_cost": 8.1e-05,
+              "output_cost": 0.000114,
+              "total": 0.000411,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 5142,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 832,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 26,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 58
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000216,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00028,
+              "output_cost": 0.000119,
+              "total": 0.000615,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 5525,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 832,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 27,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 200
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000266,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000126,
+              "output_cost": 0.003436,
+              "total": 0.003828,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 19098,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1024,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 781,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 90
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "476240f5d5574ec6a20cd5a8f10113c3",
+        "runtime_status": "done",
+        "status": "completed",
+        "status_reasons": [],
+        "tool_reads": [
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          },
+          {
+            "path": "repo",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          },
+          {
+            "path": "repo/leases.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/lease-notes.md",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": 0.005775,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "Ordinary initial leases use 900 seconds.",
+        "Atlas initial leases use 1800 seconds.",
+        "Renewals are capped at 600 seconds for both ordinary projects and Atlas.",
+        "The 1200-second note is a rejected proposal, not the current policy."
+      ],
+      "id": "repo-ttl-exceptions",
+      "question": "What TTL applies to ordinary projects, Atlas, and renewal requests? Cite the implementation and explain the renewal exception.",
+      "sources": [
+        {
+          "bytes": 351,
+          "lines": 10,
+          "path": "repo/leases.py",
+          "sha256": "14f7de8e4aaee90b7d0066a3e8615e1a2d6721a56e6f1ba17eaccf490f1d71a4"
+        },
+        {
+          "bytes": 209,
+          "lines": 4,
+          "path": "repo/lease-notes.md",
+          "sha256": "4751f8fd23cf816fc7267b11594b8a01dde072fb0dc50b9a1b8aeef10bb16c2b"
+        }
+      ]
+    },
+    {
+      "category": "repository",
+      "delegated": {
+        "answer": "",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 6e-05,
+              "output_cost": 0.001795,
+              "total": 0.002105,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 12640,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 408,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 43
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000487,
+              "output_cost": 0.000986,
+              "total": 0.001723,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 8947,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 224,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 348
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000333,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000318,
+              "output_cost": 0.000902,
+              "total": 0.001553,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 6076,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1280,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 205,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 227
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": "Agent stopped: it kept calling spawn_subagent with the same arguments (3 times) without making progress.",
+        "run_id": "701dd43caf0f4bb3838c4ad4777c823f",
+        "runtime_status": "stuck",
+        "status": "non_delegating",
+        "status_reasons": [
+          "runtime_stuck",
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "tool_reads": [],
+        "total_cost_usd": 0.005381,
+        "worker_output": ""
+      },
+      "direct": {
+        "answer": "## Ordering in `save_profile`\n\nThe cache invalidation is the **last step, after both the write and the commit**:\n\n`repo/profiles.py:2-6`\n> ```python\n> def save_profile(store, cache, profile):\n>     store.write(profile)\n>     store.commit()\n>     cache.pop(profile.id, None)\n> ```\n1. `store.write(profile)` \u2014 line 3\n2. `store.commit()` \u2014 line 4\n3. `cache.pop(profile.id, None)` \u2014 line 5 (the only invalidation in the function)\n\n## Does a failed commit clear the cache?\n\n**No.** The commit contract is exception-based, not flag-based:\n\n`repo/store.py:6-10`\n> ```python\n> def commit(self):\n>     \"\"\"Return on success; raise CommitFailed on failure. No hidden retries.\"\"\"\n>     if self.fail_commit:\n>         raise CommitFailed(\"commit failed\")\n> ```\n> *\"Return on success; raise CommitFailed on failure. No hidden retries.\"* (store.py:7)\n\nIf `commit()` raises, `save_profile` has no `try`/`except` or `finally`, so the exception propagates out of `save_profile` and **line 5 (`cache.pop`) never runs**. The cache entry survives the failed commit \u2014 a stale cached value from a previous `load_profile` (`repo/profiles.py:8-11`, `cache[profile_id] = store.read(profile_id)`) would still be returned on the next read.\n\n## Corroborating evidence\n\n`repo/notes.txt:1`\n> *\"A future background cache invalidator was discussed. It has not been implemented.\"*\n\nSo there is no fallback mechanism that would clear the cache on failure; the only invalidation path is the post-commit `cache.pop` at `repo/profiles.py:5`.\n\n**Summary:** cache invalidation happens only *after* a successful commit (`profiles.py:4` \u2192 `profiles.py:5`); a failed commit raises `CommitFailed` (`store.py:9`) and leaves the cache untouched.",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 7.7e-05,
+              "output_cost": 0.000242,
+              "total": 0.000519,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 3482,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 55,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 55
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000249,
+              "output_cost": 0.000136,
+              "total": 0.000585,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 4360,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 31,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 178
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000223,
+              "output_cost": 0.000114,
+              "total": 0.00057,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 1950,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 26,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 159
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000266,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000115,
+              "output_cost": 0.003318,
+              "total": 0.003699,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 19577,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1024,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 754,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 82
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "0dfabcc2b36f414eb9e4e9148daf24e2",
+        "runtime_status": "done",
+        "status": "completed",
+        "status_reasons": [],
+        "tool_reads": [
+          {
+            "path": "repo/profiles.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/store.py",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "repo/notes.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": 0.005373,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "save_profile writes, commits, then removes only the entry for profile.id.",
+        "A raised commit failure prevents execution reaching cache.pop.",
+        "The exception propagates from this function.",
+        "No implemented background invalidator is established by these files."
+      ],
+      "id": "repo-cache-order",
+      "question": "When is the cache invalidated by save_profile? Does a failed database commit clear it? Give the ordering and evidence.",
+      "sources": [
+        {
+          "bytes": 341,
+          "lines": 11,
+          "path": "repo/profiles.py",
+          "sha256": "83c9aa5c3ba99a673419e2b4d5267289b9081980bf5ff51bbae7d8ef383c367c"
+        },
+        {
+          "bytes": 323,
+          "lines": 10,
+          "path": "repo/store.py",
+          "sha256": "d832244a8d94be7c1689ef63001e0d7956e64d63e710b301c77e8c643abf0b20"
+        },
+        {
+          "bytes": 82,
+          "lines": 1,
+          "path": "repo/notes.txt",
+          "sha256": "11b60e894f169e6c912116c09a46dd6a74a64a8916cdcf55a775121b7b9df22d"
+        }
+      ]
+    },
+    {
+      "category": "transcript",
+      "delegated": {
+        "answer": "",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 6e-05,
+              "output_cost": 0.001549,
+              "total": 0.001859,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 12217,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 352,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 43
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000416,
+              "output_cost": 0.001153,
+              "total": 0.001819,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 13717,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 262,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 297
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000316,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000353,
+              "output_cost": 0.000519,
+              "total": 0.001188,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 4947,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 1216,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 118,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 252
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": "Agent stopped: it kept calling spawn_subagent with the same arguments (3 times) without making progress.",
+        "run_id": "d23f467f88f743de94ea2d26f33f25e6",
+        "runtime_status": "stuck",
+        "status": "non_delegating",
+        "status_reasons": [
+          "runtime_stuck",
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "tool_reads": [],
+        "total_cost_usd": 0.004866,
+        "worker_output": ""
+      },
+      "direct": {
+        "answer": "",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 7.7e-05,
+              "output_cost": 0.000356,
+              "total": 0.000633,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 3605,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 81,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 55
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00013,
+              "output_cost": 0.000185,
+              "total": 0.000515,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 2776,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 42,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 93
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000216,
+              "cache_write_cost": 0.0,
+              "input_cost": 8.5e-05,
+              "output_cost": 0.000383,
+              "total": 0.000684,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 4880,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 832,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 87,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 61
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000216,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000134,
+              "output_cost": 0.000308,
+              "total": 0.000658,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 4,
+            "latency_ms": 6888,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 832,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 70,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 96
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 9e-05,
+              "output_cost": 0.000167,
+              "total": 0.00049,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 5,
+            "latency_ms": 8227,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 38,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 64
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.00014,
+              "output_cost": 0.000123,
+              "total": 0.000496,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 6,
+            "latency_ms": 5513,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 28,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 100
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.005093,
+              "output_cost": 0.000726,
+              "total": 0.006069,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 7,
+            "latency_ms": 6408,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 165,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 3638
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.001181,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.005243,
+              "output_cost": 0.000647,
+              "total": 0.007071,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 8,
+            "latency_ms": 5288,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 4544,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 147,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 3745
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": "step budget exhausted",
+        "run_id": "2e4e02dde8314402b02628047017ee06",
+        "runtime_status": "stuck",
+        "status": "incomplete",
+        "status_reasons": [
+          "runtime_stuck"
+        ],
+        "tool_reads": [
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_glob"
+          },
+          {
+            "path": ".",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          },
+          {
+            "path": "meetings",
+            "run_kind": "primary",
+            "tool": "fs_list"
+          },
+          {
+            "path": "meetings/falcon-review.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "meetings/falcon-review.txt",
+            "run_kind": "primary",
+            "tool": "fs_grep"
+          },
+          {
+            "path": "meetings/falcon-review.txt",
+            "run_kind": "primary",
+            "tool": "fs_grep"
+          }
+        ],
+        "total_cost_usd": 0.016616,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "Monday 21 September at 09:00 UTC replaces Friday 18 September.",
+        "Initial audience is 20 internal accounts.",
+        "Ravi owns the rollout.",
+        "The 45,000-dollar cap replaces the 80,000-dollar proposal.",
+        "Security signoff is pending; launch is conditional, not approved.",
+        "The quoted adversarial test string is not an instruction or approval."
+      ],
+      "id": "transcript-late-correction",
+      "question": "What is the latest Falcon rollout plan: schedule, audience, owner, budget and approval status? Identify which opening statements were superseded and cite exact evidence.",
+      "sources": [
+        {
+          "bytes": 80096,
+          "lines": 659,
+          "path": "meetings/falcon-review.txt",
+          "sha256": "d4a8a0f60dd3e111a65f32cd2163d01e56db507cd69ac72044e248f882a90a79"
+        }
+      ]
+    },
+    {
+      "category": "transcript",
+      "delegated": {
+        "answer": "```tool_call\n{\"name\": \"spawn_subagent\", \"arguments\": {\"agent\": \"bulk-reader\", \"task\": \"Read the workspace files at exactly these paths: meetings/archive-review.txt and meetings/archive-addendum.txt. Do not assume their contents; read them with your available tools (handle missing/empty files by reporting exactly what you observe). Then answer: Which vendor was selected for the archive migration, and what contract price was approved? Report only what the provided record actually establishes, quoting the relevant passages verbatim with line numbers. If the two files conflict or one is silent/missing, state that explicitly. Also note any gaps (e.g., missing signature, missing approval, placeholder text).\"}}}}\n```",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.00025,
+              "cache_write_cost": 0.0,
+              "input_cost": 5.6e-05,
+              "output_cost": 0.001056,
+              "total": 0.001362,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 7813,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 960,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 240,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 40
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "476fb914c9fb444aba1be6e7effeda40",
+        "runtime_status": "done",
+        "status": "non_delegating",
+        "status_reasons": [
+          "named_bulk_reader_delegation_missing",
+          "bulk_reader_content_read_missing"
+        ],
+        "tool_reads": [],
+        "total_cost_usd": 0.001362,
+        "worker_output": ""
+      },
+      "direct": {
+        "answer": "The provided record does **not** establish either a selected vendor or an approved contract price \u2014 no such decision was ever made in the documented materials.\n\n**What the record shows:**\n\n1. **No vendor was selected.** The main meeting explicitly deferred the choice:\n   - `meetings/archive-review.txt:3` \u2014 Nia: \"Defer both vendor selection and budget approval until the next meeting.\"\n   - Two vendors were merely under consideration: \"We will collect proposals from Cedar and Birch.\" (`meetings/archive-review.txt:1`), and the comparison was unresolved: \"The estimates are not comparable; Cedar excluded support.\" (`meetings/archive-review.txt:2`)\n   - The deferral was confirmed: Omar: \"Agreed. No decision today.\" (`meetings/archive-review.txt:4`)\n\n2. **No contract price was approved.** Budget approval was explicitly deferred alongside vendor selection (`meetings/archive-review.txt:3`), and no price figure appears anywhere in either file.\n\n3. **No later decision exists in the record.** The only other document is explicitly non-decisive:\n   - `meetings/archive-addendum.txt:1` \u2014 \"This addendum lists the agenda only: vendor proposals, migration timing and support coverage. No subsequent decision is recorded here.\"\n\n**Conclusion:** The record establishes only that Cedar and Birch proposals were gathered, deemed non-comparable, and that both the vendor selection and the budget/contract approval were postponed. Any claim of a chosen vendor or an approved contract price is unsupported by the provided documents.",
+        "calls": [
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 7.3e-05,
+              "output_cost": 0.000264,
+              "total": 0.000537,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 1,
+            "latency_ms": 3244,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 60,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 52
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.0002,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000231,
+              "output_cost": 0.000154,
+              "total": 0.000585,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 2,
+            "latency_ms": 2787,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 768,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 35,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 165
+            }
+          },
+          {
+            "agent_role": "main",
+            "cost": {
+              "as_of": "2026-09-08",
+              "audio_input_cost": 0.0,
+              "audio_output_cost": 0.0,
+              "cache_read_cost": 0.000233,
+              "cache_write_cost": 0.0,
+              "input_cost": 0.000139,
+              "output_cost": 0.001716,
+              "total": 0.002088,
+              "transcription_cost": 0.0
+            },
+            "cost_status": "known",
+            "failure": null,
+            "finish_reason": "stop",
+            "index": 3,
+            "latency_ms": 11545,
+            "model": "glm-5.3",
+            "output_truncated": false,
+            "provider": "ZAI",
+            "provider_output_limited": false,
+            "status": "completed",
+            "usage": {
+              "audio_input": 0,
+              "audio_output": 0,
+              "cache_read": 896,
+              "cache_write": 0,
+              "model": "glm-5.3",
+              "output": 390,
+              "partial": false,
+              "provider": "ZAI",
+              "transcription_seconds": 0.0,
+              "uncached_input": 99
+            }
+          }
+        ],
+        "child_runs": [],
+        "cost_status": "known",
+        "delegation_occurred": false,
+        "primary_error": null,
+        "run_id": "9f97fedd24974bdea3a511392829488c",
+        "runtime_status": "done",
+        "status": "completed",
+        "status_reasons": [],
+        "tool_reads": [
+          {
+            "path": "meetings/archive-review.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          },
+          {
+            "path": "meetings/archive-addendum.txt",
+            "run_kind": "primary",
+            "tool": "fs_read"
+          }
+        ],
+        "total_cost_usd": 0.00321,
+        "worker_output": ""
+      },
+      "expected_facts": [
+        "No vendor selection is recorded in the supplied sources.",
+        "No contract price is approved or stated.",
+        "Selection and budget approval were deferred.",
+        "Do not fabricate a vendor, price or later-meeting outcome."
+      ],
+      "id": "transcript-absent-answer",
+      "question": "Which vendor was selected for the archive migration, and what contract price was approved? State what the provided record establishes.",
+      "sources": [
+        {
+          "bytes": 259,
+          "lines": 4,
+          "path": "meetings/archive-review.txt",
+          "sha256": "600012995490a748597377212b24cf3771c717d22d2c350ae189541f54e4e654"
+        },
+        {
+          "bytes": 135,
+          "lines": 1,
+          "path": "meetings/archive-addendum.txt",
+          "sha256": "c00ec0323d0fadc0a964dcc23fd67684372084b3375b2f66eff40920403fc911"
+        }
+      ]
+    }
+  ],
+  "corpus": {
+    "id": "bulk-reader-pilot-v1",
+    "schema_version": 1,
+    "sha256": "994ea96487bba0866ae1b6432fe130177b4cdf0cb4d44e9e4f342b771f3178dd"
+  },
+  "execution_order": [
+    "direct",
+    "delegated"
+  ],
+  "experiment": "bulk-reader-direct-vs-delegated",
+  "generated_at_utc": "2026-09-08T07:01:32.344288+00:00",
+  "limits": {
+    "max_output_tokens_per_call": 2048,
+    "max_provider_calls_per_arm": 8,
+    "max_recorded_output_chars": 16000,
+    "max_tool_call_seconds": 30.0,
+    "max_total_tokens_per_arm": 100000,
+    "max_wall_seconds_per_arm": 120.0,
+    "provider_request_retries": 0,
+    "provider_request_timeout_seconds": 60.0,
+    "supported_live_providers": [
+      "Moonshot",
+      "ZAI"
+    ]
+  },
+  "models": {
+    "main": "glm-5.3",
+    "worker": "glm-5.3-flash"
+  },
+  "provider": {
+    "base_url": "https://api.z.ai/api/paas/v4",
+    "execution_key": "zai",
+    "requested": "ZAI",
+    "resolved": "ZAI",
+    "transport_policy": {
+      "request_retries": 0,
+      "request_retry_delay_seconds": 0.0,
+      "request_timeout_seconds": 60.0
+    }
+  },
+  "quality_review": {
+    "rubric": {
+      "citation_accuracy": "Check quotations and cited line ranges against the materialized source.",
+      "decision": "Adopt only after both arms are reviewed; one small pilot is not a general savings or quality claim.",
+      "factual_coverage": "Record which expected facts are present and correct.",
+      "qualifications": "Retain exceptions, corrections and uncertainty.",
+      "unsupported_claims": "List factual claims not supported by the submitted files."
+    },
+    "status": "pending"
+  },
+  "schema_version": 1,
+  "status": "incomplete"
+}

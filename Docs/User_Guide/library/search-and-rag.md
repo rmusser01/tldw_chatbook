@@ -38,9 +38,9 @@ Top to bottom on the main canvas:
 - **"Sources"** — the scope block: a "Scope: …" summary line (reads "Scope:
   all local sources" when every available source is selected, otherwise the
   selected sources followed by what's off, e.g. "Scope: Notes, Conversations
-  (Media, Prompts off)") and one toggle per source type — ✓/○ **Notes**,
+  (Media, Prompts off)") and one toggle per source type — ☐/☑ **Notes**,
   **Media**, **Conversations**, **Prompts**, each with its count, e.g.
-  "✓ Media (1)".
+  "☑ Media (1)".
 - **"Answer"** (RAG Answer mode only) — the generated answer, its
   citations, or an honest abstention; sits between "Sources" and the
   evidence rows. Nothing renders here in Search mode, or before a RAG
@@ -69,8 +69,9 @@ Type into "Ask or search Library sources" and press Enter or **Run**. The
 gates are gentle: with no query the status line reads "Enter a question or
 search query."; with every source toggled off it reads "Select at least one
 source." Those are quiet nudges, not errors. Real failures are louder — a
-**"Blocked | <reason>"** callout plus a recovery block spelling out Why /
-Next / Recovery / Owner.
+callout carrying the reason and its next step on one line. (The full
+structured record — why, owner, the config-file remedy — goes to the log,
+not the screen.)
 
 The **mode** toggle carries both modes on its label — "mode: ✓ Search ⇄
 RAG Answer" — with ✓ marking the active one; a single press flips to the
@@ -183,7 +184,7 @@ are actually on screen right now.
 
 ### Sources scope
 
-The four toggles decide where the query looks: ✓ is in scope, ○ is
+The four toggles decide where the query looks: ☑ is in scope, ☐ is
 excluded; click to flip. A source whose count is (0) is disabled. If your
 Library is empty, the scope block takes over entirely: "No Library sources
 yet — import media or create notes, then search." with an **"Open Import
@@ -199,6 +200,52 @@ loading (right after landing on this canvas, or after a count lookup
 fails) filtering is suspended, so rows are never wrongly hidden before
 real counts arrive — the toggle strip and the run gate read the same
 either way.
+
+### Older-engine chunks: the report line and Re-chunk
+
+Under the source toggles, the panel reports how much of your Library was
+chunked by the pre-parity engine: **"Chunked by an older engine: N items."**
+The line (and everything in this section) appears only when such items
+actually exist — a fully migrated Library shows nothing at all, rather
+than a zero. Beside the line sits **"Re-chunk older-engine items"**,
+which re-chunks exactly those items through the current template-aware
+path: each item is re-chunked honoring **its own stored template choice**
+(the one picked at import, or the `[chunking] default_template` config
+fallback, or plain options), the old chunk rows are replaced in one
+transaction, and the item is force-reindexed into the semantic index —
+the stale vector document is deleted by its deterministic id first, so
+search serves the new chunk text, and the owning service's query cache is
+cleared. When the run lands, a summary line states the outcome honestly:
+**"N re-chunked, M skipped, K failed"** plus any notes (for example "…
+re-index skipped (semantic index unavailable)" when no embeddings index is
+configured) — never a bare "done". The reported count drops by exactly
+the number re-chunked; skipped and failed items keep their older-engine
+chunks.
+
+Details worth knowing before you press:
+
+- **Skips are honest, not silent.** An item whose source text is empty or
+  whose stored template no longer resolves is *skipped* and counted —
+  never silently re-chunked with different settings. Genuine errors (a
+  chunker crash, a database failure) are per-item *failures* that never
+  abort the rest of the batch.
+- **Re-chunk and index backfill refuse to overlap.** While a RAG index
+  backfill (Settings ▸ RAG) is running, the press is refused with a
+  notice — and a backfill is likewise refused while a re-chunk runs.
+  Neither cancels the other; wait for one to finish, then run the other.
+- **An interrupted run loses nothing.** The re-index step marks the item
+  as needing re-indexing *before* adding the new vector document, so a
+  crash in between leaves the item re-indexable — the next backfill
+  restores it to search rather than leaving it permanently absent.
+- **Offset-basis caveat for re-chunked items.** When the governing
+  template runs a preprocessing step (normalizing whitespace, cleaning
+  markdown), the re-chunked rows' start/end offsets count into that
+  *transformed* text, not necessarily the stored source — the same caveat
+  as template imports (see [Import &
+  export](import-and-export.md)). Each chunk's metadata names the basis
+  it used (`offset_basis`: "source" when nothing rewrote the text,
+  otherwise the preprocessing operation), so navigation and citation
+  consumers can check that one key instead of guessing.
 
 ### The generated answer
 
@@ -258,13 +305,14 @@ working credential* configured — an endpoint name alone is no longer
 enough to unblock Run. The block names whichever of the two is actually
 missing:
 
-- **No provider chosen at all** — **"Blocked | Select a provider/model
-  before asking for a RAG answer."**, recovery pointer "Console controls".
-- **A provider chosen, but no credential for it** — the block names the
-  key instead, e.g. **"Blocked | The configured provider has no usable API
-  key. Set ANTHROPIC_API_KEY or add api_key under
-  [api_settings.anthropic]."**, owner "LLM provider credential". Telling
-  you to pick a provider here would name a step you already finished.
+- **No provider chosen at all** — **"Select a provider/model before
+  asking for a RAG answer."**
+- **A provider chosen, but no credential for it** — **"No analysis
+  provider is configured · Set one in Settings ▸ Providers & Models."**,
+  with an **"Open Settings ▸ Providers"** button beside it that takes you
+  straight there. This is the same sentence the Media reader's analysis
+  gate uses, so one missing key never produces two different remedies; the
+  env-var / `[api_settings.<provider>]` detail is written to the log.
 
 A key set either the modern way (`[api_settings.<provider>] api_key = …`)
 or the legacy way (`[API] <provider>_api_key = …`) satisfies it — the same
@@ -355,9 +403,8 @@ populate results." A search that runs cleanly but finds nothing is a quiet
 two-line note, not an error: "No evidence matched '\<your query>'." then
 "Try broader terms." (or "Try broader terms or turn on more sources." when
 a real source is still toggled off). A genuine retrieval failure — missing
-dependencies, an empty index, no provider, a policy block — is louder: a
-**"Blocked | \<reason>"** callout plus the full Why / Next / Recovery /
-Owner block described above.
+dependencies, an empty index, no provider, a policy block — is louder: the
+one-line reason callout described above.
 
 In RAG Answer mode, when results land but the semantic query didn't
 actually touch one of your selected sources (or every hit's match is weak),
@@ -402,6 +449,11 @@ labeled **"Review evidence in Console"**; the snippet, citations, and
 source identity travel with it. See [Console: Context &
 RAG](../console/context-and-rag.md) for the staged-sources side.
 
+This is a **user-initiated Library search**. Staging its result is a one-shot
+manual action and **does not change the current conversation's Library
+controls**: Auto remains Never or Automatic, and Assistant remains Blocked or
+Allowed exactly as saved on the Console Library chip.
+
 If Console isn't set up yet (no provider/model configured), a toast warns
 that the evidence is staged and setup is what unlocks it before you
 navigate, and Console's own locked "Get started" card shows the same
@@ -424,7 +476,7 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 1. **Search everything, fast** — type your words into the rail's "Search
    Library…" box and press Enter. You land here with results.
 2. **Narrow the scope to media only** — under "Sources", click **Notes**,
-   **Conversations**, and **Prompts** so they show ○, leaving "✓ Media";
+   **Conversations**, and **Prompts** so they show ☐, leaving "☑ Media";
    run again.
 3. **Open an evidence hit** — press **Open** on its row; you jump straight
    to that item's editor or viewer in Library.
@@ -448,6 +500,19 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 | Enter (on a focused evidence card) | Select that evidence — the same as clicking its select action |
 | `o` (on a focused evidence card) | Open that item in its own Library surface |
 | `u` | Use Library context in Console — only while the "Search / RAG" rail row is selected; the footer hint appears here and nowhere else in Library. With an evidence card focused it selects that card first, so one key stages what you're looking at |
+| Esc (in the query box) | Leave the query box for the panel, so the panel's own keys work on the next keystroke. Nothing you typed is cleared |
+
+Five Tabs from the query box reach the first evidence card: Run, then each
+enabled source toggle, then the cards. The card you are on draws a solid
+block down its left edge — a shape, not just a colour — so it stays
+visible in a monochrome terminal and next to a card that is merely
+selected.
+
+The footer's **enter** hint names what Enter does on the control you are
+actually on: "run search" in the query box and on **Run**, "toggle
+Notes"/"toggle Media"/… on a source button, "switch mode" on the
+Search ⇄ RAG Answer toggle, and "select evidence" on a card. It used to
+read "select evidence" everywhere, including in the query box.
 
 ## Related settings & docs
 
@@ -487,7 +552,7 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
   above.
 - **The scope summary line tracks the toggles.** Deselecting a source (e.g.
   turning Media off) updates "Scope: …" to name what's still in scope and
-  what's off — it's a live summary of the ✓/○ toggles below it, not a fixed
+  what's off — it's a live summary of the ☐/☑ toggles below it, not a fixed
   label.
 - **A source toggle also filters the rows you're already looking at.** It
   is not just a setting for the next run — turning a source off hides its
@@ -744,3 +809,50 @@ play; the keyword-only Search run had its full list on screen at the first
 capture after Enter, in both arms. Hybrid and semantic profiles are untouched
 by the change rather than merely unexercised: their retrieval never enters this
 merge.*
+
+*Verified against feat/chunking-template-parity — 2026-08-21
+(chunking-template-parity tasks 12-13: the Sources block gains the
+"Chunked by an older engine: N items" report line and the "Re-chunk
+older-engine items" action documented above. The line is fetched off the
+mount path via the RAG admin scope service's diagnostics payload and is
+omitted when empty; the re-chunk worker runs in its own worker group
+behind a shared in-flight guard with the Settings backfill (a refusal
+notice, never worker cancellation), replaces chunk rows in one
+transaction honoring each item's stored template choice, force-reindexes
+by deterministic vector id with the pre-add needs-reindexing mark, and
+clears the query cache. Pinned by
+`Tests/UI/test_library_rag_legacy_chunk_report.py`,
+`Tests/Library/test_library_rechunk_service.py`,
+`Tests/UI/test_library_rag_rechunk_action.py`, and
+`Tests/RuntimePolicy/test_rechunk_policy_pin.py`.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
+docs-vs-live pass from critique #8): `enter`, `o` and `u` are bound and
+advertised in the footer, and each one gates on a focused
+`.library-rag-result-card` — but nothing gives an evidence card focus by
+keyboard, so the advertised flow is unreachable without a mouse (14
+consecutive Tabs never landed on a card and eventually left Library for
+the nav bar). The keys themselves are unchanged; the table now says which
+half works today. The fix is task-32053.)*
+
+*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32053: the
+focused evidence card now paints a left-edge block instead of only swapping
+its border colour — the generic focus outline had been painting over the
+card's own border, so the cue was colour-alone; **Run** gains the compact
+buttons' focus rails; the footer's Enter hint follows the focused control;
+and Escape leaves the query box. Pinned in
+`Tests/UI/test_library_crit8_keyboard.py`.)*
+
+*Verified against fix/library-crit9-grammar — 2026-09-10 (task-32236 and
+task-32235: a RAG Answer blocked on a missing provider credential now paints
+ONE line — "No analysis provider is configured · Set one in Settings ▸
+Providers & Models." — plus an "Open Settings ▸ Providers" button, instead of
+six lines naming an env var, a TOML table and an "Owner"; the structured
+record moved to the log. The Sources toggles read "☐/☑", not "○/✓".
+Live-verified at 235x52 and 100x30 on a profile with no provider.)*
+
+*Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
+critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
+32354, 32355). The "mode: ✓ Search ⇄ RAG Answer" toggle this page documents
+was re-checked live at 235x52 and is the first control on the canvas — the
+critique row claiming it does not exist was wrong, and nothing here changed.*

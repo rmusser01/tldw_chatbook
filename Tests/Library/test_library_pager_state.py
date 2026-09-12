@@ -5,6 +5,8 @@ import pytest
 from tldw_chatbook.Library.library_pager_state import (
     LibraryPagerDisplay,
     build_library_pager_display,
+    library_pager_layout,
+    simple_library_pager_display,
 )
 
 
@@ -84,6 +86,47 @@ def test_one_row_page_has_both_visible_boundary_reasons():
     assert display.page_copy == "Page 1 of 1"
     assert display.previous_reason == "Already on the first page."
     assert display.next_reason == "No more results."
+
+
+def test_single_page_fresh_result_is_flagged_single_page():
+    # task-28016: one full page (total <= page_size) is a single page, so the
+    # media canvas can drop the "Page 1 of 1" / boundary-reason chrome.
+    display = _fresh_display(applied_page=1, requested_page=1, total=3, row_count=3)
+
+    assert display.single_page is True
+    assert display.page_copy == "Page 1 of 1"
+
+
+def test_empty_fresh_result_is_flagged_single_page():
+    display = _fresh_display(applied_page=1, requested_page=1, total=0, row_count=0)
+
+    assert display.single_page is True
+
+
+def test_multi_page_result_is_not_single_page():
+    # _fresh_display defaults to 45 rows over a 20-row page (3 pages).
+    assert _fresh_display().single_page is False
+
+
+def test_loading_single_page_is_not_flagged_single_page():
+    display = _fresh_display(
+        applied_page=1, requested_page=2, total=3, row_count=3, loading=True
+    )
+
+    assert display.single_page is False
+
+
+def test_uninitialized_state_is_not_flagged_single_page():
+    display = build_library_pager_display(
+        applied_page=None,
+        requested_page=1,
+        page_size=20,
+        row_count=0,
+        total=None,
+        freshness="uninitialized",
+    )
+
+    assert display.single_page is False
 
 
 def test_successfully_empty_collection_is_not_uninitialized():
@@ -382,3 +425,72 @@ def test_stale_state_rejects_error_copy_even_with_meaningful_stale_copy():
             error_copy="Couldn't refresh page.",
             stale_copy="List may be out of date",
         )
+
+
+# ---------------------------------------------------------------------------
+# ``simple_library_pager_display`` (task-32354): the factory for a source
+# that pages itself and cannot satisfy ``build_library_pager_display``'s
+# row-count invariants.
+# ---------------------------------------------------------------------------
+
+
+def test_simple_display_on_one_page_is_single_page_with_both_reasons():
+    display = simple_library_pager_display(
+        range_copy="0–0 of 0",
+        page=1,
+        total_pages=1,
+        has_previous=False,
+        has_next=False,
+    )
+
+    assert display == LibraryPagerDisplay(
+        title_count=None,
+        range_copy="0–0 of 0",
+        page_copy="Page 1 of 1",
+        status_copy="",
+        previous_disabled=True,
+        next_disabled=True,
+        previous_reason="Already on the first page.",
+        next_reason="No more results.",
+        retry_visible=False,
+        single_page=True,
+    )
+    layout = library_pager_layout(display)
+    assert layout.status_parts == ("0–0 of 0",)
+    assert layout.boundary_reasons == ()
+    assert layout.controls_hidden is True
+
+
+def test_simple_display_with_a_next_page_keeps_every_part_of_the_pager():
+    display = simple_library_pager_display(
+        range_copy="1–20 of 21",
+        page=1,
+        total_pages=2,
+        has_previous=False,
+        has_next=True,
+    )
+
+    assert display.single_page is False
+    assert display.next_reason == ""
+    layout = library_pager_layout(display)
+    assert layout.status_parts == ("1–20 of 21", "Page 1 of 2")
+    assert layout.boundary_reasons == ("Already on the first page.",)
+    assert layout.controls_hidden is False
+
+
+def test_simple_display_drops_page_copy_when_the_page_count_is_unknown():
+    """A service that cannot give an exact total still gets a usable pager:
+    no "Page x of 0", and the controls stay because a next page may exist."""
+    display = simple_library_pager_display(
+        range_copy="Page 2 · total unavailable",
+        page=2,
+        total_pages=0,
+        has_previous=True,
+        has_next=True,
+    )
+
+    assert display.page_copy == ""
+    assert display.single_page is False
+    layout = library_pager_layout(display)
+    assert layout.status_parts == ("Page 2 · total unavailable",)
+    assert layout.controls_hidden is False

@@ -179,6 +179,30 @@ async def test_narrow_width_layout_80x24():
 
 
 @pytest.mark.asyncio
+async def test_console_capture_controls_are_reachable_at_80x24() -> None:
+    app = _build_test_app()
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        await _settle(pilot)
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        await pilot.pause()
+
+        enabled = screen.query_one("#settings-console-exchange-capture-enabled")
+        pii = screen.query_one("#settings-console-trace-pii-redaction")
+        viewer = screen.query_one("#settings-console-trace-viewer-profile")
+        status = screen.query_one("#settings-console-exchange-capture-status")
+        scroll = screen.query_one("#settings-detail-pane-body")
+        scroll.scroll_to_widget(status, animate=False)
+        await pilot.pause()
+
+        assert enabled.region.height > 0
+        assert pii.region.height > 0
+        assert viewer.region.height > 0
+        assert status.region.height > 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("size", "category_value", "expected_words"),
     [

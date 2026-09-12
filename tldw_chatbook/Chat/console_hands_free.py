@@ -172,7 +172,11 @@ if TYPE_CHECKING:
 HandsFreeState = Literal["idle", "listening", "countdown", "awaiting_reply", "speaking"]
 
 _VALID_STATES: tuple[HandsFreeState, ...] = (
-    "idle", "listening", "countdown", "awaiting_reply", "speaking",
+    "idle",
+    "listening",
+    "countdown",
+    "awaiting_reply",
+    "speaking",
 )
 
 #: How long `awaiting_reply` may wait, via `tick()`, before presuming the
@@ -647,7 +651,9 @@ class HandsFreeController:
             if not self._acoustic_barge_in:
                 return  # default mode: nothing to reopen, no ceiling to track
             if had_segments:
-                self._capture_limit_reopened = False  # a real capture; reset the ceiling
+                self._capture_limit_reopened = (
+                    False  # a real capture; reset the ceiling
+                )
                 self._reopen_capture_if_closed()
                 return
             if not self._capture_limit_reopened:

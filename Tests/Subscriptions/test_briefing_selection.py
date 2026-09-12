@@ -193,9 +193,9 @@ def test_list_briefings_returns_newest_first_by_identity():
     db = SubscriptionsDB(":memory:", "test")
     w = WatchlistBundleService(db).create(name="w")["id"]
 
-    first = db.insert_briefing(w)
-    second = db.insert_briefing(w)
-    third = db.insert_briefing(w)
+    first = db.insert_briefing(w, status="complete")
+    second = db.insert_briefing(w, status="complete")
+    third = db.insert_briefing(w, status="complete")
 
     listed = db.list_briefings(w)
     assert [row["id"] for row in listed] == [third, second, first]
@@ -268,8 +268,9 @@ def _complete_briefing(db, watchlist_id, covers_through_item_id, *, item_ids=())
     with db.transaction() as conn:
         for item_id in item_ids:
             conn.execute(
-                "INSERT INTO briefing_items (briefing_id, item_id, featured) "
-                "VALUES (?, ?, 0)",
+                "INSERT INTO briefing_items "
+                "(briefing_id, item_id, featured, provenance_version) "
+                "VALUES (?, ?, 0, 1)",
                 (briefing_id, item_id),
             )
     return briefing_id
@@ -725,8 +726,9 @@ def test_a_failed_briefings_junction_rows_do_not_bury_a_queued_item():
         db.update_briefing(briefing, status=status, error="boom")
         with db.transaction() as conn:
             conn.execute(
-                "INSERT INTO briefing_items (briefing_id, item_id, featured) "
-                "VALUES (?, ?, 1)",
+                "INSERT INTO briefing_items "
+                "(briefing_id, item_id, featured, provenance_version) "
+                "VALUES (?, ?, 1, 1)",
                 (briefing, queued),
             )
 
@@ -735,6 +737,9 @@ def test_a_failed_briefings_junction_rows_do_not_bury_a_queued_item():
     assert _ids(select_briefing_items(db, watchlist, mode="curated")) == [queued]
 
     # ... and a briefing that DID reach the user still excludes it.
+    assert db.transition_briefing(
+        briefing, status="failed", error="interrupted"
+    ) is not None
     _complete_briefing(db, watchlist, queued, item_ids=[queued])
     assert select_briefing_items(db, watchlist, mode="curated").items == []
 

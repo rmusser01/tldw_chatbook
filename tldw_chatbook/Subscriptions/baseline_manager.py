@@ -49,8 +49,27 @@ from difflib import SequenceMatcher
 
 #
 # Third-Party Imports
-from bs4 import BeautifulSoup
 from loguru import logger
+
+# bs4 is extras-only (`[subscriptions]` among others): guarded so a base
+# install can import this module; parsing degrades at use time (TASK-21104).
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover - exercised via the base-install probe
+    BeautifulSoup = None  # type: ignore[assignment]
+
+_BS4_INSTALL_HINT = (
+    "beautifulsoup4 is required to analyze HTML content for baselines, "
+    "but it is not installed. "
+    "Install it with: pip install tldw_chatbook[subscriptions]"
+)
+
+
+def _require_beautifulsoup() -> type:
+    """Return the BeautifulSoup class or raise an actionable ImportError."""
+    if BeautifulSoup is None:
+        raise ImportError(_BS4_INSTALL_HINT)
+    return BeautifulSoup
 
 #
 # Local Imports
@@ -155,7 +174,7 @@ class ContentAnalyzer:
     def extract_text(self, html_content: str) -> str:
         """Extract clean text from HTML."""
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
+            soup = _require_beautifulsoup()(html_content, "html.parser")
 
             # Remove script and style elements
             for script in soup(["script", "style"]):
@@ -178,7 +197,7 @@ class ContentAnalyzer:
     def calculate_structural_hash(self, html_content: str) -> str:
         """Calculate hash of HTML structure (tags only, no content)."""
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
+            soup = _require_beautifulsoup()(html_content, "html.parser")
 
             # Build structure string
             structure_parts = []
@@ -201,7 +220,7 @@ class ContentAnalyzer:
     def extract_key_elements(self, html_content: str) -> Dict[str, Any]:
         """Extract key elements like headers, links, images."""
         try:
-            soup = BeautifulSoup(html_content, "html.parser")
+            soup = _require_beautifulsoup()(html_content, "html.parser")
 
             elements = {
                 "title": soup.find("title").get_text() if soup.find("title") else None,
@@ -367,7 +386,7 @@ class ChangeDetector:
     def _apply_ignore_selectors(self, content: str, ignore_selectors: List[str]) -> str:
         """Remove elements matching ignore selectors."""
         try:
-            soup = BeautifulSoup(content, "html.parser")
+            soup = _require_beautifulsoup()(content, "html.parser")
 
             for selector in ignore_selectors:
                 for element in soup.select(selector):

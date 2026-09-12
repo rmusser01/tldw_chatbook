@@ -18,7 +18,7 @@ required.
 
 ## Getting there
 
-Press **F9**, or click **F9 Settings** in the nav bar (**Ctrl+P** →
+Press **F4**, or click **F4 Settings** in the nav bar (**Ctrl+P** →
 "Tab Navigation: Switch to Settings" also works), then pick **Speech &
 TTS** in the left
 category rail (it sits in the **Core** group). The panel has three cards:
@@ -131,12 +131,12 @@ Beyond the app-wide default above, a **character** can carry its own voice,
 which outranks it. This is managed in two different places, deliberately
 kept apart:
 
-- **Create the profile** in the Speech Lab (**F7** ▸ **Speech** ▸ **🎤 TTS
+- **Create the profile** in the Speech Lab (**F2** ▸ **Speech** ▸ **🎤 TTS
   Playground**): generate a result, then **Save result as profile**. This
   works for all seven built-in providers, not just audio.cpp — pick
   whichever provider/model/voice you generated with.
 - **Assign it to a character** in **Roleplay & Chat Dictionaries**
-  (**Ctrl+5**) ▸ **Characters** ▸ open a character's card or editor ▸ the
+  (**Ctrl+4**) ▸ **Characters** ▸ open a character's card or editor ▸ the
   **Voice & Speech** block. Its picker's first option is **"Use global
   default"** (this app-wide default, or the plain axes below it if no
   default profile is set); every other option is one of your saved

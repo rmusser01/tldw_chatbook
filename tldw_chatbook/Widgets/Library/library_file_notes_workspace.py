@@ -8,7 +8,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path, PurePosixPath
-from threading import Lock, RLock
+from threading import Event, Lock, RLock
+from time import monotonic
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
@@ -19,9 +20,9 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.events import Resize
-from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.worker import Worker
 from textual.widgets import Button, Input, ListView, Static, TextArea, Tree
 
@@ -29,6 +30,16 @@ from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
     get_cli_setting,
     get_user_data_dir,
+)
+from tldw_chatbook.Library.library_browse_location import (
+    claim_browse_directory,
+    remember_browse_directory,
+    validated_browse_directory,
+)
+from tldw_chatbook.Library.library_structural_wait import (
+    STRUCTURAL_WAIT_PATIENCE_SECONDS,
+    WAIT_OWNER_FILE_NOTES,
+    StructuralWait,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
@@ -82,10 +93,26 @@ from tldw_chatbook.Notes.file_notes_service import (
     OpenedFileNote,
     OperationResult,
     ReconcileResult,
+    ScanCancelled,
     ScanResult,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.Utils.adaptive_reader_state import (
+    AdaptiveReaderEffectiveLayout,
+    AdaptiveReaderLayoutPreferences,
+    AdaptiveReaderLayoutProfile,
+    PaneName,
+    resolve_adaptive_reader_layout,
+)
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.path_validation import (
+    validate_existing_absolute_directory,
+)
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    AdaptiveReaderShellResized,
+    LibraryAdaptiveReaderShell,
+)
+from tldw_chatbook.Widgets.Library.library_notes_canvas import NotesStatusChannels
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     CommitDraftProjection,
@@ -103,6 +130,126 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     SessionGitTrustDialog,
     _middle_elide_cells,
 )
+from tldw_chatbook.Widgets.Library.library_file_notes_events import (
+    FileNotesEditableOpened,
+    FileNotesIdentityCleared,
+    FileNotesReloadConfirmationChanged,
+    FileNotesRootChanged,
+)
+
+FileNotesPathTask = Literal["none", "new", "move", "save_copy"]
+FileNotesWorkMode = Literal["edit", "manage"]
+
+
+def resolve_file_note_status_channels(
+    *,
+    root: str | Path | None,
+    conflict: bool = False,
+    unavailable: bool = False,
+    read_only: bool = False,
+    exact_export_available: bool = False,
+    save_failed: bool = False,
+    saving: bool = False,
+    dirty: bool = False,
+    git_failure: str = "",
+    git_uncertain: str = "",
+    git_running: str = "",
+    git_changes: int = 0,
+    authority_failure: str = "",
+    authority_uncertain: str = "",
+    authority_running: str = "",
+) -> NotesStatusChannels:
+    """Resolve Folder content and Git status without cross-channel masking.
+
+    Args:
+        root: Active Folder Files root, or ``None`` when no root is linked.
+        conflict: Whether disk and editor content conflict.
+        unavailable: Whether the linked root cannot currently be reached.
+        read_only: Whether the opened document cannot be edited.
+        exact_export_available: Whether the exact read-only content can be exported.
+        save_failed: Whether the latest save attempt failed.
+        saving: Whether a save is currently running.
+        dirty: Whether the editor contains unsaved changes.
+        git_failure: Bounded detail for a failed Git operation.
+        git_uncertain: Bounded detail for a Git operation with an uncertain outcome.
+        git_running: Bounded detail for the active Git operation.
+        git_changes: Number of observed repository changes.
+        authority_failure: Bounded detail for a failed authority operation.
+        authority_uncertain: Bounded detail for an uncertain authority operation.
+        authority_running: Bounded detail for the active authority operation.
+
+    Returns:
+        The independent content, authority, and safe-action status channels.
+    """
+    if conflict:
+        content = "Conflict — the disk file changed; your draft is preserved."
+        safe = "Save Copy"
+    elif unavailable:
+        content = "Unavailable — the folder cannot be reached; your draft is preserved."
+        safe = "Choose folder"
+    elif read_only:
+        content = (
+            "Read-only — the file cannot be edited; the current text is preserved."
+        )
+        safe = "Export exact copy" if exact_export_available else "Open Manage"
+    elif save_failed:
+        content = "Save failed — your draft remains in the editor."
+        safe = "Save Copy"
+    elif saving:
+        content, safe = "Saving…", None
+    elif dirty:
+        content, safe = "Unsaved changes", None
+    else:
+        content, safe = "Saved", None
+
+    if git_failure:
+        failure_lower = git_failure.casefold()
+        if "commit" in failure_lower:
+            git_failure = "Commit failed"
+        elif "push" in failure_lower:
+            git_failure = "Push failed"
+        elif "status" in failure_lower:
+            git_failure = "Git status failed"
+        elif "action" in failure_lower or "stage" in failure_lower:
+            git_failure = "Git action failed"
+        elif cell_len(git_failure) > 24:
+            git_failure = "Git operation failed"
+    if git_uncertain and cell_len(git_uncertain) > 24:
+        git_uncertain = "Outcome uncertain"
+    if git_running and cell_len(git_running) > 24:
+        git_running = "Git operation running"
+
+    status_copy = authority_failure or authority_uncertain or authority_running
+    if not status_copy:
+        status_copy = (
+            (f"Git · {git_failure}" if git_failure else "")
+            or (f"Git · {git_uncertain}" if git_uncertain else "")
+            or (f"Git · {git_running}" if git_running else "")
+        )
+    if not status_copy and git_changes:
+        change_word = "change" if git_changes == 1 else "changes"
+        status_copy = f"Git · {git_changes} {change_word}"
+    if cell_len(status_copy) > 34:
+        status_copy = _middle_elide_cells(status_copy, 34)
+
+    authority_suffix = f" · {status_copy}" if status_copy else ""
+    if root is None:
+        root_copy = "No folder selected"
+    else:
+        path = Path(root)
+        folder_name = path.name or path.anchor or str(path)
+        authority_prefix = "Folder files · Folder:"
+        available = 60 - cell_len(authority_prefix + " " + authority_suffix)
+        if available > 0:
+            root_name = _middle_elide_cells(folder_name, min(14, available))
+            root_copy = f"Folder: {root_name}"
+        else:
+            root_copy = "Folder:…"
+    authority = f"Folder files · {root_copy}{authority_suffix}"
+    if cell_len(authority) > 60:
+        authority = _middle_elide_cells(authority, 60)
+    return NotesStatusChannels(content, authority, safe)
+
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
 _SAVE_STATE_COPY: dict[SaveState, str] = {
@@ -114,10 +261,44 @@ _SAVE_STATE_COPY: dict[SaveState, str] = {
     "error": "Save failed: draft preserved in editor",
 }
 _UNSET = object()
-_SESSION_GIT_MUTATION_BUSY = (
-    "Git operation in progress; structural actions are busy."
+_SESSION_GIT_MUTATION_BUSY = "Git operation in progress; structural actions are busy."
+#: task-32055: a folder change waits this long before it gives up. Read at
+#: call time (never bound as a default argument) so tests can shorten it.
+ROOT_CHANGE_TIMEOUT_SECONDS = 30.0
+#: How often the scan thread looks up from waiting for the service lock to
+#: ask whether its attempt has been abandoned. Short enough to be invisible
+#: beside a folder change, long enough not to spin.
+SERVICE_LOCK_POLL_SECONDS = 0.05
+ROOT_CHANGE_CANCELLED_COPY = "Folder change cancelled · previous folder kept"
+ROOT_CHANGE_TIMEOUT_COPY = (
+    "Folder change timed out · previous folder kept. "
+    "Try again or choose a different folder."
+)
+#: Root persistence past its atomic file replacement is deliberately
+#: unstoppable: refusing to publish there would leave the on-disk config
+#: pointing at a folder the UI never adopted. When a cancel or the deadline
+#: loses that race, the receipt -- not the commit -- is what has to stay
+#: honest.
+ROOT_CHANGE_LANDED_COPY = (
+    "Folder change finished before it could be stopped · now linked to the "
+    "new folder."
+)
+#: task-32136: the empty state has to say what this MODE of Notes is before
+#: it asks for a folder -- "Choose a notes folder." explained nothing.
+FOLDER_FILES_EMPTY_COPY = (
+    "Folder files edits Markdown files in a folder on disk, in place. "
+    "Nothing is copied into the Library."
 )
 FILE_TREE_BATCH_SIZE = 100
+
+
+class _ServiceLockBusy(Exception):
+    """An earlier File Notes operation still owns the service lock."""
+
+
+def _folder_label(path: Path) -> str:
+    """Name one folder for a status line or a button (``/`` has no name)."""
+    return path.name or path.anchor or str(path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -557,12 +738,7 @@ class FileNotesConflictCompareDialog(SafeModalDismissMixin, ModalScreen[None]):
 class LibraryFileNotesWorkspace(Vertical):
     """Browse and edit one disk-authoritative Markdown/text root."""
 
-    class ReloadConfirmationChanged(Message):
-        """Announce whether the destructive reload confirmation is active."""
-
-        def __init__(self, active: bool) -> None:
-            super().__init__()
-            self.active = active
+    ReloadConfirmationChanged = FileNotesReloadConfirmationChanged
 
     DEFAULT_CSS = """
     LibraryFileNotesWorkspace {
@@ -577,13 +753,9 @@ class LibraryFileNotesWorkspace(Vertical):
         max-height: 1;
     }
 
-    /* LIB-19 / TASK-14880: placement sentence relating Files mode to
-       Database/Sync. Keep the muted treatment used by
-       #library-notes-database-purpose
-       and #library-notes-sync-purpose (library_notes_canvas.py /
-       css/components/_agentic_terminal.tcss), but allow the concise copy
-       one additional row at compact widths rather than clipping it. */
-    #file-notes-purpose {
+    /* Pinned authority remains readable without consuming the editor's
+       compact conflict controls. */
+    #file-notes-authority {
         width: 100%;
         height: auto;
         min-height: 1;
@@ -629,8 +801,16 @@ class LibraryFileNotesWorkspace(Vertical):
         width: auto;
     }
 
+    /* task-32180: every optional control in the folder row, not just the
+       two it shipped with. Textual's Button default is ``min-width: 16``,
+       so "Cancel" reserved 16 cells and the row's three wait controls ran
+       11 cells off the right edge of a 60-column terminal. */
     #file-notes-root-details,
-    #file-notes-choose-root {
+    #file-notes-choose-root,
+    #library-structural-wait-cancel,
+    #file-notes-root-keep-waiting,
+    #file-notes-root-choose-another,
+    #file-notes-use-sync-folder {
         width: auto;
         min-width: 0;
         height: 1;
@@ -649,6 +829,19 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 8;
     }
 
+    /* task-32173: before a folder is linked the body holds the Library
+       rail and nothing else, so it must not claim eight rows back from
+       the empty state's own copy on a short terminal. */
+    #file-notes-body.-no-root {
+        min-height: 0;
+    }
+
+    #library-file-notes-reader-shell,
+    #file-notes-work {
+        height: 100%;
+        min-width: 0;
+    }
+
     #file-notes-navigator {
         width: 3fr;
         min-width: 24;
@@ -658,18 +851,29 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-editor-pane {
-        width: 7fr;
-        min-width: 32;
+        width: 100%;
+        min-width: 0;
         height: 100%;
         padding-left: 1;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     #file-notes-search-row,
-    #file-notes-path-row,
     #file-notes-search,
     #file-notes-path {
         height: 3;
         min-height: 3;
+    }
+
+    #file-notes-path-row {
+        height: 4;
+        min-height: 4;
+    }
+
+    #file-notes-path-task {
+        height: 5;
+        min-height: 5;
     }
 
     .file-notes-field-label {
@@ -688,8 +892,11 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-path-label {
-        width: 17;
-        min-width: 17;
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        padding-right: 0;
+        content-align: left top;
     }
 
     #file-notes-search,
@@ -712,10 +919,23 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-breadcrumb {
+        width: 1fr;
+        min-width: 0;
         text-style: bold;
     }
 
+    #file-notes-work-header {
+        height: auto;
+        min-height: 1;
+    }
+
+    #file-notes-mode-controls {
+        width: auto;
+        min-width: 14;
+    }
+
     #file-notes-save-status,
+    #file-notes-save-detail,
     #file-notes-preview-status,
     #file-notes-action-status {
         color: $text-muted;
@@ -755,10 +975,6 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
-    LibraryFileNotesWorkspace.-reload-confirming #file-notes-path-row {
-        display: none;
-    }
-
     #file-notes-reload-confirm {
         color: $error;
         text-style: bold;
@@ -767,6 +983,18 @@ class LibraryFileNotesWorkspace(Vertical):
     #file-notes-editor {
         height: 1fr;
         min-height: 5;
+    }
+
+    #file-notes-edit-region,
+    #file-notes-manage-region {
+        height: 1fr;
+        min-height: 0;
+    }
+
+    #file-notes-edit-region,
+    #file-notes-manage-region {
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     .file-notes-toolbar {
@@ -790,6 +1018,11 @@ class LibraryFileNotesWorkspace(Vertical):
         background: transparent;
     }
 
+    #file-notes-session-changes {
+        width: 1fr;
+        padding: 0;
+    }
+
     LibraryFileNotesWorkspace.-prepare-session-wide .file-notes-toolbar {
         display: none;
     }
@@ -799,6 +1032,19 @@ class LibraryFileNotesWorkspace(Vertical):
         grid-size: 2;
         grid-columns: 1fr 1fr;
         height: auto;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-editor-pane {
+        padding-left: 0;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-work-header {
+        layout: vertical;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-mode-controls {
+        width: 100%;
+        min-width: 0;
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions .file-notes-toolbar Button {
@@ -927,10 +1173,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._autosave_timer: Timer | None = None
         self._poll_worker: Worker[Any] | None = None
         self._save_worker: Worker[Any] | None = None
+        self._save_task: asyncio.Task[bool] | None = None
         self._git_status_worker: Worker[Any] | None = None
         self._git_action_worker: Worker[Any] | None = None
         self._git_status_task: asyncio.Task[SessionGitStatus] | None = None
         self._git_status_task_binding: SessionBinding | None = None
+        self._git_status_failure = ""
+        self._git_action_running = ""
         self._active = False
         self._refresh_lock = asyncio.Lock()
         self._save_lock = asyncio.Lock()
@@ -940,6 +1189,23 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_transitioning = False
         self._path_transitioning = False
         self._shutdown = False
+        # task-32055: the one in-flight structural wait (a folder change),
+        # its cancellable task, and the timer that repaints it once the
+        # patience window closes.
+        self._structural_wait: StructuralWait | None = None
+        self._structural_wait_task: asyncio.Task[bool] | None = None
+        self._structural_wait_timer: Timer | None = None
+        # task-32121: cancelling the asyncio task left the SCAN THREAD
+        # running under ``_service_lock``, so every later folder change
+        # queued behind it. Each attempt now carries its own cancel Event
+        # (created in ``_change_root_with_deadline``, handed to the thread
+        # and to the abandon seam) -- deliberately NOT widget state, so a
+        # superseding attempt can neither cancel itself nor miss its own
+        # flag. The count and the extension drive the busy row's line.
+        self._root_scan_entries = 0
+        self._root_change_extension: float | None = None
+        self._root_change_extension_used = False
+        self._root_action_reason = ""
 
         self._entries: dict[str, FileNoteEntry] = {}
         self._deleted_paths: tuple[str, ...] = ()
@@ -967,6 +1233,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._editor_action_layout_sync_scheduled = False
         self._editor_action_focus_target: str | None = None
         self._maintenance_expanded = False
+        self._work_mode: FileNotesWorkMode = "edit"
+        self._path_task: FileNotesPathTask = "none"
+        self._path_task_opener_id = ""
+        self._path_task_editor_lease: _EditorReadOnlyLease | None = None
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
@@ -986,9 +1256,7 @@ class LibraryFileNotesWorkspace(Vertical):
             "needs_attention",
         ] = "idle"
         self._push_view_phase: PushPanelPhase = "list"
-        self._push_authorization_projection: (
-            PushAuthorizationProjection | None
-        ) = None
+        self._push_authorization_projection: PushAuthorizationProjection | None = None
         self._push_review_handle: PushReviewHandle | None = None
         self._push_review_projection: PushPanelReviewProjection | None = None
         self._push_result: object | None = None
@@ -1027,6 +1295,301 @@ class LibraryFileNotesWorkspace(Vertical):
             id="file-notes-editor",
             read_only=True,
         )
+        self._search_widget = Input(
+            placeholder="File contents…",
+            id="file-notes-search",
+            value=self._search_query,
+        )
+        self._tree_widget: Tree[object] = Tree("Files", id="file-notes-tree")
+        self._search_results_widget: Tree[object] = Tree(
+            "Search results",
+            id="file-notes-search-results",
+        )
+        self._search_results_widget.display = False
+        self._reader_items_widget = self._build_reader_items_pane()
+        self._reader_work_widget = self._build_reader_work_pane()
+        self._reader_shell: LibraryAdaptiveReaderShell | None = None
+        self._reader_shell_external = False
+        # Placeholder until the first resolve; its default `grip_width` is
+        # `PANE_GRIP_WIDTH`, which is what LIBRARY_FILE_NOTES_READER_PROFILE
+        # reserves today. It does not have to be kept in step by hand: the
+        # shell re-applies `layout.grip_width` on every `sync_layout`, so the
+        # first resolved layout corrects a stale grip (task-31952 AC#3).
+        self._reader_layout = AdaptiveReaderEffectiveLayout(
+            library_open=False,
+            items_open=True,
+            library_width=0,
+            items_width=40,
+            reader_width=30,
+            priority_pane=None,
+        )
+        self._standalone_reader_preferences = AdaptiveReaderLayoutPreferences(
+            library_open=False,
+            items_open=True,
+        )
+
+    def _build_reader_items_pane(self) -> Widget:
+        """Build the retained Folder navigator role once."""
+        return Vertical(
+            Horizontal(
+                Static("Folder files", classes="destination-section", markup=False),
+                Button("New", id="file-notes-new", compact=True),
+                id="file-notes-tree-header",
+            ),
+            Horizontal(
+                Static(
+                    "Search",
+                    id="file-notes-search-label",
+                    classes="file-notes-field-label",
+                    markup=False,
+                ),
+                self._search_widget,
+                id="file-notes-search-row",
+            ),
+            self._tree_widget,
+            self._search_results_widget,
+            id="file-notes-navigator",
+        )
+
+    def _build_reader_work_pane(self) -> Widget:
+        """Build the retained incumbent Folder work role once."""
+        back = Button(
+            "Back to navigator",
+            id="file-notes-back",
+            compact=True,
+        )
+        back.display = False
+        preview_status = Static(
+            "",
+            id="file-notes-preview-status",
+            markup=False,
+        )
+        preview_status.display = False
+        keep = Button(
+            "Keep editing",
+            id="file-notes-resolution-keep",
+            compact=True,
+        )
+        keep.tooltip = "Close these choices and leave the conflict open"
+        save_new = Button(
+            "Save draft as new note",
+            id="file-notes-resolution-save-new",
+            compact=True,
+        )
+        save_new.tooltip = (
+            "Write the complete draft to the Target path without replacing "
+            "an existing file"
+        )
+        discard = Button(
+            "Discard draft and load disk",
+            id="file-notes-resolution-discard",
+            compact=True,
+        )
+        discard.tooltip = (
+            "Open a separate confirmation before replacing the editor with "
+            "the current disk file"
+        )
+        path_task = Vertical(
+            Static(
+                self._path_field_label_copy(),
+                id="file-notes-path-label",
+                classes="file-notes-field-label",
+                markup=False,
+            ),
+            Input(
+                placeholder="relative/path.md",
+                id="file-notes-path",
+                value="",
+            ),
+            Horizontal(
+                Button("Continue", id="file-notes-path-submit", compact=True),
+                Button("Cancel", id="file-notes-path-cancel", compact=True),
+                classes="file-notes-toolbar",
+            ),
+            id="file-notes-path-task",
+        )
+        path_task.display = False
+        editor_pane = Vertical(
+            back,
+            Horizontal(
+                Static(
+                    "No file selected",
+                    id="file-notes-breadcrumb",
+                    markup=False,
+                ),
+                Horizontal(
+                    Button("Edit", id="file-notes-edit", compact=True),
+                    Button("Manage", id="file-notes-manage", compact=True),
+                    id="file-notes-mode-controls",
+                    classes="file-notes-toolbar",
+                ),
+                id="file-notes-work-header",
+            ),
+            Static(
+                _SAVE_STATE_COPY["idle"],
+                id="file-notes-save-status",
+                markup=False,
+            ),
+            preview_status,
+            Vertical(
+                self._editor_widget,
+                Horizontal(
+                    Button("Restore", id="file-notes-restore", compact=True),
+                    Button("Compare", id="file-notes-compare", compact=True),
+                    Button(
+                        "Resolve conflict",
+                        id="file-notes-resolve-conflict",
+                        compact=True,
+                    ),
+                    Button(
+                        "Reload from disk",
+                        id="file-notes-recovery-reload",
+                        compact=True,
+                    ),
+                    Button(
+                        "Save Copy",
+                        id="file-notes-recovery-save-copy",
+                        compact=True,
+                    ),
+                    id="file-notes-contextual-actions",
+                    classes="file-notes-toolbar",
+                ),
+                Static(
+                    "Choose a safe next step. No option overwrites the disk file.",
+                    id="file-notes-resolution-copy",
+                    markup=False,
+                ),
+                Horizontal(
+                    keep,
+                    save_new,
+                    discard,
+                    id="file-notes-resolution-actions",
+                    classes="file-notes-toolbar",
+                ),
+                Static(
+                    (
+                        self._reload_confirmation_copy()
+                        if self.reload_confirmation_active
+                        else ""
+                    ),
+                    id="file-notes-reload-confirm-copy",
+                    markup=False,
+                ),
+                Horizontal(
+                    Button("Cancel", id="file-notes-reload-cancel", compact=True),
+                    Button(
+                        "Discard draft and load disk",
+                        id="file-notes-reload-confirm",
+                        compact=True,
+                    ),
+                    id="file-notes-reload-confirm-actions",
+                    classes="file-notes-toolbar",
+                ),
+                id="file-notes-edit-region",
+            ),
+            Vertical(
+                Static(
+                    "File details & path", classes="destination-section", markup=False
+                ),
+                Static("No file selected", id="file-notes-exact-path", markup=False),
+                Static("", id="file-notes-save-detail", markup=False),
+                Static("File actions", classes="destination-section", markup=False),
+                Horizontal(
+                    Button("Move", id="file-notes-move", compact=True),
+                    Button("Reload", id="file-notes-reload", compact=True),
+                    Button("Save copy", id="file-notes-save-copy", compact=True),
+                    Button(
+                        "More file actions",
+                        id="file-notes-maintenance-toggle",
+                        compact=True,
+                    ),
+                    id="file-notes-file-actions",
+                    classes="file-notes-toolbar",
+                ),
+                Horizontal(
+                    Button("Protect", id="file-notes-protect", compact=True),
+                    Button("Refresh", id="file-notes-refresh", compact=True),
+                    id="file-notes-maintenance-actions",
+                    classes="file-notes-toolbar",
+                ),
+                Static("Session Git", classes="destination-section", markup=False),
+                Button(
+                    "Review session changes (0)",
+                    id="file-notes-session-changes",
+                    compact=True,
+                ),
+                self._git_panel_widget,
+                Static("Danger", classes="destination-section", markup=False),
+                Horizontal(
+                    Static("", id="file-notes-delete-spacer"),
+                    Button("Delete", id="file-notes-delete", compact=True),
+                    classes="file-notes-toolbar",
+                ),
+                id="file-notes-manage-region",
+            ),
+            path_task,
+            Static("", id="file-notes-action-status", markup=False),
+            id="file-notes-editor-pane",
+        )
+        return Vertical(editor_pane, id="file-notes-work")
+
+    def configure_reader_shell(
+        self,
+        *,
+        library_pane: Widget,
+        layout: AdaptiveReaderEffectiveLayout,
+    ) -> None:
+        """Attach the screen-owned Library rail before this workspace mounts."""
+        if self.is_attached:
+            raise RuntimeError("configure_reader_shell requires a detached workspace")
+        self._reader_shell_external = True
+        self._reader_layout = layout
+        if self._reader_shell is None:
+            self._reader_shell = LibraryAdaptiveReaderShell(
+                library=library_pane,
+                items=self._reader_items_widget,
+                work=self._reader_work_widget,
+                layout=layout,
+                id_prefix="library-file-notes",
+                library_label="Library",
+                items_label="Folder files",
+                id="library-file-notes-reader-shell",
+            )
+        else:
+            self._reader_shell.sync_layout(layout)
+
+    def sync_reader_layout(
+        self,
+        layout: AdaptiveReaderEffectiveLayout,
+        *,
+        manual_reopen: PaneName | None = None,
+    ) -> None:
+        """Patch the mounted shared shell without recomposing its roles."""
+        self._reader_layout = layout
+        shell = self._reader_shell
+        if shell is not None:
+            shell.sync_layout(layout, manual_reopen=manual_reopen)
+            # task-32173: ``sync_layout`` restores ``items`` from the
+            # resolved layout, which knows nothing about whether a folder
+            # is linked. Re-assert the root gate here so a resize cannot
+            # paint the file panes back into the empty state.
+            self._sync_body_panes()
+        self._schedule_editor_action_layout()
+
+    def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
+        """Supply the shared structure for direct workspace harnesses."""
+        if self._reader_shell is None:
+            self._reader_shell = LibraryAdaptiveReaderShell(
+                library=Static(id="file-notes-standalone-library"),
+                items=self._reader_items_widget,
+                work=self._reader_work_widget,
+                layout=self._reader_layout,
+                id_prefix="library-file-notes",
+                library_label="Library",
+                items_label="Folder files",
+                id="library-file-notes-reader-shell",
+            )
+        return self._reader_shell
 
     @staticmethod
     def _configured_root(value: object) -> Path | None:
@@ -1086,6 +1649,16 @@ class LibraryFileNotesWorkspace(Vertical):
         return self._conflict_resolution_active
 
     @property
+    def work_mode(self) -> FileNotesWorkMode:
+        """Return the visible retained work presentation."""
+        return self._work_mode
+
+    @property
+    def path_task(self) -> FileNotesPathTask:
+        """Return the one active named target-path task."""
+        return self._path_task
+
+    @property
     def leave_allowed(self) -> bool:
         """Return whether the retained draft can be left without a flush."""
         binding = self._session_binding
@@ -1093,8 +1666,7 @@ class LibraryFileNotesWorkspace(Vertical):
             not self._root_transitioning
             and not self._path_transitioning
             and not (
-                binding is not None
-                and self._session_owner.mutation_active(binding)
+                binding is not None and self._session_owner.mutation_active(binding)
             )
             and self._save_state not in {"dirty", "saving", "conflict", "error"}
         )
@@ -1122,22 +1694,224 @@ class LibraryFileNotesWorkspace(Vertical):
     @property
     def navigator_visible(self) -> bool:
         """Return whether the navigator pane is currently displayed."""
-        return self.query_one("#file-notes-navigator").display
+        return not self._narrow or self._narrow_view == "navigator"
 
     @property
     def editor_visible(self) -> bool:
         """Return whether the editor pane is currently displayed."""
-        return self.query_one("#file-notes-editor-pane").display
+        return not self._narrow or self._narrow_view == "editor"
 
     def _path_field_label_copy(self) -> str:
         """Describe the action context currently represented by the path field."""
-        if self._conflict_resolution_active:
-            return "New note path"
-        if self._selected_deleted_path:
-            return "Restore path"
-        if self._opened is not None:
-            return "New / move path"
-        return "New path"
+        return {
+            "new": "New file path",
+            "move": "Move file to",
+            "save_copy": "Save copy as",
+        }.get(self._path_task, "Target path · New / Move / Save copy")
+
+    @staticmethod
+    def _update_static_content(target: Static, content: str) -> None:
+        """Preserve layout-aware updates while skipping identical timer copy."""
+        if target.content != content:
+            target.update(content)
+
+    def _sync_work_mode(self) -> None:
+        """Toggle retained Edit and Manage presentations without remounting."""
+        if not self._active or not self.is_mounted:
+            return
+        edit = self.query_one("#file-notes-edit-region")
+        manage = self.query_one("#file-notes-manage-region")
+        edit.display = self._work_mode == "edit"
+        manage.display = self._work_mode == "manage"
+        edit_button = self.query_one("#file-notes-edit", Button)
+        manage_button = self.query_one("#file-notes-manage", Button)
+        edit_button.set_class(self._work_mode == "edit", "is-active")
+        manage_button.set_class(self._work_mode == "manage", "is-active")
+        for button in (edit_button, manage_button):
+            # The app-wide active-state rule adds a physical border. These
+            # compact mode chips are deliberately one row tall, so keep the
+            # semantic class while preventing a selected chip from growing
+            # to two rows and clipping its label.
+            button.styles.border = ("none", "transparent")
+        exact_path = self.query_one("#file-notes-exact-path", Static)
+        relative_path = self._current_path or self._selected_deleted_path
+        if relative_path and self._root is not None:
+            self._update_static_content(exact_path, str(self._root / relative_path))
+        else:
+            self._update_static_content(exact_path, relative_path or "No file selected")
+        self._sync_editor_action_visibility()
+        self._sync_navigator_mode()
+
+    def _sync_path_task_surface(self, *, focus_target: bool = False) -> None:
+        """Project the one named path task into the retained target row."""
+        if not self._active or not self.is_mounted:
+            return
+        task = self.query_one("#file-notes-path-task")
+        active = self._path_task != "none"
+        task.display = active
+        self._update_static_content(
+            self.query_one("#file-notes-path-label", Static),
+            self._path_field_label_copy(),
+        )
+        submit = self.query_one("#file-notes-path-submit", Button)
+        submit.label = {
+            "new": "Create",
+            "move": "Move",
+            "save_copy": (
+                "Export exact copy"
+                if self._opened is not None and self._opened.is_excerpt
+                else "Save Copy"
+            ),
+        }.get(self._path_task, "Continue")
+        submit.disabled = (
+            not active or self._root_transitioning or self._path_transitioning
+        )
+        self.query_one("#file-notes-path-cancel", Button).disabled = not active
+        if active and focus_target:
+            self.call_after_refresh(self._focus_path_task_input)
+
+    def _focus_path_task_input(self) -> None:
+        """Reveal the complete named task before focusing its retained input."""
+        task = self.query_one("#file-notes-path-task")
+        task.scroll_visible(animate=False, top=True)
+        self.query_one("#file-notes-path", Input).focus(scroll_visible=False)
+
+    async def _open_path_task(
+        self,
+        task: FileNotesPathTask,
+        *,
+        opener_id: str,
+    ) -> bool:
+        """Open one guarded target-path task and remember its focus origin."""
+        if task == "none":
+            self._close_path_task()
+            return True
+        if task not in {"new", "move", "save_copy"}:
+            raise ValueError(f"Unsupported File Notes path task: {task}")
+        service = self._service
+        generation = self._root_generation
+        binding = self._session_binding
+        session_key = self._session_key
+        if (
+            not self._active
+            or not self.is_mounted
+            or not self.display
+            or self._root_transitioning
+            or self._path_transitioning
+            or self._shutdown
+            or service is None
+        ):
+            return False
+        if task in {"move", "save_copy"} and self._opened is None:
+            return False
+        path_task_lease: _EditorReadOnlyLease | None = None
+        if task in {"new", "move"} and self._opened is not None:
+            if binding is None:
+                return False
+            path_task_lease = self._acquire_editor_read_only(binding)
+            if path_task_lease is None:
+                return False
+            try:
+                flushed = await self.flush_pending_work()
+            except BaseException:
+                path_task_lease.release()
+                raise
+            if (
+                not flushed
+                or not self._active
+                or not self.is_mounted
+                or not self.display
+                or self._root_transitioning
+                or self._path_transitioning
+                or self._shutdown
+                or generation != self._root_generation
+                or service is not self._service
+                or binding != self._session_binding
+                or session_key != self._session_key
+                or (task == "move" and self._opened is None)
+            ):
+                path_task_lease.release()
+                return False
+        if self._path_task != "none":
+            self._close_path_task(restore_focus=False)
+        self._path_task = task
+        self._path_task_opener_id = opener_id
+        self._path_task_editor_lease = path_task_lease
+        path = self.query_one("#file-notes-path", Input)
+        path.value = self._current_path if task == "move" else ""
+        self._sync_path_task_surface(focus_target=True)
+        return True
+
+    def _close_path_task(self, *, restore_focus: bool = True) -> None:
+        """Close the named task and restore its actual invoking control."""
+        closed_task = self._path_task
+        opener_id = self._path_task_opener_id
+        self._path_task = "none"
+        self._path_task_opener_id = ""
+        path_task_lease = self._path_task_editor_lease
+        self._path_task_editor_lease = None
+        if path_task_lease is not None:
+            path_task_lease.release()
+        self._sync_path_task_surface()
+        if (
+            not restore_focus
+            or not opener_id
+            or not self._active
+            or not self.is_mounted
+        ):
+            return
+        matches = self.query(f"#{opener_id}")
+        if not matches:
+            return
+        opener = matches.first(Button)
+        opener_is_visible = opener.display and all(
+            ancestor.display for ancestor in opener.ancestors if ancestor is not self
+        )
+        if opener_is_visible and not opener.disabled:
+            self.call_after_refresh(opener.focus)
+            return
+        if self._work_mode == "manage":
+            fallback_ids = (
+                ("file-notes-save-copy", "file-notes-manage")
+                if closed_task == "save_copy"
+                else ("file-notes-manage",)
+            )
+            for fallback_id in fallback_ids:
+                fallback = self.query_one(f"#{fallback_id}", Button)
+                if fallback.display and not fallback.disabled:
+                    self.call_after_refresh(fallback.focus)
+                    return
+        editor = self.query_one("#file-notes-editor", TextArea)
+        if self._work_mode == "edit" and editor.display:
+            self.call_after_refresh(editor.focus)
+
+    def cancel_path_task(self) -> bool:
+        """Cancel a visible path task for the screen-level guarded Escape path."""
+        if self._path_task == "none":
+            return False
+        self._close_path_task(restore_focus=True)
+        return True
+
+    async def _submit_path_task(self) -> bool:
+        """Execute the active task through its incumbent validation/service seam."""
+        task = self._path_task
+        if task == "none":
+            return False
+        if task == "new":
+            succeeded = await self._execute_new_file()
+        elif task == "move":
+            succeeded = await self._execute_move_file()
+        else:
+            opened = self._opened
+            action = (
+                "Export exact copy"
+                if opened is not None and opened.is_excerpt
+                else "Save draft as copy"
+            )
+            succeeded = await self._save_editor_copy(action)
+        if succeeded:
+            self._close_path_task(restore_focus=True)
+        return succeeded
 
     @staticmethod
     def _large_file_preview_copy(opened: OpenedFileNote) -> str:
@@ -1162,12 +1936,9 @@ class LibraryFileNotesWorkspace(Vertical):
         status.display = True
 
     def compose(self) -> ComposeResult:
-        # LIB-19: Database mode, Files mode (this surface), and the Sync
-        # sub-canvas are three folder-notes concepts never related to each
-        # other anywhere in the UI -- one placement sentence per surface.
         yield Static(
-            "Files edits this folder directly. Sync mirrors files into Library.",
-            id="file-notes-purpose",
+            self._authority_copy(),
+            id="file-notes-authority",
             markup=False,
         )
         with Horizontal(id="file-notes-root-row"):
@@ -1191,170 +1962,149 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-choose-root",
                 compact=True,
             )
+            # task-32055: the way out of a structural wait, next to the
+            # control that starts one. Display-toggled (never conditionally
+            # yielded) so the in-place wait updates always find it.
+            structural_cancel = Button(
+                "Cancel",
+                id="library-structural-wait-cancel",
+                compact=True,
+            )
+            structural_cancel.display = False
+            yield structural_cancel
+            # task-32121: the two decisions a slow scan actually leaves the
+            # user. task-32136: and the folder they already configured.
+            # All display-toggled, like the Cancel above them.
+            for label, button_id in (
+                ("Keep waiting", "file-notes-root-keep-waiting"),
+                ("Choose another", "file-notes-root-choose-another"),
+                ("Use folder", "file-notes-use-sync-folder"),
+            ):
+                optional = Button(label, id=button_id, compact=True)
+                optional.display = False
+                yield optional
+        # task-32136: what this mode of Notes IS, on its own wrapping line
+        # -- the folder row is a single nowrap line that leaves the status
+        # 46 cells at 120 columns, far too narrow to carry a sentence.
+        purpose = Static(
+            FOLDER_FILES_EMPTY_COPY,
+            id="file-notes-empty-purpose",
+            classes="destination-purpose",
+            markup=False,
+        )
+        purpose.display = self._root is None
+        yield purpose
         with Horizontal(id="file-notes-body"):
-            with Vertical(id="file-notes-navigator"):
-                with Horizontal(id="file-notes-search-row"):
-                    yield Static(
-                        "Search",
-                        id="file-notes-search-label",
-                        classes="file-notes-field-label",
-                        markup=False,
-                    )
-                    yield Input(
-                        placeholder="File contents…",
-                        id="file-notes-search",
-                        value=self._search_query,
-                    )
-                yield Tree[object]("Files", id="file-notes-tree")
-                search_results = Tree[object](
-                    "Search results",
-                    id="file-notes-search-results",
-                )
-                search_results.display = False
-                yield search_results
-                yield Button(
-                    "Review session changes (0)",
-                    id="file-notes-session-changes",
-                    compact=True,
-                )
-                yield self._git_panel_widget
-            with Vertical(id="file-notes-editor-pane"):
-                back = Button(
-                    "Back to navigator",
-                    id="file-notes-back",
-                    compact=True,
-                )
-                back.display = False
-                yield back
-                yield Static(
-                    "No file selected",
-                    id="file-notes-breadcrumb",
-                    markup=False,
-                )
-                yield Static(
-                    _SAVE_STATE_COPY["idle"],
-                    id="file-notes-save-status",
-                    markup=False,
-                )
-                preview_status = Static(
-                    "",
-                    id="file-notes-preview-status",
-                    markup=False,
-                )
-                preview_status.display = False
-                yield preview_status
-                with Horizontal(id="file-notes-path-row"):
-                    yield Static(
-                        self._path_field_label_copy(),
-                        id="file-notes-path-label",
-                        classes="file-notes-field-label",
-                        markup=False,
-                    )
-                    yield Input(
-                        placeholder="relative/path.md",
-                        id="file-notes-path",
-                        value=self._selected_deleted_path or self._current_path,
-                    )
-                yield self._editor_widget
-                with Horizontal(
-                    id="file-notes-file-actions",
-                    classes="file-notes-toolbar",
-                ):
-                    yield Button("New", id="file-notes-new", compact=True)
-                    yield Button("Restore", id="file-notes-restore", compact=True)
-                    yield Button(
-                        "Compare",
-                        id="file-notes-compare",
-                        compact=True,
-                    )
-                    yield Button(
-                        "Resolve conflict",
-                        id="file-notes-resolve-conflict",
-                        compact=True,
-                    )
-                    yield Button(
-                        "Save draft as copy",
-                        id="file-notes-save-copy",
-                        compact=True,
-                    )
-                    yield Button(
-                        "More file actions",
-                        id="file-notes-maintenance-toggle",
-                        compact=True,
-                    )
-                    yield Static("", id="file-notes-delete-spacer")
-                    yield Button("Delete", id="file-notes-delete", compact=True)
-                with Horizontal(
-                    id="file-notes-maintenance-actions",
-                    classes="file-notes-toolbar",
-                ):
-                    yield Button("Move", id="file-notes-move", compact=True)
-                    yield Button("Protect", id="file-notes-protect", compact=True)
-                    yield Button("Reload", id="file-notes-reload", compact=True)
-                    yield Button("Refresh", id="file-notes-refresh", compact=True)
-                yield Static(
-                    (
-                        "Choose a safe next step. No option overwrites the disk "
-                        "file."
-                    ),
-                    id="file-notes-resolution-copy",
-                    markup=False,
-                )
-                with Horizontal(
-                    id="file-notes-resolution-actions",
-                    classes="file-notes-toolbar",
-                ):
-                    keep = Button(
-                        "Keep editing",
-                        id="file-notes-resolution-keep",
-                        compact=True,
-                    )
-                    keep.tooltip = "Close these choices and leave the conflict open"
-                    yield keep
-                    save_new = Button(
-                        "Save draft as new note",
-                        id="file-notes-resolution-save-new",
-                        compact=True,
-                    )
-                    save_new.tooltip = (
-                        "Write the complete draft to the New note path without "
-                        "replacing an existing file"
-                    )
-                    yield save_new
-                    discard = Button(
-                        "Discard draft and load disk",
-                        id="file-notes-resolution-discard",
-                        compact=True,
-                    )
-                    discard.tooltip = (
-                        "Open a separate confirmation before replacing the editor "
-                        "with the current disk file"
-                    )
-                    yield discard
-                yield Static(
-                    (
-                        self._reload_confirmation_copy()
-                        if self.reload_confirmation_active
-                        else ""
-                    ),
-                    id="file-notes-reload-confirm-copy",
-                    markup=False,
-                )
-                with Horizontal(
-                    id="file-notes-reload-confirm-actions",
-                    classes="file-notes-toolbar",
-                ):
-                    yield Button(
-                        "Cancel",
-                        id="file-notes-reload-cancel",
-                        compact=True,
-                    )
-                    yield Button(
-                        "Discard draft and load disk",
-                        id="file-notes-reload-confirm",
-                        compact=True,
-                    )
-                yield Static("", id="file-notes-action-status", markup=False)
+            yield self._ensure_standalone_reader_shell()
+
+    def _authority_copy(self, session_git_count: int | None = None) -> str:
+        """Return the authority/Git channel only."""
+        if session_git_count is None:
+            binding = self._session_binding
+            changes = (
+                () if binding is None else self._session_owner.snapshot(binding).changes
+            )
+            session_git_count = len(coalesce_session_changes(changes))
+        return self._status_channels(session_git_count).authority_git
+
+    def _status_channels(
+        self, session_git_count: int | None = None
+    ) -> NotesStatusChannels:
+        """Project current async inputs through the pure status resolver."""
+        if session_git_count is None:
+            binding = self._session_binding
+            changes = (
+                () if binding is None else self._session_owner.snapshot(binding).changes
+            )
+            session_git_count = len(coalesce_session_changes(changes))
+        git_failure = ""
+        git_uncertain = ""
+        commit_result = self._commit_result_projection
+        if self._commit_view_phase == "result" and commit_result is not None:
+            if commit_result.outcome.state == "failed_unchanged":
+                git_failure = "Commit failed"
+            elif commit_result.outcome.state == "uncertain":
+                git_uncertain = "Commit outcome uncertain"
+        if self._git_last_action is not None and self._git_last_action.complete:
+            git_failure = git_failure or self._git_last_action.text.removeprefix(
+                "Last action: "
+            )
+        git_failure = git_failure or self._git_status_failure
+        if not git_uncertain and self._push_phase == "needs_attention":
+            git_uncertain = "Push outcome needs attention"
+        commit_running = {
+            "checking": "Checking commit…",
+            "confirming": "Checking commit…",
+            "executing": "Committing…",
+        }.get(self._commit_view_phase, "")
+        status_task = self._git_status_task
+        status_checking = bool(
+            status_task is not None
+            and not status_task.done()
+            and self._git_status_task_binding == self._session_binding
+        )
+        git_running = (
+            commit_running
+            or {
+                "checking": "Checking push…",
+                "pushing": "Pushing…",
+            }.get(self._push_phase, "")
+            or self._git_action_running
+            or ("Checking Git…" if status_checking else "")
+        )
+        opened = self._opened
+        authority_failure = ""
+        authority_uncertain = ""
+        authority_running = ""
+        if self._root is not None and self._root_offline is True:
+            authority_failure = "Folder unavailable"
+        elif self._runtime_warning:
+            authority_uncertain = "Folder warning"
+        elif self._root_transitioning:
+            authority_running = "Changing folder…"
+        elif self._path_transitioning:
+            authority_running = "File operation…"
+        elif self._root is not None and self._root_offline is None:
+            authority_running = "Checking folder…"
+        return resolve_file_note_status_channels(
+            root=self._root,
+            conflict=self._save_state == "conflict",
+            unavailable=self._root is None or self._root_offline is True,
+            read_only=opened is not None and not opened.editable,
+            exact_export_available=opened is not None and opened.is_excerpt,
+            save_failed=self._save_state == "error",
+            saving=self._save_state == "saving",
+            dirty=self._save_state == "dirty",
+            git_failure=git_failure,
+            git_uncertain=git_uncertain,
+            git_running=git_running,
+            git_changes=session_git_count,
+            authority_failure=authority_failure,
+            authority_uncertain=authority_uncertain,
+            authority_running=authority_running,
+        )
+
+    def _render_status_channels(self, session_git_count: int | None = None) -> None:
+        """Render both header channels from one deterministic projection."""
+        if not self._active or not self.is_mounted:
+            return
+        channels = self._status_channels(session_git_count)
+        content = channels.content_recovery
+        if channels.safe_next_action:
+            content = f"{content} Next: {channels.safe_next_action}."
+        detail = self._save_detail.strip()
+        status = self.query_one("#file-notes-save-status", Static)
+        self._update_static_content(status, content)
+        status.tooltip = detail or None
+        save_detail = self.query_one("#file-notes-save-detail", Static)
+        self._update_static_content(
+            save_detail, f"Content detail: {detail}" if detail else ""
+        )
+        save_detail.display = bool(detail)
+        self._update_static_content(
+            self.query_one("#file-notes-authority", Static),
+            channels.authority_git,
+        )
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
@@ -1373,8 +2123,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_save_state(self._save_state, self._save_detail)
         self._sync_large_file_preview()
         self._set_action_status(self._action_detail)
+        self._sync_work_mode()
+        self._sync_path_task_surface()
         self._update_root_surface()
         self._sync_navigator_mode()
+        if self._search_paths:
+            self._rebuild_search_results(self._search_paths)
         self._rehydrate_git_presentation()
         self._update_controls()
         self.run_worker(
@@ -1388,23 +2142,44 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_poll,
             pause=False,
         )
+        if self._save_task is not None and not self._save_task.done():
+            self._attach_save_observer(self._save_task)
+        elif self._save_state == "saving":
+            self._set_save_state("dirty", "save interrupted")
+            self._arm_autosave()
+        elif self._save_state == "dirty":
+            self._arm_autosave()
 
     def on_unmount(self) -> None:
         """Pause timers; Textual cancels node workers during removal."""
         self._active = False
-        if self._save_state == "saving":
+        # Source and breakpoint transitions keep this workspace mounted, but
+        # an explicit host removal still lets Textual prune the composed shell.
+        # Rebuild that disposable shell wrapper on a later remount while
+        # retaining the incumbent editor, navigator, Git, and recovery roles.
+        self._reader_shell = None
+        self._reader_items_widget = self._build_reader_items_pane()
+        self._reader_work_widget = self._build_reader_work_pane()
+        if self._save_state == "saving" and (
+            self._save_task is None or self._save_task.done()
+        ):
             self._save_state = "dirty"
             self._save_detail = "save interrupted"
         for timer in (
             self._poll_timer,
             self._autosave_timer,
             self._git_refresh_timer,
+            # task-32121: the folder-change patience repaint repeats now,
+            # and only the wait settling stops it -- which a scan parked in
+            # an uninterruptible syscall never does (review round 2).
+            self._structural_wait_timer,
         ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
         self._git_refresh_timer = None
+        self._structural_wait_timer = None
         self._poll_worker = None
         self._save_worker = None
         self._git_status_worker = None
@@ -1424,12 +2199,23 @@ class LibraryFileNotesWorkspace(Vertical):
             self._poll_timer,
             self._autosave_timer,
             self._git_refresh_timer,
+            # task-32121: the folder-change patience repaint repeats now,
+            # and only the wait settling stops it -- which a scan parked in
+            # an uninterruptible syscall never does (review round 2).
+            self._structural_wait_timer,
         ):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
         self._git_refresh_timer = None
+        self._structural_wait_timer = None
+        save_task = self._save_task
+        if save_task is not None and not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except (asyncio.CancelledError, Exception):
+                pass
         if self._owns_session_owner:
             await asyncio.to_thread(self._session_owner.shutdown)
         elif self._owns_replica:
@@ -1479,6 +2265,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._replica = replica
         self._service = service
         self._runtime_warning = warning
+        self._update_root_surface()
+        self._update_controls()
         if service is None:
             self._initialized = True
             self._update_root_surface()
@@ -1605,6 +2393,7 @@ class LibraryFileNotesWorkspace(Vertical):
         *,
         persist: bool,
     ) -> bool:
+        previous_root = self._root
         with self._runtime_lock:
             if (
                 self._shutdown
@@ -1663,6 +2452,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._git_observed_changes = None
                     self._git_status_task = None
                     self._git_status_task_binding = None
+                    self._git_status_failure = ""
+                    self._git_action_running = ""
                     if self._active and self.is_mounted:
                         self._git_panel_widget.render_unavailable(
                             "Selected notes root changed. Open Review session "
@@ -1672,7 +2463,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._root = root
                 self._session_binding = binding
                 self._service = service
-                self._clear_open_document()
+                self._clear_open_document(
+                    announce_identity_cleared=previous_root == root
+                )
                 self._initialized = True
                 self._apply_scan(
                     result,
@@ -1686,6 +2479,8 @@ class LibraryFileNotesWorkspace(Vertical):
             # this reservation.
             with self._runtime_lock:
                 reservation.commit(publish)
+            if previous_root != self._root:
+                self.post_message(FileNotesRootChanged(root).set_sender(self))
             if cancellation is not None:
                 raise cancellation
             return True
@@ -1791,38 +2586,201 @@ class LibraryFileNotesWorkspace(Vertical):
             rebuild_tree=navigator_changed,
         )
 
+    def _show_root_row_button(
+        self,
+        selector: str,
+        visible: bool,
+        *,
+        label: str | None = None,
+    ) -> None:
+        """Toggle one optional folder-row control without assuming it exists."""
+        try:
+            button = self.query_one(selector, Button)
+        except NoMatches:
+            return
+        if label is not None and str(button.label) != label:
+            button.label = label
+        button.display = visible
+
+    def _structural_wait_line(self, wait: StructuralWait) -> str:
+        """Return the busy row's line for one in-flight folder change.
+
+        task-32121: past the patience window the shared helper's line ends
+        in ``· Cancel``, which sat beside the actual Cancel button and read
+        as a second control with the same label. This surface reports how
+        far the scan has actually got instead, and the decisions are the
+        buttons in the same row -- measured, not stylistic: at 120 columns
+        the row leaves the status 46 cells, so a line naming both choices
+        as well elides to ``Changing folder… · sti...ting · Choose another``.
+        """
+        now = monotonic()
+        if not wait.is_slow(now):
+            return wait.status_line(now)
+        entries = self._root_scan_entries
+        progress = f"{entries:,} entries so far" if entries else "still working"
+        return f"{wait.label}… · {progress}"
+
+    def _configured_sync_folder(self) -> Path | None:
+        """Return the configured notes folder to offer by name, when usable.
+
+        task-32136: a user who already configured a notes folder should be
+        offered it by name instead of being sent to a file picker that
+        opens on their home directory.
+
+        task-32180: ``[file_notes] root`` -- the key this mode itself writes
+        on every successful folder change -- is read first; the legacy
+        ``[notes] sync_directory`` (TASK-21112 calls it that) stays the
+        fallback for a profile that has never linked a folder here.
+
+        Both are config-derived input, so they go through
+        ``path_validation`` (review round 2) rather than straight to
+        ``is_dir()``: a relative spelling would otherwise resolve against
+        whatever directory the app was launched from.
+        """
+        for section, key in (("file_notes", "root"), ("notes", "sync_directory")):
+            raw = get_cli_setting(section, key, None)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                return validate_existing_absolute_directory(
+                    Path(raw).expanduser()
+                )
+            except (OSError, ValueError):
+                continue
+        return None
+
+    def _sync_body_panes(self) -> None:
+        """Keep the Library rail; make only the file panes wait for a folder.
+
+        task-32173: Folder files is a mode of Notes (task-32136 user
+        decision), so its rail belongs on screen from the first frame, not
+        after a folder is linked. The body itself stays mounted --
+        display-gating it left the reader shell with zero width, so the
+        adaptive layout never resolved at all and the rail could not open
+        even at 235 columns.
+
+        Compact terminals are unchanged because the resolver already closes
+        the rail below the Library's compact breakpoint: at 60 and at 100
+        columns it reports ``library_open=False``, so the unlinked body
+        holds nothing to paint.
+        """
+        linked = self._root is not None
+        shell = self._reader_shell
+        if shell is not None:
+            # ``library`` is deliberately absent: the resolver owns it.
+            shell.items.display = linked and shell.effective_layout.items_open
+            shell.items_grip.display = linked
+            shell.library_grip.display = linked
+            shell.work.display = linked
+        try:
+            body = self.query_one("#file-notes-body")
+        except NoMatches:
+            return
+        # An empty body must not claim its ``min-height`` back from the
+        # empty state's own copy on a short terminal.
+        body.set_class(not linked, "-no-root")
+
     def _update_root_surface(self, *, offline: bool | None = None) -> None:
         if not self._active or not self.is_mounted or not self.children:
             return
         try:
             status = self.query_one("#file-notes-root-status", Static)
-            body = self.query_one("#file-notes-body")
             details = self.query_one("#file-notes-root-details", Button)
             choose = self.query_one("#file-notes-choose-root", Button)
         except NoMatches:
             return
+        self._sync_body_panes()
         binding = self._session_binding
-        mutation_active = (
-            binding is not None
-            and self._session_owner.mutation_active(binding)
+        mutation_active = binding is not None and self._session_owner.mutation_active(
+            binding
         )
         choose.disabled = (
-            self._root_transitioning
-            or self._path_transitioning
-            or mutation_active
+            self._root_transitioning or self._path_transitioning or mutation_active
         )
-        if self._root is None:
-            self._root_status_detail = "Choose a notes folder."
+        wait = self._structural_wait
+        try:
+            structural_cancel = self.query_one(
+                "#library-structural-wait-cancel", Button
+            )
+        except NoMatches:
+            structural_cancel = None
+        slow = wait is not None and wait.is_slow(monotonic())
+        if structural_cancel is not None:
+            # task-32102: the way out arrives when the row first admits it
+            # is slow -- the same patience boundary Keep waiting and Choose
+            # another already use. Revealed at t=0 it offered an escape from
+            # an operation that had not yet claimed to be stuck, while the
+            # line still read a bare "Changing folder…".
+            structural_cancel.display = (
+                wait is not None and wait.cancel is not None and slow
+            )
+        self._show_root_row_button(
+            "#file-notes-root-keep-waiting",
+            slow and not self._root_change_extension_used,
+        )
+        self._show_root_row_button("#file-notes-root-choose-another", slow)
+        sync_folder = None if self._root is not None else self._configured_sync_folder()
+        self._show_root_row_button(
+            "#file-notes-use-sync-folder",
+            wait is None and sync_folder is not None,
+            label=None if sync_folder is None else f"Use {_folder_label(sync_folder)}",
+        )
+        try:
+            self.query_one("#file-notes-empty-purpose", Static).display = (
+                self._root is None
+            )
+        except NoMatches:
+            pass
+        if wait is not None:
+            # task-32055: the wait owns this slot while it runs -- the line
+            # says what is happening, then that it is still working, and the
+            # button beside it is the way out.
+            self._root_status_detail = self._structural_wait_line(wait)
             self._root_status_summary = self._root_status_detail
             status.tooltip = None
             status.update(self._root_status_summary)
-            status.set_class(True, "-empty-root")
+            # Never the empty state's hug (fix round 1): task-2850's
+            # ``width: auto`` is for the short "Choose a notes folder."
+            # prompt, and a wait line wearing it hugs its own full length
+            # instead of eliding -- which pushed Keep waiting and Choose
+            # another off a 60-column row whenever the change started from
+            # an unlinked state. Same reasoning as the ``_root is None``
+            # branch below, which already excludes its own reason line.
+            status.set_class(False, "-empty-root")
+            # task-32102: and never the tint of the state the wait replaced
+            # -- this branch returns before the resets below, so a warning
+            # or offline colour stayed under the wait line.
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
-            body.display = False
+            # task-32180: the row belongs to the wait's own three controls
+            # while it runs. Details would open a dialog showing this very
+            # line, and Change… is disabled for the whole transition while
+            # Choose another does exactly its job -- two dead controls that
+            # pushed Choose another 11 cells off a 60-column row.
+            details.display = False
+            choose.display = False
+            self._render_status_channels()
+            self.call_after_refresh(self._fit_root_status)
+            return
+        if self._root is None:
+            reason = self._root_action_reason
+            self._root_status_detail = "Choose a notes folder."
+            self._root_status_summary = reason or self._root_status_detail
+            status.tooltip = None
+            status.update(self._root_status_summary)
+            # task-2850's hug-your-own-width rule is right for the short
+            # prompt and wrong for a folder-change reason four times its
+            # length: that one has to elide rather than push Choose folder…
+            # off the end of a narrow row.
+            status.set_class(not reason, "-empty-root")
+            status.set_class(False, "-warning")
+            status.set_class(False, "-offline")
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
+            self._render_status_channels()
+            if reason:
+                self.call_after_refresh(self._fit_root_status)
             return
         status.set_class(False, "-empty-root")
         is_offline = self._root_offline if offline is None else offline
@@ -1837,21 +2795,24 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._runtime_warning:
             detail = f"{detail} · {self._runtime_warning}"
         self._root_status_detail = detail
-        folder_name = self._root.name or self._root.anchor or str(self._root)
+        folder_name = _folder_label(self._root)
         display_state = (
             "Offline · Warning"
             if is_offline is True and self._runtime_warning
             else ("Warning" if self._runtime_warning else state)
         )
-        self._root_status_summary = (
-            f"{display_state} · Local folder: {folder_name}"
-        )
+        self._root_status_summary = f"{display_state} · Local folder: {folder_name}"
+        if self._root_action_reason:
+            # task-32121: the reason a folder change ended owns the row the
+            # user was watching until they try again; the folder it kept
+            # stays in the tooltip and in Details.
+            self._root_status_summary = self._root_action_reason
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
-        body.display = True
         details.display = True
         choose.label = "Change…"
         choose.display = True
+        self._render_status_channels()
         self._apply_responsive_layout(self.size.width)
         self.call_after_refresh(self._fit_root_status)
 
@@ -1872,8 +2833,10 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         was_narrow = self._narrow
         self._narrow = width < 80
-        if self._narrow and not was_narrow and (
-            self._opened is not None or self._selected_deleted_path
+        if (
+            self._narrow
+            and not was_narrow
+            and (self._opened is not None or self._selected_deleted_path)
         ):
             # task-15790 (bisected to 4202930d6's era, born-green then
             # regressed): `_narrow_view` was only ever set to "editor" when a
@@ -1885,17 +2848,24 @@ class LibraryFileNotesWorkspace(Vertical):
             # document. Transition-only on purpose: while ALREADY narrow,
             # Back's explicit navigator choice must keep winning.
             self._narrow_view = "editor"
-        navigator = self.query_one("#file-notes-navigator")
-        editor = self.query_one("#file-notes-editor-pane")
         back = self.query_one("#file-notes-back", Button)
-        if self._narrow:
-            navigator.display = self._narrow_view == "navigator"
-            editor.display = self._narrow_view == "editor"
-            back.display = self._narrow_view == "editor"
-        else:
-            navigator.display = True
-            editor.display = True
-            back.display = False
+        back.display = self._narrow and self._narrow_view == "editor"
+        if not self._reader_shell_external:
+            preferences = self._standalone_reader_preferences
+            priority: PaneName | None = None
+            if self._narrow:
+                if self._narrow_view == "navigator":
+                    priority = "items"
+                else:
+                    preferences = replace(preferences, items_open=False)
+            layout = resolve_adaptive_reader_layout(
+                max(width, 0),
+                preferences,
+                AdaptiveReaderLayoutProfile(work_min_width=30),
+                previous=self._reader_layout,
+                priority=priority,
+            )
+            self.sync_reader_layout(layout)
         self._sync_navigator_mode()
         self._schedule_editor_action_layout()
 
@@ -1911,12 +2881,17 @@ class LibraryFileNotesWorkspace(Vertical):
             "#file-notes-git-panel",
             LibraryFileNotesGitPanel,
         )
-        git_visible = self._navigator_mode == "git"
+        git_visible = self._navigator_mode == "git" and self._work_mode == "manage"
+        file_mode = (
+            self._navigator_mode_before_git
+            if self._navigator_mode == "git"
+            else self._navigator_mode
+        )
         panel.display = git_visible
-        search_row.display = not git_visible
+        search_row.display = True
         entry.display = not git_visible
-        tree.display = not git_visible and self._navigator_mode == "files"
-        results.display = not git_visible and self._navigator_mode == "search"
+        tree.display = file_mode == "files"
+        results.display = file_mode == "search"
         self.set_class(
             git_visible and not self._narrow,
             "-prepare-session-wide",
@@ -1924,14 +2899,17 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _schedule_editor_action_layout(self) -> None:
         """Coalesce editor-action measurements after Textual refreshes layout."""
-        if (
-            not self._active
-            or not self.is_mounted
-            or self._editor_action_layout_sync_scheduled
-        ):
+        if not self._active or not self.is_mounted:
+            return
+        # Label/display changes can happen while an earlier resize measurement
+        # is pending.  Fit the current settled pane synchronously so those
+        # controls never keep stale off-pane geometry.
+        self._apply_editor_action_layout()
+        if self._editor_action_layout_sync_scheduled:
             return
         self._editor_action_layout_sync_scheduled = True
-        self.call_after_refresh(self._sync_editor_action_layout)
+        self.refresh(layout=True)
+        self.call_later(self._sync_editor_action_layout)
 
     def _set_delete_confirmation(self, relative_path: str = "") -> None:
         """Project one confirmation state into its copy and narrow layout."""
@@ -1981,6 +2959,8 @@ class LibraryFileNotesWorkspace(Vertical):
         was_active = self.reload_confirmation_active
         self._reload_confirmation = confirmation
         if self._active and self.is_mounted:
+            self._work_mode = "edit"
+            self._sync_work_mode()
             self.query_one("#file-notes-reload-confirm-copy", Static).update(
                 self._reload_confirmation_copy()
             )
@@ -2005,6 +2985,9 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         self._reload_confirmation = None
         if self._active and self.is_mounted:
+            if focus_opener and confirmation.opener_id == "file-notes-reload":
+                self._work_mode = "manage"
+                self._sync_work_mode()
             self.query_one("#file-notes-reload-confirm-copy", Static).update("")
             self._update_controls()
             if focus_opener:
@@ -2021,12 +3004,22 @@ class LibraryFileNotesWorkspace(Vertical):
     def _sync_editor_action_layout(self) -> None:
         """Stack current editor actions only when their labels need the space."""
         self._editor_action_layout_sync_scheduled = False
+        self._apply_editor_action_layout()
+
+    def _apply_editor_action_layout(self) -> None:
+        """Fit actions to the currently settled retained work-pane geometry."""
         if not self._active or not self.is_mounted:
             return
         pane = self.query_one("#file-notes-editor-pane")
         if not pane.display:
             return
-        available_width = pane.content_region.width
+        settled_width = pane.content_region.width
+        projected_width = self._reader_layout.reader_width
+        available_width = (
+            min(settled_width, projected_width)
+            if settled_width > 0 and projected_width > 0
+            else max(settled_width, projected_width)
+        )
         if available_width <= 0:
             return
         single_column = available_width <= 40
@@ -2042,6 +3035,12 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         self.set_class(needs_stack, "-stack-editor-actions")
         self.set_class(single_column, "-single-editor-actions")
+        for toolbar in pane.query(".file-notes-toolbar"):
+            toolbar.styles.grid_size_columns = 1 if single_column else None
+            toolbar.styles.grid_columns = "1fr" if single_column else None
+            for button in toolbar.query(Button):
+                button.styles.column_span = 1 if single_column else None
+                button.styles.width = "1fr" if single_column else None
         delete = self.query_one("#file-notes-delete", Button)
         self.query_one("#file-notes-delete-spacer", Static).display = (
             delete.display and not needs_stack
@@ -2137,7 +3136,7 @@ class LibraryFileNotesWorkspace(Vertical):
         items = self._page_items(page)
         end = min(page.offset + FILE_TREE_BATCH_SIZE, len(items))
         last_node: Any | None = None
-        for item in items[page.offset:end]:
+        for item in items[page.offset : end]:
             if item.kind == "folder":
                 last_node = parent.add(
                     Text(item.label),
@@ -2188,10 +3187,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._append_tree_page(node, page)
 
     def _rebuild_search_results(self, paths: tuple[str, ...]) -> None:
+        self._search_paths = paths
         if not self._active or not self.is_mounted:
             return
-        results = self.query_one("#file-notes-search-results", Tree)
-        self._search_paths = paths
+        matches = self.query("#file-notes-search-results")
+        if not matches:
+            return
+        results = matches.first(Tree)
         results.reset(Text("Search results"))
         self._append_tree_page(
             results.root,
@@ -2255,9 +3257,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if count is None:
             binding = self._session_binding
             changes = (
-                ()
-                if binding is None
-                else self._session_owner.snapshot(binding).changes
+                () if binding is None else self._session_owner.snapshot(binding).changes
             )
             count = len(coalesce_session_changes(changes))
         suffix = {
@@ -2270,6 +3270,7 @@ class LibraryFileNotesWorkspace(Vertical):
         except NoMatches:
             return
         entry.label = f"Review session changes ({count}){suffix}"
+        self._render_status_channels(count)
 
     def _clear_push_presentation(self) -> None:
         """Retire visible push state without canceling service-owned work."""
@@ -2339,9 +3340,7 @@ class LibraryFileNotesWorkspace(Vertical):
         )
 
     @staticmethod
-    def _settled_push_phase(result: object) -> Literal[
-        "idle", "needs_attention"
-    ]:
+    def _settled_push_phase(result: object) -> Literal["idle", "needs_attention"]:
         """Map typed service outcomes to the persistent indicator."""
         if isinstance(result, PushDestinationPolicyResult):
             return "needs_attention" if result.state != "ready" else "idle"
@@ -2350,8 +3349,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if isinstance(result, PushExecutionResult):
             return (
                 "needs_attention"
-                if result.state
-                in {"blocked", "failed_no_update_observed", "uncertain"}
+                if result.state in {"blocked", "failed_no_update_observed", "uncertain"}
                 else "idle"
             )
         if isinstance(result, PushRecoveryProjection):
@@ -2365,9 +3363,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._push_availability is None:
             self._git_panel_widget.clear_push_availability()
         else:
-            self._git_panel_widget.render_push_availability(
-                self._push_availability
-            )
+            self._git_panel_widget.render_push_availability(self._push_availability)
 
     @staticmethod
     def _push_view_for_operation(
@@ -2400,8 +3396,7 @@ class LibraryFileNotesWorkspace(Vertical):
             "pushing",
         }:
             self._git_panel_widget.render_push_progress(
-                phase,
-                operation_id=operation_id
+                phase, operation_id=operation_id
             )
         elif phase == "review" and self._push_review_projection is not None:
             self._git_panel_widget.render_push_review(
@@ -2522,9 +3517,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     "result. Inspect the configured destination externally "
                     "before taking further action."
                 ),
-                action=(
-                    "review_again" if pre_network else "back_to_session"
-                ),
+                action=("review_again" if pre_network else "back_to_session"),
             )
         )
         self._render_session_git_label()
@@ -2546,6 +3539,9 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._push_operation_is_current(operation, key, operation_id):
             return
         if isinstance(result, PushDestinationPolicyResult):
+            if snapshot.push_candidate != operation.candidate:
+                self._set_push_result_projection(self._expired_push_review_projection())
+                return
             if result.state == "ready" and result.authorization is not None:
                 self._push_authorization_projection = result.authorization
                 self._push_view_phase = "checking_candidate"
@@ -2561,16 +3557,21 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             return
         if isinstance(result, PushPreflightResult):
+            repository = snapshot.trusted_repository
             if (
                 result.state == "review"
                 and result.handle is not None
                 and result.review is not None
                 and result.review.candidate == operation.candidate.candidate
+                and snapshot.push_candidate == operation.candidate
+                and self._repository_identity_is_complete(repository)
             ):
+                assert repository is not None
                 try:
                     projection = PushPanelReviewProjection(
                         review=result.review,
                         availability=operation.candidate,
+                        repository=repository,
                     )
                 except ValueError:
                     projection = None
@@ -2582,6 +3583,12 @@ class LibraryFileNotesWorkspace(Vertical):
                     return
             if result.state == "cancelled":
                 self._return_push_to_list()
+                return
+            if (
+                snapshot.push_candidate != operation.candidate
+                and result.outcome is None
+            ):
+                self._set_push_result_projection(self._expired_push_review_projection())
                 return
             if result.outcome is not None:
                 self._set_push_result_projection(
@@ -2629,9 +3636,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             )
             return
-        action_enabled = (
-            snapshot.push_recovery_available and result.can_check_again
-        )
+        action_enabled = snapshot.push_recovery_available and result.can_check_again
         self._set_push_result_projection(
             PushPanelResultProjection(
                 title=result.title,
@@ -2718,6 +3723,17 @@ class LibraryFileNotesWorkspace(Vertical):
         return (
             "Owned push descendants are still settling; checking becomes "
             "available after every owned process ends."
+        )
+
+    @staticmethod
+    def _expired_push_review_projection() -> PushPanelResultProjection:
+        return PushPanelResultProjection(
+            title="Push review expired",
+            message=(
+                "The reviewed push candidate changed or expired. Return to "
+                "the current Session Git list and review it again."
+            ),
+            action="back_to_session",
         )
 
     def _set_push_result_projection(
@@ -2973,11 +3989,10 @@ class LibraryFileNotesWorkspace(Vertical):
                 recovery = snapshot.push_recovery
                 if (
                     recovery is not None
-                    and snapshot.push_recovery_candidate
-                    == operation.candidate
+                    and snapshot.push_recovery_candidate == operation.candidate
                 ):
-                    self._push_authorization_projection = (
-                        PushAuthorizationProjection(recovery.destination)
+                    self._push_authorization_projection = PushAuthorizationProjection(
+                        recovery.destination
                     )
                     self._open_push_authorization(
                         operation,
@@ -2995,9 +4010,7 @@ class LibraryFileNotesWorkspace(Vertical):
                         replace(
                             projection,
                             action_enabled=False,
-                            disabled_reason=(
-                                self._push_recovery_not_ready_copy()
-                            ),
+                            disabled_reason=(self._push_recovery_not_ready_copy()),
                         )
                     )
                 return
@@ -3037,7 +4050,9 @@ class LibraryFileNotesWorkspace(Vertical):
             self._push_result = None
             self._return_push_to_list()
         retained_push = (
-            None if service is None else getattr(service, "retained_push_operation", None)
+            None
+            if service is None
+            else getattr(service, "retained_push_operation", None)
         )
         operation = None if retained_push is None else retained_push(binding)
         if operation is None:
@@ -3051,9 +4066,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._return_push_to_list()
             self._push_key = candidate_key
             self._push_phase = (
-                "needs_attention"
-                if snapshot.push_recovery is not None
-                else "idle"
+                "needs_attention" if snapshot.push_recovery is not None else "idle"
             )
             self._render_session_git_label()
             return availability is not None or snapshot.push_recovery is not None
@@ -3063,7 +4076,10 @@ class LibraryFileNotesWorkspace(Vertical):
             current_operation is not None
             and self._push_operation_admitted
             and (
-                (candidate_key is not None and candidate_key != self._push_operation_key)
+                (
+                    candidate_key is not None
+                    and candidate_key != self._push_operation_key
+                )
                 or (
                     candidate_key is None
                     and current_operation.kind not in {"push", "recovery"}
@@ -3074,9 +4090,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._push_operation_admitted = False
             self._push_result = None
             self._push_phase = (
-                "needs_attention"
-                if snapshot.push_recovery is not None
-                else "idle"
+                "needs_attention" if snapshot.push_recovery is not None else "idle"
             )
             self._push_key = candidate_key
             self._return_push_to_list()
@@ -3084,16 +4098,11 @@ class LibraryFileNotesWorkspace(Vertical):
             if not self._push_operation_admitted:
                 self._push_key = candidate_key
                 self._push_phase = (
-                    "needs_attention"
-                    if snapshot.push_recovery is not None
-                    else "idle"
+                    "needs_attention" if snapshot.push_recovery is not None else "idle"
                 )
                 self._return_push_to_list()
                 self._render_session_git_label()
-                return (
-                    availability is not None
-                    or snapshot.push_recovery is not None
-                )
+                return availability is not None or snapshot.push_recovery is not None
             if (
                 self._push_operation_admitted
                 and self._push_operation_key == operation_key
@@ -3106,14 +4115,11 @@ class LibraryFileNotesWorkspace(Vertical):
                     if operation.kind == "push" and operation.child_started
                     else "checking"
                 )
-                self._push_view_phase = self._push_view_for_operation(
-                    operation
-                )
+                self._push_view_phase = self._push_view_for_operation(operation)
             refreshed = self._refresh_push_recovery_readiness(snapshot)
             if (
                 not refreshed
-                and self._git_panel_widget.push_phase
-                != self._push_view_phase
+                and self._git_panel_widget.push_phase != self._push_view_phase
             ):
                 self._render_current_push_view()
             if (
@@ -3132,9 +4138,7 @@ class LibraryFileNotesWorkspace(Vertical):
             if not self._push_operation_admitted:
                 self._push_key = candidate_key
                 self._push_phase = (
-                    "needs_attention"
-                    if snapshot.push_recovery is not None
-                    else "idle"
+                    "needs_attention" if snapshot.push_recovery is not None else "idle"
                 )
                 self._return_push_to_list()
             self._render_session_git_label()
@@ -3167,9 +4171,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._push_result = None
             self._return_push_to_list()
             self._push_phase = (
-                "needs_attention"
-                if snapshot.push_recovery is not None
-                else "idle"
+                "needs_attention" if snapshot.push_recovery is not None else "idle"
             )
         self._render_session_git_label()
         return True
@@ -3328,11 +4330,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._commit_review_projection = None
         self._commit_result_projection = None
         binding = self._session_binding
-        snapshot = (
-            None
-            if binding is None
-            else self._session_owner.snapshot(binding)
-        )
+        snapshot = None if binding is None else self._session_owner.snapshot(binding)
         if binding is not None and snapshot is not None:
             self._rehydrate_push_state(
                 self._session_git_service(),
@@ -3382,9 +4380,7 @@ class LibraryFileNotesWorkspace(Vertical):
             snapshot.binding == action.binding
             and snapshot.trusted_repository == action.repository
             and snapshot.changes == action.changes
-            and self._repository_identity_is_complete(
-                snapshot.trusted_repository
-            )
+            and self._repository_identity_is_complete(snapshot.trusted_repository)
         )
 
     def _clear_git_last_action(self) -> None:
@@ -3392,6 +4388,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._git_last_action = None
         if self._active and self.is_mounted:
             self._git_panel_widget.clear_last_action()
+            self._render_status_channels()
 
     def _sync_git_last_action(self) -> bool:
         """Validate and project the retained action against fresh owner state."""
@@ -3407,6 +4404,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     action.text,
                     complete=action.complete,
                 )
+            self._render_status_channels()
         return action is not None
 
     def _git_can_retain_rows(self, binding: SessionBinding) -> bool:
@@ -3459,10 +4457,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         key = draft.key
         if not self._commit_key_is_current(key):
-            if (
-                self._session_owner.snapshot(binding).trusted_repository
-                is None
-            ):
+            if self._session_owner.snapshot(binding).trusted_repository is None:
                 return False
             self._invalidate_commit_binding(
                 "Repository changed; the previous commit draft was cleared."
@@ -3583,9 +4578,7 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             self._git_refresh_after_mutation = True
             return True
-        retained_task = (
-            None if service is None else service.retained_status(binding)
-        )
+        retained_task = None if service is None else service.retained_status(binding)
         if retained_task is not None:
             self._git_status_task = retained_task
             self._git_status_task_binding = binding
@@ -3625,8 +4618,7 @@ class LibraryFileNotesWorkspace(Vertical):
         """Project one discovery failure to reason plus feasible recovery."""
         if discovery.state == "not_repository":
             return (
-                "This notes folder is not in a Git worktree. "
-                "Notes remain fully usable."
+                "This notes folder is not in a Git worktree. Notes remain fully usable."
             )
 
         defaults = {
@@ -3709,9 +4701,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             return
         snapshot = self._session_owner.snapshot(binding)
-        needs_trust = (
-            force_prompt or snapshot.trusted_repository != repository
-        )
+        needs_trust = force_prompt or snapshot.trusted_repository != repository
         if needs_trust:
             self._clear_git_last_action()
             self._git_panel_widget.render_untrusted(repository.worktree_root)
@@ -3723,9 +4713,7 @@ class LibraryFileNotesWorkspace(Vertical):
             if not await service.revalidate_repository(binding, repository):
                 if self._git_binding_is_current(binding):
                     self._clear_git_last_action()
-                    self._git_panel_widget.render_untrusted(
-                        repository.worktree_root
-                    )
+                    self._git_panel_widget.render_untrusted(repository.worktree_root)
                     self._git_panel_widget.set_current_status(
                         "Status: TRUST REQUIRED — Repository identity changed; "
                         "retry Trust and check status.",
@@ -3736,9 +4724,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._clear_git_last_action()
                 return
             snapshot = self._session_owner.snapshot(binding)
-        if (
-            self._git_refresh_after_mutation
-            and not self._session_owner.mutation_active(binding)
+        if self._git_refresh_after_mutation and not self._session_owner.mutation_active(
+            binding
         ):
             self._git_refresh_after_mutation = False
             self._start_git_refresh()
@@ -3793,9 +4780,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 f"{error}. Retry Refresh.",
                 retain_rows=self._git_can_retain_rows(binding),
             )
+            if error.reason != "mutation_active":
+                self._git_status_failure = "Git status failed"
+                self._render_status_channels()
             return
+        self._git_status_failure = ""
         self._git_status_task = task
         self._git_status_task_binding = binding
+        self._render_status_channels()
         self._ensure_git_status_waiter(task, binding, replace=True)
 
     async def _render_git_status(
@@ -3809,6 +4801,7 @@ class LibraryFileNotesWorkspace(Vertical):
             raise
         except Exception as error:
             if self._git_binding_is_current(binding):
+                self._git_status_failure = "Git status failed"
                 self._sync_git_last_action()
                 self._git_panel_widget.mark_stale(
                     f"Git status failed: {error}. Retry Refresh.",
@@ -3818,6 +4811,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 if self._git_status_task is task:
                     self._git_status_task = None
                     self._git_status_task_binding = None
+                self._render_status_channels()
             return
         self._sync_git_last_action()
         if not self._git_binding_is_current(binding):
@@ -3826,6 +4820,8 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._git_status_task is task:
             self._git_status_task = None
             self._git_status_task_binding = None
+        self._git_status_failure = ""
+        self._render_status_channels()
         if snapshot.trusted_repository is None:
             self._clear_git_last_action()
             self._git_panel_widget.render_unavailable(
@@ -3862,19 +4858,17 @@ class LibraryFileNotesWorkspace(Vertical):
         if state != "conflict":
             self._conflict_resolution_active = False
         if self._active and self.is_mounted:
-            label = _SAVE_STATE_COPY[state]
-            if detail:
-                label = f"{label}; {detail}"
             status = self.query_one("#file-notes-save-status", Static)
             status.set_class(state == "conflict", "-conflict")
             status.set_class(state == "error", "-error")
-            status.update(label)
+            self._render_status_channels()
             self._update_controls()
 
     def _set_action_status(self, text: str) -> None:
         self._action_detail = text
         if self._active and self.is_mounted:
             self.query_one("#file-notes-action-status", Static).update(text)
+            self._render_status_channels()
 
     def _acquire_editor_read_only(
         self,
@@ -4071,14 +5065,14 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
             return
-        self.query_one("#file-notes-path-label", Static).update(
-            self._path_field_label_copy()
+        self._update_static_content(
+            self.query_one("#file-notes-path-label", Static),
+            self._path_field_label_copy(),
         )
         transitioning = self._root_transitioning or self._path_transitioning
         binding = self._session_binding
-        mutation_active = (
-            binding is not None
-            and self._session_owner.mutation_active(binding)
+        mutation_active = binding is not None and self._session_owner.mutation_active(
+            binding
         )
         focused = self.app.focused
         if (
@@ -4098,34 +5092,32 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-protect",
                 "file-notes-reload",
                 "file-notes-save-copy",
+                "file-notes-recovery-save-copy",
+                "file-notes-recovery-reload",
                 "file-notes-refresh",
                 "file-notes-maintenance-toggle",
             }
         ):
             self._editor_action_focus_target = focused.id
         structurally_available = not transitioning and not mutation_active
-        has_service = self._service is not None and structurally_available
+        has_service = (
+            self._service is not None and self._initialized and structurally_available
+        )
         has_document = self._opened is not None and not transitioning
         has_deleted = bool(self._selected_deleted_path) and not transitioning
         self.query_one("#file-notes-new", Button).disabled = not has_service
         for selector in ("move", "delete", "reload"):
-            self.query_one(
-                f"#file-notes-{selector}", Button
-            ).disabled = not (
+            self.query_one(f"#file-notes-{selector}", Button).disabled = not (
                 has_document and structurally_available
             )
         self.query_one("#file-notes-protect", Button).disabled = not (
             has_document and structurally_available
         )
         self.query_one("#file-notes-compare", Button).disabled = not (
-            has_document
-            and structurally_available
-            and self._save_state == "conflict"
+            has_document and structurally_available and self._save_state == "conflict"
         )
         self.query_one("#file-notes-resolve-conflict", Button).disabled = not (
-            has_document
-            and structurally_available
-            and self._save_state == "conflict"
+            has_document and structurally_available and self._save_state == "conflict"
         )
         for selector in (
             "resolution-keep",
@@ -4139,7 +5131,7 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         copy_button = self.query_one("#file-notes-save-copy", Button)
         exact_export = self._opened is not None and self._opened.is_excerpt
-        copy_label = "Export exact copy" if exact_export else "Save draft as copy"
+        copy_label = "Export exact copy" if exact_export else "Save copy"
         disabled_prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
         if str(copy_button.label).removeprefix(disabled_prefix) != copy_label:
             copy_button.label = copy_label
@@ -4154,6 +5146,26 @@ class LibraryFileNotesWorkspace(Vertical):
                 and self._save_state not in {"dirty", "conflict", "error"}
             )
         )
+        copy_disabled_reason = None
+        if not has_document:
+            copy_disabled_reason = "Open a file before saving a copy."
+        elif not structurally_available:
+            copy_disabled_reason = (
+                "Wait for the current file or Git operation to finish."
+            )
+        elif not exact_export and self._save_state not in {
+            "dirty",
+            "conflict",
+            "error",
+        }:
+            copy_disabled_reason = (
+                "Save Copy becomes available when the draft differs from disk."
+            )
+        copy_button.tooltip = copy_disabled_reason
+        recovery_copy = self.query_one("#file-notes-recovery-save-copy", Button)
+        recovery_copy.label = copy_label
+        recovery_copy.disabled = copy_button.disabled
+        recovery_copy.tooltip = copy_disabled_reason
         self.query_one("#file-notes-restore", Button).disabled = (
             not has_service or not has_deleted or not structurally_available
         )
@@ -4175,20 +5187,25 @@ class LibraryFileNotesWorkspace(Vertical):
             if protect.parent is not None:
                 protect.parent.refresh(layout=True)
         reload_button = self.query_one("#file-notes-reload", Button)
+        recovery_reload = self.query_one("#file-notes-recovery-reload", Button)
         reload_label = (
-            "Discard draft and reload"
-            if self._save_state in {"conflict", "error"}
-            else "Reload"
+            "Reload from disk"
+            if self._save_state == "conflict"
+            else (
+                "Discard draft and reload" if self._save_state == "error" else "Reload"
+            )
         )
         if str(reload_button.label) != reload_label:
             reload_button.label = reload_label
             reload_button.refresh(layout=True)
             if reload_button.parent is not None:
                 reload_button.parent.refresh(layout=True)
+        recovery_reload.label = reload_label
+        recovery_reload.disabled = reload_button.disabled
         self._sync_editor_action_visibility()
-        self.query_one("#file-notes-reload-cancel", Button).disabled = (
-            not self.reload_confirmation_active
-        )
+        self.query_one(
+            "#file-notes-reload-cancel", Button
+        ).disabled = not self.reload_confirmation_active
         self.query_one("#file-notes-reload-confirm", Button).disabled = (
             not self.reload_confirmation_active or not structurally_available
         )
@@ -4212,6 +5229,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self.query_one("#file-notes-path", Input).disabled = (
             transitioning or mutation_active
         )
+        self._sync_path_task_surface()
         self.query_one("#file-notes-tree", Tree).disabled = (
             transitioning or mutation_active
         )
@@ -4224,7 +5242,11 @@ class LibraryFileNotesWorkspace(Vertical):
     def _sync_editor_action_disabled_presentation(self) -> None:
         """Keep every disabled editor action readable and visibly inert."""
         prefix = f"{LIBRARY_DISABLED_ACTION_MARKER} "
-        for button in self.query(".file-notes-toolbar Button"):
+        buttons = (
+            self.query_one("#file-notes-new", Button),
+            *self.query(".file-notes-toolbar Button"),
+        )
+        for button in buttons:
             label = str(button.label)
             base_label = label.removeprefix(prefix)
             rendered_label = library_disabled_action_label(
@@ -4242,7 +5264,7 @@ class LibraryFileNotesWorkspace(Vertical):
             and self._save_state == "conflict"
             and self._opened is not None
         )
-        self.set_class(confirming_reload, "-reload-confirming")
+        critical_reload = self._save_state in {"conflict", "error"}
         self.set_class(resolving_conflict, "-resolving-conflict")
         has_service = self._service is not None
         has_document = self._opened is not None
@@ -4252,9 +5274,7 @@ class LibraryFileNotesWorkspace(Vertical):
             "file-notes-move": has_document,
             "file-notes-delete": has_document and not resolving_conflict,
             "file-notes-restore": has_deleted,
-            "file-notes-compare": (
-                has_document and self._save_state == "conflict"
-            ),
+            "file-notes-compare": (has_document and self._save_state == "conflict"),
             "file-notes-resolve-conflict": (
                 has_document
                 and self._save_state == "conflict"
@@ -4266,13 +5286,22 @@ class LibraryFileNotesWorkspace(Vertical):
                 has_document
                 and (
                     (self._opened is not None and self._opened.is_excerpt)
-                    or self._save_state in {"dirty", "error"}
+                    or self._save_state in {"dirty", "conflict", "error"}
                 )
             ),
             "file-notes-refresh": has_service,
+            "file-notes-recovery-reload": (
+                has_document and self._save_state in {"conflict", "error"}
+            ),
+            "file-notes-recovery-save-copy": (
+                has_document
+                and (
+                    (self._opened is not None and self._opened.is_excerpt)
+                    or self._save_state in {"conflict", "error"}
+                )
+            ),
         }
         maintenance_ids = {
-            "file-notes-move",
             "file-notes-protect",
             "file-notes-reload",
             "file-notes-refresh",
@@ -4283,27 +5312,44 @@ class LibraryFileNotesWorkspace(Vertical):
         visibility["file-notes-maintenance-toggle"] = (
             maintenance_available and not resolving_conflict
         )
+        file_actions = self.query_one("#file-notes-file-actions")
+        reload_button = self.query_one("#file-notes-reload", Button)
+        reload_target = self.query_one(
+            (
+                "#file-notes-save-copy"
+                if critical_reload
+                else "#file-notes-maintenance-toggle"
+            ),
+            Button,
+        )
+        action_children = tuple(file_actions.children)
+        reload_index = action_children.index(reload_button)
+        target_index = action_children.index(reload_target)
+        if critical_reload:
+            if reload_index != target_index - 1:
+                file_actions.move_child(reload_button, before=reload_target)
+        elif reload_index != target_index + 1:
+            file_actions.move_child(reload_button, after=reload_target)
         focused = self.app.focused
         for action_id, displayed in visibility.items():
             if action_id in maintenance_ids:
-                displayed = displayed and self._maintenance_expanded
-            displayed = displayed and not confirming_reload
+                displayed = displayed and (
+                    self._maintenance_expanded
+                    or (action_id == "file-notes-reload" and critical_reload)
+                )
+            if confirming_reload:
+                displayed = action_id == "file-notes-recovery-save-copy" and displayed
             button = self.query_one(f"#{action_id}", Button)
             if button is focused and not displayed:
                 self._editor_action_focus_target = action_id
             button.display = displayed
-        self.query_one("#file-notes-delete-spacer", Static).display = (
-            visibility["file-notes-delete"]
-            and not self.has_class("-stack-editor-actions")
-        )
+        self.query_one("#file-notes-delete-spacer", Static).display = visibility[
+            "file-notes-delete"
+        ] and not self.has_class("-stack-editor-actions")
 
-        maintenance_toggle = self.query_one(
-            "#file-notes-maintenance-toggle", Button
-        )
+        maintenance_toggle = self.query_one("#file-notes-maintenance-toggle", Button)
         maintenance_toggle.label = (
-            "Hide file actions"
-            if self._maintenance_expanded
-            else "More file actions"
+            "Hide file actions" if self._maintenance_expanded else "More file actions"
         )
         maintenance = self.query_one("#file-notes-maintenance-actions")
         maintenance.display = (
@@ -4326,9 +5372,7 @@ class LibraryFileNotesWorkspace(Vertical):
             "#file-notes-reload-confirm-copy",
             Static,
         )
-        confirmation_actions = self.query_one(
-            "#file-notes-reload-confirm-actions"
-        )
+        confirmation_actions = self.query_one("#file-notes-reload-confirm-actions")
         confirmation_copy.display = confirming_reload
         confirmation_actions.display = confirming_reload
         for button in confirmation_actions.query(Button):
@@ -4410,8 +5454,122 @@ class LibraryFileNotesWorkspace(Vertical):
             or service is not self._service
         )
 
-    async def set_root(self, path: str | Path, *, persist: bool = True) -> bool:
-        """Adopt one canonical root after the common draft leave guard."""
+    def _scan_for_root(
+        self,
+        service: FileNotesService,
+        cancel_event: Event | None,
+        generation: int,
+    ) -> ScanResult:
+        """Scan a candidate root on a worker thread, cancellably and bounded.
+
+        Two halves of the same task-32121 wedge. The scan itself is now
+        cancellable, so an abandoned one lets go of ``_service_lock``
+        instead of holding it to the end of a home directory. And the wait
+        for that lock is bounded, so a scan stuck inside a single
+        uninterruptible syscall (a dead network mount) makes the NEXT
+        change report a timeout instead of queueing behind it silently.
+
+        That bound is the CALLER's deadline, not a second one down here
+        (review round 2): abandoning an attempt sets its cancel flag, and
+        ``Keep waiting`` extends the deadline that decides when to abandon.
+        A worker-side timeout of its own ended the change a moment after
+        the user asked for more time. A caller that passes no flag has
+        nobody to abandon it, so it keeps a bound of its own.
+
+        Args:
+            service: Service bound to the candidate root.
+            cancel_event: This attempt's own cancel flag, or None when the
+                caller cannot abandon the scan.
+            generation: The ``_root_generation`` this attempt owns, so its
+                progress reports stop at the attempt that started them.
+
+        Returns:
+            The candidate root's scan result.
+
+        Raises:
+            ScanCancelled: If this attempt was abandoned, waiting for the
+                lock or mid-scan.
+            _ServiceLockBusy: If an earlier operation still holds the lock
+                after ``ROOT_CHANGE_TIMEOUT_SECONDS``, for a caller that
+                cannot abandon this attempt.
+        """
+        should_cancel = None if cancel_event is None else cancel_event.is_set
+        deadline = monotonic() + ROOT_CHANGE_TIMEOUT_SECONDS
+        while not self._service_lock.acquire(timeout=SERVICE_LOCK_POLL_SECONDS):
+            if should_cancel is not None:
+                if should_cancel():
+                    raise ScanCancelled()
+            elif monotonic() >= deadline:
+                raise _ServiceLockBusy()
+        try:
+            return service.scan(
+                should_cancel=should_cancel,
+                on_progress=partial(
+                    self._record_root_scan_progress, generation=generation
+                ),
+            )
+        finally:
+            self._service_lock.release()
+
+    def _record_root_scan_progress(self, entries: int, *, generation: int) -> None:
+        """Publish the running entry count from the scan thread.
+
+        A plain attribute store, deliberately: the busy row reads it on its
+        own repaint tick, so no cross-thread call is needed and a stale
+        read is at worst one tick behind. It is not a cross-attempt store,
+        though (PR #2549 review, finding 2): an abandoned scan's thread can
+        still be inside its file loop when the next change resets the
+        counter, and its next report would otherwise land on the new
+        attempt's row.
+
+        Args:
+            entries: Entries this scan has seen so far.
+            generation: The ``_root_generation`` the reporting scan was
+                started for. A report from any older attempt is dropped.
+        """
+        if generation != self._root_generation:
+            return
+        self._root_scan_entries = entries
+
+    def _report_root_change_reason(self, reason: str) -> None:
+        """Keep one folder-change outcome visible until the next attempt.
+
+        task-32121: the timeout reason used to be written only into the
+        action-status line at the bottom of the editor pane, while the root
+        row -- the line the user is actually watching -- silently reverted
+        to the previously linked folder. The reason now owns the row until
+        another folder change starts.
+        """
+        self._root_action_reason = reason
+        self._set_action_status(reason)
+        self._update_root_surface()
+
+    async def set_root(
+        self,
+        path: str | Path,
+        *,
+        persist: bool = True,
+        cancel_event: Event | None = None,
+    ) -> bool:
+        """Adopt one canonical root after the common draft leave guard.
+
+        Args:
+            path: Folder to link. Canonicalized here; a value that cannot
+                be canonicalized ends the attempt.
+            persist: Whether to write the adopted root to the config.
+            cancel_event: The caller's flag for THIS attempt, set to
+                abandon its scan (the deadline, Cancel, Escape and the back
+                cue all go through it). Cancellation belongs to the caller:
+                pass None and the scan runs to completion, bounded only by
+                its own wait for the service lock.
+
+        Returns:
+            True when the folder was adopted. False covers every other
+            outcome -- a refused leave guard, a busy session, a superseded
+            attempt, an abandoned or timed-out scan -- and the previously
+            linked folder is still in place. The reason a user needs is
+            reported on the folder row, not returned here.
+        """
         if not self._active or self._path_transitioning or self._shutdown:
             return False
         if not await self.flush_pending_work():
@@ -4440,6 +5598,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_generation += 1
         generation = self._root_generation
         self._root_transitioning = True
+        # task-32121: the previous attempt's outcome stops being reported
+        # the moment a new one starts.
+        self._root_scan_entries = 0
+        self._root_action_reason = ""
         self._update_root_surface()
         self._update_controls()
         try:
@@ -4465,7 +5627,23 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             if not self._active or generation != self._root_generation:
                 return False
-            result = await asyncio.to_thread(service.scan)
+            try:
+                result = await asyncio.to_thread(
+                    self._scan_for_root,
+                    service,
+                    cancel_event,
+                    generation,
+                )
+            except ScanCancelled:
+                # Abandonment bumps the generation, so a still-current
+                # generation here means nobody has reported this yet.
+                if generation == self._root_generation:
+                    self._report_root_change_reason(ROOT_CHANGE_CANCELLED_COPY)
+                return False
+            except _ServiceLockBusy:
+                if generation == self._root_generation:
+                    self._report_root_change_reason(ROOT_CHANGE_TIMEOUT_COPY)
+                return False
             deleted = await self._load_deleted_paths(
                 replica=self._replica,
                 service=service,
@@ -4530,10 +5708,15 @@ class LibraryFileNotesWorkspace(Vertical):
                 or service is not self._service
             ):
                 return False
-            self._apply_opened_document(opened)
+            self._apply_opened_document(opened, announce_editable=True)
             return True
 
-    def _apply_opened_document(self, opened: OpenedFileNote) -> None:
+    def _apply_opened_document(
+        self,
+        opened: OpenedFileNote,
+        *,
+        announce_editable: bool = False,
+    ) -> None:
         if not self._active:
             return
         self._dismiss_reload_confirmation(focus_opener=False)
@@ -4549,6 +5732,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._sync_large_file_preview()
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
+        self._update_static_content(
+            self.query_one("#file-notes-exact-path", Static),
+            opened.relative_path,
+        )
         if opened.editable:
             self._set_save_state("saved")
         else:
@@ -4557,12 +5744,31 @@ class LibraryFileNotesWorkspace(Vertical):
                 f"read only: {opened.read_only_reason or 'unsupported content'}",
             )
         self._set_action_status(opened.replica_warning or "")
+        if self._root_action_reason:
+            # Review round 1: the folder-change reason owned the row until
+            # the next folder change, so one timeout hid the linked folder
+            # for the rest of the session. Opening a file ends it too.
+            self._root_action_reason = ""
+            self._update_root_surface()
         if self._narrow:
             self._narrow_view = "editor"
             self._apply_responsive_layout(self.size.width)
+            if self._reader_shell_external:
+                self.post_message(AdaptiveReaderShellResized())
         self._update_controls()
+        self._sync_work_mode()
+        if announce_editable and opened.editable:
+            self.post_message(
+                FileNotesEditableOpened(opened.relative_path).set_sender(self)
+            )
 
-    def _clear_open_document(self, *, keep_restore_path: bool = False) -> None:
+    def _clear_open_document(
+        self,
+        *,
+        keep_restore_path: bool = False,
+        announce_identity_cleared: bool = True,
+    ) -> None:
+        had_identity = self._opened is not None
         self._dismiss_reload_confirmation(focus_opener=False)
         self._opened = None
         self._current_path = ""
@@ -4570,6 +5776,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._delete_confirmation_path = ""
         if not keep_restore_path:
             self._selected_deleted_path = ""
+        self._close_path_task(restore_focus=False)
         if not self._active or not self.is_mounted:
             self._save_state = "idle"
             self._save_detail = ""
@@ -4582,20 +5789,26 @@ class LibraryFileNotesWorkspace(Vertical):
         if not keep_restore_path:
             self.query_one("#file-notes-path", Input).value = ""
             self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
+            self.query_one("#file-notes-exact-path", Static).update("No file selected")
         self._set_delete_confirmation()
         self._set_save_state("idle")
         self._update_controls()
+        if had_identity and announce_identity_cleared:
+            self.post_message(FileNotesIdentityCleared().set_sender(self))
 
     def select_deleted(self, relative_path: str) -> bool:
         """Select one persistent tombstone for the Restore action."""
         if not self._active or relative_path not in self._deleted_paths:
             return False
+        self._work_mode = "edit"
+        self._sync_work_mode()
         self._selected_deleted_path = relative_path
         self._clear_open_document(keep_restore_path=True)
         self.query_one("#file-notes-path", Input).value = relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(
             f"Recently deleted: {relative_path}"
         )
+        self.query_one("#file-notes-exact-path", Static).update(relative_path)
         self._set_action_status("Ready to restore.")
         if self._narrow:
             self._narrow_view = "editor"
@@ -4690,8 +5903,18 @@ class LibraryFileNotesWorkspace(Vertical):
         self._apply_opened_document(reloaded)
 
     def _start_poll(self) -> None:
+        # TASK-22219: skip the filesystem walk while this widget's screen is
+        # not the top of the stack (covered by a modal/pushed screen, or the
+        # Library screen is otherwise inactive). The timer itself keeps
+        # ticking -- a no-op fire every interval costs nothing, and it IS the
+        # resume path: the first tick after the screen is active again runs
+        # the catch-up reconcile, so no pause/resume bookkeeping can rot.
+        # Same gate as UI/Navigation/main_navigation.py's overflow tick;
+        # Textual 8.2.8 `Screen.is_active` is `app.screen is self`.
         if (
             not self._active
+            or not self.is_attached
+            or not self.screen.is_active
             or self._root_transitioning
             or self._path_transitioning
             or self._service is None
@@ -4715,26 +5938,71 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _start_autosave(self) -> None:
         self._autosave_timer = None
-        if (
-            not self._active
-            or self._save_state != "dirty"
-            or (
-                self._save_worker is not None
-                and not self._save_worker.is_finished
-            )
-        ):
+        if not self._active or self._save_state != "dirty":
+            return
+        task = self._save_task
+        if task is None or task.done():
+            task = self._begin_save_task()
+        self._attach_save_observer(task)
+
+    def _begin_save_task(self) -> asyncio.Task[bool]:
+        """Start one process-owned save that survives Textual node removal."""
+        task = asyncio.create_task(
+            self._save_draft(),
+            name="file-notes-autosave-task",
+        )
+        self._save_task = task
+        task.add_done_callback(self._save_task_finished)
+        return task
+
+    def _attach_save_observer(self, task: asyncio.Task[bool]) -> None:
+        """Attach one mount-owned Worker observer without owning the save task."""
+        if not self._active or not self.is_attached or task.done():
+            return
+        if self._save_worker is not None and not self._save_worker.is_finished:
             return
         self._save_worker = self.run_worker(
-            self._save_draft(),
+            self._observe_save_task(task),
             name="file-notes-autosave",
             group="file-notes-save",
             exclusive=False,
         )
 
+    @staticmethod
+    async def _observe_save_task(task: asyncio.Task[bool]) -> bool:
+        """Observe a retained save without letting Worker cancellation own it."""
+        return await asyncio.shield(task)
+
+    def _save_task_finished(self, task: asyncio.Task[bool]) -> None:
+        """Consume one save result and schedule a newer retained draft once."""
+        if self._save_task is task:
+            self._save_task = None
+        try:
+            saved = task.result()
+        except asyncio.CancelledError:
+            if self._save_state == "saving":
+                self._set_save_state("dirty", "save interrupted")
+        except Exception as error:
+            self._set_save_state("error", str(error))
+        else:
+            if not saved and self._save_state == "saving":
+                self._set_save_state("dirty", "save authority changed")
+        if (
+            self._active
+            and self.is_attached
+            and not self._shutdown
+            and self._save_state == "dirty"
+            and self._autosave_timer is None
+        ):
+            self._arm_autosave()
+
     async def _save_draft(self) -> bool:
         async with self._save_lock:
             opened = self._opened
             service = self._service
+            generation = self._root_generation
+            binding = self._session_binding
+            session_key = self._session_key
             if opened is None or service is None:
                 return True
             if self._save_state in {"conflict", "error"}:
@@ -4747,12 +6015,18 @@ class LibraryFileNotesWorkspace(Vertical):
                     service.save_file,
                     opened,
                     body,
-                    session_key=self._session_key,
+                    session_key=session_key,
                 )
             except Exception as error:
                 self._set_save_state("error", str(error))
                 return False
-            if not self._active:
+            if (
+                service is not self._service
+                or generation != self._root_generation
+                or binding != self._session_binding
+                or session_key != self._session_key
+                or opened is not self._opened
+            ):
                 return False
             if result.status == "ok" and result.content_hash is not None:
                 self._opened = replace(
@@ -4764,7 +6038,8 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._set_save_state("saved")
                 else:
                     self._set_save_state("dirty")
-                    self._arm_autosave()
+                    if self._active and self.is_attached:
+                        self._arm_autosave()
                 self._set_action_status(result.replica_warning or "")
                 self._refresh_session_changes()
                 return True
@@ -4794,16 +6069,21 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._autosave_timer is not None:
             self._autosave_timer.stop()
             self._autosave_timer = None
-        worker = self._save_worker
-        if worker is not None and not worker.is_finished:
+        task = self._save_task
+        if task is not None and not task.done():
             try:
-                await worker.wait()
+                await asyncio.shield(task)
             except Exception:
                 pass
         if self._save_state in {"conflict", "error"}:
             return False
         if self._save_state == "dirty":
-            await self._save_draft()
+            task = self._begin_save_task()
+            self._attach_save_observer(task)
+            try:
+                await asyncio.shield(task)
+            except Exception:
+                pass
         binding = self._session_binding
         if self._mutation_blocks_flush(binding):
             return False
@@ -4854,27 +6134,28 @@ class LibraryFileNotesWorkspace(Vertical):
         relative_path: str,
         operation: Callable[..., OperationResult],
         *args: object,
-    ) -> None:
+    ) -> bool:
         with self._hold_path_transition() as transition:
             if transition is None:
-                return
+                return False
             service, generation = transition
             result = await asyncio.to_thread(operation, *args)
             if self._path_result_is_stale(service, generation):
-                return
+                return False
             if not result.succeeded:
                 self._operation_error(action, result)
-                return
+                return False
             if not await self._rescan_after_action():
-                return
+                return False
             try:
                 opened = await asyncio.to_thread(service.open_file, relative_path)
             except Exception as error:
                 self._set_action_status(f"Open failed: {error}")
-                return
+                return False
             if self._path_result_is_stale(service, generation):
-                return
-            self._apply_opened_document(opened)
+                return False
+            self._apply_opened_document(opened, announce_editable=True)
+            return True
 
     @on(TextArea.Changed, "#file-notes-editor")
     def _editor_changed(self, event: TextArea.Changed) -> None:
@@ -4884,6 +6165,7 @@ class LibraryFileNotesWorkspace(Vertical):
             or self._path_transitioning
             or self._opened is None
             or not self._opened.editable
+            or self._save_state == "conflict"
         ):
             return
         self._set_delete_confirmation()
@@ -4984,15 +6266,67 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-choose-root")
     async def _choose_root(self, event: Button.Pressed) -> None:
         event.stop()
+        await self._open_root_picker()
+
+    async def _open_root_picker(self) -> None:
+        """Open the folder picker on the current root, else the last
+        browsed directory, else home."""
         location = (
             self._root
             if self._root is not None and self._root_offline is False
-            else Path.home()
+            else self._file_notes_browse_location()
         )
         await self.app.push_screen(
             SelectDirectory(location, title="Choose File Notes Folder"),
             callback=self._root_selected,
         )
+
+    def _file_notes_browse_location(self) -> Path:
+        """Return where Folder files should open with no root set (task-32174 AC#3).
+
+        Keyed independently (``file_notes.browse``) from Import once and
+        "Keep a folder synced" -- each picker context remembers its own
+        last-used directory. The stored value is persisted user state, so it
+        is validated in ``library_browse_location`` before it is used.
+        """
+        remembered = validated_browse_directory(
+            get_cli_setting("file_notes", "browse", None)
+        )
+        return remembered if remembered is not None else Path.home()
+
+    @on(Button.Pressed, "#file-notes-use-sync-folder")
+    def _use_configured_sync_folder(self, event: Button.Pressed) -> None:
+        """Link the folder ``[notes] sync_directory`` already names."""
+        event.stop()
+        folder = self._configured_sync_folder()
+        if folder is not None:
+            self._root_selected(folder)
+
+    @on(Button.Pressed, "#file-notes-root-keep-waiting")
+    def _keep_waiting_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.extend_root_change_deadline()
+
+    def extend_root_change_deadline(self) -> bool:
+        """Grant one in-flight folder change a second deadline.
+
+        Returns:
+            True when this call granted the extension; False when there is
+            no wait to extend or its one extension is already spent.
+        """
+        if self._structural_wait is None or self._root_change_extension_used:
+            return False
+        self._root_change_extension_used = True
+        self._root_change_extension = ROOT_CHANGE_TIMEOUT_SECONDS
+        self._update_root_surface()
+        return True
+
+    @on(Button.Pressed, "#file-notes-root-choose-another")
+    async def _choose_another_pressed(self, event: Button.Pressed) -> None:
+        """Abandon the slow change and go straight back to the picker."""
+        event.stop()
+        self.cancel_structural_wait()
+        await self._open_root_picker()
 
     @on(Button.Pressed, "#file-notes-root-details")
     def _show_root_details(self, event: Button.Pressed) -> None:
@@ -5003,18 +6337,238 @@ class LibraryFileNotesWorkspace(Vertical):
     def _root_selected(self, path: Path | None) -> None:
         if path is None or not self._active:
             return
+        self._persist_file_notes_browse_location(path)
         self.run_worker(
-            self.set_root(path),
+            self._change_root_with_deadline(path),
             name="file-notes-root-change",
             group="file-notes-root-change",
             exclusive=True,
         )
+
+    def _persist_file_notes_browse_location(self, path: Path) -> None:
+        """Off the event loop: remember the picked Folder files directory."""
+        generation = claim_browse_directory("file_notes", "browse")
+        self.run_worker(
+            lambda: remember_browse_directory(
+                "file_notes", "browse", path, generation
+            ),
+            thread=True,
+        )
+
+    async def _change_root_with_deadline(self, path: Path) -> None:
+        """Run one folder change under a deadline the user can cut short.
+
+        task-32055: ``set_root`` itself is unbounded -- it scans a folder
+        that may live on an unreachable network volume -- and while it ran,
+        every leave guard that consults ``_root_transitioning`` refused,
+        which is how a folder change swallowed Escape, the back cue and the
+        palette. The wait now owns a cancellable task, publishes an honest
+        status line, and always leaves the previously linked folder in
+        place when it does not complete.
+        """
+        previous_root = self._root
+        cancel_event = Event()
+        change = asyncio.ensure_future(
+            self.set_root(path, cancel_event=cancel_event)
+        )
+        self._root_change_extension = None
+        self._root_change_extension_used = False
+        wait = self._begin_structural_wait("Changing folder", change, cancel_event)
+        try:
+            # task-32121: ``asyncio.wait`` rather than ``wait_for`` so the
+            # deadline can be extended once by Keep waiting without the
+            # first expiry killing the task.
+            budget = ROOT_CHANGE_TIMEOUT_SECONDS
+            while True:
+                done, _pending = await asyncio.wait({change}, timeout=budget)
+                if done:
+                    await change
+                    break
+                extension = self._root_change_extension
+                if extension is not None:
+                    self._root_change_extension = None
+                    budget = extension
+                    self._update_root_surface()
+                    continue
+                # ``set_root``'s own ``finally`` only clears the transition
+                # once the cancelled coroutine unwinds -- release the canvas
+                # now, on the same seam an explicit Cancel uses.
+                self._abandon_root_change_task(change, cancel_event)
+                self._abandon_root_change(
+                    wait,
+                    ROOT_CHANGE_TIMEOUT_COPY
+                    if self._root == previous_root
+                    else ROOT_CHANGE_LANDED_COPY,
+                )
+                break
+        except asyncio.CancelledError:
+            # ``asyncio.wait`` leaves the change running when THIS coroutine
+            # is cancelled (a superseding folder pick, a screen teardown);
+            # abandoning it here is what stops its scan thread.
+            if not change.done():
+                self._abandon_root_change_task(change, cancel_event)
+            if not wait.cancelled:
+                raise
+            # The cancel receipt was written the moment Cancel was pressed;
+            # the commit may have crossed it since (see
+            # ROOT_CHANGE_LANDED_COPY). Both branches settle only once the
+            # task is done, so ``self._root`` is now final either way.
+            if self._root != previous_root:
+                # Through the reason channel, not just the action status:
+                # the cancel receipt already owns the folder row, and
+                # leaving it there tells the user the previous folder was
+                # kept while the new one is linked (review round 2).
+                self._report_root_change_reason(ROOT_CHANGE_LANDED_COPY)
+        finally:
+            self._end_structural_wait(wait)
+
+    def _begin_structural_wait(
+        self,
+        label: str,
+        task: asyncio.Task[Any],
+        cancel_event: Event | None = None,
+    ) -> StructuralWait:
+        """Publish one cancellable wait and arm its patience repaint."""
+        wait = StructuralWait(
+            label=label,
+            started_at=monotonic(),
+            cancel=partial(self._abandon_root_change_task, task, cancel_event),
+            owner=WAIT_OWNER_FILE_NOTES,
+        )
+        self._structural_wait = wait
+        self._structural_wait_task = task
+        if self._structural_wait_timer is not None:
+            self._structural_wait_timer.stop()
+        # task-32121: repeating, not one-shot -- the running entry count
+        # the busy row reports has to keep moving while a big folder is
+        # still being walked.
+        self._structural_wait_timer = (
+            self.set_interval(
+                STRUCTURAL_WAIT_PATIENCE_SECONDS,
+                self._update_root_surface,
+            )
+            if self._active and self.is_mounted
+            else None
+        )
+        self._update_root_surface()
+        return wait
+
+    def _end_structural_wait(self, wait: StructuralWait | None = None) -> None:
+        """Clear the wait (and its timer) once its operation has settled."""
+        if wait is not None and self._structural_wait is not wait:
+            return
+        self._structural_wait = None
+        self._structural_wait_task = None
+        if self._structural_wait_timer is not None:
+            self._structural_wait_timer.stop()
+            self._structural_wait_timer = None
+        self._update_root_surface()
+        self._update_controls()
+
+    def _abandon_root_change_task(
+        self,
+        task: asyncio.Task[Any],
+        cancel_event: Event | None = None,
+    ) -> None:
+        """Cancel the wait's task and release the canvas in the same beat.
+
+        The transition flags are cleared HERE rather than in ``set_root``'s
+        own ``finally``: that only runs once the cancelled coroutine
+        unwinds, and every leave guard consulted in the meantime would
+        still refuse -- which is the swallowed-Escape bug. Bumping the
+        generation makes the abandoned run's late results stale, so it can
+        never commit the folder it was still scanning.
+
+        Invariant (task-32180): **every** way a folder change ends early
+        arrives here, and nothing else releases the previous scan's hold on
+        ``_service_lock``. Three call sites reach it: the deadline and the
+        ``CancelledError`` branch of ``_change_root_with_deadline``, and
+        the ``StructuralWait.cancel`` partial that Cancel, Escape, the back
+        cue, the navigation flush and ``Choose another`` all go through. A
+        re-entrant folder change arrives by the second of those: the worker
+        is ``exclusive=True`` in the ``file-notes-root-change`` group, so
+        picking a second folder cancels the first worker.
+
+        What it is NOT: synchronous. Textual's exclusive-worker cancel
+        delivers ``CancelledError`` on a later loop turn, so the new
+        attempt's ``set_root`` can reach ``_scan_for_root`` while the
+        abandoned scan still holds the lock. That overlap is covered, not
+        avoided: ``_scan_for_root`` polls the lock and gives up only on
+        THIS attempt's cancel flag, so the new attempt simply waits out
+        the microseconds the old one needs to notice its flag. Do not
+        write an assertion here claiming the previous attempt is already
+        finished -- it usually is not.
+        """
+        task.cancel()
+        # task-32121: the asyncio cancel never reached the scan THREAD,
+        # which kept ``_service_lock`` and wedged every later folder change
+        # for the rest of the session. This is the flag it watches -- THIS
+        # attempt's, passed in with its task: a superseding pick starts its
+        # own attempt before this one unwinds, so reading current widget
+        # state here cancelled the wrong scan (review round 1).
+        if cancel_event is not None:
+            cancel_event.set()
+        self._root_generation += 1
+        self._root_transitioning = False
+
+    def _abandon_root_change(
+        self,
+        wait: StructuralWait,
+        reason: str,
+        *,
+        leaving: bool = False,
+    ) -> None:
+        """Report why a folder change ended and keep the current folder.
+
+        Args:
+            wait: The wait being abandoned.
+            reason: What to tell the user.
+            leaving: Whether the user is leaving this surface. task-32102:
+                the reason line owns the root row, which is exactly the
+                canvas being torn down on the way out -- nobody ever read
+                it. A toast is app-wide, so it follows the user to wherever
+                they land instead.
+        """
+        self._end_structural_wait(wait)
+        if leaving:
+            self.app.notify(reason)
+            return
+        self._report_root_change_reason(reason)
+
+    def cancel_structural_wait(self, *, leaving: bool = False) -> bool:
+        """Abandon the in-flight structural wait, keeping the current folder.
+
+        The single seam for every exit: the Cancel button, Escape, the back
+        cue and the app's navigation flush all reach it, so a structural
+        wait can gate the WRITE (a second folder change) without ever
+        gating the way out.
+
+        Args:
+            leaving: Whether this exit also leaves the surface, in which
+                case the outcome is announced rather than written to the
+                row the user is walking away from (task-32102).
+
+        Returns:
+            True when a wait was actually abandoned.
+        """
+        wait = self._structural_wait
+        if wait is None or not wait.request_cancel():
+            return False
+        self._abandon_root_change(wait, ROOT_CHANGE_CANCELLED_COPY, leaving=leaving)
+        return True
+
+    @on(Button.Pressed, "#library-structural-wait-cancel")
+    def _structural_wait_cancel_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.cancel_structural_wait()
 
     @on(Button.Pressed, "#file-notes-back")
     def _back_to_navigator(self, event: Button.Pressed) -> None:
         event.stop()
         self._narrow_view = "navigator"
         self._apply_responsive_layout(self.size.width)
+        if self._reader_shell_external:
+            self.post_message(AdaptiveReaderShellResized())
 
     @on(Button.Pressed, "#file-notes-session-changes")
     def _session_git_pressed(self, event: Button.Pressed) -> None:
@@ -5022,9 +6576,7 @@ class LibraryFileNotesWorkspace(Vertical):
         entry_owned_focus = event.button.has_focus
         if self._navigator_mode != "git":
             self._navigator_mode_before_git = (
-                "search"
-                if self._navigator_mode == "search"
-                else "files"
+                "search" if self._navigator_mode == "search" else "files"
             )
         self._navigator_mode = "git"
         self._sync_navigator_mode()
@@ -5274,8 +6826,7 @@ class LibraryFileNotesWorkspace(Vertical):
             operation is None
             or key is None
             or service is None
-            or self._push_view_phase
-            not in {"checking_candidate", "checking_remote"}
+            or self._push_view_phase not in {"checking_candidate", "checking_remote"}
             or operation_id != self._push_operation_id
             or not self._push_operation_is_current(
                 operation,
@@ -5604,9 +7155,9 @@ class LibraryFileNotesWorkspace(Vertical):
         try:
             return CommitPanelReviewProjection(
                 review,
+                key.repository,
                 tuple(
-                    CommitReviewNoteProjection(note)
-                    for note in review.included_notes
+                    CommitReviewNoteProjection(note) for note in review.included_notes
                 ),
             )
         except ValueError:
@@ -5792,9 +7343,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._clear_commit_draft_after_success()
             snapshot = self._session_owner.snapshot(key.binding)
             if snapshot.trusted_repository == key.repository:
-                note_label = (
-                    "note" if result.committed_note_count == 1 else "notes"
-                )
+                note_label = "note" if result.committed_note_count == 1 else "notes"
                 self._git_last_action = _GitLastAction(
                     binding=key.binding,
                     repository=key.repository,
@@ -5973,10 +7522,8 @@ class LibraryFileNotesWorkspace(Vertical):
         pending_save = (
             self._save_state in {"dirty", "saving"}
             or self._autosave_timer is not None
-            or (
-                self._save_worker is not None
-                and not self._save_worker.is_finished
-            )
+            or (self._save_task is not None and not self._save_task.done())
+            or (self._save_worker is not None and not self._save_worker.is_finished)
         )
         if (action == "stage" or pending_save) and not await self.flush_pending_work():
             gerund = "staging" if action == "stage" else "unstaging"
@@ -5986,14 +7533,9 @@ class LibraryFileNotesWorkspace(Vertical):
                     "Return to the editor."
                 )
             elif self._save_state == "error":
-                detail = (
-                    f"Fix the save error before {gerund}. "
-                    "Return to the editor."
-                )
+                detail = f"Fix the save error before {gerund}. Return to the editor."
             else:
-                detail = (
-                    f"Save the note before {gerund}. Return to the editor."
-                )
+                detail = f"Save the note before {gerund}. Return to the editor."
             self._git_panel_widget.set_current_status(
                 f"Status: CURRENT · BLOCKED — {detail}",
                 complete=True,
@@ -6038,6 +7580,8 @@ class LibraryFileNotesWorkspace(Vertical):
         action_key_after_admission = self._capture_git_action_key(binding)
         if action_key_after_admission != action_key:
             action_key = None
+        self._git_status_failure = ""
+        self._git_action_running = "Staging…" if action == "stage" else "Unstaging…"
         self._clear_git_last_action()
         self._git_status_task = None
         self._git_status_task_binding = None
@@ -6076,10 +7620,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 f"Git action failed: {error}. Inspect the repository "
                 "index outside Chatbook, then Refresh."
             )
-            if (
-                action_key is not None
-                and self._git_action_key_is_current(action_key)
-            ):
+            if action_key is not None and self._git_action_key_is_current(action_key):
                 self._git_last_action = replace(
                     action_key,
                     text=f"Last action: FAILED — {detail}",
@@ -6100,21 +7641,20 @@ class LibraryFileNotesWorkspace(Vertical):
                     summary_context,
                     action_key,
                 )
-                if (
-                    summary is not None
-                    and self._git_action_key_is_current(action_key)
-                ):
+                if summary is not None and self._git_action_key_is_current(action_key):
                     self._git_last_action = replace(
                         action_key,
                         text=(
-                            f"Last action: {self._git_action_label(result)} — "
-                            f"{summary}"
+                            f"Last action: {self._git_action_label(result)} — {summary}"
                         ),
                         complete=result.state != "success",
                     )
                     if self._git_binding_is_current(binding):
                         self._sync_git_last_action()
         finally:
+            self._git_action_running = ""
+            if self._active and self.is_mounted:
+                self._render_status_channels()
             binding_changed = (
                 binding != self._session_binding
                 or binding != self._session_owner.current_binding()
@@ -6149,9 +7689,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return _GitActionSummaryContext()
         requested = frozenset(group_ids)
         excluded: tuple[SessionGitRow, ...] = tuple(
-            row
-            for row in self._git_panel_widget.rows
-            if row.group_id not in requested
+            row for row in self._git_panel_widget.rows if row.group_id not in requested
         )
         clean = sum(row.state == "clean" for row in excluded)
         if action == "stage":
@@ -6186,11 +7724,7 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         affected = len(tuple(dict.fromkeys(affected_group_ids)))
         counts: list[str] = []
-        if (
-            context.bulk
-            and result.action == "stage"
-            and context.already_staged
-        ):
+        if context.bulk and result.action == "stage" and context.already_staged:
             counts.append(f"already staged {context.already_staged}")
         if context.bulk and result.action == "unstage" and context.skipped:
             counts.append(f"skipped {context.skipped}")
@@ -6200,9 +7734,7 @@ class LibraryFileNotesWorkspace(Vertical):
             counts.append(f"clean {clean}")
         if blocked:
             counts.append(f"blocked {blocked}")
-        counts_text = (
-            f"Counts: {'; '.join(counts)}." if counts else ""
-        )
+        counts_text = f"Counts: {'; '.join(counts)}." if counts else ""
 
         message = (result.message or "").strip()
         if message and message[-1] not in ".!?":
@@ -6221,9 +7753,7 @@ class LibraryFileNotesWorkspace(Vertical):
                     f"{affected} {note} unstaged; Chatbook restored only its "
                     f"owned session {entry}."
                 )
-            return " ".join(
-                part for part in (core, message, counts_text) if part
-            )
+            return " ".join(part for part in (core, message, counts_text) if part)
 
         if result.state == "success":
             past = "staged" if result.action == "stage" else "unstaged"
@@ -6259,9 +7789,7 @@ class LibraryFileNotesWorkspace(Vertical):
             "blocked": (
                 "Resolve the reported Git state outside Chatbook, then Refresh."
             ),
-            "stale": (
-                "Review the changed repository or session state, then Refresh."
-            ),
+            "stale": ("Review the changed repository or session state, then Refresh."),
             "error": "Fix the reported Git error outside Chatbook, then Refresh.",
             "uncertain": (
                 "Inspect the repository index outside Chatbook, then Refresh."
@@ -6293,15 +7821,17 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-new")
     async def _new_file(self, event: Button.Pressed) -> None:
         event.stop()
-        if not await self.flush_pending_work():
-            return
+        await self._open_path_task("new", opener_id=event.button.id or "file-notes-new")
+
+    async def _execute_new_file(self) -> bool:
+        """Execute New through the incumbent validator and file service."""
         service = self._service
         if service is None:
-            return
+            return False
         destination = self._validated_path_input("Create")
         if destination is None:
-            return
-        await self._complete_path_action(
+            return False
+        return await self._complete_path_action(
             "Create",
             destination,
             service.create_file,
@@ -6311,22 +7841,56 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-move")
     async def _move_file(self, event: Button.Pressed) -> None:
         event.stop()
+        await self._open_path_task(
+            "move", opener_id=event.button.id or "file-notes-move"
+        )
+
+    async def _execute_move_file(self) -> bool:
+        """Execute Move through the incumbent validator and file service."""
         opened = self._opened
-        if opened is None or not await self.flush_pending_work():
-            return
+        if opened is None:
+            return False
         service = self._service
         if service is None:
-            return
+            return False
         destination = self._validated_path_input("Move")
         if destination is None:
-            return
-        await self._complete_path_action(
+            return False
+        return await self._complete_path_action(
             "Move",
             destination,
             service.move_file,
             opened.relative_path,
             destination,
         )
+
+    @on(Button.Pressed, "#file-notes-path-submit")
+    async def _submit_named_path_task(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._submit_path_task()
+
+    @on(Button.Pressed, "#file-notes-path-cancel")
+    def _cancel_named_path_task(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._close_path_task(restore_focus=True)
+
+    @on(Button.Pressed, "#file-notes-edit")
+    def _show_edit_mode(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._work_mode = "edit"
+        self._sync_work_mode()
+        self.call_after_refresh(self._editor_widget.focus)
+
+    @on(Button.Pressed, "#file-notes-manage")
+    def _show_manage_mode(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._work_mode = "manage"
+        self._sync_work_mode()
+        if self._narrow:
+            self._narrow_view = "editor"
+            self._apply_responsive_layout(self.size.width)
+            if self._reader_shell_external:
+                self.post_message(AdaptiveReaderShellResized())
 
     @on(Button.Pressed, "#file-notes-maintenance-toggle")
     def _toggle_maintenance_actions(self) -> None:
@@ -6345,17 +7909,15 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> None:
         """Project the bounded conflict choices without resolving any side."""
         self._conflict_resolution_active = bool(
-            active
-            and self._opened is not None
-            and self._save_state == "conflict"
+            active and self._opened is not None and self._save_state == "conflict"
         )
         self._update_controls()
         if not self._active or not self.is_mounted:
             return
         if self._conflict_resolution_active:
             keep = self.query_one("#file-notes-resolution-keep", Button)
-            self.screen.set_focus(keep)
-            self.call_after_refresh(partial(self.screen.set_focus, keep))
+            keep.focus()
+            self.call_after_refresh(keep.focus)
         elif focus_opener:
             opener = self.query_one("#file-notes-resolve-conflict", Button)
             if opener.display and not opener.disabled:
@@ -6408,6 +7970,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             deleted_path = opened.relative_path
             self._selected_deleted_path = deleted_path
+            self._work_mode = "edit"
+            self._sync_work_mode()
             self._clear_open_document(keep_restore_path=True)
             self.query_one("#file-notes-path", Input).value = deleted_path
             self.query_one("#file-notes-breadcrumb", Static).update(
@@ -6445,9 +8009,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if service is None or opened is None:
             return
         target = not opened.protected
-        operation = (
-            service.protect_path if target else service.unprotect_path
-        )
+        operation = service.protect_path if target else service.unprotect_path
         result = await asyncio.to_thread(operation, opened.relative_path)
         if self._path_result_is_stale(service, generation):
             return
@@ -6729,10 +8291,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             if self._reload_confirmation is not confirmation:
                 return
-            if (
-                self._path_result_is_stale(service, generation)
-                or not self._reload_confirmation_is_current(confirmation)
-            ):
+            if self._path_result_is_stale(
+                service, generation
+            ) or not self._reload_confirmation_is_current(confirmation):
                 self._dismiss_reload_confirmation(focus_opener=True)
                 self._set_action_status(
                     "Reload stopped: the active root, file, or editing session "
@@ -6787,22 +8348,33 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-save-copy")
     async def _save_copy(self, event: Button.Pressed) -> None:
         event.stop()
-        opened = self._opened
-        if opened is None:
-            return
-        action = "Export exact copy" if opened.is_excerpt else "Save draft as copy"
-        await self._save_editor_copy(action)
+        await self._open_path_task(
+            "save_copy", opener_id=event.button.id or "file-notes-save-copy"
+        )
+
+    @on(Button.Pressed, "#file-notes-recovery-save-copy")
+    async def _save_recovery_copy(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._open_path_task(
+            "save_copy",
+            opener_id=event.button.id or "file-notes-recovery-save-copy",
+        )
+
+    @on(Button.Pressed, "#file-notes-recovery-reload")
+    async def _reload_from_recovery(self, event: Button.Pressed) -> None:
+        await self._reload_file(event)
 
     @on(Button.Pressed, "#file-notes-resolution-save-new")
     async def _save_conflict_draft_as_new_note(
         self,
         event: Button.Pressed,
     ) -> None:
-        """Save the retained draft through the existing no-clobber copy path."""
+        """Open recovery Save Copy through the same named no-clobber path."""
         event.stop()
-        if await self._save_editor_copy("Save draft as new note"):
-            editor = self.query_one("#file-notes-editor", TextArea)
-            self.call_after_refresh(editor.focus)
+        await self._open_path_task(
+            "save_copy",
+            opener_id=event.button.id or "file-notes-resolution-save-new",
+        )
 
     @on(Button.Pressed, "#file-notes-refresh")
     async def _refresh_pressed(self, event: Button.Pressed) -> None:

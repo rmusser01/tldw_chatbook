@@ -5,33 +5,30 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from hypothesis import given, settings, strategies as st
+from rich.cells import cell_len
 
 from tldw_chatbook.Library.library_media_state import (
+    _KEYWORD_REASON_CELLS,
+    _trailing_regional_indicators,
     MediaBrowseScope,
     LibraryMediaRow,
     LibraryMediaCanvasState,
     build_media_browse_result,
     build_library_media_browse_state,
     build_library_media_state,
+    library_media_int_backing_id,
+    validate_media_browse_items,
 )
+from Tests.UI.library_media_rows import summary_row, summary_rows
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
-
-
-def _summary_item(media_id: int) -> dict[str, object]:
-    return {
-        "id": f"local:media:{media_id}",
-        "backing_media_id": media_id,
-        "title": f"Media {media_id}",
-        "media_type": "document",
-        "updated_at": "2026-08-16T00:00:00+00:00",
-    }
 
 
 def _page(scope: MediaBrowseScope, *, total: int) -> dict[str, object]:
     count = min(20, max(total - scope.offset, 0))
     return {
-        "items": [_summary_item(scope.offset + index + 1) for index in range(count)],
+        "items": summary_rows(count, start=scope.offset + 1, media_type="document"),
         "total": total,
         "limit": 20,
         "offset": scope.offset,
@@ -150,6 +147,78 @@ def test_media_browse_result_rejects_malformed_identity_and_shape(mutate) -> Non
         build_media_browse_result(scope, payload)
 
 
+def test_validator_accepts_the_exact_seven_key_summary_row() -> None:
+    """has_analysis and reviewed are part of the contract, not decoration."""
+    frozen = validate_media_browse_items(
+        [summary_row(id=1, has_analysis=True, reviewed=False)]
+    )
+
+    assert set(frozen[0]) == {
+        "id",
+        "backing_media_id",
+        "title",
+        "media_type",
+        "updated_at",
+        "has_analysis",
+        "reviewed",
+    }
+    assert frozen[0]["has_analysis"] is True
+    assert frozen[0]["reviewed"] is False
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda item: item.pop("has_analysis"), id="five-key-legacy-row"),
+        pytest.param(lambda item: item.pop("reviewed"), id="six-key-row"),
+        pytest.param(
+            lambda item: item.__setitem__("match_reason", "keyword"), id="eighth-key"
+        ),
+    ],
+)
+def test_validator_rejects_any_key_set_but_the_seven(mutate) -> None:
+    item = summary_row(id=1)
+    mutate(item)
+
+    with pytest.raises(ValueError, match="seven"):
+        validate_media_browse_items([item])
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", None, "yes"])
+def test_validator_rejects_non_boolean_has_analysis(value: object) -> None:
+    """A truthy int would paint the analysed marker off a SQL 1/0 leak."""
+    item = summary_row(id=1)
+    item["has_analysis"] = value
+
+    with pytest.raises((TypeError, ValueError), match="has_analysis"):
+        validate_media_browse_items([item])
+
+
+@pytest.mark.parametrize("value", ["yes", "", 0, 1, "True"])
+def test_validator_rejects_non_tristate_reviewed(value: object) -> None:
+    item = summary_row(id=1)
+    item["reviewed"] = value
+
+    with pytest.raises((TypeError, ValueError), match="reviewed"):
+        validate_media_browse_items([item])
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    has_analysis=st.booleans(),
+    reviewed=st.sampled_from([None, False, True]),
+)
+def test_validator_accepts_the_whole_marker_value_domain(
+    has_analysis: bool, reviewed: bool | None
+) -> None:
+    frozen = validate_media_browse_items(
+        [summary_row(id=1, has_analysis=has_analysis, reviewed=reviewed)]
+    )
+
+    assert frozen[0]["has_analysis"] is has_analysis
+    assert frozen[0]["reviewed"] is reviewed
+
+
 def test_media_browse_result_rejects_duplicate_page_identity() -> None:
     scope = MediaBrowseScope()
     payload = _page(scope, total=2)
@@ -207,7 +276,11 @@ def test_authoritative_projection_distinguishes_unfiltered_from_literal_all_type
 
 
 def test_rows_with_type_and_age_secondary_and_missing_last():
-    """Rows sorted by recency with secondary showing '{type} · {age}' or fallback."""
+    """Rows sorted by recency with secondary showing '{type} · {age}' or fallback.
+
+    task-32347: the age is labelled ("updated 3m"), not bare -- on an audio
+    or video row a bare "3m" reads as the item's duration.
+    """
     records = [
         {
             "id": "media-b",
@@ -233,8 +306,8 @@ def test_rows_with_type_and_age_secondary_and_missing_last():
 
     assert isinstance(state, LibraryMediaCanvasState)
     assert [row.media_id for row in state.rows] == ["media-a", "media-b", "media-c"]
-    assert state.rows[0].secondary == "pdf · 3m"
-    assert state.rows[1].secondary == "video · 2h"
+    assert state.rows[0].secondary == "pdf · updated 3m"
+    assert state.rows[1].secondary == "video · updated 2h"
     # No age available -> no " · {age}" suffix
     assert state.rows[2].secondary == "audio"
     for row in state.rows:
@@ -435,7 +508,11 @@ def test_limit_truncates_rows_to_max_after_sorting():
 
 
 def test_id_title_type_key_fallbacks():
-    """Test key fallbacks: media_id/id/uuid, title, type/media_type."""
+    """Test key fallbacks: media_id/id/uuid, title, type/media_type.
+
+    task-32347: the secondary's age is labelled ("updated 3m") with the
+    field it comes from (`last_modified`), not left bare.
+    """
     records = [
         {
             "media_id": "mid-99",
@@ -457,12 +534,12 @@ def test_id_title_type_key_fallbacks():
     row_a = state.rows[0]  # sorted by recency
     assert row_a.media_id == "mid-99"
     assert row_a.title == "Fallback Media"
-    assert row_a.secondary == "video · 3m"
+    assert row_a.secondary == "video · updated 3m"
 
     row_b = state.rows[1]
     assert row_b.media_id == "uuid-77"
     assert row_b.title == "UUID Media"
-    assert row_b.secondary == "pdf · 2h"
+    assert row_b.secondary == "pdf · updated 2h"
 
 
 def test_untitled_fallback_for_missing_title():
@@ -732,3 +809,254 @@ def test_delete_receipt_count_defaults_zero_and_passes_through():
 
     floored_state = build_library_media_state(records, delete_receipt_count=-1)
     assert floored_state.delete_receipt_count == 0
+
+
+def test_analyze_receipt_fields_default_zero_and_pass_through():
+    """task-28007 AC#3/AC#4: the five bulk-Analyze receipt fields follow
+    ``delete_receipt_count`` exactly -- pure passthrough, defaulted so
+    every existing constructor call stays valid, counts floored at 0."""
+    records = [{"id": "1", "title": "A", "type": "video"}]
+
+    default_state = build_library_media_state(records)
+    assert default_state.analyze_receipt_total == 0
+    assert default_state.analyze_receipt_done == 0
+    assert default_state.analyze_receipt_failed == 0
+    assert default_state.analyze_receipt_running is False
+    assert default_state.analyze_choice_count == 0
+
+    running = build_library_media_state(
+        records,
+        analyze_receipt_total=40,
+        analyze_receipt_done=37,
+        analyze_receipt_failed=1,
+        analyze_receipt_running=True,
+        analyze_choice_count=2,
+    )
+    assert running.analyze_receipt_total == 40
+    assert running.analyze_receipt_done == 37
+    assert running.analyze_receipt_failed == 1
+    assert running.analyze_receipt_running is True
+    assert running.analyze_choice_count == 2
+
+    floored = build_library_media_state(
+        records,
+        analyze_receipt_total=-1,
+        analyze_receipt_done=-1,
+        analyze_receipt_failed=-1,
+        analyze_choice_count=-1,
+    )
+    assert floored.analyze_receipt_total == 0
+    assert floored.analyze_receipt_done == 0
+    assert floored.analyze_receipt_failed == 0
+    assert floored.analyze_choice_count == 0
+
+
+# ---------------------------------------------------------------------------
+# task-31955: the keyword match-reason suffix is cut by CELLS, not code points
+# ---------------------------------------------------------------------------
+
+
+def _keyword_reason_secondary(keyword: str) -> str:
+    """The whole secondary line of a row the browse filter matched by keyword."""
+    scope = MediaBrowseScope(query="q")
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": [summary_row(id=1, media_type="article")],
+            "total": 1,
+            "limit": scope.page_size,
+            "offset": 0,
+            "match_reasons": {"local:media:1": keyword},
+        },
+    )
+    state = build_library_media_browse_state(result, type_options=("All",), now=NOW)
+    return state.rows[0].secondary
+
+
+def _keyword_reason_term(keyword: str) -> str:
+    """The term one row paints after ``· keyword: `` when ``keyword`` matched."""
+    secondary = _keyword_reason_secondary(keyword)
+    assert " · keyword: " in secondary, secondary
+    return secondary.split(" · keyword: ", 1)[1]
+
+
+def test_keyword_reason_cut_is_cell_aware_for_wide_characters() -> None:
+    """Ten CJK characters occupy TWENTY cells, so ten of them never fit.
+
+    The cap bounds how much of the line the reason may take; counting code
+    points let a CJK keyword take twice the budget it was given.
+    """
+    term = _keyword_reason_term("会議記録一覧表示設定値二")
+
+    assert term == "会議記録一…", term
+    assert cell_len(term.removesuffix("…")) == 10, term
+
+
+def test_keyword_reason_never_splits_an_emoji_cluster() -> None:
+    """A ZWJ family emoji is ONE grapheme; the cut lands between clusters."""
+    zwj = "\u200d"
+    family = zwj.join("\U0001f468\U0001f469\U0001f467\U0001f466")
+    term = _keyword_reason_term(family * 6)
+
+    assert term == family * 5 + "\u2026", term
+    assert term.removesuffix("\u2026")[-1] != zwj, term
+
+
+def test_keyword_reason_cut_drops_a_dangling_interior_space() -> None:
+    """A cut landing on a space must not paint ``abcdefghi …``."""
+    assert _keyword_reason_term("abcdefghi jkl") == "abcdefghi…"
+
+
+def test_narrow_keyword_reason_cut_is_unchanged() -> None:
+    """The single-cell case keeps the exact ten-character line it always had."""
+    assert _keyword_reason_term("notesandmorestuff") == "notesandmo…"
+    assert _keyword_reason_term("notes") == "notes"
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    [
+        pytest.param("\u200d", id="zero-width-joiner"),
+        pytest.param("\u0301", id="combining-mark"),
+        pytest.param("\u200d" + " " * 12, id="zero-width-then-spaces-past-the-cap"),
+        pytest.param("   \u200d  ", id="spaces-around-a-zero-width-term"),
+    ],
+)
+def test_keyword_reason_with_nothing_to_paint_is_dropped(keyword: str) -> None:
+    """A cut head with no visible cells gets NO suffix, not a dangling label.
+
+    ``chop_cells`` has no line to return for a zero-width term (and an
+    IndexError there would take down the whole page projection, not just
+    one row's suffix), and a head of nothing but spaces cuts to "". Both
+    painted ``article · now · keyword: `` -- a label introducing nothing --
+    and past the cap, ``keyword: …``.
+
+    A reason that is ONLY whitespace never gets this far: the result's own
+    validator rejects it (pinned below), so these are the shapes that do.
+    """
+    assert "keyword" not in _keyword_reason_secondary(keyword)
+
+
+def test_a_blank_match_reason_is_rejected_before_any_row_is_built() -> None:
+    """The boundary, not the row, is where a whitespace-only reason dies."""
+    with pytest.raises(ValueError, match="match_reasons"):
+        _keyword_reason_secondary("    ")
+
+
+# ---------------------------------------------------------------------------
+# task-31962: ONE spelling of the display-id -> int backing-id coercion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param("local:media:12", 12, id="prefixed-display-id"),
+        pytest.param("12", 12, id="bare-int-text"),
+        pytest.param(12, 12, id="bare-int"),
+        pytest.param("media-12", None, id="legacy-row-id"),
+        pytest.param("local:media:abc", None, id="unparseable-tail"),
+        pytest.param("", None, id="empty"),
+        pytest.param(None, None, id="missing"),
+        pytest.param("local:media:0", None, id="non-positive"),
+        pytest.param("local:media:-4", None, id="negative"),
+    ],
+)
+def test_int_backing_id_covers_every_shape_the_three_spellings_handled(
+    value: object, expected: int | None
+) -> None:
+    assert library_media_int_backing_id(value) == expected
+
+
+def test_flag_pair_keyword_never_paints_a_half_flag() -> None:
+    """task-32044 (crit #7 P2): a flag keyword never leaves a lone indicator.
+
+    A regional-indicator flag is a PAIR of code points painted as one 2-cell
+    glyph. ``chop_cells`` fills the ten-cell budget to the tail and can split
+    the pair, leaving a lone indicator that a real terminal paints as a
+    2-cell box -- the row frame drifts +2 (border at 237 vs 235). The cut now
+    drops the dangling half so only whole flags paint; rich counts a whole
+    flag as 2 cells, matching the terminal, so once no half-flag survives the
+    measured width is the painted width and the frame stays put.
+
+    (Supersedes the task-31955 ceiling pin that accepted the half-flag.)
+    """
+    flag = "\U0001F1EF\U0001F1F5"  # JP, two regional indicators = one 2-cell flag
+    term = _keyword_reason_term("a" + flag * 6)
+    head = term.removesuffix("…")
+
+    # (1) no lone / half regional indicator survives the cut.
+    assert _trailing_regional_indicators(head) % 2 == 0, term
+    assert not head.endswith("\U0001F1EF"), term  # not the JP first-half alone
+    # (2) the reason's painted width stays within the cap -- whole flags count
+    #     as two cells, exactly what the terminal paints.
+    assert cell_len(head) <= _KEYWORD_REASON_CELLS, term
+    assert cell_len(term) <= _KEYWORD_REASON_CELLS, term
+
+
+# ---------------------------------------------------------------------------
+# task-31957: the preview pane reports the analysis state the row reports
+# ---------------------------------------------------------------------------
+
+
+def _browse_state_with_analysis(*values: bool) -> LibraryMediaCanvasState:
+    """One page whose Nth item carries analysis per ``values[N]``."""
+    scope = MediaBrowseScope()
+    items = [
+        summary_row(id=index, media_type="article", has_analysis=analysed)
+        for index, analysed in enumerate(values, start=1)
+    ]
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": items,
+            "total": len(items),
+            "limit": scope.page_size,
+            "offset": 0,
+        },
+    )
+    return build_library_media_browse_state(result, type_options=("All",), now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("analysed", "expected"),
+    [(True, "Analysed: yes"), (False, "Analysed: no")],
+)
+def test_preview_pane_reports_the_rows_analysis_state(
+    analysed: bool, expected: str
+) -> None:
+    """task-31957: the two surfaces describe the same item the same way.
+
+    The row's own line carries the word only when there IS an analysis (a
+    36-cell budget cannot spend cells saying "no"); the pane has a labelled
+    line per fact, so it answers in both directions with the row's word.
+    """
+    state = _browse_state_with_analysis(analysed)
+
+    assert expected in state.preview_lines, state.preview_lines
+    assert ("· analysed" in state.rows[0].secondary) is analysed
+
+
+def test_preview_pane_follows_the_selection_not_the_first_row() -> None:
+    """The pane describes the SELECTED item, so the answer must move with it."""
+    state = _browse_state_with_analysis(True, False)
+    other = build_library_media_browse_state(
+        build_media_browse_result(
+            MediaBrowseScope(),
+            {
+                "items": [
+                    summary_row(id=1, media_type="article", has_analysis=True),
+                    summary_row(id=2, media_type="article", has_analysis=False),
+                ],
+                "total": 2,
+                "limit": 20,
+                "offset": 0,
+            },
+        ),
+        type_options=("All",),
+        selected_id="local:media:2",
+        now=NOW,
+    )
+
+    assert "Analysed: yes" in state.preview_lines, state.preview_lines
+    assert "Analysed: no" in other.preview_lines, other.preview_lines

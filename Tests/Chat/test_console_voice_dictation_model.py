@@ -182,9 +182,7 @@ def test_unset_dictation_model_and_unset_transcription_model_stays_none_for_othe
 ):
     """Neither key set, non-fast provider: `model` stays `None`, exactly as before."""
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("parakeet-mlx",))
-    _stub_settings(
-        monkeypatch, {"transcription.default_provider": "parakeet-mlx"}
-    )
+    _stub_settings(monkeypatch, {"transcription.default_provider": "parakeet-mlx"})
 
     effective = cvi.resolve()
 

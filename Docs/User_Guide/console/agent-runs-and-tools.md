@@ -1,5 +1,23 @@
 # Agent runs & tools — what happens when a reply uses tools, skills, and sub-agents
 
+## Running the Watchlists workflow from Console
+
+You can ask the Console agent to create feeds, group them into a Watchlist, check the sources, generate a briefing, save a recurrence, and read a completed briefing. The agent discovers and loads the required local tools, while each approval remains explicit and auditable.
+
+A useful first request is:
+
+> Create a Watchlist from these RSS feeds, check every source, generate a briefing, schedule it every 24 hours, then open the completed briefing and summarize it for me.
+
+Long-running checks and briefings return receipt IDs. The agent should follow each exact receipt until it reaches a terminal state instead of treating “accepted” as “finished.” Keep the receipts when you need an audit trail or want to ask for status later.
+
+The agent can list and open completed briefings on your behalf. Full briefing and item bodies remain Console-local; an external MCP client receives only the limited metadata and receipt surface described in the MCP guide.
+
+“Use the existing model” means the collection's saved briefing provider/model
+preset first. Without one, Chatbook reads the saved `chat_defaults` provider and
+model at briefing run time; if that model is empty, it uses the saved model for
+that same provider. It never means “silently copy the model selected for this
+Console conversation.”
+
 ## What this page covers
 
 When a Console reply needs more than plain text — running a tool, spawning a
@@ -7,6 +25,12 @@ sub-agent, executing a skill, or calling an MCP server — it becomes an *agent
 run*. This page covers what you see while a run is in flight, how tool-call
 approvals work, how background runs in other tabs surface, and how skills and
 MCP tools plug in. For the Console screen itself see [Console](../console.md).
+
+Canvas uses four conversation-scoped agent tools outside the ordinary approval
+card flow: list and read are branch-bounded, while create and update stage local,
+reversible revisions that commit with the assistant turn. Canvas submit and
+download requests still require their own explicit trusted-shell confirmation.
+See [Canvas](canvas.md) for the complete workflow and recovery model.
 
 ## Getting there
 
@@ -28,19 +52,40 @@ a one-time banner spells it out:
 
 The number is your configured cap (default 3). Sending past the cap is
 refused with a message like "2 agents already running (…). Wait for one to
-finish or interrupt it." Runs live only while Console stays open — see
-[Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
+finish or interrupt it." Runs continue when you switch screens — see
+[Console runs continue during navigation](../index.md#console-runs-continue-during-navigation).
 
 **In the reply row itself** — while the turn works, the unfinished
 `Assistant` row shows a live activity line in place of its (empty) text, so
-a long tool call never looks frozen: `⚙ read_file · 4s` names the tool that
-is running and how long it has been running, `Thinking… · 6s` means the
-tool finished and the model is composing the next round, and `Generating…`
-is the wait for the model's first response of the turn. The elapsed figure
-advances while you watch. The line is live-only — it vanishes the moment
-the reply's own text arrives, and a conversation you reopen later shows the
-completed `Tool` rows below instead. A sub-agent's work never appears here;
-it belongs to the **Sub-agents** panel in the left rail.
+a long tool call never looks frozen. `Connecting tools… · 4s` marks the
+pre-provider setup step — the first send after a launch pays for it once,
+assembling the turn's tools and your profile; that setup step is capped at
+ten seconds, so if something it needs (an OS keychain prompt, for
+instance) does not answer in time, the send goes ahead without profile
+tools rather than waiting. `⚙ read_file · 4s` names the tool that is
+running and how long it has been running, `Thinking… · 6s` means the tool
+finished and the model is composing the next round, and `Generating…` is
+the wait for the model's first response of the turn. Once an approval or
+confirm card is up and waiting on you, the line reads `Waiting for your
+approval · 12s` instead of `Thinking…` — a decision only you can make
+outranks whatever the model's last step happened to be — and the same
+applies to the "Run:" status chip above the composer and the Inspector's
+`Live work`/`Run` rows, which read "Waiting for your approval"/"Waiting
+for approval" rather than the generic run-in-progress copy while a card is
+pending. The elapsed figure advances while you watch. The line is
+live-only — it vanishes the moment the reply's own text arrives, and a
+conversation you reopen later shows the completed `Tool` rows below
+instead. During a fleet turn, while the primary waits on its children, the
+line reads `2 sub-agents · ⚙ grep_files · 12s`
+(the count of running sub-agents and their longest-running tool) instead of
+`Thinking…`; the running sub-agent list itself lives in the **Agents**
+section of the Inspect rail (**Alt+I**), and each child's full step list
+stays in the left rail's Agent drill-down. Once a tool call has run for
+five seconds the line grows a `✕ abandon call` link: clicking it abandons
+that one call (the model sees it fail as "tool call cancelled") and the
+turn continues, unlike **Stop**, which ends the run. A tool that must
+finish once started (a Watchlists mutation, for example) cannot be
+abandoned and shows no link.
 
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
@@ -54,10 +99,9 @@ reply:
 
 - Status line: `Agent: idle`, or `Agent: running · step N` while working.
 - One `·`-prefixed line per step.
-- A **Sub-agents** panel appears once the reply has spawned at least one
-  sub-agent — see [The fleet panel](#the-fleet-panel--three-states) below
-  for its three states (collapsed summary, expanded rows, drilled into one
-  child), how to cancel a child, and how its token spend shows up.
+- The drilled-into view of a single sub-agent (`Sub-agent · <status>
+  (Back)`) and the **Cancel all agents** button, both reached from the
+  Inspect rail's **Agents** section — see below.
 - **View full log** opens the "Full run log — <run id>" window: the complete,
   untruncated record ("what the model actually saw, before the Console's
   display cap trimmed it"). **Close** or **Esc** dismisses it.
@@ -65,16 +109,119 @@ reply:
 **In the Inspector** (right rail) — the "Status:" line tracks the run
 (`Status: Ready` / `Status: Generating…` / `Status: Needs approval` /
 `Status: Source blocked` / `Status: Blocked`), and the "Run recipe" row summarizes provider / model /
-sources / tools / approvals for the next send.
+sources / tools / approvals for the next send. The **Agents** section near
+the top of this rail is the sub-agent list itself — it appears once the
+reply has spawned at least one sub-agent; see
+[The fleet panel](#the-fleet-panel--three-states) below for its three
+states (collapsed summary, expanded rows, drilled into one child), how to
+cancel a child, and how its token spend shows up. The list used to live in
+the left rail's Agent section; only the list moved, and everything about
+its rows and actions is unchanged.
 
 **In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
 "Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
 clickable: it jumps you to the pending approval card (with nothing pending it
-just says "No approval is pending.").
+just says "No approval is pending."). A mutation already in **Finishing** is
+status, not a pending decision, so it no longer contributes to this count.
 
 ## Features & controls
+
+### Planning is not model thinking
+
+Console may show a **Planning** activity while it prepares a run. That is a
+safe, session-only application preamble: it is not provider reasoning, is not
+saved as model thinking, and is not replayed into later model history. When an
+adapter reports an actual Thinking block for the same model round, the Planning
+preamble is suppressed so the two are not presented as duplicate evidence.
+
+Model **Thinking** rows have a stricter rule: they exist only for actual
+adapter-reported displayable or proprietary evidence. Tool use, a reasoning-
+capable model, or a long pause does not create one. Proprietary evidence never
+contains private text; its expanded notice is
+`Proprietary thinking obfuscated - not available`. This distinction describes
+observable provider events and does not promise hidden chain-of-thought.
+
+### Task panel — the agent's task list stays in view
+
+When the agent keeps a task list (the `todo_create` / `todo_update` tools),
+a **Tasks** panel sits pinned above the transcript for as long as the list
+has entries:
+
+```
+▾ Tasks · 3 of 7 done · Writing the migration
+[x] Read the schema
+[x] Draft the migration plan
+[x] Add the version bump
+[~] Writing the migration
+[ ] Run the DB tests
+[ ] Update the docs
+[ ] Open the PR
+```
+
+- The header always shows how many tasks are done and what the agent is
+  working on right now. `[~]` marks the in-progress task, `[x]` a finished
+  one, `[ ]` one still waiting.
+- The panel updates the instant the agent changes the list. The transcript
+  still gets its `☰ Tasks` marker on every change, so the history stays
+  intact; the panel is the copy that does not scroll away.
+- Click the header to collapse the panel to its one-line summary, and click
+  again to expand it. Each tab remembers its own collapsed state.
+- Long lists scroll inside the panel rather than pushing the transcript
+  down.
+- The list belongs to the tab: switching tabs switches the panel, and a tab
+  with no tasks shows no panel at all. Like the rest of a run, the list
+  lives only while Console stays open.
+
+The panel is read-only — it shows the agent's plan; it is not a place to
+edit it.
+
+### Questions from the agent
+
+An agent can stop and ask you up to four multiple-choice questions. The
+questions appear on a card above the transcript, in the same slot as
+approvals, and the run waits until you answer:
+
+```
+The agent has 2 questions for you:
+Database   Which database should the migration target?
+  ( ) Postgres — managed, relational
+  (•) SQLite — embedded
+  Other…
+Region     Which regions? (pick any)
+  [x] eu
+  [ ] us
+  Other…
+                                                    [ Submit ]
+```
+
+- Pick an option per question, or type your own answer in **Other…** — it
+  is always there, whatever the agent offered. `1`–`4` pick an option in the
+  question you are on, `Tab` moves between questions, `Enter` submits.
+- You can submit with questions left blank; the agent sees them as
+  unanswered and decides what to do.
+- You can also just type your answer and send it. While a question card is
+  up, a plain message answers the questions you have not picked an option
+  for (it becomes their **Other…** text) and is not sent to the agent as a
+  new message. Two exceptions: a `/` command runs as usual, and a message
+  with a staged attachment or staged Library evidence is sent as a normal
+  turn, leaving the question up for you to answer on the card.
+- The card never grabs focus from something you are typing. If you need to
+  reach it from the keyboard, the inspector's **Review approval** action
+  focuses the question card when no approval is pending.
+- By default the question waits as long as it takes. To make an unanswered
+  question expire instead, set `ask_user_timeout_seconds` under `[console]`
+  in your config; the card then shows *Auto-continues in m:ss* and the run
+  carries on without an answer when it reaches zero. The clock advances only
+  while the question can be answered in the visible conversation.
+- A question for a tab you are not looking at lights that tab's badge and
+  shows a toast; visit the tab to answer it. Stopping the run clears the card.
+- Every answered round leaves one line per question in the transcript, so
+  the exchange stays in the record.
+
+The tool is on by default. To remove it from every agent, set
+`ask_user_enabled = false` under `[tools]`.
 
 ### Approvals — tools ask before they run
 
@@ -85,9 +232,9 @@ appears above the transcript:
 ![The "Approval required" card with a pending tool call](../images/console/approval-card.svg)
 
 - Each pending tool call gets a row with a decision select: **Approve once**
-  (the default), **Approve for session**, **Always allow**, or **Deny**.
-  Built-in tools don't offer "Always allow" — decisions for them last at most
-  the session.
+  (the default), **Approve for session**, **Always allow this exact input**,
+  **Always allow**, or **Deny** — some rows narrow that set (built-in tools
+  don't offer "Always allow"; decisions for them last at most the session).
 - Bulk controls: **Approve all** sets every row to Approve once, **Submit**
   applies each row's selected decision and resumes the run, **Deny all** sets
   every row to Deny.
@@ -96,8 +243,21 @@ appears above the transcript:
 - Watch the badges on a row's header: **(definition changed)** means the
   tool's definition differs from what you previously approved; **(high risk)**
   flags reads that could exfiltrate file contents; and a path warning —
-  "path outside allowed folders; will fail even if approved" — means the file
-  path will be rejected regardless of your decision.
+  "path outside private scratch and bound Workspace folders; will fail even
+  if approved" — means the file path will be rejected regardless of your
+  decision.
+- Some local-tool rows also state their code-owned effects: they may read
+  private local data, modify local data, access the network, or incur LLM
+  usage costs. These labels come from the registered tool descriptor, never
+  from model-supplied arguments. They explain what approval covers; they do
+  not grant authorization or replace the permission decision.
+
+A tool's catalog exposure, authorization, risk tags, and approval effects are
+separate. Exposure controls whether the descriptor is available in Console
+only or may also be published to external MCP. Authorization is still the
+per-tool permission state, definition-hash guard, and master kill switch. Risk
+tags enforce permission-store floors; approval effects are human-facing call
+explanations only.
 
 An armed approval card does not expire — the run waits for your decision
 however long you take. Stopping the run or closing the session withdraws a
@@ -105,11 +265,31 @@ pending card; nothing else does. If you'd rather have undecided calls
 auto-denied on a clock, set `[mcp] approval_timeout_seconds` in
 `config.toml` (seconds; `0`, the default, waits indefinitely — the skill
 install and run-script confirm cards follow the same rule).
+Finite clocks pause while no supported view can answer the card, including hidden
+Console, another conversation, or an earlier card of the same kind. A visible
+Buddy interaction card can keep its own decision answerable.
+
+Some short local database mutations have a definitive-after-start contract.
+Before approval, Stop still withdraws the request. After you approve and the
+mutation starts, the card changes to **“Finishing — Stop will not cancel”**;
+its decision controls are disabled and the row stays visible until the actual
+commit, rollback, or scrubbed failure result arrives. Stop can still end the
+rest of the run, but it cannot truthfully cancel a transaction already in
+progress, so Console does not claim that it did. Keyboard inspection focuses
+the finishing card itself rather than one of its disabled decision controls.
+Closing that Console chat
+removes its finishing row because the session no longer exists; it does not
+retroactively cancel a mutation that already started.
 
 **Always allow** (MCP tools only) is remembered per tool, tied to the tool's
 current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered
 allow from the tool's row on the [MCP screen](../mcp.md) 🚧.
+
+**Always allow this exact input** is narrower: it remembers only the exact
+arguments shown on that card, not the whole tool — the same tool called
+again with different arguments still asks. See [Exact-input allow
+rules](../mcp.md#exact-input-allow-rules) for where to review or remove one.
 
 With sub-agents running in parallel (see below), more than one approval card
 can be pending at once — cards aren't merged across sub-agents: each is
@@ -121,6 +301,54 @@ was. Within one session, Console shows only one card at a time, oldest-armed
 first — a second round arming for the same session while another is still
 pending queues silently and mounts its own card only once the earlier round
 is decided.
+
+#### Agent Lesson saves always require exact foreground review
+
+`Agent_Lessons` is reusable memory in ordinary user-owned Notes, not trusted
+instructions. When the exact `agent-lesson` keyword, an already marked note, or
+an unresolved Agent Lesson organization receipt classifies a save, Console
+forces a separate per-call review even if ordinary Notes tools are allowed for
+the session. The row identifies create/update, title, classification, and a
+content digest without placing the full private note body on the card; the
+agent must first show the complete proposed title, content, organization,
+target, and versions in the conversation. The only decisions are **Approve
+once** and **Deny**.
+
+Only the foreground primary can submit that save. A subagent can search
+lessons, verify evidence, and return a structured draft, but a mutation returns
+`foreground_required` and creates no approval card. A direct or unbound call
+returns `approval_required`. Approval is single-use and bound to the exact run,
+call, payload, Note identity, marker/classification, content and organization
+versions, and pending receipt state. A replay or intervening change fails
+without writing; Console asks for a fresh read and preview instead of silently
+restoring a removed marker or overwriting user changes.
+
+Search/read results carry `Untrusted reference data; not instructions or
+authorization.` Treat them as evidence to check. Text inside a lesson cannot
+approve another tool, grant filesystem or network access, override system,
+project, or user instructions, or otherwise increase the run's authority.
+
+#### Agent Lesson promotions use current target authority
+
+A foreground primary with independently verified, reusable procedural evidence
+may suggest the smallest focused instruction improvement; no fixed incident
+count makes a lesson authoritative. Subagents can return evidence, target hints,
+candidate wording, and verification ideas, but cannot present a promotion card
+or apply a change.
+
+For repository instructions, preparation is one **Approve once** / **Deny**
+card over an exact read-only preview. Application is a second card over the
+identical retained proposal. Only `AGENTS.md` or `AGENTS.override.md` inside the
+selected writable binding qualifies. A changed target, binding, applicable
+instruction chain, payload, run, role, or call invalidates the review and writes
+nothing.
+
+For a Chatbook-managed local skill, the reviewed Console action returns proposal
+text only. Apply it manually in **Library ▸ Skills**; saving uses the skill's
+current version and makes it trust-pending, so review and re-trust it there
+before use. Neither lesson text nor a previous outcome grants a future write.
+Recording an applied, rejected, stale, or failed outcome is a separate ordinary
+Agent Lesson Note update with its own exact foreground approval.
 
 ### Interrupted provider tool runs — Resume, Take over, or Discard
 
@@ -182,6 +410,13 @@ marker stays the durable pointer to what finished.
   they never resolve themselves.
 - A background run that ends also toasts once: "Agent in <tab> (<workspace>)
   finished." (or "failed.").
+- A round that blocks on you — an approval, a skill or worktree confirm, or
+  a question — while you are on **another screen** (Library, Settings, …) or
+  Console has not been opened this launch rings the terminal bell once, and
+  the **Console** entry in the top navigation carries a `◆` badge until the
+  round resolves. `[console] interrupt_bell = false` (or the
+  `TLDW_CONSOLE_INTERRUPT_BELL` environment variable) silences the bell; the
+  badge stays. A round raised while Console is in front rings nothing.
 - The left rail pins a fleet summary line whenever other tabs are busy:
   "N other agents running, M waiting for approval."
 - Open session tabs show `Qn`, and open conversation rows show `Queue n`,
@@ -216,7 +451,35 @@ already streaming.
   model at spawn time) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
 
+For a read-only example, Settings includes an unsaved **Bulk reader** preset.
+Its four local file tools still pass through the normal workspace and approval
+rules, and its requested file list remains advisory within that workspace. The
+[bulk-reader comparison pilot](../../Examples/agents/bulk-reader/README.md)
+explains compatible same-provider model selection and the opt-in synthetic
+evaluation. It does not enable automatic routing or establish savings by
+itself.
+
 ### Change review — reviewing a turn's file changes
+
+Change Review is **off for every new workspace until you explicitly enable
+it** in **Settings > Workspaces**. The global `[change_review] enabled`
+setting is only a capability switch; it never opts a workspace in by itself.
+If Git, the global capability, or the workspace registry is unavailable, the
+toggle is not offered and Console continues without change tracking.
+
+Enabling prepares each bound folder in a bounded background queue. Settings
+shows `preparing`, `ready`, or `failed` state and offers a retry for failures;
+chat and file tools never wait for that preparation. A turn that starts while
+a folder is still preparing or failed continues normally and gets an
+alias-only warning explaining that Change Review skipped that folder. The
+warning is not a snapshot and cannot enter Review, revert, retention, or
+cleanup state.
+
+The privacy tradeoff is explicit: Change Review stores shadow Git history in
+the application's data directory, including file contents, for 30 days by
+default (or the configured `[change_review] retention_days`). Disabling a
+workspace stops new review snapshots but does **not** erase history already
+retained; normal retention cleanup still governs that existing history.
 
 When an agent turn edits files, the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
@@ -301,44 +564,30 @@ by design it covers the same run's full set of tracked changes — turn and
 post-turn windows alike — the same union the `v` Review screen shows for
 that run. It supports notes and Review exactly like a turn's own card.
 
-#### The rail's Changed-files section
+#### Reviewing or undoing a turn's changed files
 
-Turn file cards only show one turn at a time. To see everything a
-conversation has changed, look for the **Changed files** section in the
-Inspector (right rail) — a quiet-framed section sitting between the
-retrieval Scope row and the run inspector. It lists the conversation's
-changed files across **every** turn, one row per file, latest state only:
-status glyph, cell-elided path, that file's `+A −D`, and a `✎ N` badge
-when the file carries notes.
+Each completed agent turn keeps its own **Edited N files** card in the
+transcript. The card is the quickest place to inspect what that turn did:
+expand individual files (or all files), read their diffs, leave notes, or
+choose **Review** for the full Change Review screen. The historical card
+stays in the transcript after an undo so the user can still audit what the
+agent changed.
 
-The header names the honesty rule directly — `Changed files (N) · latest
-turn deltas +A −D` — because the per-row and header counts are each
-file's **newest** covering turn's own deltas, never a cumulative total
-across the conversation. The list caps at 12 rows; past that, a
-`+N more — open Review` tail line names the rest instead of growing the
-rail without bound. If retention pruned a turn's snapshot history, a dim
-`history pruned for N turns` line appears below the list rather than
-hiding the gap. A conversation that hasn't touched a file yet renders no
-header and no empty box at all.
+Choose **Undo All** to restore every file changed by that turn. The button
+stays disabled until the exact snapshot rows have loaded, then opens the
+same confirmation used by Change Review. If a file was edited after the
+turn, the confirmation names it and warns that the undo will overwrite
+that later work. Cancel leaves the workspace unchanged and makes Undo All
+available again; a complete undo labels the card **Undone** while keeping
+its rows and **Review** action.
 
-The section is never computed on the rail's regular sync tick — the same
-cached-summary discipline the dictionary/world-book rail sections already
-use. An off-thread worker recomputes only when the conversation switches
-or a new turn's marker message appears (an in-memory check, no DB read),
-and it re-derives incrementally, so only turns it hasn't already read
-cost a fresh git call. Saving or deleting a note anywhere — the card or
-the Review screen below — also forces one refresh so a stale `✎ N` badge
-never lingers.
-
-Set **`[console] changed_files_section`** in `config.toml` to `false` to
-turn the section off (default `true`): it's a pure presentation switch —
-off renders nothing and skips the recompute worker entirely.
-
-**Click a row** (or press Enter on it) to open the Review screen already
-focused on that exact file: its newest covering turn is selected and that
-file's diff loads immediately, pinned to the specific snapshot the row's
-counts came from — so two windows of the same run that happen to touch
-the same path never open to the wrong one.
+Undo All refuses while an agent run is active or when change tracking is
+incomplete. A turn can also contain multiple tracking windows for the same
+workspace (for example, overlapping parent/sub-agent activity). The compact
+card cannot establish a safe ordering for that case, so it refuses the
+inline undo and opens **Review** instead. Ordinary turns spanning different
+workspace roots are supported; warnings include the workspace name so
+same-named files remain distinguishable.
 
 #### Leaving feedback on a diff line or the whole file
 
@@ -378,6 +627,101 @@ attached — a.py @@ -1,4 +1,6 @@: "note"`; a whole-file comment reads
 comment reads `📝 Diff feedback attached — a.py @@ -1,4 +1,6 @@ line:
 "note"` — one line per note, oldest first, byte-identical whether you're
 watching it happen live or reading it back after a resume.
+
+#### Git actions in change review
+
+The Review screen's turn selector can carry one more entry above the
+recorded turns: **Working tree (current)** — the real, live state of your
+repository's working tree, read fresh from disk each time you open it
+(**not** a `change_snapshots` row, and not something an agent turn wrote).
+Selecting it swaps the file tree and diff pane over from "what this turn
+changed" to "what's different right now" — you get **`g` commit**, **`p`
+push**, and **`P` open PR** in place of the turn-mode revert/comment keys,
+spelled out in the footer while you're in this mode.
+
+**When it appears.** Two things both have to be true:
+
+- The workspace root — a folder bound to this conversation's workspace
+  (see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md) for
+  where those bindings are set), or the root a recorded turn already
+  wrote to — must itself **be** a git repository's toplevel. A folder
+  that is merely *inside* a repository (a subdirectory of a real
+  checkout) is refused with "workspace is inside a repository — git
+  actions need the workspace root to be the repository root"; bind the
+  repository's own root instead.
+- **`[change_review] git_actions`** in `config.toml` must be on (default
+  **`true`** — the feature ships on). Turning it off makes the whole
+  `current` entry, and every action below, disappear; nothing else about
+  Change Review changes.
+
+With no repository detected at all (or the switch off), the selector only
+ever lists recorded turns, exactly as before this feature existed.
+
+**Commit (`g` / the Commit… button).** Opens a checklist built from a
+**fresh** read of the working tree taken the moment you press `g` — never
+the possibly-stale list you're looking at — with every changed file
+pre-checked (uncheck to exclude one). A commit message is required; an
+optional "create branch first" field checks out a new branch before
+staging. The dialog also shows non-blocking **warnings** — they never stop
+the commit — for a detached HEAD ("this commit will not be on any
+branch") and for committing straight to `main` or `master`. Committing is
+**refused outright before the dialog even opens** while an agent run is
+active on that workspace. A repository that is mid merge, rebase, or
+cherry-pick is also refused, but at the moment you confirm rather than
+before the dialog opens — finish or abort that operation first. (The check
+runs then because the repository can enter a merge while the dialog is
+open, so checking earlier could only promise something that later stops
+being true.)
+
+**Push (`p` / the Push… button).** Always confirms in a dialog first,
+naming the repository, the branch, and where it's going — including the
+remote's actual **URL**, not just its name. That matters when the
+repository redirects pushes to a different host than it fetches from
+(`remote.<name>.pushurl`, or `url.<other>.pushInsteadOf`), which is a
+perfectly normal setup — fetching over https and pushing over ssh, say.
+Those redirects are honoured rather than refused; the dialog simply tells
+you where the push will actually land, so the confirmation says as much as
+`git remote -v` would. A branch with no
+upstream yet gets one set on this push; with an upstream already
+configured, push targets exactly that upstream's remote and ref — never
+"whatever the repository's push configuration would have done" (see the
+no-force guarantee below).
+Unlike commit, **push is not refused while an agent run is active** — it
+only ships state you (or the agent) already committed and never touches
+the working tree, so there is nothing for a concurrent run to collide
+with. A credential failure (no non-interactive credential helper or SSH
+agent available) reports its own reason with a hint rather than hanging
+the app waiting on a prompt that can never appear.
+
+**Open PR (`P` / the Open PR button).** Opens your browser to a
+compare/new-merge-request page on **github.com**, **gitlab.com**,
+**bitbucket.org**, or **codeberg.org** — whichever the branch's upstream
+remote points at. The branch must already be pushed (has an upstream) or
+this refuses with "push the branch first". Any other host answers
+honestly that PR links only support those four.
+
+**The no-force guarantee.** None of these three actions ever force-pushes
+or rewrites history — not `--force`, not `--force-with-lease`, not an
+amend. Nor can your repository's own configuration turn one of these
+pushes into a force: each push names one exact source and destination ref
+on the command line, which supersedes any `remote.<name>.push` refspec or
+`push.default` setting in `.git/config` (and a `remote.<name>.mirror`
+remote is *rejected* outright rather than silently honoured — git refuses
+to combine `--mirror` with a refspec). So exactly one branch is ever
+updated, and only as a fast-forward. The one thing a push can add beyond
+that branch is tags: with `push.followTags = true` set in your config, git
+also publishes annotated tags reachable from the commits you just pushed.
+That is additive only — it creates tags the remote does not have and can
+never move or delete one it already has. A push that the remote rejects
+(e.g. it's behind) reports git's own rejection message rather than
+retrying with force; you resolve it from a terminal exactly as you would
+any other rejected push.
+
+**What the diff pane shows is your real diff.** The pane never renders a
+custom diff driver's output, so a `diff.external` program or a
+`.gitattributes` `textconv` driver configured in the repository cannot
+substitute its own text for a file's real change, blank the pane for a
+file the list shows as changed, or colour-code it into unreadability.
 
 ### Parallel sub-agents (the fleet)
 
@@ -423,15 +767,17 @@ own task concurrently. The Agent rail shows this directly: several
 
 #### The fleet panel — three states
 
-The **Sub-agents** panel inside the Agent rail section has its own header
-(title + chevron), independent of the Agent section's own collapse state —
-it only appears once the reply has spawned at least one sub-agent, and it
+The **Agents** section near the top of the Inspect rail (**Alt+I**) has its
+own header (title + chevron), independent of the left rail's Agent section
+— it only appears once the reply has spawned at least one sub-agent, and it
 reaches a real terminal status (done/error/stuck/cancelled) for each child
 **while the turn is still running**, not only after the whole reply
-finishes.
+finishes. On terminals 150 columns and wider, the Inspect rail opens itself
+when the first row appears, so a fleet is never invisible behind a closed
+rail; close it and it stays closed for the rest of that busy window.
 
 1. **Collapsed** (its default state the first time it appears). Just the
-   header: "Sub-agents" plus a right-aligned summary — one status glyph per
+   header: "Agents" plus a right-aligned summary — one status glyph per
    child, in spawn order (e.g. `●●✓`), then "N working, M done". "Working"
    means still running; done/error/stuck/cancelled all count toward "done"
    here.
@@ -446,12 +792,13 @@ finishes.
      *Token spend*, below. Both are **transient**: they come from the live
      fleet, so when the whole turn ends every row falls back to the sparser
      historical rendering (name and task only). See *Known gaps*.
-3. **Drilled in** — click a specific row: the whole Agent section switches
-   to that one child's own view (`Sub-agent · <status> (Back)` plus its own
-   step lines), and the Sub-agents panel itself is hidden while you're
-   drilled in. **Back** returns to the overview. Each row resolves directly
-   to its own run — clicking never cycles you through other sub-agent runs
-   first.
+3. **Drilled in** — click a specific row: the **left rail's** Agent section
+   switches to that one child's own view (`Sub-agent · <status> (Back)`
+   plus its own step lines), and the Agents section in the Inspect rail
+   hides itself while you're drilled in — the detail is already on screen,
+   so the aggregate list beside it would be redundant. **Back** returns to
+   the overview. Each row resolves directly to its own run — clicking never
+   cycles you through other sub-agent runs first.
 
 **Cancel one child.** Focus a still-running row (Tab into the panel, or
 click a row then Tab) and press **Delete** — this cooperatively cancels
@@ -461,7 +808,8 @@ errored, or already-cancelled child — or any historical/resumed row —
 doesn't offer this gesture at all, since there's nothing left to stop.
 
 **Cancel all agents.** While at least one child of the conversation is
-live, the rail's Agent section also offers a **Cancel all agents** button
+live, the **left rail's** Agent section also offers a **Cancel all agents**
+button
 — one press cancels every live child of that conversation, including
 survivors of earlier replies, through the same per-child mechanism as the
 row's Delete (so each child's pending approval cards are withdrawn too).
@@ -605,7 +953,7 @@ What this means in practice:
   [When a background sub-agent finishes — auto-wake](#when-a-background-sub-agent-finishes--auto-wake)
   below. The finished work itself is always durable in the sub-agent's
   own run record (**View full log**) and in any files it edited.
-- **It stays visible.** The **Sub-agents** panel keeps its row — glyph,
+- **It stays visible.** The **Agents** section keeps its row — glyph,
   name/task, elapsed — after the reply lands and across the turns that
   follow, and clicking that row still drills into that child. The summary
   keeps counting it under "N working". While only survivors are running,
@@ -848,12 +1196,11 @@ on whatever screen you're on ("Agent in “…” needs approval to use a tool.
 Open Console to review — nothing runs until you answer."), the session
 picks up its usual approval badge, and the round waits for you rather
 than expiring. The tool does not run until you answer it. Nothing
-auto-approves: navigating away from Console again denies the request (the
-same rule as any card you leave unanswered), and so does quitting the
-app. If you have set a positive `[mcp] approval_timeout_seconds`, it
-still expires the request on schedule — being away does not buy the
-request extra time. The shipped default is `0`, which means no deadline:
-the request waits for you.
+auto-approves: navigating away again keeps the request pending. Explicit Stop,
+closing the owning conversation, or quitting the app withdraws it. A positive
+`[mcp] approval_timeout_seconds` counts only time when that conversation's card
+is answerable in Console or a supported Buddy card; hidden time does not consume the budget.
+The shipped default is `0`, which means no deadline: the request waits for you.
 
 **The card is rendered and answerable the first time you open Console —
 no session switch needed.** (Fixed as task-17500, 2026-08-17.) As first
@@ -899,6 +1246,209 @@ lowest-priority of the session markers, so once a woken turn has finished
 in a conversation you were not watching, that session's tab shows the
 finished-and-unvisited `✓` instead. Both mean "there is something here
 you haven't seen"; viewing the conversation clears either.
+
+### Local file authority
+
+Every live Console Chat owns an independent private temporary scratch space.
+No folder setup is required for Chatbook's built-in sandbox file tools. The
+structured local `fs_*`/Git tools and virtual CLI receive path authority only
+from valid local-folder bindings admitted from the run's owning Workspace:
+
+| Console context | Built-in file tools | Local `fs_*` / Git and virtual CLI |
+|---|---|---|
+| Chat in Default | Private scratch only | Not advertised |
+| Named Workspace, no valid folder binding | Private scratch only | Not advertised |
+| Named Workspace with project instructions disabled | Private scratch plus live explicit folder bindings | Every valid binding captured for the run |
+| Named Workspace, selected project folder | Private scratch plus live explicit folder bindings | The selected binding only |
+
+Each captured root uses its stable folder-binding ID as an opaque `root_alias`.
+With one root the alias may be omitted; with multiple roots every path call must
+select one explicitly. The app rechecks owning-Workspace membership, locator,
+filesystem identity, and access before review and execution. Removing or
+retargeting a binding, replacing its directory, or changing `rw` to `ro`
+revokes that run's captured authority. Reads accept `ro` or `rw`; mutations
+require current `rw`.
+
+Workspace folders are optional and start read-only. Approval still applies:
+path confinement cannot turn Ask into Allow, bypass a tool kill switch, expose
+a protected credential path, or make a read-only binding writable. This
+upgrade changes path-tool schemas, so previously saved Allows for those tools
+are invalidated by the existing definition guard and require fresh approval.
+The legacy `[console] workspace_root` and process working directory do not grant
+path access inside the Console; the standalone MCP server retains its explicit
+configured-root behavior.
+
+Scratch belongs to the live tab, not the saved conversation. Two tabs for the
+same conversation have different scratch spaces; closing and reopening starts
+empty. Retained skill-script output and fallback agent run logs stay with the
+owning Chat's scratch instead of a shared container. Normal cleanup is
+best-effort deletion, not secure erase. A hard crash can leave unreferenced OS
+temporary residue, but a later process never discovers or attaches it.
+
+This boundary describes Chatbook-managed local tools only. Attachments,
+Library/RAG content, generated media, provider-hosted tools, and external MCP
+servers keep their own storage and authority contracts.
+
+### Read-only virtual CLI
+
+Console agents can see one model tool named `virtual_cli`. It accepts a
+structured `command` plus an `argv` array; it does not accept a command-line
+string, parse pipes or redirection, expand environment variables, or invoke a
+host shell. Its fixed read-only commands are `ls`, `cat`, `grep`, `find`,
+`stat`, `git_status`, `git_diff`, `git_log`, `git_blame`, and `git_branches`.
+
+The tool is discoverable only when local tools are enabled and the run admitted
+at least one valid Workspace folder, but discoverability is not authorization.
+Before each invocation, Chatbook resolves the selected command under the
+separate **Virtual CLI (read-only)** group in MCP ▸ Tools.
+Every command has its own Allow, Ask, or Off setting, defaults to Ask when no
+decision exists, and remains independent from the equivalent `fs_*` or Git
+tool permission. Allowing `cat` does not allow `grep`, and allowing `fs_read`
+does not allow virtual `cat`.
+
+Approved commands dispatch directly to the same confined read-only filesystem
+and Git implementations used by Chatbook's local tools. The run-admitted
+Workspace binding, protected-path checks, Git exclusions, result limits, global
+tool kill switch, and approval audit therefore remain in force. With multiple
+roots, `root_alias` is required just as it is for `fs_*` and Git calls. There is
+no escape hatch to arbitrary programs or shell syntax.
+
+### Raw CLI: direct user commands and model `shell_exec`
+
+Raw CLI does not inherit the local file-tool boundary above. Both raw paths run
+with the full filesystem, process, and network authority of the OS user running
+Chatbook; neither is confined to Chat scratch or a selected Workspace binding.
+A scrubbed process environment reduces accidental variable inheritance, but it
+does not prevent access to credential files, local services, or the network.
+Discoverability is not authorization: a saved unlock and a separate per-launch
+Arm confirmation are required before either path can execute.
+
+The `! ` command described in [Chat basics](chat-basics.md#raw-cli-user-commands--full-host-authority)
+is a direct user action. When physically typed into the composer while raw host
+access is armed, it bypasses the model, tool catalog, approval cards, prompt
+queue, provider call, global model-tool kill switch, and Workspace path checks.
+It executes without another approval because the user authored the command.
+Each accepted command is stored as a generic `local_command` run so its Tool
+marker can be restored at the same conversation leaf after restart. Command
+text and bounded sanitized output may persist in the run's steps and a
+dedicated app-private log. These rows are excluded from provider history,
+agent/sub-agent counts, rails, fleet state, costs, and the model-facing run-log
+search, slice, and statistics tools.
+
+`shell_exec` is the model-facing path to the same one-shot executor. Its schema
+is available only while all four gates permit it: the saved unlock is On, raw
+host access is armed for this launch, local tools are enabled, and the global
+model-tool kill switch is Off. Chatbook rechecks those gates at invocation; a
+schema seen earlier is not authority to run later. MCP ▸ Tools keeps a stable
+policy row visible as Locked, Unlocked/not armed, or Armed so the feature can be
+found without implying that it is currently authorized.
+
+Raw model permission is **Ask or Off only**. A hand-edited or previously stored
+Allow value is treated as Ask. Unless the current Console session already has a
+temporary grant, every request shows a command-visible approval card containing
+the complete command, selected shell, absolute initial directory, timeout,
+full-host-authority warning, and the scope of a session decision. The choices
+are **Run once**, **Allow all raw shell commands for this Console session**, and
+**Deny**. Run once applies only to the displayed call; repeated calls retain
+separate identities. A session grant may cover later calls in that same live
+Console session, but it is held in process memory only and is cleared by
+Disarm, locking raw CLI, shutdown, or restart.
+
+Tool discovery got two upgrades: `find_tools` now matches paraphrases
+(stemmed-token overlap ranks below the exact/prefix/substring tiers, so
+"find files by name" surfaces `fs_glob`), and when the catalog is too large
+to disclose directly, `find_tools`' own description names the available
+tools — degrading to prefix groups (`fs_* (7), git_* (5)`) when even the
+name list would be too long — so the model can never conclude a present
+capability is absent.
+
+Oversized local tool results no longer lose their tail: in Console runs
+(where a private scratch root exists) a result over the 32 KiB ceiling is
+written **in full** to a restricted file under the scratch's `tool-spill/`
+directory — atomically, `0600`, sharing the scratch lifecycle as its
+retention bound — and the model receives the usual 32 KiB preview plus the
+pre-truncation size and a relative path it can hand straight to `fs_read`.
+Once a run's cumulative returned output passes an aggregate budget
+(256 KiB), results above a 4 KiB floor spill even under the ceiling.
+Standalone providers without a scratch root keep today's truncation exactly.
+
+For ordinary MCP/catalog tools, the approval card offers **Always allow
+this exact input** alongside the existing choices: it saves an allow scoped
+to exactly the arguments displayed on the card — the same tool called with
+different arguments still asks. Argument-scoped rules obey the same
+definition-hash rug-pull guard as whole-tool allows (a changed tool
+definition silently invalidates them), never quiet a high-risk-tagged tool,
+and can be extended by hand in `mcp_permissions.json` with
+`{"field": …, "pattern": …}` glob rules. Raw shell does not offer this
+option.
+
+Beneath all of this sits an **unbypassable hardline floor**: a small set of
+catastrophic command shapes — recursive root delete (`rm -rf /`, `~`,
+`$HOME`), `mkfs`, `dd` onto a block device, fork bombs, and
+shutdown/poweroff/reboot — is refused at request validation, before any
+permission state or session grant is consulted, for both the user path and
+model `shell_exec`. Detection resists trivial obfuscation (quoting,
+whitespace padding, variable indirection on the command word), the refusal
+names the rule that fired and states it is not a user denial, and the floor
+is not configurable off. It is a floor under the approval card, not a
+replacement for it.
+
+Both paths are one-shot and non-interactive: shell profiles are disabled,
+standard input is closed, and no terminal or PTY is provided. Output streams
+into the Console, is bounded and sanitized, and follows the shared timeout,
+Stop, Disarm, and best-effort process-tree cleanup contract. Detached
+descendants may outlive cleanup. A non-zero exit whose output matches a known failure shape (command not
+found, permission denied, missing module, network refusal, …) gains one
+appended `[tool hint]` recovery line — the original output is never
+altered, and unrecognized failures return exactly as before. Model
+`shell_exec` results enter ordinary
+bounded agent tool history and local run logs; they do not create a
+`local_command` record. Generic diagnostics retain content-free execution
+metadata rather than command or output bodies.
+
+### Persistent Terminal: user-only interactive PTY
+
+Persistent Terminal is a fourth, deliberately separate capability. Open it
+from the pinned **Context** rail's Terminal row or the Console command palette.
+It does not extend direct `!`, model `shell_exec`, or read-only `virtual_cli`.
+It registers no model tool, makes no provider call, and never places Terminal
+input, output, names, paths, or screen state in model context, conversation
+history, AgentRuns, run logs, exports, or reconnect data.
+
+Terminal shares the saved **Allow raw CLI host access** unlock but has its own
+per-launch **Arm Terminal** confirmation. Raw CLI and Terminal arms do not arm
+one another. Terminal starts a normal interactive account shell from a
+scrubbed initial environment; normal profile files may restore credentials,
+agents, proxies, aliases, environment values, or arbitrary commands. The shell
+may write history, files, logs, and caches. A Workspace folder—or home when no
+Workspace is selected—is only the starting directory. The process has the full
+filesystem, process, and network authority of the OS user and is not sandboxed
+or confined there.
+
+The Terminal workspace supports **New**, **Rename**, **Focus**, **Close**,
+cleanup **Retry**, and **Jump live**. Up to four app-global sessions survive
+conversation switches, screen navigation, recomposition, and remounting for
+the current Chatbook process. Each retains its shell process, current directory,
+environment, terminal screen, and bounded normal-screen scrollback until the
+shell exits, the user closes it, Terminal is disarmed, or Chatbook shuts down.
+An ordinary shell exit retains the final screen and exact exit state until the
+user closes that record. Sessions are never persisted or reconnected after a
+restart.
+
+Each session is bounded to a 300×120 active viewport, 5,000 lines/4 MiB of
+normal-screen scrollback, 512 KiB pending input, 512 KiB pending output, and a
+256 KiB all-or-refuse paste. While input is focused, terminal-convention keys
+go to the shell except Chatbook's reserved global keys. Press **Ctrl+]** to
+release input into local keyboard scrollback; line/page/oldest navigation and
+**Jump live** stay local and are not forwarded. Mouse reporting is not
+supported in this version.
+
+Close, Disarm, and shutdown perform bounded best-effort process cleanup and
+show when cleanup cannot be proven; deliberately detached processes may
+survive. macOS/Linux use an admitted controlling PTY. Windows Terminal support
+is currently unavailable and fails closed—Chatbook ships no `pywinpty`, legacy
+winpty, or ordinary-pipe fallback. A future Windows implementation requires a
+new or superseding ADR and passing native qualification.
 
 ### Project instructions before tools run
 
@@ -949,7 +1499,9 @@ appears above the transcript:
 - **Skill script** — "An agent wants to run a script from a skill:" with the
   target and arguments, buttons **Allow once** / **Always allow this skill** /
   **Deny**, and the note: "It runs with a scrubbed environment in a temporary
-  folder (not the skill's own folder); only its output comes back."
+  folder (not the skill's own folder); only its output comes back." Files the
+  script intentionally produces are retained inside the owning Chat's private
+  scratch space for that live session.
 
 ### MCP tools
 
@@ -957,28 +1509,130 @@ Servers you configure on the [MCP screen](../mcp.md) 🚧 surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
-"Approval required" card as everything else.
+"Approval required" card as everything else. An external MCP server is not
+confined by the Chatbook-local scratch boundary unless that server implements
+an equivalent boundary itself; review its arguments and permission policy.
 
 ### Web research tools
 
 Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
 agent tools, not tools supplied by an external MCP server. They are registered
-by default. Configure the master switch and confinement directory in **MCP →
-Tools → Local workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each
-tool in MCP Permissions. Master/root changes apply to the next Console agent
-run. `[mcp] expose_local_tools` is only for external MCP clients and does not
-enable these tools in Console.
+by default. Configure their master switch in **MCP → Tools → Local workspace,
+web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
+Permissions. Console file authority comes from the Chat's private scratch plus
+explicit Workspace bindings, not a global confinement-directory field.
+`[mcp] expose_local_tools` is only for external MCP clients and does not enable
+these tools in Console.
+
+**Default search backend.** Basic `web_search` and the opt-in
+`web_deep_search` share one preference. Open **Settings (F4) → Web Search**,
+choose **Default search backend**, complete its fields, and **Save (s)**.
+Use **Test saved settings** to send the displayed sample query and check access.
+For file-based configuration, the equivalent preference is:
+
+```toml
+[SearchSettings]
+search_provider_default = "serper"
+```
+
+Use a backend whose credentials or self-hosted endpoint you have configured.
+The preference is read on the next search; it does not require a restart.
+With no saved preference, both tools use DuckDuckGo, which requires no API key
+but still needs the web-search dependencies and network access. Existing saved
+choices, including Google, are preserved. Deep search remains separately
+opt-in through `[tools] web_deep_search_enabled = true` (restart required) and
+requires its relevance/synthesis LLM configuration.
+
+For a temporary choice, supply `search_engine` to `web_search`, or `engine`
+to `web_deep_search`. That affects only that call. A result line such as
+`Engine: serper (saved default)` shows the effective backend; other sources are
+`call override` and `application default`. Cached results retain the current
+call's source label. Invalid choices fail before searching, and backend
+failures do not automatically switch providers. Web Search shows local setup
+requirements separately from its explicit network test. **Configure backend**
+lets you prepare another provider without changing the shared default.
 
 Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.
 
-### Watchlists evidence tools
+Missing credentials, backend errors, and DuckDuckGo anti-bot challenges produce
+failed tool results. Check the reported error and configure an available search
+engine before retrying. A successful search with no matches remains a normal
+empty result. Three consecutive failures from the same tool stop the run, even
+when the query or search engine changes.
 
-The same local-tools group provides `watchlists_search_items` and
-`watchlists_get_item`. Results are local-first: both tools read the local
-Watchlists database, and server Watchlists search is not yet supported. In
+### Library media chunk tools
+
+Console agents get five `library_*` tools for reading ingested media by its
+stored chunks — the difference between an agent that walks a book in blind
+8,000-character windows and one that asks "where are the chapters?", fetches
+Chapter 7 by address, and writes notes from it. `library_get_media_structure`
+returns a book's heading tree with per-chapter chunk addresses;
+`library_get_media_chunk` fetches one unit **from the chunks already stored
+at ingestion** — deterministic and version-stamped; nothing is silently
+re-chunked on a read. `library_list_chunk_specs` lists the saved chunking
+specs. Items imported with "Chunk content" off degrade honestly: the
+structure still shows the chapters, and the fetch error names the way out.
+
+Two of the five write, and only when you opt in from the agent's side:
+`library_save_chunk_spec` saves a custom chunking spec, and
+`library_rechunk_media` re-chunks one item (an explicit tool call with a
+spec — never a side effect of a read). Both run under runtime-policy actions
+(`library.templates.save`, `library.media.rechunk`) that can be denied, they
+write only your local Library database, and re-indexing the item into the
+semantic index is a separate `reindex: true` opt-in. They advertise
+themselves as writing tools in the approval card's tool description. Full
+contracts: [Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
+The tools ride the same `[console].direct_library_tools` setting as the
+other Library tools.
+
+### The study-notes fan-out pattern
+
+A sixth `library_*` tool — and the third that writes — `library_save_note`, closes the student story the
+chunk tools set up: *"make me per-chapter notes of this book"* (or
+flashcards per section) runs as a fan-out over the ordinary sub-agent
+machinery — no special orchestration:
+
+1. **Structure.** `library_get_media_structure(id)` returns the chapter map
+   with each chapter's chunk addresses.
+2. **Spawn per chapter.** For each chapter the agent spawns a sub-agent
+   (`spawn_subagent`, under the usual `[agents]` caps) with a narrow brief:
+   fetch the chapter's units by address (`library_get_media_chunk`), derive
+   the notes — or Q/A flashcard pairs — and save them with
+   `library_save_note`: one note titled per chapter, content starting with
+   the provenance header (`source`, `revision`, `chapter`, `chunks`), every
+   save naming the same one-level folder for the book (the folder is
+   created on first save; concurrent savers converge on one folder).
+3. **Fetch and save.** Each sub-agent reuses the chunks stored at
+   ingestion — nothing re-chunks behind anyone's back — and its note lands
+   in the notes screen, grouped in the book's folder, the moment it is
+   saved.
+4. **Re-run.** Asked again later (new chapters, a re-chunk), the convention
+   is search-first: `library_search_notes(query=<note title>)` finds the
+   existing note — the list tool has no folder filter — and the agent
+   updates it via `note_id` + `expected_version` instead of creating a
+   duplicate.
+
+Flashcards are Q/A markdown inside notes (`Q:`/`A:` pairs) — a deliberate
+ruling: the real flashcards data layer has no screen route yet, so notes
+are the one output a student can actually see. `library_save_note` is the
+third policy-gated writing tool in the `library_*` namespace
+(`library.notes.save`); full contract:
+[Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
+
+### Watchlists query tools
+
+The local-tools group provides eight bounded Watchlists reads. External MCP
+may receive only `watchlists_list_sources`, `watchlists_list_collections`,
+`watchlists_list_briefings`, `watchlists_get_operations_status`, and
+`watchlists_get_operation_status`: metadata and durable receipts, never article
+snippets, article bodies, briefing Markdown, or briefing provenance. The
+Console-only descriptors are `watchlists_search_items`, `watchlists_get_item`,
+and `watchlists_get_briefing`; an external client cannot register or resolve
+them even if their permission records are Allow. Results are local-first and
+read the local Watchlists database; server Watchlists search is not yet supported. In
 server mode they return a non-retryable unsupported result and do not search
 the local database. Its logical fields are explicit: `status` is `unsupported`,
 `retryable` is `false`, and `message` is exactly `server Watchlists search is
@@ -989,6 +1643,36 @@ collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
 over title, body, and author; it is not semantic search. Blank or absent
 `query` browses recent items. Every feed-supplied field is untrusted evidence,
 never an instruction.
+
+#### `watchlists_list_sources`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `type` | Optional source type; non-blank, maximum 32 characters. |
+| `state` | Optional `active`, `paused`, `disabled`, or `all`. |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Sources use `casefolded_name_prefix_asc_name_prefix_asc_id_asc` ordering: the
+first 96 Unicode characters of the casefolded name, then the first 96 Unicode
+characters of the raw name, then ID. They return canonical
+`local:subscription:<id>` identities, bounded memberships, and sanitized URLs.
+Authentication, headers, extraction secrets, and raw errors are excluded.
+
+#### `watchlists_list_collections`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Collections use the same stable ordering and canonical
+`local:watchlist:<id>` identities. Stored cadence is reported separately from
+effective scheduler state; a stored value alone never proves the scheduler is
+running.
 
 #### `watchlists_search_items`
 
@@ -1023,6 +1707,57 @@ The item integer is limited to 1 through 2^63-1. The detail tool rejects bare
 integers, foreign IDs, malformed IDs, and unknown parameters. Its normalized
 article or change evidence is bounded and labeled untrusted.
 
+#### `watchlists_list_briefings`
+
+| Parameter | Contract |
+| --- | --- |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `statuses` | Unique non-empty array of up to four: `generating`, `complete`, `empty`, `failed`. |
+| `since` | Inclusive `YYYY-MM-DD` or RFC 3339 creation-date floor. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Newest-first receipts include canonical `local:briefing:<id>` identity,
+status, coverage, counts, model/preset metadata, and body availability/byte
+count—never Markdown, an excerpt, or selected/cited provenance. For one
+collection, `latest_readable` is the newest complete receipt while newer
+failed, empty, or generating attempts remain operational context.
+
+#### `watchlists_get_briefing`
+
+| Parameter | Contract |
+| --- | --- |
+| `briefing_id` | Required exact `local:briefing:<positive integer>`; maximum 36 characters. |
+| `selected_cursor` | Optional filter-bound opaque continuation for selected provenance; maximum 2,048 characters. |
+| `cited_cursor` | Optional filter-bound opaque continuation for cited provenance; maximum 2,048 characters. |
+
+This Console-only read reserves a fixed Markdown budget, remains below 30 KiB,
+labels generated prose and snapshots untrusted, and reports Unicode-safe
+truncation, ordered selected/cited immutable provenance, legacy best-effort
+snapshots, and missing references. Selected and cited arrays have independent
+byte budgets; follow their respective continuation until its next cursor is absent.
+
+#### `watchlists_get_operations_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `source` | Optional name/URL, canonical source ID, or positive row ID. |
+| `collection` | Optional name, canonical collection ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50 for the combined operation page. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+The overview returns bounded normalized source-check and briefing-generation
+receipt metadata, never raw logs, raw errors, paths, or result payloads.
+
+#### `watchlists_get_operation_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `operation_id` | Required exact `local:watchlist_run:<id>` or `local:briefing:<id>`; maximum 40 characters. |
+
+The exact receipt includes owner, timestamps, normalized state, retry/cancel
+capability, a bounded error category, and Runs/Artifacts destination.
+
 Date fields are intentionally distinct: `effective_date` is the normalized
 publication date, falling back to item creation time; `published_date`,
 `created_at`, and `updated_at` remain separate. Source `last_checked` and
@@ -1034,7 +1769,8 @@ Only absolute HTTP(S) URLs with a host are returned. In Console, Ask can show
 an approval card. External MCP additionally requires `[mcp]
 expose_local_tools` to be true and each per-tool permission must be Allow; Ask
 is refused because a headless client cannot show that card. An external client
-may send the approved evidence to its client or model.
+may send approved metadata and receipts to its client or model; article and
+briefing content remains Console-only.
 
 ### Stopping & leaving
 
@@ -1053,21 +1789,13 @@ may send the approved evidence to its client or model.
   it takes that session's fleet with it: every live sub-agent, survivors
   included, is cancelled as part of the close (a survivor would otherwise
   outlive its own conversation, with no row left to cancel it from).
-- Leaving the Console screen is different: after the "Leave Console?" confirm,
-  every in-flight **turn** is cancelled and every pending or parked approval is
-  denied — never approved. One thing survives the leave: a background
-  sub-agent that already outlived its turn **keeps running** — its result
-  lands durably, you get the completion toast + `◈` marker wherever you
-  are, and the staged wake is claimed when Console next mounts (see
-  [auto-wake](#when-a-background-sub-agent-finishes--auto-wake)). The next
-  Console mount reports both fates honestly: "N agent runs were cancelled
-  when you left Console." and/or "… sub-agents kept running in the
-  background when you left Console — you'll be notified as they finish."
-  The warning also counts queued sessions and unsent
-  prompts. Staying leaves the queue and manager focus untouched; leaving
-  clears process-memory queues. Closing one tab uses the same count-aware
-  warning for that tab, and quitting the app reports the whole fleet. Details in
-  [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
+- Leaving Console or opening a modal keeps accepted turns, queued prompts,
+  sub-agents and pending decisions alive. Hidden decisions notify once and remain
+  available on return. A configured decision timeout pauses while the owning card
+  cannot be answered. A dirty queue-manager edit must be saved or cancelled first.
+  Closing one session and quitting the app retain their count-aware warnings and
+  cancellation boundaries. See
+  [Console runs continue during navigation](../index.md#console-runs-continue-during-navigation).
 
 ### Agent run budget — how long and how expensive one reply may get
 
@@ -1129,18 +1857,19 @@ Setting it to 0 removes the ceiling but not Stop: cancellation is still
 polled every 0.5 s while a tool runs, so pressing Stop interrupts the wait
 (even though the tool's own thread may finish in the background).
 
-**Setting the token budget to 0 means unlimited, and costs you your only
-safety net.** The loop detector only catches a tool called repeatedly with
-*identical* arguments; a loop that varies anything — an incrementing offset,
-a slightly reworded query — walks straight past it. At a 2,000-turn cap the
-token budget is the last thing standing between a stuck agent and an
-unbounded bill.
+**Setting the token budget to 0 means unlimited.** Loop detection stops repeated
+identical calls and three consecutive failures from the same tool, including
+calls with changing arguments. A successful call or a different tool resets
+the failure count. Loops that keep returning successful results with changing
+arguments can still continue, so keep a token budget to bound spending.
 
 **If you lower the step budget, lower it deliberately.** A tool round costs
 3 steps (think, call, result) and the closing reply costs 1, so N turns need
 `3*(N-1)+1` steps. Set steps below that and runs stop on "step budget
 exhausted" well before your turn limit — Settings warns you when the two
-disagree.
+disagree. The runtime-wide maximum is 199,999 steps; that ceiling keeps the
+control, trace, capture-diagnostic, and lifecycle storage-index bands disjoint.
+The other run-budget ceilings are unchanged.
 
 ## Common tasks
 
@@ -1154,7 +1883,13 @@ disagree.
 3. **Deny a risky tool call.** On the card, check the row's badges (e.g.
    "(high risk)"), set its select to **Deny** (or click the fast **Deny**
    button when it's the only row), then **Submit** if needed. The agent
-   continues without that tool result.
+   continues without that tool result. The transcript marker for that call
+   then reads `· denied by you` — a call refused by a permission set to Off
+   reads `· blocked (Off)` and one stopped by the kill switch reads
+   `· blocked (kill switch)`, so you can always tell your own decision from
+   a policy. Expanding the marker shows the refusal under **Sent to the
+   model**: that text is the instruction the agent received, not output from
+   the tool.
 4. **Check what a finished background run did.** Open its tab, expand the
    **Agent** rail section, skim the step and sub-agent lines, then click
    **View full log** for the untruncated record.
@@ -1169,6 +1904,8 @@ disagree.
 | `/skills` | List installed skills in the transcript |
 | `/skills <name>` | Points you at the `$name` form (never runs) |
 | `$name …` | Run a skill, with everything after the name as its input |
+| Physically typed `! command` | Run one user-only raw host command after saved unlock and per-launch Arm |
+| `\! command` | Send ordinary chat text beginning with literal `! ` |
 | Enter / Space (on the Approvals chip) | Jump to the pending approval card |
 
 Approval-card decisions are mouse-driven (or Tab to a control and press
@@ -1187,8 +1924,9 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   one run: token budget, wall-clock, per-tool-call, model turns, and steps
   (saved as `console.agent_max_total_tokens`,
   `console.agent_max_wall_seconds`, `console.agent_max_tool_call_seconds`,
-  `console.agent_max_model_turns`, `console.agent_max_steps`). No upper
-  bounds. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
+  `console.agent_max_model_turns`, `console.agent_max_steps`). Steps have a
+  runtime-wide maximum of 199,999; the other four retain their existing
+  ranges. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
   above for why the token budget, not the turn cap, is what stops a long run.
 - **`[agents] run_log_evict_enabled`** in `config.toml` — whether older
   rounds are trimmed out of what gets re-sent to the provider each turn
@@ -1236,15 +1974,10 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   review](#change-review--reviewing-a-turns-file-changes) above, or the
   original plain-text marker row (default `true`, card on). No Settings UI
   switch.
-- **`[console] changed_files_section`** in `config.toml` — whether the
-  Inspector rail's cross-turn [Changed-files
-  section](#the-rails-changed-files-section) renders at all (default
-  `true`, on). A pure presentation switch: `false` renders nothing and
-  skips its off-thread recompute worker entirely. No Settings UI switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
-- [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped)
+- [Console runs continue during navigation](../index.md#console-runs-continue-during-navigation)
   — what leaving Console does to runs and approvals.
 - [Console](../console.md) — the screen itself.
 - [Context & RAG](context-and-rag.md#project-instructions) — status states,
@@ -1265,7 +1998,8 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   means you already looked.
 
 —
-*Verified against dev @ ff435772c — 2026-07-31. Named agents section added
+*Verified against dev @ ff435772c — 2026-07-31; activity-line states
+re-verified live 2026-09-10 (task-32344, `Connecting tools…`). Named agents section added
 against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live — Console
 delegated to a real named definition, the transcript showed the
 `[researcher]` sub-agent marker, and the reply visibly honored the
@@ -1350,7 +2084,10 @@ the honest-limits bullet corrected @ HEAD — 2026-08-14 (task-16300,
 documentation-only for this page: navigating away from Console under an
 open dialog used to leave the old Console screen resident and running,
 and the bullet had described that leak as intended behavior. Navigation
-now unmounts the outgoing screen, so leaving Console stages. Pinned by
+then unmounted the outgoing screen, so leaving Console staged. TASK-31520
+subsequently introduced deliberate screen reuse; TASK-32078 verifies that
+streams, queues and decisions now continue during ordinary navigation. The
+earlier unmount behavior was pinned by
 `Tests/UI/test_screen_residency.py`; the live off-view evidence above is
 unaffected — it was gathered with a palette covering an open Console and
 a different session tab active, not by navigating away.) The "Change
@@ -1480,29 +2217,122 @@ rail on the next sync; and closing the session cancelled its live child
 immediately. The rest of this page's content is unchanged from the prior
 stamps.*
 
-*The "Change review" section extended @ `4eb073f31` on
-`feat/console-review-rail` (based on dev @ `f00acbd8b`) — 2026-08-20
-(TASK-18060: the Inspector rail's cross-turn Changed-files section, its
-click-through into the Review screen, and the Review screen's
-diff-line/whole-file commenting. Every claim above checked against the
-shipped code — `Widgets/Console/console_changed_files_section.py`,
-`UI/Console_Modules/right_rail.py`'s mount point between the retrieval
-Scope row and the run inspector, `UI/Screens/chat_screen.py`'s
-cached-summary/guard machinery and `_open_change_review` opener, the
-`ChangeReviewDiffPane`/cursor/key-reclaim/comment-save/notes-strip code in
-`UI/Screens/change_review_screen.py`, and the kind-aware
-`render_diff_feedback_block`/`format_diff_feedback_disclosure` in
-`Chat/console_display_state.py` — then confirmed by the targeted sweep:
-`Tests/Chat/test_change_notes_db.py`,
-`Tests/Chat/test_console_conversation_files.py`,
-`Tests/Chat/test_console_diff_hunks.py`,
-`Tests/Chat/test_console_diff_feedback_delivery.py`,
+*The Review screen's diff-line/whole-file commenting was added in
+TASK-18060 on 2026-08-20. That task also introduced a cross-turn Changed
+files list in the Inspector; TASK-22305 retired that duplicate surface and
+kept file inspection, notes, Review, and direct Undo All on each turn card.*
+
+*"Git actions in change review" added @ `3e3497555`, re-verified @
+`d0f385b80` after the arc's final fix wave, on
+`feat/console-review-git-modes` (based on dev @ `2a74a7b31`) — 2026-08-21
+(TASK-16801 arc B, Task 9: the `Working tree (current)` entry, its
+appearance conditions, commit/push/PR, and the no-force guarantee. Every
+claim checked against the shipped code — `Workspaces/git_workspace.py`'s
+`detect_git_workspace` (the inside-a-repository refusal literal),
+`commit_selected` (run-active refusal,
+in-progress-merge/rebase/cherry-pick refusal, pathspec add+commit,
+`_commit_warnings`' detached-HEAD/main-master copy), `push_current`
+(never passes `--force`/`--force-with-lease`, sets upstream via
+`push -u` only when `info.upstream is None`, `_push_failure_detail`'s
+credential-hint classifier), `pr_compare_url` (the four supported hosts
+and the `push the branch first` refusal), and
+`UI/Screens/change_review_screen.py`'s `BINDINGS` (`g`/`p`/`P`),
+`git_actions_enabled` (the `[change_review] git_actions` kill switch,
+default on), `action_git_commit`/`action_git_push`/`action_git_pr` (push
+is deliberately NOT gated on `run_active()`, unlike commit).
+Docs-only pass, not an interactive live-tmux walkthrough, confirmed by
+the arc's regression sweep —
+`Tests/UI/test_change_review_push_ui.py`,
+`Tests/UI/test_change_review_commit_ui.py`,
+`Tests/UI/test_change_review_current_mode.py`,
 `Tests/UI/test_change_review_screen.py`,
-`Tests/UI/test_console_changed_files_section.py`,
-`Tests/UI/test_console_changed_files_wiring.py`,
-`Tests/UI/test_console_turn_file_card_notes.py`,
-`Tests/UI/test_console_turn_file_card.py`,
-`Tests/UI/test_console_turn_file_card_factory.py`, and
-`Tests/Chat/test_console_agent_bridge.py`, 414 passed — again a docs-only
-pass against shipped code and the whole-suite test run, not an
-interactive live-tmux walkthrough.)*
+`Tests/UI/test_change_review_git_provider.py`,
+`Tests/UI/test_console_modal_dismissal.py`,
+`Tests/UI/test_change_review_opener_roots.py` (new, T9's own opener-wiring
+pin), and `Tests/Workspaces/`, 624 passed in 260.12s — plus a
+`--collect-only` sweep of the whole `Tests/` tree, 52,273 collected with
+zero collection errors. Three paragraphs changed in the final fix wave:
+the no-force guarantee now also states that repository CONFIG
+(`remote.<name>.push` superseded, `remote.<name>.mirror` rejected,
+`push.default` irrelevant) cannot turn one of these pushes into a force —
+true only because `push_current` now carries an explicit fully-qualified
+refspec — with the one honest exception, `push.followTags`, verified
+additive-only against real git (a re-pointed `v9` was NOT pushed over the
+remote's existing `v9`); the rename/staged-deletion "Known limitation"
+paragraph was DELETED, because `commit_selected` now filters the add
+pathspec to worktree-present paths and both gestures commit; and a new
+"What the diff pane shows is your real diff" paragraph records the
+machine-safe diff flags (`--no-ext-diff`/`--no-textconv`/`--no-color` at
+both `git diff` sites, matching `Tools/git_tool_impls.py`'s precedent),
+without which `diff.external` rendered `TOTALLY FABRICATED DIFF OUTPUT`
+and a constant-output textconv driver rendered 0 bytes for a file the
+same read counted as `1 1`. One correction against this task's own brief: the
+brief described the live workspace root as driven by `[console]
+workspace_root`; that config key is not Console authority. The mounted
+Console derives external roots from the conversation's explicit Workspace
+folder bindings (`Tools/workspace_file_roots.py`'s `folder_binding_roots`),
+and ADR-082 later removed the compatibility controller's config/cwd fallback
+as well: every Console Chat now starts from private scratch. This page
+describes that current authority source; see
+[Sessions, tabs & workspaces](sessions-tabs-workspaces.md) for where folders
+are optionally bound. One
+thing this pass could NOT verify:
+whether `current` mode is reachable at all from a conversation on the
+**Default** workspace, since `Workspaces/registry_service.py` refuses
+runtime bindings ("Default workspace does not allow runtime bindings")
+and always reads back zero for it — a recorded turn's own tracked root
+is the only candidate left there, so a brand-new Default-workspace
+conversation with no turns yet may show no `current` entry; this is a
+pre-existing characteristic of the change-tracking roots this arc reused
+verbatim, not something Task 9 changed, and it is not re-verified live
+here.)*
+
+*Git-actions placement corrected @ TASK-19703 — 2026-08-22: the mid-merge/rebase/cherry-pick refusal was documented here as happening "before the dialog even opens", which is true of the active-run refusal but not of this one — it fires when you confirm. Not driven live; corrected by reading the shipped code (`commit_selected`'s `in-progress-check` step) against this page's claim, and the design spec was amended to match rather than the code changed (a pre-modal check could only be advisory, since the repository can enter a merge while the dialog is open).*
+
+*Push-destination disclosure added @ TASK-19701 — 2026-08-22: the confirm dialog now names the remote's effective push URL. Not driven live; verified against real repositories in tests configured with `remote.<name>.pushurl` and with `url.<other>.pushInsteadOf`, plus a control with no redirect.*
+
+*"Library media chunk tools" section added @ `1a392f1c4` — 2026-08-21
+(chunking-agent-tools Task 6). Not driven live in tmux: the section
+documents tool contracts, and every claim is verified against the
+descriptor table (`Library/library_tool_contract.py`), the service
+(`Library/local_media_chunk_tool_service.py`), and the end-to-end story
+test (`Tests/Library/test_agent_chunk_student_story.py`, which ingests a
+real fixture book through the real parse → persist → chunk-rows pipeline
+and reads Chapter 7 back from the stored chunks). The rest of this page
+is unchanged from the prior stamp.*
+
+*"The study-notes fan-out pattern" section added — 2026-08-23
+(student-workflow Task 2). Not driven live in tmux: the pattern rides
+machinery this page already documents (`spawn_subagent` and the `[agents]`
+caps, verified above in the sub-agent sections) plus the
+`library_save_note` contract, verified against the descriptor table, the
+save handler (`Library/local_library_tool_service.py`), the policy
+registration (`library.notes.save.local` in
+`runtime_policy/registry.py`), and the story test — which now runs the
+whole loop (structure → chunk fetches → provenance-headered save →
+re-read → search-based re-run update → Q/A flashcard note) against real
+databases. The rest of this page is unchanged from the prior stamp.*
+
+*Agent Lesson search/draft roles, exact foreground approval, single-use stale
+state refusal, and untrusted-result handling added for TASK-24309 — 2026-08-30.
+Architecture: [ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
+and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*
+
+*Fleet-panel location updated for TASK-31450 — 2026-09-04
+(`feat/console-inspector-environment` @ 08ca0957b1): the sub-agent list moved
+out of the left rail's Agent section into the Inspect rail's **Agents**
+section (`ConsoleInspectorRail`, `UI/Console_Modules/right_rail.py`), which
+also auto-opens the rail on fleet activity at 150 columns and wider. The left
+rail keeps the run status/steps lines, the drilled-in single-child view, and
+**Cancel all agents**. Code-level pass against the shipped rail and controller;
+the live 80x24/200x50 run for this task exercised the sibling Environment and
+Tasks sections, not a real sub-agent fleet.*
+
+*"Always allow this exact input" named in the decision-option list, and its
+own short paragraph added, for TASK-32281 — 2026-09-10. Docs-only pass
+against code and tests, not a live screen: the option previously persisted
+an argument-scoped rule with no UI to list or remove it, and the Virtual CLI
+provider's verdict path silently dropped or denied it; both gaps are now
+closed (see [Exact-input allow rules](../mcp.md#exact-input-allow-rules) for
+the review/remove surface). The rest of this page is unchanged from the
+prior stamp.*

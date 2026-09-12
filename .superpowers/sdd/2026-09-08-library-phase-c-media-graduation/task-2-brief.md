@@ -1,0 +1,3 @@
+### Task 2: Resident media canvas (the behavior change)
+Implement the chosen mechanism for the media canvas: TDD from Task 1's failing acceptance test; the suspend/resume interaction rulings implemented and pinned (a resident-but-unselected canvas must not process row events — gate per the TASK-31521 suspended-activity precedent); the canvas_sync dispatcher path updated only as the mechanism requires (TASK-32089-labeled commits); all existing media suites + both dual-receiver guards + screen-reuse green; probe before/after pair (same-location, order-swapped, interleaved) recorded as the acceptance evidence.
+

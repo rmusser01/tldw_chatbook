@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Static
 
@@ -23,6 +24,10 @@ from tldw_chatbook.Skills_Interop.project_skills_discovery import (
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Utils.input_validation import sanitize_string
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+from tldw_chatbook.Widgets.workspace_persona_default import (
+    WorkspacePersonaPicker,
+    WorkspacePersonaSelection,
+)
 from tldw_chatbook.Workspaces.registry_service import (
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
@@ -31,13 +36,11 @@ from tldw_chatbook.Workspaces.registry_service import (
 )
 
 _WORKSPACE_EXPLAINER = (
-    "A workspace scopes the Console to one project. Conversations started "
-    "in it are grouped together, agents' project file access comes only "
-    "from the folders you bind here (read-only unless you grant write in "
-    "Settings), and retrieval can be narrowed to the workspace's items via "
-    "its RAG Scope. Binding your project's folder is what makes a "
-    "workspace more than a label — without one, agents have no file "
-    "access. You can add or change folders later in Settings ▸ Workspaces."
+    "A workspace groups related Console conversations and can narrow "
+    "retrieval through its RAG Scope. Every chat has private scratch space. "
+    "Bind project folders here to add explicit project-file access "
+    "(read-only unless you grant write in Settings). Folder access is "
+    "optional; add or change folders later in Settings ▸ Workspaces."
 )
 
 
@@ -54,6 +57,7 @@ class WorkspaceCreateResult:
     #: non-empty .SKILLS/ (spec §5.5 create-modal chaining). Empty when no
     #: bound folder had project skills, or none were bound at all.
     project_skills: tuple[ProjectSkillsDiscovery, ...] = ()
+    offer_profile_interview: bool = False
 
 
 class WorkspaceCreateModal(
@@ -61,7 +65,7 @@ class WorkspaceCreateModal(
 ):
     """Collect a workspace name + optional folder bindings."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     WorkspaceCreateModal {
         align: center middle;
     }
@@ -121,6 +125,7 @@ class WorkspaceCreateModal(
         self,
         *,
         registry_service: LocalWorkspaceRegistryService,
+        persona_service: Any = None,
         description: str = "Created from the workspace setup dialog.",
     ) -> None:
         """Build the dialog against a registry, with per-surface provenance.
@@ -134,6 +139,8 @@ class WorkspaceCreateModal(
         """
         super().__init__()
         self._registry = registry_service
+        self._personas = persona_service
+        self._persona_selection = WorkspacePersonaSelection()
         #: Provenance stored on the created ``WorkspaceRecord`` (TASK-17962):
         #: each surface (Console/Settings/Library) passes its own wording so
         #: a workspace's origin is still visible after creation -- restoring
@@ -159,6 +166,7 @@ class WorkspaceCreateModal(
         self._created_workspace_id: str | None = None
         self._created_workspace_name: str = ""
         self._make_active_result: bool = True
+        self._offer_profile_interview_result: bool = False
         self._bound_folders: tuple[str, ...] = ()
         # (path -> message) for whatever is still failing after the most
         # recent bind attempt; used to build the partial result if the user
@@ -181,6 +189,7 @@ class WorkspaceCreateModal(
         self._name_value = self._suggested_name
         self._folder_path_value = ""
         self._make_active_value = True
+        self._offer_profile_interview_value = False
 
     def compose(self) -> ComposeResult:
         """Build the name/folder-binding form and its action buttons.
@@ -190,7 +199,13 @@ class WorkspaceCreateModal(
             add/list controls, inline error area, make-active checkbox, and
             the Cancel/Create action row.
         """
-        with Vertical(id="workspace-create-modal"):
+        workspace_created = self._created_workspace_id is not None
+        offer_profile_interview = (
+            self._offer_profile_interview_result
+            if workspace_created
+            else self._offer_profile_interview_value
+        )
+        with VerticalScroll(id="workspace-create-modal"):
             yield Static("New Workspace", classes="console-modal-header")
             yield Static(
                 _WORKSPACE_EXPLAINER, id="workspace-create-explainer", markup=False
@@ -200,6 +215,12 @@ class WorkspaceCreateModal(
                 id="workspace-create-name",
                 placeholder="Workspace name",
                 compact=True,
+            )
+            yield WorkspacePersonaPicker(
+                self._personas,
+                selection=self._persona_selection,
+                allow_auto=True,
+                disabled=workspace_created,
             )
             with Horizontal(id="workspace-create-folder-row"):
                 yield Input(
@@ -242,6 +263,13 @@ class WorkspaceCreateModal(
                 id="workspace-create-make-active",
                 compact=True,
             )
+            yield Checkbox(
+                "Define project context after creating",
+                offer_profile_interview,
+                id="workspace-create-profile-interview",
+                disabled=workspace_created,
+                compact=True,
+            )
             with Horizontal(id="workspace-create-actions"):
                 yield Button("Cancel", id="workspace-create-cancel", compact=True)
                 yield Button("Create", id="workspace-create-confirm", compact=True)
@@ -272,6 +300,7 @@ class WorkspaceCreateModal(
                     for folder in self._folders
                 ),
                 make_active=self._make_active_result,
+                offer_profile_interview=self._offer_profile_interview_result,
                 project_skills=self._project_skills_for(self._bound_folders),
             )
         )
@@ -298,13 +327,11 @@ class WorkspaceCreateModal(
 
         def _picked(selected: Path | None) -> None:
             if selected is not None:
-                self.query_one(
-                    "#workspace-create-folder-path", Input
-                ).value = str(selected)
+                self.query_one("#workspace-create-folder-path", Input).value = str(
+                    selected
+                )
 
-        self.app.push_screen(
-            SelectDirectory(title="Bind Project Folder"), _picked
-        )
+        self.app.push_screen(SelectDirectory(title="Bind Project Folder"), _picked)
 
     def _stash_form_state(self) -> None:
         """Capture live Input/Checkbox values before a recompose discards them.
@@ -317,11 +344,15 @@ class WorkspaceCreateModal(
         (and an unchecked "make active" box back to checked).
         """
         self._name_value = self.query_one("#workspace-create-name", Input).value
+        self._persona_selection = self.query_one(WorkspacePersonaPicker).selection()
         self._folder_path_value = self.query_one(
             "#workspace-create-folder-path", Input
         ).value
         self._make_active_value = self.query_one(
             "#workspace-create-make-active", Checkbox
+        ).value
+        self._offer_profile_interview_value = self.query_one(
+            "#workspace-create-profile-interview", Checkbox
         ).value
 
     def _set_error(self, message: str) -> None:
@@ -474,6 +505,7 @@ class WorkspaceCreateModal(
                 bound_folders=all_bound,
                 failed_folders=(),
                 make_active=self._make_active_result,
+                offer_profile_interview=self._offer_profile_interview_result,
                 project_skills=self._project_skills_for(all_bound),
             )
         )
@@ -518,15 +550,15 @@ class WorkspaceCreateModal(
         # this try so a raise resets _committed instead of permanently
         # locking the Create button for the rest of the session.
         try:
-            workspace_id, generated_name = next_local_workspace_identity(
-                self._registry
-            )
+            assistant_kwargs = self.query_one(WorkspacePersonaPicker).creation_kwargs()
+            workspace_id, generated_name = next_local_workspace_identity(self._registry)
             self._registry.create_workspace(
                 workspace_id=workspace_id,
                 name=name or generated_name,
                 description=self._description,
+                **assistant_kwargs,
             )
-        except WorkspaceRegistryServiceError as exc:
+        except (ValueError, WorkspaceRegistryServiceError) as exc:
             # Nothing was committed -- let the user fix the name/folder and
             # retry rather than permanently locking the dialog.
             self._committed = False
@@ -537,6 +569,9 @@ class WorkspaceCreateModal(
         self._created_workspace_name = name or generated_name
         self._make_active_result = self.query_one(
             "#workspace-create-make-active", Checkbox
+        ).value
+        self._offer_profile_interview_result = self.query_one(
+            "#workspace-create-profile-interview", Checkbox
         ).value
 
         bound, failed = self._bind_folders(workspace_id, list(self._folders))

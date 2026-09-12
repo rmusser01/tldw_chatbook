@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -14,7 +14,15 @@ from textual.widgets import Button, DataTable, Input, Select
 
 import tldw_chatbook
 from tldw_chatbook.MCP.readiness import HubAction
-from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode, remediation_actions
+from tldw_chatbook.MCP.execution_log import POLICY_DENIED_DECISION
+from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import (
+    _BLOCKED_DECISIONS,
+    _DECISION_OPTIONS,
+    MCPAuditMode,
+    _decision_kind,
+    _outcome_text,
+    remediation_actions,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -505,7 +513,16 @@ async def test_select_options_cover_full_decision_and_initiator_vocabulary():
         assert decision_values == {
             "allowed",
             "approved",
+            "approved-session",
             "denied",
+            # task-32280: a permissions-Off refusal is audited as its own
+            # decision, so "what did I refuse?" cannot be answered with rows
+            # nobody ever saw a card for.
+            "denied-policy",
+            # task-32280 fix round: the kill switch is neither a person nor
+            # a per-tool Allow/Ask/Off setting -- filtering for it must not
+            # mean trawling the other refusals.
+            "denied-killswitch",
             "denied-timeout",
             # TASK-294: an unresolved verdict is audited as its own decision
             # so Decision filtering cannot mistake it for an explicit denial.
@@ -515,6 +532,96 @@ async def test_select_options_cover_full_decision_and_initiator_vocabulary():
         assert initiator_values == {"test", "agent", "system"}
         assert decision_select.value is Select.NULL
         assert initiator_select.value is Select.NULL
+
+
+# -- task-32280: user denials vs policy Off ------------------------------
+#
+# Live (dev 3315241674): three approvals of `builtin:tldw_chatbook ·
+# list_characters` were logged and the user's Deny was not, and where a
+# denial IS written the permissions-Off refusal used the very same "denied"
+# token -- so Audit could not answer "what did I refuse?". The vocabulary
+# below is what makes the two answerable apart.
+
+
+def test_decision_vocabulary_names_user_denials_and_policy_off_apart():
+    """The two labels are the user-facing contract, not just the tokens."""
+    labels = dict((value, label) for label, value in _DECISION_OPTIONS)
+    assert labels["denied"] == "Denied by you"
+    assert labels[POLICY_DENIED_DECISION] == "Blocked (Off)"
+
+
+@pytest.mark.parametrize(
+    ("decision", "label", "kind"),
+    [
+        # task-32280 fix round: every refusal token names WHO refused, and
+        # every one of them is an `error` row -- a call that never ran.
+        # "denied-unresolved" had no `_DECISION_KIND` entry at all (it fell
+        # back to `muted`, reading like an informational row) while already
+        # being in `_BLOCKED_DECISIONS`; the fix round gave it four more
+        # producers, so the gap became load-bearing.
+        pytest.param("denied", "Denied by you", "error", id="user"),
+        pytest.param("denied-policy", "Blocked (Off)", "error", id="policy"),
+        pytest.param(
+            "denied-killswitch", "Blocked (kill switch)", "error", id="killswitch"
+        ),
+        pytest.param("denied-timeout", "Denied (timeout)", "error", id="timeout"),
+        pytest.param(
+            "denied-unresolved", "Denied (no decision)", "error", id="unresolved"
+        ),
+    ],
+)
+def test_every_refusal_token_has_its_own_label_and_reads_as_an_error(
+    decision, label, kind
+):
+    labels = dict((value, text) for text, value in _DECISION_OPTIONS)
+    assert labels[decision] == label
+    assert decision in _BLOCKED_DECISIONS
+    assert _decision_kind(decision) == kind
+
+
+def test_policy_off_denials_read_as_blocked_calls():
+    """A policy-Off row is still a blocked call: same Outcome, same color
+    bucket as every other denial -- only its provenance differs."""
+    assert _outcome_text(_entry(decision=POLICY_DENIED_DECISION, ok=False)) == "Blocked"
+    assert _decision_kind(POLICY_DENIED_DECISION) == "error"
+
+
+@pytest.mark.asyncio
+async def test_decision_filter_narrows_user_denials_and_policy_off_separately():
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_entries(
+            [
+                _entry(tool_name="i_said_no", decision="denied", ok=False, duration_ms=0),
+                _entry(
+                    tool_name="switched_off",
+                    decision=POLICY_DENIED_DECISION,
+                    ok=False,
+                    duration_ms=0,
+                ),
+            ]
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-table", DataTable)
+        decision_select = app.query_one("#mcp-audit-filter-decision", Select)
+
+        decision_select.value = "denied"
+        await pilot.pause()
+        assert table.row_count == 1
+        assert _row_texts(table, 0)[1] == "local:docs::i_said_no"
+        assert _row_texts(table, 0)[3] == "Denied by you"
+
+        decision_select.value = POLICY_DENIED_DECISION
+        await pilot.pause()
+        assert table.row_count == 1
+        assert _row_texts(table, 0)[1] == "local:docs::switched_off"
+        assert _row_texts(table, 0)[3] == "Blocked (Off)"
+
+
+def test_approved_session_decision_renders_as_successful_execution():
+    """Catches cached session approvals appearing as muted audit outcomes."""
+    assert _decision_kind("approved-session") == "ready"
 
 
 @pytest.mark.asyncio

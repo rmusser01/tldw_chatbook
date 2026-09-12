@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.console_provider_doubles import persisted_console_store
 
 
 def _controller(store, gateway, model="test-model"):
@@ -43,7 +44,7 @@ class TestVisionGateSingleSeam:
         pre-check-then-recheck let the send THROUGH; the gate must block."""
         monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
         monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: True)
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         controller = _controller(store, RecordingStreamingGateway())
         session = store.ensure_session()
         store.set_pending_attachment(session.id, _pending_image())
@@ -58,7 +59,7 @@ class TestVisionGateSingleSeam:
         attachment_core's internal seam claims otherwise."""
         monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
         monkeypatch.setattr(attachment_core, "is_vision_capable", lambda p, m: False)
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         gateway = RecordingStreamingGateway()
         controller = _controller(store, gateway)
         session = store.ensure_session()
@@ -93,7 +94,7 @@ class TestOmittedImagePlaceholder:
 
     def test_non_vision_image_only_turn_becomes_placeholder(self, monkeypatch):
         monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         gateway = RecordingStreamingGateway()
         controller = _controller(store, gateway)
         session = store.ensure_session()
@@ -109,7 +110,7 @@ class TestOmittedImagePlaceholder:
     def test_over_cap_image_only_turn_becomes_placeholder(self, monkeypatch):
         monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
         monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         gateway = RecordingStreamingGateway()
         controller = _controller(store, gateway)
         session = store.ensure_session()
@@ -126,7 +127,7 @@ class TestOmittedImagePlaceholder:
 
     def test_multiple_omitted_images_pluralize(self, monkeypatch):
         monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         gateway = RecordingStreamingGateway()
         controller = _controller(store, gateway)
         session = store.ensure_session()
@@ -140,7 +141,7 @@ class TestOmittedImagePlaceholder:
 
     def test_captioned_image_message_keeps_its_text(self, monkeypatch):
         monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         gateway = RecordingStreamingGateway()
         controller = _controller(store, gateway)
         session = store.ensure_session()
@@ -167,6 +168,11 @@ class TestSaveImageToastEscaping:
     def _screen_with_message(tmp_path, monkeypatch, attachment_count=1):
         from tldw_chatbook.UI.Console_Modules import message as message_module
         from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
+        from Tests.UI.console_controller_stubs import (
+            NO_APP,
+            stub_fleet_controller,
+            stub_library_activity_controller,
+        )
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
         markup_dir = tmp_path / "sav[e]dir"
@@ -179,7 +185,7 @@ class TestSaveImageToastEscaping:
             "get_cli_setting",
             lambda section, key=None, default=None: str(markup_dir),
         )
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         session = store.ensure_session()
         attachments = tuple(
             MessageAttachment(
@@ -198,6 +204,18 @@ class TestSaveImageToastEscaping:
         )
         notices: list[str] = []
         screen = ChatScreen.__new__(ChatScreen)
+        # The `_console_chat_store` setter reaches
+        # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`,
+        # which reads `self._fleet._console_wake_user_priority` (TASK-21381)
+        # and `self._library_activity.build_provider` (TASK-23144) unguarded.
+        stub_fleet_controller(screen, context="attachment riders bare screen")
+        stub_library_activity_controller(
+            screen,
+            context="attachment riders bare screen",
+            # `app_instance` is assigned just below; no scenario here
+            # reaches a library-activity seam.
+            app_instance=NO_APP,
+        )
         screen._console_chat_store = store
         screen._ensure_console_chat_store = lambda: store
         screen.app_instance = SimpleNamespace(

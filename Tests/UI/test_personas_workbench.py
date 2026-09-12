@@ -3,41 +3,62 @@
 
 import asyncio
 from copy import deepcopy
-from dataclasses import replace
-from datetime import UTC, datetime
+from dataclasses import asdict, replace
+from datetime import UTC, datetime, timedelta
 import inspect
 import json
+import os
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 from uuid import UUID
 
 import pytest
 from textual.app import App
+from textual.screen import Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
-from Tests.UI.background_signals import wait_for_background_signal
+from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     CharacterCardImportOutcome,
     CharacterCardTTSInspection,
+)
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
+    ResolvedLocalCharacterKey,
+)
+from tldw_chatbook.Chat.console_conversation_activation import (
+    CharacterConversationActivationRequest,
+    ConsoleActivationCommit,
+    ConsoleActivationResultKind,
+    ConsoleConversationActivationResult,
 )
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Constants import (
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
+    TAB_CHAT,
     TAB_LIBRARY,
+)
+from tldw_chatbook.Persona_Buddy import (
+    PersonaBuddyController,
+    PersonaBuddyPreferences,
+    PersonaBuddySelection,
 )
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.TTS import (
@@ -65,10 +86,20 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaProfileUpdate,
 )
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+    RoleplayCharacterConversationLink,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.Screens.personas_screen import (
+    CharacterConversationLinkOutcome,
+    PersonasScreen,
+)
 from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
+from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
+    PersonaBuddyWidget,
+)
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
@@ -244,6 +275,31 @@ class StyledPersonasTestApp(PersonasTestApp):
     )
 
 
+class PersonaBuddyWorkbenchApp(PersonasTestApp):
+    """Workbench harness using the real app-to-screen Buddy reconciliation."""
+
+    reconcile_persona_buddy_view = TldwCli.reconcile_persona_buddy_view
+    _start_persona_buddy_overlay = TldwCli._start_persona_buddy_overlay
+    _schedule_persona_buddy_overlay = TldwCli._schedule_persona_buddy_overlay
+    _notify_persona_buddy_changed = TldwCli._notify_persona_buddy_changed
+    on_persona_buddy_changed = TldwCli.on_persona_buddy_changed
+    on_base_app_screen_contents_rebuilt = TldwCli.on_base_app_screen_contents_rebuilt
+    _persona_buddy_authority = staticmethod(TldwCli._persona_buddy_authority)
+    is_persona_buddy_confirmed_unavailable = (
+        TldwCli.is_persona_buddy_confirmed_unavailable
+    )
+    confirm_persona_buddy_unavailable = TldwCli.confirm_persona_buddy_unavailable
+
+    def __init__(self, mock_app_instance) -> None:
+        super().__init__(mock_app_instance)
+        self._persona_buddy_unavailable_authority = None
+        self._persona_buddy_overlay = None
+        self._persona_buddy_overlay_started = False
+
+    def on_mount(self) -> None:
+        self._start_persona_buddy_overlay()
+
+
 def _row_text(item) -> str:
     """Visible text of a library/conversation row (the ListItem's inner Static)."""
     return str(item.query_one(Static).renderable)
@@ -360,6 +416,48 @@ def _right_edge(widget) -> int:
     return widget.region.x + widget.region.width
 
 
+def _relative_luminance(color) -> float:
+    """Return WCAG relative luminance for a Rich color."""
+    triplet = color.get_truecolor()
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.04045 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(triplet.red)
+        + 0.7152 * channel(triplet.green)
+        + 0.0722 * channel(triplet.blue)
+    )
+
+
+def _contrast_ratio(first, second) -> float:
+    """Return WCAG contrast for two Rich colors."""
+    lighter, darker = sorted(
+        (_relative_luminance(first), _relative_luminance(second)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _painted_style_of_text(app: App, region, needle: str):
+    """Return the compositor style that actually paints ``needle``."""
+    strips = list(app.screen._compositor.render_strips())
+    for y in range(region.y, region.bottom):
+        if y >= len(strips):
+            break
+        segments = list(strips[y]._segments)
+        row_text = "".join(segment.text for segment in segments)
+        index = row_text.find(needle)
+        if index == -1:
+            continue
+        x = 0
+        for segment in segments:
+            if x + len(segment.text) > index:
+                return segment.style
+            x += len(segment.text)
+    return None
+
+
 async def _mounted(pilot):
     await pilot.pause()
     return pilot.app.screen
@@ -430,6 +528,22 @@ class TestWorkbenchShell:
             # readiness line never claims ready (F-031 auto-select means a
             # selection exists, so this is the provider gate talking).
             assert "blocked" in str(readiness.renderable).lower()
+
+    async def test_52_by_20_roleplay_shows_exactly_one_workbench_pane(
+        self, mock_app_instance, stub_characters
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            panes = (
+                screen.query_one("#personas-library-pane"),
+                screen.query_one("#personas-work-area"),
+                screen.query_one("#personas-inspector-pane"),
+            )
+            assert sum(bool(pane.display) for pane in panes) == 1
 
     async def test_header_band_merges_purpose_and_count(
         self, mock_app_instance, stub_characters
@@ -857,6 +971,9 @@ class TestCharacterSelectionAndEdit:
             assert screen._edit_mode == "create"
             editor = screen.query_one("#ccp-character-editor-view")
             assert editor.display is True
+            assert not list(screen.query("#ccp-persona-editor-view"))
+            assert not list(screen.query("#personas-dictionary-detail"))
+            assert not list(screen.query("#personas-lore-detail"))
             selected_name = str(
                 screen.query_one("#personas-selected-name", Static).renderable
             )
@@ -1083,7 +1200,7 @@ class TestCharacterSelectionAndEdit:
             screen.post_message(EditCharacterRequested(2))
             await pilot.pause()
             assert screen._edit_mode == "view"
-            assert screen.query_one("#ccp-character-editor-view").display is False
+            assert not list(screen.query("#ccp-character-editor-view"))
 
     async def test_mode_switch_during_save_does_not_render_character_into_other_mode(
         self, mock_app_instance, stub_characters, monkeypatch
@@ -1276,6 +1393,9 @@ class TestPersonasMode:
             # read-only card).
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
+            assert not list(screen.query("#ccp-character-editor-view"))
+            assert not list(screen.query("#personas-dictionary-detail"))
+            assert not list(screen.query("#personas-lore-detail"))
 
     async def test_profile_save_refresh_failure_updates_purpose_line_and_recovery(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -2486,8 +2606,7 @@ class TestImportExport:
             await screen._stage_character_avatar_from_path(str(avatar))
             await pilot.pause()
 
-            editor = screen.query_one(PersonasCharacterEditorWidget)
-            assert "image" not in editor.get_character_data()
+            assert not list(screen.query(PersonasCharacterEditorWidget))
             assert screen.state.has_unsaved_changes is False
             assert any("Open a character editor" in msg for msg, _ in notifications)
 
@@ -3530,14 +3649,92 @@ class TestImportExport:
 
 
 class _FtsStubDB:
-    """Captures the MATCH term handed to search_character_cards."""
+    """Captures the MATCH term handed to search_character_cards.
+
+    TASK-19558: `search_character_cards` used to compute a `safe_search_term`
+    and bind the RAW one, so a caller-built prefix expression reached MATCH
+    only through the plain-text parameter. The plain-text parameter now
+    quotes what it is given, and a caller-built expression travels through
+    `fts_match_query` -- which is what `calls` records here, so these tests
+    still assert on the expression SQLite actually sees.
+    """
 
     def __init__(self):
         self.calls: list[tuple[str, int]] = []
+        self.plain_terms: list[str] = []
 
-    def search_character_cards(self, search_term, limit=10):
-        self.calls.append((search_term, limit))
+    def search_character_cards(self, search_term, limit=10, fts_match_query=None):
+        self.plain_terms.append(search_term)
+        self.calls.append((fts_match_query, limit))
         return [{"id": 1, "name": "Match"}]
+
+
+_CURSOR_OMITTED = object()
+
+
+def _conversation_record(index: int, *, title: str | None = None) -> dict[str, Any]:
+    """Return the complete conversation shape the mounted inspector consumes."""
+    return {
+        "id": f"conv-{index}",
+        "title": title or f"Case {index}",
+        "last_modified": (
+            datetime(2026, 8, 27, 12, tzinfo=UTC) - timedelta(minutes=index)
+        ).isoformat(),
+    }
+
+
+class _ConversationPageDB:
+    """Cursor-aware character DB double at the screen's production seam."""
+
+    def __init__(self, *pages: object) -> None:
+        self.pages = list(pages) or [[]]
+        self.calls: list[tuple[int, int, int, dict[str, object]]] = []
+
+    def replace_pages(self, *pages: object) -> None:
+        """Replace queued responses; the last response repeats if read again."""
+        self.pages = list(pages) or [[]]
+
+    def get_character_card_by_id(self, character_id: int) -> dict[str, Any] | None:
+        """Support the mounted inspector's sibling portrait read."""
+        return next(
+            (deepcopy(row) for row in CHARACTERS if row["id"] == character_id),
+            None,
+        )
+
+    def get_conversations_for_character(
+        self,
+        character_id: int,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        before_last_modified: object = _CURSOR_OMITTED,
+        before_id: object = _CURSOR_OMITTED,
+    ) -> list[dict[str, Any]]:
+        cursor: dict[str, object] = {}
+        if before_last_modified is not _CURSOR_OMITTED:
+            cursor["before_last_modified"] = before_last_modified
+        if before_id is not _CURSOR_OMITTED:
+            cursor["before_id"] = before_id
+        self.calls.append((character_id, limit, offset, cursor))
+        response = self.pages.pop(0) if len(self.pages) > 1 else self.pages[0]
+        if isinstance(response, BaseException):
+            raise response
+        if callable(response):
+            response = response(
+                character_id,
+                limit,
+                offset,
+                **cursor,
+            )
+        return deepcopy(response)
+
+
+def _install_conversation_db(
+    monkeypatch: pytest.MonkeyPatch, *pages: object
+) -> _ConversationPageDB:
+    db = _ConversationPageDB(*pages)
+    monkeypatch.setattr(PersonasScreen, "_character_db", lambda self: db)
+    return db
 
 
 class TestFtsTermSafety:
@@ -3555,6 +3752,12 @@ class TestFtsTermSafety:
         results = character_handler_module.search_characters_fts("sam")
         assert [term for term, _ in stub_db.calls] == ['"sam"*']
         assert results and results[0]["name"] == "Match"
+        # The raw term is still passed positionally, but when
+        # `fts_match_query` is supplied `search_term` is UNUSED by
+        # `search_character_cards` -- not even in its error message, which
+        # reports the expression that was actually run. Recorded here only so
+        # a future change that starts using it is visible.
+        assert stub_db.plain_terms == ["sam"]
 
     async def test_apostrophe_term_is_safe(self, stub_db):
         character_handler_module.search_characters_fts("O'Brien")
@@ -3589,6 +3792,1086 @@ class _NavCaptureApp(PersonasTestApp):
         self.nav_contexts.append(dict(getattr(message, "screen_context", {}) or {}))
 
 
+class _StyledNavCaptureApp(_NavCaptureApp):
+    """Navigation-capture harness using the production consolidated CSS."""
+
+    CSS_PATH = StyledPersonasTestApp.CSS_PATH
+
+
+class _RoleplayActivationApp(_StyledNavCaptureApp):
+    """Mounted caller harness implementing the production app-owned seam."""
+
+    def __init__(self, mock_app_instance):
+        super().__init__(mock_app_instance)
+        self.activation_started = asyncio.Event()
+        self.activation_release = asyncio.Event()
+        self.activation_requests: list[CharacterConversationActivationRequest] = []
+
+    async def activate_character_conversation_from_roleplay(
+        self, request, cancellation, phase_changed
+    ):
+        self.activation_requests.append(request)
+        self.activation_started.set()
+        await self.activation_release.wait()
+        if cancellation.is_set():
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.CANCELLED_PRECOMMIT,
+                request.target,
+                False,
+            )
+        phase_changed("finishing")
+        return ConsoleConversationActivationResult(
+            ConsoleActivationResultKind.FAILED, request.target, True
+        )
+
+
+class _RaisingRoleplayActivationApp(_StyledNavCaptureApp):
+    """Production-seam harness that raises after source ownership is claimed."""
+
+    async def activate_character_conversation_from_roleplay(
+        self, request, cancellation, phase_changed
+    ):
+        phase_changed("finishing")
+        raise RuntimeError("activation failed")
+
+
+class _CharacterActivationColdHost:
+    """Cold-route cache adapter for reduced app orchestration harnesses."""
+
+    def _current_runtime_identity(self):
+        return None
+
+    def _reusable_navigation_screen(self, _route, _identity):
+        return None
+
+    def _retain_reusable_navigation_screen(self, route, identity, screen):
+        TldwCli._retain_reusable_navigation_screen(self, route, identity, screen)
+
+
+async def test_app_preflight_keeps_roleplay_current_until_caller_cancels() -> None:
+    """The production app orchestration does not mount Console before commit."""
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            started.set()
+            await release.wait()
+
+        async def activate_character_conversation(self, _request, cancellation):
+            raise AssertionError("cancelled preflight must not reach hydration")
+
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _AppHost(_CharacterActivationColdHost):
+        def __init__(self):
+            self.pushes = 0
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, _screen):
+            self.pushes += 1
+
+    host = _AppHost()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    cancellation = asyncio.Event()
+    phases: list[str] = []
+    task = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, cancellation, phases.append
+        )
+    )
+    await started.wait()
+    assert host.pushes == 0
+    cancellation.set()
+
+    result = await task
+    release.set()
+    assert result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT
+    assert host.pushes == 0
+    assert phases == []
+
+
+async def test_app_escape_cancels_while_global_activation_lane_is_held() -> None:
+    """Waiting for the app-wide lane remains caller-visible and cancellable."""
+
+    lane = asyncio.Lock()
+    await lane.acquire()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _Runtime:
+        character_conversation_activation_lock = lane
+
+    class _Host(_CharacterActivationColdHost):
+        console_runtime = _Runtime()
+        pushes = 0
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, _screen):
+            self.pushes += 1
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    cancellation = asyncio.Event()
+    task = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, cancellation, lambda _phase: None
+        )
+    )
+    await asyncio.sleep(0)
+    cancellation.set()
+    result = await task
+    lane.release()
+
+    assert result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT
+    assert host.pushes == 0
+
+
+async def test_app_owner_cancellation_while_waiting_for_lane_leaves_it_reusable() -> None:
+    """Cancelling the activation task cannot orphan a later lock acquisition."""
+
+    lane = asyncio.Lock()
+    await lane.acquire()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return ConsoleActivationResultKind.FAILED
+
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _Host(_CharacterActivationColdHost):
+        def __init__(self):
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=lane
+            )
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    abandoned = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await asyncio.sleep(0)
+    abandoned.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await abandoned
+
+    lane.release()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not lane.locked()
+
+    result = await asyncio.wait_for(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, asyncio.Event(), lambda _phase: None
+        ),
+        timeout=1,
+    )
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.commit_started is False
+    assert not lane.locked()
+
+
+@pytest.mark.parametrize("failure_site", ("constructor", "preflight"))
+async def test_app_precommit_exceptions_never_claim_commit_started(
+    failure_site: str,
+) -> None:
+    """Constructor and preflight failures remain on the reversible side."""
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            raise RuntimeError("preflight failed")
+
+    class _Host(_CharacterActivationColdHost):
+        def __init__(self):
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            if failure_site == "constructor":
+                raise RuntimeError("constructor failed")
+            return SimpleNamespace(_workspace=_Workspace())
+
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    result = await TldwCli.activate_character_conversation_from_roleplay(
+        _Host(), request, asyncio.Event(), lambda _phase: None
+    )
+
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.commit_started is False
+
+
+async def test_app_transfers_proved_console_into_the_only_content_screen_slot() -> None:
+    """Successful Resume unmounts Roleplay and retains the proved Console."""
+
+    roleplay_unmounted = asyncio.Event()
+
+    class _RoleplayScreen(Screen):
+        def on_unmount(self) -> None:
+            roleplay_unmounted.set()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+        async def activate_character_conversation_after_commit(
+            self, request, *, finalize_visible
+        ):
+            await finalize_visible()
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.OPENED, request.target, True
+            )
+
+    class _ConsoleScreen(Screen):
+        def __init__(self):
+            super().__init__()
+            self._workspace = _Workspace()
+
+    class _App(_CharacterActivationColdHost, App):
+        def __init__(self):
+            super().__init__()
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.roleplay = _RoleplayScreen()
+            self.candidate = _ConsoleScreen()
+            self.created = 0
+            self.current_tab = "personas"
+
+        def on_mount(self) -> None:
+            self.push_screen(self.roleplay)
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, _ConsoleScreen
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            self.created += 1
+            return self.candidate
+
+        async def _remove_promoted_screen_caller(self, caller):
+            self.candidate_callbacks_before_transfer = tuple(
+                self.candidate._result_callbacks
+            )
+            await TldwCli._remove_promoted_screen_caller(self, caller)
+
+    app = _App()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.screen is app.roleplay
+        roleplay_callbacks = tuple(app.roleplay._result_callbacks)
+
+        result = await TldwCli.activate_character_conversation_from_roleplay(
+            app, request, asyncio.Event(), lambda _phase: None
+        )
+        await pilot.pause()
+
+        assert result.kind is ConsoleActivationResultKind.OPENED
+        assert app.created == 1
+        assert app.screen is app.candidate
+        assert app.is_screen_installed(app.candidate)
+        assert app._reusable_screen_instances[TAB_CHAT][1] is app.candidate
+        assert list(app.screen_stack)[1:] == [app.candidate]
+        assert app.roleplay not in app.screen_stack
+        assert roleplay_unmounted.is_set()
+        # Textual's is_mounted means "has mounted at least once" and is not
+        # reset on removal.  DOM detachment plus the Unmount event prove the
+        # outgoing Roleplay screen actually left the content slot.
+        assert app.roleplay.parent is None
+        assert not app.roleplay.is_running
+        assert len(roleplay_callbacks) == 1
+        assert tuple(app.roleplay._result_callbacks) == roleplay_callbacks[:-1]
+        assert len(app.candidate_callbacks_before_transfer) == 1
+        assert (
+            tuple(app.candidate._result_callbacks)
+            == app.candidate_callbacks_before_transfer
+        )
+        assert (
+            app.candidate._result_callbacks[0]
+            is app.candidate_callbacks_before_transfer[0]
+        )
+
+
+async def test_app_promotion_fault_restores_exact_roleplay_runtime_and_lane() -> None:
+    """A fault after caller removal cannot strand either live screen off-stack."""
+
+    fault_reached = asyncio.Event()
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._chat_store_accessor = lambda: store
+
+    async def preflight(_request):
+        return None
+
+    async def open_target(_request):
+        owned = store.restore_persisted_session(
+            title="Target",
+            workspace_id=None,
+            persisted_conversation_id="conversation-X",
+            all_nodes=[],
+        )
+        return ConsoleActivationCommit(True, owned)
+
+    async def revalidate(_request):
+        return None
+
+    async def restore(prior_session_id):
+        store.switch_session(prior_session_id)
+
+    controller.preflight_character_conversation_activation = preflight
+    controller._open_character_conversation_activation = open_target
+    controller._revalidate_character_conversation_target = revalidate
+    controller._restore_character_conversation_prior_session = restore
+    controller._character_conversation_target_visible = lambda _request: True
+
+    class _RoleplayScreen(Screen):
+        pass
+
+    class _ConsoleScreen(Screen):
+        def __init__(self):
+            super().__init__()
+            self._workspace = controller
+
+    class _App(_CharacterActivationColdHost, App):
+        def __init__(self):
+            super().__init__()
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.roleplay = _RoleplayScreen()
+            self.candidate = _ConsoleScreen()
+            self.current_tab = "personas"
+
+        def on_mount(self) -> None:
+            self.push_screen(self.roleplay)
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, _ConsoleScreen
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return self.candidate
+
+        async def _remove_promoted_screen_caller(self, caller):
+            assert caller is self.roleplay
+            assert self.screen is self.candidate
+            assert self.roleplay not in self.screen_stack
+            assert self.candidate in self.screen_stack
+            await TldwCli._remove_promoted_screen_caller(self, caller)
+            assert not caller.is_running and caller.parent is None
+            fault_reached.set()
+            raise RuntimeError("fault after Roleplay unmount")
+
+    app = _App()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        roleplay_callbacks = tuple(app.roleplay._result_callbacks)
+        result = await TldwCli.activate_character_conversation_from_roleplay(
+            app, request, asyncio.Event(), lambda _phase: None
+        )
+        await pilot.pause()
+
+        assert fault_reached.is_set()
+        assert result.kind is ConsoleActivationResultKind.FAILED
+        assert not app.is_screen_installed(app.candidate)
+        assert TAB_CHAT not in getattr(app, "_reusable_screen_instances", {})
+        assert app.screen is app.roleplay
+        assert list(app.screen_stack)[1:] == [app.roleplay]
+        assert app.roleplay.is_running and app.roleplay.parent is app
+        assert tuple(app.roleplay._result_callbacks) == roleplay_callbacks
+        assert app.candidate not in app.screen_stack
+        assert not app.candidate.is_running and app.candidate.parent is None
+        assert app.candidate._result_callbacks == []
+        assert store.active_session_id == prior.id
+        assert all(
+            session.persisted_conversation_id != "conversation-X"
+            for session in store.sessions()
+        )
+        lane = app.console_runtime.character_conversation_activation_lock
+        assert not lane.locked()
+        await asyncio.wait_for(lane.acquire(), timeout=1)
+        lane.release()
+
+
+async def test_named_post_commit_cancellation_restores_exact_screen_and_runtime() -> None:
+    """Cancelling app-owned commit work settles exact UI and store rollback."""
+
+    roleplay_unmounted = asyncio.Event()
+    removal_suspended = asyncio.Event()
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    unrelated = store.create_session(title="Unrelated")
+    store.switch_session(prior.id)
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._chat_store_accessor = lambda: store
+
+    async def preflight(_request):
+        return None
+
+    async def open_target(_request):
+        owned = store.restore_persisted_session(
+            title="Target",
+            workspace_id=None,
+            persisted_conversation_id="conversation-X",
+            all_nodes=[],
+        )
+        return ConsoleActivationCommit(True, owned)
+
+    async def revalidate(_request):
+        return None
+
+    async def restore(prior_session_id):
+        store.switch_session(prior_session_id)
+
+    controller.preflight_character_conversation_activation = preflight
+    controller._open_character_conversation_activation = open_target
+    controller._revalidate_character_conversation_target = revalidate
+    controller._restore_character_conversation_prior_session = restore
+    controller._character_conversation_target_visible = lambda _request: True
+
+    class _RoleplayScreen(Screen):
+        def on_unmount(self) -> None:
+            roleplay_unmounted.set()
+
+    class _ConsoleScreen(Screen):
+        def __init__(self):
+            super().__init__()
+            self._workspace = controller
+
+    class _App(_CharacterActivationColdHost, App):
+        def __init__(self):
+            super().__init__()
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.roleplay = _RoleplayScreen()
+            self.candidate = _ConsoleScreen()
+            self.current_tab = "personas"
+
+        def on_mount(self) -> None:
+            self.push_screen(self.roleplay)
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, _ConsoleScreen
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return self.candidate
+
+        async def _remove_promoted_screen_caller(self, caller):
+            await TldwCli._remove_promoted_screen_caller(self, caller)
+            assert roleplay_unmounted.is_set()
+            assert not caller.is_running and caller.parent is None
+            removal_suspended.set()
+            await asyncio.Future()
+
+    app = _App()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        original_stack = tuple(app.screen_stack)
+        roleplay_callbacks = tuple(app.roleplay._result_callbacks)
+        activation = asyncio.create_task(
+            TldwCli.activate_character_conversation_from_roleplay(
+                app, request, asyncio.Event(), lambda _phase: None
+            )
+        )
+        await removal_suspended.wait()
+        post_commit = next(
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == "character_conversation_post_commit"
+        )
+        post_commit.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await activation
+        await pilot.pause()
+
+        assert post_commit.cancelled()
+        assert activation.cancelled()
+        assert tuple(app.screen_stack) == original_stack
+        assert app.screen is app.roleplay
+        assert app.roleplay.is_running and app.roleplay.parent is app
+        assert tuple(app.roleplay._result_callbacks) == roleplay_callbacks
+        assert app.candidate not in app.screen_stack
+        assert not app.candidate.is_running and app.candidate.parent is None
+        assert app.candidate._result_callbacks == []
+        assert store.active_session_id == prior.id
+        assert {session.id for session in store.sessions()} == {
+            prior.id,
+            unrelated.id,
+        }
+        lane = app.console_runtime.character_conversation_activation_lock
+        assert not lane.locked()
+        await asyncio.wait_for(lane.acquire(), timeout=1)
+        lane.release()
+
+
+async def test_app_partial_console_mount_failure_restores_roleplay() -> None:
+    """A push that partially changes current screen remains inside rollback."""
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+    roleplay = object()
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _Runtime:
+        character_conversation_activation_lock = asyncio.Lock()
+
+    class _Host(_CharacterActivationColdHost):
+        console_runtime = _Runtime()
+
+        def __init__(self):
+            self.screen = roleplay
+            self.popped = 0
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, screen):
+            self.screen = screen
+            raise RuntimeError("mount failed")
+
+        async def pop_screen(self):
+            self.popped += 1
+            self.screen = roleplay
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    result = await TldwCli.activate_character_conversation_from_roleplay(
+        host, request, asyncio.Event(), lambda _phase: None
+    )
+
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.commit_started is True
+    assert host.screen is roleplay
+    assert host.popped == 1
+    assert not host.console_runtime.character_conversation_activation_lock.locked()
+
+
+@pytest.mark.parametrize("held_stage", ("mount", "hydrate", "revalidate", "rollback"))
+async def test_app_owner_cancellation_after_commit_waits_for_atomic_settlement(
+    held_stage: str,
+) -> None:
+    """Caller-task cancellation cannot strand any committed activation stage."""
+
+    stage_started = asyncio.Event()
+    stage_release = asyncio.Event()
+    roleplay = object()
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._chat_store_accessor = lambda: store
+
+    async def hold_stage(name: str) -> None:
+        if held_stage == name:
+            stage_started.set()
+            await stage_release.wait()
+
+    async def open_target(_request):
+        owned = store.restore_persisted_session(
+            title="Target",
+            workspace_id=None,
+            persisted_conversation_id="conversation-X",
+            all_nodes=[],
+        )
+        await hold_stage("hydrate")
+        return ConsoleActivationCommit(True, owned)
+
+    revalidation_calls = 0
+
+    async def revalidate(_request):
+        nonlocal revalidation_calls
+        revalidation_calls += 1
+        if revalidation_calls == 1:
+            return None
+        await hold_stage("revalidate")
+        return ConsoleActivationResultKind.FAILED
+
+    async def rollback(owned):
+        await hold_stage("rollback")
+        await ConsoleWorkspaceController._rollback_character_conversation_activation(
+            controller, owned
+        )
+
+    async def restore(prior_session_id):
+        store.switch_session(prior_session_id)
+
+    controller._open_character_conversation_activation = open_target
+    controller._revalidate_character_conversation_target = revalidate
+    controller._rollback_character_conversation_activation = rollback
+    controller._restore_character_conversation_prior_session = restore
+    candidate = SimpleNamespace(_workspace=controller)
+
+    class _Host(_CharacterActivationColdHost):
+        def __init__(self):
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.stack = [roleplay]
+
+        @property
+        def screen(self):
+            return self.stack[-1]
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, screen):
+            self.stack.append(screen)
+            await hold_stage("mount")
+
+        async def pop_screen(self):
+            assert self.stack[-1] is candidate
+            self.stack.pop()
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    activation = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await stage_started.wait()
+
+    activation.cancel()
+    await asyncio.sleep(0)
+    assert not activation.done()
+    stage_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await activation
+
+    assert host.stack == [roleplay]
+    assert store.active_session_id == prior.id
+    assert all(
+        session.persisted_conversation_id != "conversation-X"
+        for session in store.sessions()
+    )
+    assert not host.console_runtime.character_conversation_activation_lock.locked()
+
+
+async def test_app_serializes_two_targets_before_touching_screen_stack() -> None:
+    """A second target cannot push while the first owns the app transaction."""
+
+    release_first = asyncio.Event()
+    first_started = asyncio.Event()
+
+    class _Workspace:
+        def __init__(self, conversation_id):
+            self.conversation_id = conversation_id
+
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+        async def activate_character_conversation_after_commit(
+            self, request, *, finalize_visible
+        ):
+            if self.conversation_id == "conversation-X":
+                first_started.set()
+                await release_first.wait()
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.FAILED, request.target, True
+            )
+
+    class _Runtime:
+        character_conversation_activation_lock = asyncio.Lock()
+
+    class _Host(_CharacterActivationColdHost):
+        console_runtime = _Runtime()
+
+        def __init__(self):
+            self.pending_ids = ["conversation-X", "conversation-Y"]
+            self.roleplay = object()
+            self.screen = self.roleplay
+            self.stack: list[object] = []
+            self.max_depth = 0
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return SimpleNamespace(
+                _workspace=_Workspace(self.pending_ids.pop(0))
+            )
+
+        async def push_screen(self, screen):
+            self.stack.append(screen)
+            self.screen = screen
+            self.max_depth = max(self.max_depth, len(self.stack))
+
+        async def pop_screen(self):
+            self.stack.pop()
+            self.screen = self.stack[-1] if self.stack else self.roleplay
+
+    host = _Host()
+    first_request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    second_request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-Y"
+        ),
+        "authority-A",
+        1,
+    )
+    first = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, first_request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await first_started.wait()
+    second = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, second_request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await asyncio.sleep(0)
+    assert len(host.stack) == 1
+    release_first.set()
+    await asyncio.gather(first, second)
+    assert host.max_depth == 1
+
+
+async def test_aggregate_navigation_reads_real_mounted_attachment_owner(
+    mock_app_instance, stub_characters
+) -> None:
+    """The aggregate snapshot uses the mounted editor's staged avatar owner."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._ensure_center_view("character-editor")
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
+        assert not editor.has_unsaved_attachment()
+        editor.set_avatar_image(b"new")
+
+        snapshot = screen._aggregate_roleplay_draft_snapshot()
+
+        assert snapshot.attachments_dirty
+        assert "attachments" in snapshot.dirty_domains
+        editor.discard_unsaved_attachment()
+        assert not screen._aggregate_roleplay_draft_snapshot().attachments_dirty
+
+
+async def test_mounted_partial_save_names_failed_domains_and_offers_retry_stay(
+    mock_app_instance, stub_characters, monkeypatch
+) -> None:
+    """A failed real editor/attachment save keeps navigation recoverable."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._ensure_center_view("character-editor")
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
+        editor.set_avatar_image(b"new")
+        screen.state.has_unsaved_changes = True
+        monkeypatch.setattr(screen, "action_personas_save", lambda: None)
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-draft-recovery"
+        )
+        await pilot.pause()
+        assert app.screen.query_one("#roleplay-draft-navigation-dialog")
+        await pilot.click("#roleplay-draft-save-continue")
+        await pilot.pause()
+        failed = app.screen.query_one("#roleplay-draft-recovery-domains", Static)
+        copy = str(failed.renderable)
+        assert "character form" in copy and "attachments" in copy
+        assert app.screen.query_one("#roleplay-draft-retry", Button)
+        await pilot.click("#roleplay-draft-recovery-stay")
+        assert await decision.wait() is False
+        assert editor.has_unsaved_attachment()
+
+
+@pytest.mark.parametrize(
+    ("selector", "expected"),
+    (("#roleplay-draft-discard-continue", True), ("#roleplay-draft-stay", False)),
+)
+async def test_mounted_aggregate_discard_and_stay(
+    mock_app_instance, stub_characters, selector, expected
+) -> None:
+    """Mounted draft owners honor both non-save decisions."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        await screen._ensure_center_view("character-editor")
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
+        editor.set_avatar_image(b"new")
+        editor.query_one("#personas-char-editor-name", Input).value = "Discarded name"
+        editor.query_one("#personas-char-editor-description", TextArea).text = "Discarded description"
+        screen.state.has_unsaved_changes = True
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-draft-choice"
+        )
+        await pilot.pause()
+        await pilot.click(selector)
+
+        assert await decision.wait() is expected
+        assert editor.has_unsaved_attachment() is (not expected)
+        await pilot.pause()
+        # Reusing the same screen/editor must not resurrect a discarded form,
+        # including when a later Save reads its values.
+        assert screen.query_one(PersonasCharacterEditorWidget) is editor
+        assert editor.get_character_data()["name"] == ("Ada" if expected else "Discarded name")
+        assert editor.get_character_data()["description"] == ("" if expected else "Discarded description")
+        assert screen.state.has_unsaved_changes is (not expected)
+
+
+@pytest.mark.parametrize("kind", ("character", "persona"))
+@pytest.mark.parametrize("saved", (False, True))
+async def test_discard_restores_form_baseline_across_cached_screen_return(
+    mock_app_instance, stub_characters, kind, saved
+):
+    from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget import (
+        PersonaProfileEditorWidget,
+    )
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        await screen._ensure_center_view(f"{kind}-editor")
+        record = {"id": 1, "name": "Saved name", "description": "Saved description"} if saved else {}
+        if kind == "character":
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            editor.load_character(record)
+            prefix = "personas-char-editor"
+            values = editor.get_character_data
+        else:
+            screen.state.active_mode = "personas"
+            editor = screen.query_one(PersonaProfileEditorWidget)
+            editor.load_persona(record)
+            prefix = "personas-editor"
+            values = editor.collect
+        before = values()
+        editor.query_one(f"#{prefix}-name", Input).value = "Unwanted name"
+        editor.query_one(f"#{prefix}-description", TextArea).text = "Unwanted description"
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+        decision = screen.run_worker(screen.confirm_navigation())
+        await pilot.pause()
+        await pilot.click("#roleplay-draft-discard-continue")
+        assert await decision.wait() is True
+        await app.push_screen(Screen())
+        await app.pop_screen()
+        await pilot.pause()
+        assert app.screen is screen
+        assert editor.is_mounted
+        assert values() == before, "a later Save must never serialize discarded fields"
+        assert not screen.state.has_unsaved_changes
+
+
+async def test_mounted_aggregate_waits_exact_inflight_character_save(
+    mock_app_instance, stub_characters, monkeypatch
+) -> None:
+    """An incumbent real save settles without Resume waiting on itself."""
+
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        EditCharacterRequested,
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def delayed_update(_character_id, _data):
+        started.set()
+        assert release.wait(5)
+        return True
+
+    monkeypatch.setattr(character_handler_module, "update_character", delayed_update)
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        screen.post_message(EditCharacterRequested("1"))
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+        screen.action_personas_save()
+        assert await asyncio.to_thread(started.wait, 5)
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-inflight-navigation"
+        )
+        await pilot.pause()
+        assert not decision.is_finished
+        release.set()
+
+        assert await asyncio.wait_for(decision.wait(), 5) is True
+        assert screen.state.has_unsaved_changes is False
+
+
+async def test_mounted_aggregate_save_and_continue_uses_real_owner_worker(
+    mock_app_instance, stub_characters, monkeypatch
+) -> None:
+    """Save and continue dispatches and awaits the mounted editor's worker."""
+
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        EditCharacterRequested,
+    )
+
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        character_handler_module,
+        "update_character",
+        lambda character_id, _data: persisted.append(str(character_id)) or True,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        screen.post_message(EditCharacterRequested("1"))
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-save-navigation"
+        )
+        await pilot.pause()
+        await pilot.click("#roleplay-draft-save-continue")
+
+        assert await asyncio.wait_for(decision.wait(), 5) is True
+        assert persisted == ["1"]
+        assert screen.state.has_unsaved_changes is False
+
+
+async def test_mounted_aggregate_save_waits_real_persona_owner(
+    mock_app_instance, stub_characters, stub_scope_service
+) -> None:
+    """The same guard awaits the mounted Persona profile save task."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await pilot.click("#personas-mode-personas")
+        await app.workers.wait_for_complete()
+        await pilot.click("#personas-library-row-persona-p-1")
+        screen.post_message(EditPersonaProfileRequested("p-1"))
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-persona-save-navigation"
+        )
+        await pilot.pause()
+        domains = str(
+            app.screen.query_one("#roleplay-draft-navigation-domains", Static).renderable
+        )
+        assert "Persona form" in domains
+        await pilot.click("#roleplay-draft-save-continue")
+
+        assert await asyncio.wait_for(decision.wait(), 5) is True
+        stub_scope_service.update_persona_profile.assert_awaited()
+        assert screen.state.has_unsaved_changes is False
+
+
 class TestConversationsPanel:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -3596,12 +4879,8 @@ class TestConversationsPanel:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [
-                {"id": "conv-1", "title": "First case"}
-            ],
+        db = _install_conversation_db(
+            monkeypatch, [_conversation_record(1, title="First case")]
         )
         monkeypatch.setattr(
             conversations_controller_module,
@@ -3610,6 +4889,7 @@ class TestConversationsPanel:
                 ("Hello there", "Greetings, detective."),
             ],
         )
+        return db
 
     async def _select_first_character(self, pilot):
         screen = await _mounted(pilot)
@@ -3637,26 +4917,1013 @@ class TestConversationsPanel:
             rows = screen.query(".personas-conversation-row")
             assert [_row_text(r) for r in rows] == ["First case"]
 
+    async def test_first_page_uses_sentinel_without_rendering_it(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        page = [_conversation_record(index) for index in range(1, 22)]
+        stub_conversations.replace_pages(page)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls == [(1, 21, 0, {})]
+            rows = list(screen.query(".personas-conversation-row"))
+            assert [_row_text(row) for row in rows] == [
+                f"Case {index}" for index in range(1, 21)
+            ]
+            assert not screen.query("#personas-conversation-row-conv-21")
+            tail = screen.query_one(".personas-conversations-tail")
+            assert _row_text(tail) == "Load 20 older conversations"
+
+    async def test_enter_loads_next_page_from_twentieth_visible_cursor(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        second_page = [_conversation_record(index) for index in range(21, 42)]
+        stub_conversations.replace_pages(first_page, second_page)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            twentieth = _conversation_record(20)
+            assert stub_conversations.calls == [
+                (1, 21, 0, {}),
+                (
+                    1,
+                    21,
+                    0,
+                    {
+                        "before_last_modified": twentieth["last_modified"],
+                        "before_id": twentieth["id"],
+                    },
+                ),
+            ]
+            rows = list(screen.query(".personas-conversation-row"))
+            assert [_row_text(row) for row in rows] == [
+                f"Case {index}" for index in range(1, 41)
+            ]
+            assert _row_text(rows[20]) == "Case 21"
+            assert not screen.query("#personas-conversation-row-conv-41")
+
+    async def test_appended_row_keeps_preview_and_all_conversation_actions(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        second_page = [_conversation_record(21), _conversation_record(22)]
+        stub_conversations.replace_pages(first_page, second_page)
+        app = _NavCaptureApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            assert screen.conversations._open_conversation_id == "conv-1"
+
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.conversations._open_conversation_id == "conv-1"
+            assert screen.query_one(
+                "#personas-conversation-transcript-view"
+            ).display
+
+            oldest = screen.query_one("#personas-conversation-row-conv-22")
+            conversation_list.index = list(conversation_list.children).index(oldest)
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen.conversations._open_conversation_id == "conv-22"
+            assert str(
+                screen.query_one("#personas-transcript-title", Static).renderable
+            ) == "Case 22"
+            assert str(
+                screen.query_one("#personas-conversation-resume", Button).label
+            ) == "Resume chat"
+            assert str(
+                screen.query_one(
+                    "#personas-conversation-continue-console", Button
+                ).label
+            ) == "Send transcript to Console draft"
+            assert str(
+                screen.query_one(
+                    "#personas-conversation-open-library", Button
+                ).label
+            ) == "Open in Library"
+
+            await pilot.click("#personas-conversation-resume")
+            await pilot.click("#personas-conversation-continue-console")
+            await pilot.click("#personas-conversation-open-library")
+            await pilot.pause()
+
+        assert app.nav_routes == [TAB_CHAT, TAB_LIBRARY]
+        assert app.nav_contexts[0] == {
+            CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-22"
+        }
+        assert app.nav_contexts[1] == {
+            LIBRARY_NAV_CONTEXT_MODE: LIBRARY_MODE_CONVERSATIONS,
+            LIBRARY_NAV_CONTEXT_CONVERSATION_ID: "conv-22",
+        }
+        app.open_chat_with_handoff.assert_called_once()
+
+    async def test_append_loading_is_single_flight_for_repeated_enter(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        started = asyncio.Event()
+        release = threading.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def gated_page(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(started.set)
+            release.wait(timeout=5)
+            return [_conversation_record(21)]
+
+        stub_conversations.replace_pages(
+            [_conversation_record(index) for index in range(1, 22)], gated_page
+        )
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await _mounted(pilot)
+                await pilot.app.workers.wait_for_complete()
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                conversation_list.focus()
+                conversation_list.index = len(conversation_list.children) - 1
+                await pilot.press("enter")
+                await wait_for_signal(started, what="the gated older-page read")
+
+                tail = screen.query_one(".personas-conversations-tail")
+                assert _row_text(tail) == "Loading older conversations..."
+                await pilot.press("enter")
+                await pilot.pause()
+                assert len(stub_conversations.calls) == 2
+
+                release.set()
+                await pilot.app.workers.wait_for_complete()
+        finally:
+            release.set()
+
+    async def test_initial_loading_render_exception_becomes_keyboard_retry(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        stub_conversations.replace_pages([_conversation_record(90)])
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            calls_before = list(stub_conversations.calls)
+            inspector = screen.query_one(PersonasInspectorPane)
+            original_loading = inspector.show_conversations_loading
+            fail_once = True
+
+            async def one_shot_loading_failure(render_attempt=None):
+                nonlocal fail_once
+                rendered = await original_loading(render_attempt)
+                if fail_once:
+                    fail_once = False
+                    raise RuntimeError("initial loading render failed")
+                return rendered
+
+            monkeypatch.setattr(
+                inspector, "show_conversations_loading", one_shot_loading_failure
+            )
+
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+
+            assert stub_conversations.calls == calls_before
+            assert screen.conversations._conversation_list_attempt is None
+            assert screen.conversations._conversation_list_phase == "initial-retry"
+            tail = screen.query_one(".personas-conversations-tail")
+            assert "Retry conversations" in _row_text(tail)
+            assert not tail.disabled
+
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = 0
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls[-1] == (2, 21, 0, {})
+            assert [_row_text(row) for row in screen.query(".personas-conversation-row")] == [
+                "Case 90"
+            ]
+
+    async def test_append_loading_render_exception_preserves_boundary_for_retry(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        stub_conversations.replace_pages(first_page, [_conversation_record(21)])
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            inspector = screen.query_one(PersonasInspectorPane)
+            original_loading = inspector.show_older_conversations_loading
+            fail_once = True
+
+            async def one_shot_loading_failure(render_attempt=None):
+                nonlocal fail_once
+                rendered = await original_loading(render_attempt)
+                if fail_once:
+                    fail_once = False
+                    raise RuntimeError("append loading render failed")
+                return rendered
+
+            monkeypatch.setattr(
+                inspector,
+                "show_older_conversations_loading",
+                one_shot_loading_failure,
+            )
+            cursor = screen.conversations._next_conversation_cursor
+            rows_before = dict(screen.conversations._conversation_rows)
+            ids_before = set(screen.conversations._loaded_conversation_ids)
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert len(stub_conversations.calls) == 1
+            assert screen.conversations._conversation_list_attempt is None
+            assert screen.conversations._conversation_list_phase == "append-retry"
+            assert screen.conversations._conversation_rows == rows_before
+            assert screen.conversations._loaded_conversation_ids == ids_before
+            assert screen.conversations._next_conversation_cursor == cursor
+            tail = screen.query_one(".personas-conversations-tail")
+            assert "Retry older conversations" in _row_text(tail)
+            assert not tail.disabled
+
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls[-1] == (
+                1,
+                21,
+                0,
+                {
+                    "before_last_modified": cursor[0],
+                    "before_id": cursor[1],
+                },
+            )
+            assert screen.conversations._next_conversation_cursor != cursor
+            assert screen.query_one("#personas-conversation-row-conv-21")
+
+    async def test_append_result_render_exception_rolls_back_dom_and_page_state(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        stub_conversations.replace_pages(first_page, [_conversation_record(21)])
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            inspector = screen.query_one(PersonasInspectorPane)
+            original_append = inspector.append_conversations
+            fail_once = True
+
+            async def one_shot_result_failure(*args, **kwargs):
+                nonlocal fail_once
+                rendered = await original_append(*args, **kwargs)
+                if fail_once:
+                    fail_once = False
+                    raise RuntimeError("append result render failed")
+                return rendered
+
+            monkeypatch.setattr(
+                inspector, "append_conversations", one_shot_result_failure
+            )
+            cursor = screen.conversations._next_conversation_cursor
+            rows_before = dict(screen.conversations._conversation_rows)
+            ids_before = set(screen.conversations._loaded_conversation_ids)
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen.conversations._conversation_list_attempt is None
+            assert screen.conversations._conversation_list_phase == "append-retry"
+            assert screen.conversations._conversation_rows == rows_before
+            assert screen.conversations._loaded_conversation_ids == ids_before
+            assert screen.conversations._next_conversation_cursor == cursor
+            assert not screen.query("#personas-conversation-row-conv-21")
+            assert "Retry older conversations" in _row_text(
+                screen.query_one(".personas-conversations-tail")
+            )
+
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            expected_cursor = {
+                "before_last_modified": cursor[0],
+                "before_id": cursor[1],
+            }
+            assert stub_conversations.calls[1:] == [
+                (1, 21, 0, expected_cursor),
+                (1, 21, 0, expected_cursor),
+            ]
+            assert list(screen.query("#personas-conversation-row-conv-21"))
+            assert "conv-21" in screen.conversations._loaded_conversation_ids
+
+    async def test_db_failure_retries_retry_tail_render_once(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+    ):
+        from loguru import logger as loguru_logger
+
+        read_started = asyncio.Event()
+        release_read = threading.Event()
+        app = PersonasTestApp(mock_app_instance)
+        retry_records = []
+        sink_id = loguru_logger.add(
+            lambda message: retry_records.append(message.record),
+            filter=lambda record: record["message"]
+            == "Could not render the conversations retry state.",
+        )
+
+        def gated_failure(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(read_started.set)
+            release_read.wait(timeout=5)
+            raise RuntimeError("database failed")
+
+        stub_conversations.replace_pages(
+            gated_failure, [_conversation_record(91, title="Retry succeeded")]
+        )
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await _mounted(pilot)
+                await wait_for_signal(read_started, what="the gated failed DB read")
+                inspector = screen.query_one(PersonasInspectorPane)
+                original_failure = inspector.show_conversations_failure
+                fail_once = True
+
+                async def one_shot_retry_tail_failure(*args, **kwargs):
+                    nonlocal fail_once
+                    if fail_once:
+                        fail_once = False
+                        raise RuntimeError("retry tail render failed")
+                    return await original_failure(*args, **kwargs)
+
+                monkeypatch.setattr(
+                    inspector,
+                    "show_conversations_failure",
+                    one_shot_retry_tail_failure,
+                )
+                release_read.set()
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert screen.conversations._conversation_list_attempt is None
+                assert screen.conversations._conversation_list_phase == "initial-retry"
+                tail = screen.query_one(".personas-conversations-tail")
+                assert "Retry conversations" in _row_text(tail)
+                assert not tail.disabled
+
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                conversation_list.focus()
+                conversation_list.index = 0
+                await pilot.press("enter")
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert stub_conversations.calls == [
+                    (1, 21, 0, {}),
+                    (1, 21, 0, {}),
+                ]
+                assert _row_text(
+                    screen.query_one("#personas-conversation-row-conv-91")
+                ) == "Retry succeeded"
+        finally:
+            release_read.set()
+            loguru_logger.remove(sink_id)
+
+        assert len(retry_records) == 1
+        expected_context = {
+            "character_id": "1",
+            "cursor": None,
+            "phase": "initial-retry",
+            "operation": "render-owned-retry",
+        }
+        assert {
+            key: retry_records[0]["extra"][key] for key in expected_context
+        } == expected_context
+
+    async def test_initial_and_append_failures_retry_the_identical_boundary(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        stub_conversations.replace_pages(RuntimeError("initial failed"), first_page)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            assert list(screen.query(".personas-conversation-row")) == []
+            assert "Retry conversations" in _row_text(
+                screen.query_one(".personas-conversations-tail")
+            )
+
+            conversation_list.focus()
+            conversation_list.index = 0
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            assert stub_conversations.calls[:2] == [
+                (1, 21, 0, {}),
+                (1, 21, 0, {}),
+            ]
+
+            append_cursor = {
+                "before_last_modified": _conversation_record(20)["last_modified"],
+                "before_id": "conv-20",
+            }
+            stub_conversations.replace_pages(
+                RuntimeError("append failed"), [_conversation_record(21)]
+            )
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            rows_before_retry = [
+                _row_text(row) for row in screen.query(".personas-conversation-row")
+            ]
+            assert rows_before_retry == [f"Case {index}" for index in range(1, 21)]
+            assert "Retry older conversations" in _row_text(
+                screen.query_one(".personas-conversations-tail")
+            )
+
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls[2:] == [
+                (1, 21, 0, append_cursor),
+                (1, 21, 0, append_cursor),
+            ]
+            assert [
+                _row_text(row) for row in screen.query(".personas-conversation-row")
+            ] == [f"Case {index}" for index in range(1, 22)]
+
+    @pytest.mark.parametrize(
+        ("page", "expected_rows", "tail_copy"),
+        (
+            ([], [], "No saved conversations."),
+            (
+                [_conversation_record(1), _conversation_record(2)],
+                ["Case 1", "Case 2"],
+                "All conversations shown.",
+            ),
+        ),
+        ids=("empty", "exhausted"),
+    )
+    async def test_successful_bounded_first_page_has_explicit_terminal_state(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        page,
+        expected_rows,
+        tail_copy,
+    ):
+        stub_conversations.replace_pages(page)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert [
+                _row_text(row) for row in screen.query(".personas-conversation-row")
+            ] == expected_rows
+            assert _row_text(
+                screen.query_one(".personas-conversations-tail")
+            ) == tail_copy
+
+    async def test_duplicate_shadow_page_auto_advances_to_unseen_rows(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        retained_cursor_time = datetime.fromisoformat(first_page[19]["last_modified"])
+        duplicate_shadow = []
+        for index in range(1, 21):
+            duplicate = _conversation_record(index)
+            duplicate["last_modified"] = (
+                retained_cursor_time - timedelta(seconds=index)
+            ).isoformat()
+            duplicate_shadow.append(duplicate)
+        duplicate_shadow.append(_conversation_record(21))
+        continued_page = [_conversation_record(index) for index in range(21, 42)]
+        continued_read_started = asyncio.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def continued_read(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(continued_read_started.set)
+            return continued_page
+
+        stub_conversations.replace_pages(
+            first_page, duplicate_shadow, continued_read
+        )
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await wait_for_signal(
+                continued_read_started, what="the duplicate-shadow continuation"
+            )
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            original_twentieth = first_page[19]
+            raw_shadow_boundary = duplicate_shadow[19]
+            assert stub_conversations.calls == [
+                (1, 21, 0, {}),
+                (
+                    1,
+                    21,
+                    0,
+                    {
+                        "before_last_modified": original_twentieth["last_modified"],
+                        "before_id": original_twentieth["id"],
+                    },
+                ),
+                (
+                    1,
+                    21,
+                    0,
+                    {
+                        "before_last_modified": raw_shadow_boundary[
+                            "last_modified"
+                        ],
+                        "before_id": raw_shadow_boundary["id"],
+                    },
+                ),
+            ]
+            rows = list(screen.query(".personas-conversation-row"))
+            assert [_row_text(row) for row in rows] == [
+                f"Case {index}" for index in range(1, 41)
+            ]
+            assert len({row.id for row in rows}) == 40
+            assert _row_text(
+                screen.query_one(".personas-conversations-tail")
+            ) == "Load 20 older conversations"
+
+    async def test_duplicate_shadow_auto_traversal_yields_at_hop_budget(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        retained_cursor_time = datetime.fromisoformat(first_page[19]["last_modified"])
+        expected_auto_hops = (
+            conversations_controller_module._CONVERSATIONS_MAX_AUTO_HOPS
+        )
+        duplicate_reads = 0
+        generated_boundaries: list[tuple[str, str]] = []
+        unbounded_read_started = asyncio.Event()
+        abort_unbounded_read = threading.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def duplicate_page(read_number: int) -> list[dict[str, Any]]:
+            page = []
+            for index in range(1, 21):
+                duplicate = _conversation_record(index)
+                duplicate["last_modified"] = (
+                    retained_cursor_time
+                    - timedelta(hours=read_number, seconds=index)
+                ).isoformat()
+                page.append(duplicate)
+            page.append(_conversation_record(1))
+            generated_boundaries.append(
+                (page[19]["last_modified"], page[19]["id"])
+            )
+            return page
+
+        def moving_duplicates(character_id, limit=50, offset=0, **cursor):
+            nonlocal duplicate_reads
+            duplicate_reads += 1
+            page = duplicate_page(duplicate_reads)
+            if duplicate_reads > expected_auto_hops + 1:
+                app.call_from_thread(unbounded_read_started.set)
+                abort_unbounded_read.wait()
+                raise RuntimeError("test stopped unbounded duplicate traversal")
+            return page
+
+        stub_conversations.replace_pages(first_page, moving_duplicates)
+
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await _mounted(pilot)
+                await pilot.app.workers.wait_for_complete()
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                conversation_list.focus()
+                conversation_list.index = len(conversation_list.children) - 1
+                await pilot.press("enter")
+
+                workers_done = asyncio.create_task(
+                    pilot.app.workers.wait_for_complete()
+                )
+                unbounded = asyncio.create_task(unbounded_read_started.wait())
+                done, pending = await asyncio.wait(
+                    {workers_done, unbounded},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                try:
+                    assert workers_done in done, (
+                        "duplicate-only traversal scheduled beyond its hop budget"
+                    )
+                finally:
+                    abort_unbounded_read.set()
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                latest_safe_boundary = generated_boundaries[-1]
+                assert duplicate_reads == expected_auto_hops + 1
+                assert screen.conversations._next_conversation_cursor == (
+                    latest_safe_boundary
+                )
+                assert screen.conversations._conversation_list_attempt is None
+                assert screen.conversations._conversation_list_phase == "ready"
+                assert _row_text(
+                    screen.query_one(".personas-conversations-tail")
+                ) == "Load 20 older conversations"
+                assert len(list(screen.query(".personas-conversation-row"))) == 20
+
+                next_duplicate_page = duplicate_page(duplicate_reads + 1)
+                next_boundary = generated_boundaries[-1]
+                progress_row = _conversation_record(21)
+                progress_row["last_modified"] = (
+                    datetime.fromisoformat(next_boundary[0])
+                    - timedelta(seconds=1)
+                ).isoformat()
+                stub_conversations.replace_pages(
+                    next_duplicate_page, [progress_row]
+                )
+                calls_before_new_attempt = len(stub_conversations.calls)
+
+                conversation_list.index = len(conversation_list.children) - 1
+                await pilot.press("enter")
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert len(stub_conversations.calls) == calls_before_new_attempt + 2
+                assert stub_conversations.calls[-2][3] == {
+                    "before_last_modified": latest_safe_boundary[0],
+                    "before_id": latest_safe_boundary[1],
+                }
+                assert stub_conversations.calls[-1][3] == {
+                    "before_last_modified": next_boundary[0],
+                    "before_id": next_boundary[1],
+                }
+                assert list(screen.query("#personas-conversation-row-conv-21"))
+                assert _row_text(
+                    screen.query_one(".personas-conversations-tail")
+                ) == "All conversations shown."
+        finally:
+            abort_unbounded_read.set()
+
+    async def test_mixed_page_commits_raw_boundary_after_last_accepted_row(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        row_21 = _conversation_record(21)
+        row_21_time = datetime.fromisoformat(row_21["last_modified"])
+        trailing_duplicates = []
+        for index in range(1, 20):
+            duplicate = _conversation_record(index)
+            duplicate["last_modified"] = (
+                row_21_time - timedelta(seconds=index)
+            ).isoformat()
+            trailing_duplicates.append(duplicate)
+        mixed_page = [row_21, *trailing_duplicates, _conversation_record(22)]
+        stub_conversations.replace_pages(
+            first_page, mixed_page, [_conversation_record(22)]
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            raw_boundary = trailing_duplicates[-1]
+            assert screen.conversations._next_conversation_cursor == (
+                raw_boundary["last_modified"],
+                raw_boundary["id"],
+            )
+            assert list(screen.query("#personas-conversation-row-conv-21"))
+
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert stub_conversations.calls[-1] == (
+                1,
+                21,
+                0,
+                {
+                    "before_last_modified": raw_boundary["last_modified"],
+                    "before_id": raw_boundary["id"],
+                },
+            )
+            assert list(screen.query("#personas-conversation-row-conv-22"))
+
+    async def test_nonadvancing_duplicate_page_terminates_without_looping(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        first_page = [_conversation_record(index) for index in range(1, 22)]
+        duplicate_page = [_conversation_record(index) for index in range(1, 22)]
+        stub_conversations.replace_pages(first_page, duplicate_page)
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = len(conversation_list.children) - 1
+            await pilot.press("enter")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            rows = list(screen.query(".personas-conversation-row"))
+            assert len(rows) == 20
+            assert len({row.id for row in rows}) == 20
+            assert _row_text(
+                screen.query_one(".personas-conversations-tail")
+            ) == "All conversations shown."
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(stub_conversations.calls) == 2
+
+    @pytest.mark.parametrize(
+        "stale_action",
+        ("other-character", "mode-switch", "same-character-reset"),
+    )
+    async def test_gated_stale_append_is_ignored_after_context_changes(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        stub_scope_service,
+        stale_action,
+    ):
+        started = asyncio.Event()
+        release = threading.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def gated_page(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(started.set)
+            release.wait(timeout=5)
+            return [_conversation_record(21, title="Stale older row")]
+
+        newer_page = [_conversation_record(90, title="Current context row")]
+        stub_conversations.replace_pages(
+            [_conversation_record(index) for index in range(1, 22)],
+            gated_page,
+            newer_page,
+        )
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await _mounted(pilot)
+                await pilot.app.workers.wait_for_complete()
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                conversation_list.focus()
+                conversation_list.index = len(conversation_list.children) - 1
+                await pilot.press("enter")
+                await wait_for_signal(started, what="the stale older-page read")
+
+                if stale_action == "other-character":
+                    await pilot.click("#personas-library-row-character-2")
+                elif stale_action == "mode-switch":
+                    await pilot.click("#personas-mode-personas")
+                else:
+                    await pilot.click("#personas-library-row-character-1")
+                release.set()
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                visible = [
+                    _row_text(row)
+                    for row in screen.query(".personas-conversation-row")
+                ]
+                assert "Stale older row" not in visible
+                if stale_action == "mode-switch":
+                    assert screen.state.active_mode == "personas"
+                    assert visible == []
+                else:
+                    assert visible == ["Current context row"]
+        finally:
+            release.set()
+
+    async def test_mode_switch_wins_after_stale_initial_rows_enter_dom_mount(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        stub_scope_service,
+        monkeypatch,
+    ):
+        """A reset during the inspector's mount await owns the final list."""
+        stale_page = [_conversation_record(90, title="Stale DOM row")]
+        initial_mount_started = asyncio.Event()
+        render_invalidated = asyncio.Event()
+        release_initial_mount = asyncio.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            stub_conversations.replace_pages(stale_page)
+            inspector = screen.query_one(PersonasInspectorPane)
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            real_extend = conversation_list.extend
+
+            async def gated_extend(items):
+                items = tuple(items)
+                if any(
+                    item.id == "personas-conversation-row-conv-90" for item in items
+                ):
+                    initial_mount_started.set()
+                    await release_initial_mount.wait()
+                return await real_extend(items)
+
+            monkeypatch.setattr(conversation_list, "extend", gated_extend)
+            real_invalidate = inspector.invalidate_conversation_render
+
+            def observed_invalidate(*args, **kwargs):
+                real_invalidate(*args, **kwargs)
+                render_invalidated.set()
+                release_initial_mount.set()
+
+            monkeypatch.setattr(
+                inspector, "invalidate_conversation_render", observed_invalidate
+            )
+
+            await pilot.click("#personas-library-row-character-2")
+            await wait_for_signal(
+                initial_mount_started, what="the stale initial-row DOM mount"
+            )
+
+            mode_switch = asyncio.create_task(screen._apply_mode("personas"))
+            try:
+                await wait_for_signal(
+                    render_invalidated, what="the synchronous list-render invalidation"
+                )
+                await mode_switch
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert screen.state.active_mode == "personas"
+                assert list(screen.query(".personas-conversation-row")) == []
+                assert not any(
+                    "Retry" in _row_text(tail)
+                    for tail in screen.query(".personas-conversations-tail")
+                )
+            finally:
+                release_initial_mount.set()
+                if not mode_switch.done():
+                    await mode_switch
+
+    async def test_append_completion_preserves_other_focus_and_highlight(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        started = asyncio.Event()
+        release = threading.Event()
+        app = PersonasTestApp(mock_app_instance)
+
+        def gated_page(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(started.set)
+            release.wait(timeout=5)
+            return [_conversation_record(21)]
+
+        stub_conversations.replace_pages(
+            [_conversation_record(index) for index in range(1, 22)], gated_page
+        )
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await _mounted(pilot)
+                await pilot.app.workers.wait_for_complete()
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                conversation_list.focus()
+                conversation_list.index = len(conversation_list.children) - 1
+                await pilot.press("enter")
+                await wait_for_signal(started, what="the focus-preservation read")
+
+                conversation_list.index = 4
+                search = screen.query_one("#personas-library-search", Input)
+                search.focus()
+                await pilot.pause()
+                release.set()
+                await pilot.app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert pilot.app.focused is search
+                assert conversation_list.index == 4
+                assert _row_text(conversation_list.highlighted_child) == "Case 5"
+        finally:
+            release.set()
+
     async def test_conversations_panel_shows_loading_then_rows(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
         """While the listing worker runs the panel says it is loading."""
-        import threading
-
+        started = asyncio.Event()
         release = threading.Event()
-
-        def gated_listing(db, character_id, limit=50, offset=0):
-            release.wait(timeout=5)
-            return [{"id": "conv-1", "title": "First case"}]
-
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            gated_listing,
-        )
         app = PersonasTestApp(mock_app_instance)
+
+        def gated_listing(character_id, limit=50, offset=0, **cursor):
+            app.call_from_thread(started.set)
+            release.wait(timeout=5)
+            return [_conversation_record(1, title="First case")]
+
+        stub_conversations.replace_pages(gated_listing)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
+            await wait_for_signal(started, what="the gated conversation listing")
             # F-031: first-paint auto-select already started the (gated)
             # listing during mount - the loading placeholder is up while the
             # worker thread waits on the gate.
@@ -3679,11 +5946,7 @@ class TestConversationsPanel:
     async def test_conversations_panel_empty_shows_copy(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [],
-        )
+        stub_conversations.replace_pages([])
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
@@ -3719,12 +5982,366 @@ class TestConversationsPanel:
             assert view.display is True
             texts = [str(s.renderable) for s in view.query(Static)]
             assert any("Loading transcript..." in text for text in texts)
+            note = screen.query_one("#personas-transcript-preview-note", Static)
+            assert str(note.renderable) == (
+                "Preview shows up to 200 messages. Resume opens the saved chat "
+                "in Console."
+            )
+            assert note.parent is view
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert resume.disabled is False
+            assert str(resume.label) == "Resume chat"
             release.set()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             texts = [str(s.renderable) for s in view.query(Static)]
             assert not any("Loading transcript..." in text for text in texts)
             assert any("Greetings, detective." in text for text in texts)
+
+    async def test_back_during_preview_success_load_stays_on_card(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        started = threading.Event()
+        release = threading.Event()
+
+        def gated_messages(db, conversation_id, character_name, user_name, **kwargs):
+            started.set()
+            release.wait(timeout=5)
+            return [("Delayed question", "Delayed answer")]
+
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "retrieve_conversation_messages_for_ui",
+            gated_messages,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            completion_seen = asyncio.Event()
+            original_show = screen.conversations.show_conversation_view
+
+            async def observed_show(*args, **kwargs):
+                await original_show(*args, **kwargs)
+                completion_seen.set()
+
+            monkeypatch.setattr(
+                screen.conversations, "show_conversation_view", observed_show
+            )
+            try:
+                await pilot.click("#personas-conversation-row-conv-1")
+                assert await asyncio.to_thread(started.wait, 2)
+                await pilot.click("#personas-conversation-back")
+                await pilot.pause()
+                release.set()
+                await asyncio.wait_for(completion_seen.wait(), 2)
+                await pilot.pause()
+
+                assert screen.query_one("#ccp-character-card-view").display is True
+                assert (
+                    screen.query_one(
+                        "#personas-conversation-transcript-view"
+                    ).display
+                    is False
+                )
+                assert (
+                    screen.query_one("#personas-conversation-actions").display
+                    is False
+                )
+                assert screen.query_one("#personas-inspector-actions").display is True
+                assert pilot.app.focused.id == "personas-conversations-list"
+            finally:
+                release.set()
+
+    async def test_back_during_preview_error_load_stays_on_card(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        started = threading.Event()
+        release = threading.Event()
+
+        def gated_failure(db, conversation_id, character_name, user_name, **kwargs):
+            started.set()
+            release.wait(timeout=5)
+            raise RuntimeError("delayed preview failure")
+
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "retrieve_conversation_messages_for_ui",
+            gated_failure,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            completion_seen = asyncio.Event()
+            original_show_error = screen.conversations.show_conversation_error
+
+            async def observed_show_error(*args, **kwargs):
+                await original_show_error(*args, **kwargs)
+                completion_seen.set()
+
+            monkeypatch.setattr(
+                screen.conversations,
+                "show_conversation_error",
+                observed_show_error,
+            )
+            try:
+                await pilot.click("#personas-conversation-row-conv-1")
+                assert await asyncio.to_thread(started.wait, 2)
+                await pilot.click("#personas-conversation-back")
+                await pilot.pause()
+                release.set()
+                await asyncio.wait_for(completion_seen.wait(), 2)
+                await pilot.pause()
+
+                assert screen.query_one("#ccp-character-card-view").display is True
+                assert (
+                    screen.query_one(
+                        "#personas-conversation-transcript-view"
+                    ).display
+                    is False
+                )
+                assert (
+                    screen.query_one("#personas-conversation-actions").display
+                    is False
+                )
+                assert screen.query_one("#personas-inspector-actions").display is True
+                assert pilot.app.focused.id == "personas-conversations-list"
+            finally:
+                release.set()
+
+    async def test_stale_same_row_completion_cannot_replace_newer_preview(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        first_started = threading.Event()
+        first_release = threading.Event()
+        calls = 0
+
+        def gated_first_load(
+            db, conversation_id, character_name, user_name, **kwargs
+        ):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_started.set()
+                first_release.wait(timeout=5)
+                return [("Old question", "Stale completion")]
+            return [("New question", "Current preview")]
+
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "retrieve_conversation_messages_for_ui",
+            gated_first_load,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            stale_completion_seen = asyncio.Event()
+            original_show = screen.conversations.show_conversation_view
+
+            async def observed_show(*args, **kwargs):
+                await original_show(*args, **kwargs)
+                if "Stale completion" in args[2]:
+                    stale_completion_seen.set()
+
+            monkeypatch.setattr(
+                screen.conversations, "show_conversation_view", observed_show
+            )
+            try:
+                await pilot.click("#personas-conversation-row-conv-1")
+                assert await asyncio.to_thread(first_started.wait, 2)
+
+                await pilot.click("#personas-conversation-row-conv-1")
+                for _ in range(200):
+                    await pilot.pause(0.01)
+                    text = "\n".join(
+                        str(line.renderable)
+                        for line in screen.query(".personas-transcript-line")
+                    )
+                    if "Current preview" in text:
+                        break
+                assert "Current preview" in text
+
+                first_release.set()
+                await asyncio.wait_for(stale_completion_seen.wait(), 2)
+                await pilot.pause()
+                text = "\n".join(
+                    str(line.renderable)
+                    for line in screen.query(".personas-transcript-line")
+                )
+                assert "Current preview" in text
+                assert "Stale completion" not in text
+                assert (
+                    screen.query_one(
+                        "#personas-conversation-transcript-view"
+                    ).display
+                    is True
+                )
+                assert screen.query_one("#ccp-character-card-view").display is False
+                assert pilot.app.focused.id == "personas-conversations-list"
+            finally:
+                first_release.set()
+
+    async def test_character_switch_invalidates_preview_before_detail_load_finishes(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            prior_attempt = screen.conversations._preview_attempt
+            detail_started = asyncio.Event()
+            release_detail = asyncio.Event()
+            original_load_character = screen.character_handler.load_character
+
+            async def gated_load_character(character_id):
+                if str(character_id) == "2":
+                    detail_started.set()
+                    await release_detail.wait()
+                await original_load_character(character_id)
+
+            monkeypatch.setattr(
+                screen.character_handler, "load_character", gated_load_character
+            )
+            selection = asyncio.create_task(
+                screen._select_character("2", "Lab Assistant")
+            )
+            try:
+                await asyncio.wait_for(detail_started.wait(), 2)
+                assert screen.state.selected_entity_id == "2"
+                assert screen.conversations._preview_attempt is None
+
+                await screen.conversations.show_conversation_view(
+                    "conv-1",
+                    [{"role": "assistant", "content": "Stale character preview"}],
+                    "Stale character preview",
+                    False,
+                    prior_attempt,
+                )
+                rendered = "\n".join(
+                    str(line.renderable)
+                    for line in screen.query(".personas-transcript-line")
+                )
+                assert "Stale character preview" not in rendered
+            finally:
+                release_detail.set()
+                await selection
+
+    async def test_stale_transcript_mount_cannot_replace_newer_loading_state(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            controller = screen.conversations
+            prior_attempt = controller._preview_attempt
+            controller._conversation_rows["conv-2"] = "Second case"
+            monkeypatch.setattr(
+                controller, "load_conversation_messages", lambda *args, **kwargs: None
+            )
+
+            view = screen.query_one("#personas-conversation-transcript-view")
+            scroll = screen.query_one("#personas-transcript-scroll")
+            stale_mount_started = asyncio.Event()
+            release_stale_mount = asyncio.Event()
+            loading_complete = asyncio.Event()
+            original_mount_all = scroll.mount_all
+            original_show_loading = view.show_loading
+            mount_calls = 0
+
+            async def gated_mount_all(widgets, *args, **kwargs):
+                nonlocal mount_calls
+                mount_calls += 1
+                if mount_calls == 1:
+                    stale_mount_started.set()
+                    await release_stale_mount.wait()
+                return await original_mount_all(widgets, *args, **kwargs)
+
+            async def observed_show_loading(*args, **kwargs):
+                result = await original_show_loading(*args, **kwargs)
+                loading_complete.set()
+                return result
+
+            monkeypatch.setattr(scroll, "mount_all", gated_mount_all)
+            monkeypatch.setattr(view, "show_loading", observed_show_loading)
+
+            stale_render = asyncio.create_task(
+                controller.show_conversation_view(
+                    "conv-1",
+                    [{"role": "assistant", "content": "Stale completion"}],
+                    "Stale completion",
+                    False,
+                    prior_attempt,
+                )
+            )
+            await asyncio.wait_for(stale_mount_started.wait(), 2)
+            current_open = asyncio.create_task(controller.open_conversation("conv-2"))
+            try:
+                for _ in range(100):
+                    if controller._preview_attempt is not prior_attempt:
+                        break
+                    await pilot.pause(0.01)
+                assert controller._preview_attempt is not prior_attempt
+                try:
+                    await asyncio.wait_for(loading_complete.wait(), 0.2)
+                except TimeoutError:
+                    pass
+                release_stale_mount.set()
+                await asyncio.gather(stale_render, current_open)
+                await pilot.pause()
+
+                assert screen.query_one("#personas-transcript-loading", Static)
+                rendered = "\n".join(
+                    str(line.renderable)
+                    for line in screen.query(".personas-transcript-line")
+                )
+                assert "Stale completion" not in rendered
+            finally:
+                release_stale_mount.set()
+                await asyncio.gather(stale_render, current_open, return_exceptions=True)
+
+    async def test_empty_conversation_is_distinct_and_can_resume(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "retrieve_conversation_messages_for_ui",
+            lambda *args, **kwargs: [],
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            assert str(
+                screen.query_one("#personas-transcript-empty", Static).renderable
+            ) == "No messages to display."
+            assert screen.query_one(
+                "#personas-conversation-resume", Button
+            ).disabled is False
+
+    async def test_conversation_load_failure_is_distinct_and_does_not_stage(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        def fail(*args, **kwargs):
+            raise RuntimeError("preview unavailable")
+
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "retrieve_conversation_messages_for_ui",
+            fail,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            error = screen.query_one("#personas-transcript-error", Static)
+            assert str(error.renderable) == (
+                "Couldn't load this preview. You can still resume the saved chat."
+            )
+            assert screen.conversations._loaded_conversation_id is None
+            assert screen.conversations._failed_conversation_id == "conv-1"
+            assert screen.query_one(
+                "#personas-conversation-resume", Button
+            ).disabled is False
+            await pilot.click("#personas-conversation-continue-console")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_not_called()
 
     async def test_transcript_lines_use_speaker_names(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -3745,12 +6362,7 @@ class TestConversationsPanel:
     async def test_conversation_listing_failure_is_tolerant(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
-        def boom(db, character_id, limit=50, offset=0):
-            raise RuntimeError("listing failed")
-
-        monkeypatch.setattr(
-            conversations_controller_module, "list_character_conversations", boom
-        )
+        stub_conversations.replace_pages(RuntimeError("listing failed"))
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
@@ -3784,6 +6396,883 @@ class TestConversationsPanel:
                 screen.query_one("#personas-conversation-transcript-view").display
                 is False
             )
+
+    async def test_conversation_preview_hides_card_actions_shortcut_and_footer_then_back_restores(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            inspector_actions = screen.query_one("#personas-inspector-actions")
+            assert inspector_actions.display is False
+            assert "ctrl+enter" not in screen._shortcut_context().render().lower()
+            await pilot.press("ctrl+enter")
+            await pilot.pause()
+            app.open_chat_with_handoff.assert_not_called()
+
+            await pilot.click("#personas-conversation-back")
+            await pilot.pause()
+            assert inspector_actions.display is True
+            assert "ctrl+enter send to console draft" in (
+                screen._shortcut_context().render().lower()
+            )
+
+    async def test_conversation_actions_have_three_row_hierarchy(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            actions = screen.query_one("#personas-conversation-actions")
+            assert [child.id for child in actions.children] == [
+                "personas-conversation-resume",
+                "personas-conversation-continue-console",
+                "personas-conversation-navigation-actions",
+            ]
+            navigation = screen.query_one("#personas-conversation-navigation-actions")
+            assert [child.id for child in navigation.children] == [
+                "personas-conversation-back",
+                "personas-conversation-open-library",
+            ]
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            send = screen.query_one(
+                "#personas-conversation-continue-console", Button
+            )
+            back = screen.query_one("#personas-conversation-back", Button)
+            library = screen.query_one(
+                "#personas-conversation-open-library", Button
+            )
+            assert resume.has_class("console-action-primary")
+            assert send.has_class("console-action-secondary")
+            assert back.has_class("console-action-subdued")
+            assert library.has_class("console-action-subdued")
+            assert str(resume.label) == "Resume chat"
+            assert str(send.label) == "Send transcript to Console draft"
+            assert str(back.label) == "Back to conversations"
+            assert str(library.label) == "Open in Library"
+            assert actions.region.height == 9
+            assert resume.region.width == actions.content_region.width
+            assert send.region.width == actions.content_region.width
+            assert back.region.width == library.region.width
+            assert resume.region.y < send.region.y < back.region.y
+
+    @pytest.fixture
+    def late_link_database(self, tmp_path):
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        db = CharactersRAGDB(tmp_path / "late-link.sqlite", client_id="late-link")
+        try:
+            character_id = db.add_character_card({"name": "Lab Assistant"})
+            db.add_conversation(
+                {
+                    "id": "conv-1",
+                    "title": "First case",
+                    "character_id": character_id,
+                    "assistant_kind": "character",
+                    "assistant_id": str(character_id),
+                    "assistant_authority_id": db.get_local_authority_id(),
+                }
+            )
+            db.add_message(
+                {
+                    "id": "message-1",
+                    "conversation_id": "conv-1",
+                    "sender": "User",
+                    "role": "user",
+                    "content": "Hello there",
+                }
+            )
+            db.set_conversation_active_leaf("conv-1", "message-1")
+            yield db, character_id
+        finally:
+            with db.quiesce_connections(timeout_seconds=2.0):
+                pass
+            assert db.registered_connection_count() == 0
+
+    @pytest.mark.parametrize("mutation", ("stale", "deleted", "moved"))
+    async def test_exact_deep_link_rejects_changed_snapshot_before_selection(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database, mutation,
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1",
+                data_revision=db.get_character_conversation_search_revision(),
+            )
+            if mutation == "stale":
+                db.add_character_card({"name": "Unrelated new card"})
+            else:
+                with db.transaction() as connection:
+                    if mutation == "deleted":
+                        connection.execute("UPDATE conversations SET deleted = 1 WHERE id = ?", ("conv-1",))
+                    else:
+                        connection.execute("UPDATE conversations SET assistant_authority_id = ? WHERE id = ?", ("other-authority", "conv-1"))
+            before = replace(screen.state)
+            rows = dict(screen.conversations._conversation_rows)
+            screen._pending_character_conversation_link = link
+            screen.conversations.request_conversation_focus("conv-1")
+            assert await screen._apply_pending_character_conversation_link() is CharacterConversationLinkOutcome.REJECTED
+            assert screen.state == before
+            assert screen.conversations._conversation_rows == rows
+            assert screen.conversations._requested_conversation_id is None
+            assert screen._pending_character_conversation_link is link
+            assert screen.query_one("#personas-character-link-recovery").display
+            await pilot.pause()
+            assert await pilot.click("#personas-character-link-retry")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            if mutation == "stale":
+                assert screen._pending_character_conversation_link is None
+                assert "conv-1" in screen.conversations._conversation_rows
+            else:
+                assert screen._pending_character_conversation_link.conversation_id == "conv-1"
+                assert screen.conversations._requested_conversation_id is None
+                assert screen.query_one("#personas-character-link-recovery").display
+
+    @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
+    @pytest.mark.parametrize("missing_from_query", (False, True))
+    async def test_exact_deep_link_keeps_ownership_until_later_page_or_missing_recovery(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database, missing_from_query, size,
+    ):
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=size) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            authority = db.get_local_authority_id()
+            for index in range(21):
+                db.add_conversation({
+                    "id": f"newer-{index}", "title": f"Newer {index}",
+                    "character_id": character_id, "assistant_kind": "character",
+                    "assistant_id": str(character_id), "assistant_authority_id": authority,
+                })
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            pending_pages = []
+            controller = screen.conversations
+            def schedule(*, initial, attempt):
+                pending_pages.append((str(character_id), controller._next_conversation_cursor, initial, attempt))
+            monkeypatch.setattr(controller, "_schedule_conversation_page", schedule)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(authority, character_id),
+                conversation_id="conv-1", query="nonexistentneedle" if missing_from_query else "",
+                data_revision=db.get_character_conversation_search_revision(),
+            )
+            screen._pending_character_conversation_link = link
+            await screen._apply_pending_character_conversation_link()
+            assert screen._pending_character_conversation_link is link
+            assert pending_pages
+            pages = 0
+            while pending_pages:
+                await asyncio.to_thread(controller._load_conversations_sync, *pending_pages.pop(0))
+                pages += 1
+                assert pages <= 3
+            await pilot.pause()
+            assert controller._requested_conversation_id is None
+            if missing_from_query:
+                assert screen._pending_character_conversation_link is link
+                assert screen.query_one("#personas-character-link-recovery").display
+                copy = str(screen.query_one("#personas-character-link-recovery-copy", Static).renderable)
+                assert "not in" in copy.lower()
+                painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
+                assert "not in" in painted, painted
+                retry = screen.query_one("#personas-character-link-retry", Button)
+                assert screen.get_widget_at(*retry.region.center)[0] is retry
+                await controller.search_conversations("")
+                assert screen._pending_character_conversation_link is None
+                assert controller._requested_conversation_id is None
+                while pending_pages:
+                    await asyncio.to_thread(controller._load_conversations_sync, *pending_pages.pop(0))
+                assert len(controller._conversation_rows) == 20
+            else:
+                assert pages == 2
+                assert screen._pending_character_conversation_link is None
+                assert await screen._apply_pending_character_conversation_link() is CharacterConversationLinkOutcome.ABSENT
+                listing = screen.query_one("#personas-conversations-list", ListView)
+                inspector = screen.query_one(PersonasInspectorPane)
+                assert inspector._conversation_lookup[listing.highlighted_child.id] == "conv-1"
+
+    @pytest.mark.parametrize("mutation", ("deleted", "revision"))
+    async def test_exact_link_refences_after_owned_page_render(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database, mutation,
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            inspector = screen.query_one(PersonasInspectorPane)
+            original = inspector.show_conversations
+            async def change_after_render(*args, **kwargs):
+                rendered = await original(*args, **kwargs)
+                if mutation == "deleted":
+                    with db.transaction() as connection:
+                        connection.execute("UPDATE conversations SET deleted = 1 WHERE id = ?", ("conv-1",))
+                else:
+                    db.add_character_card({"name": "Concurrent mutation"})
+                return rendered
+            monkeypatch.setattr(inspector, "show_conversations", change_after_render)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1",
+                data_revision=db.get_character_conversation_search_revision(),
+            )
+            screen._pending_character_conversation_link = link
+            await screen._apply_pending_character_conversation_link()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen._pending_character_conversation_link is link
+            assert screen.conversations._requested_conversation_id is None
+            assert screen.query_one("#personas-character-link-recovery").display
+
+    async def test_fast_exact_link_completion_keeps_compact_focused_list_visible(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database,
+    ):
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            original = screen._select_character
+            async def finish_page_before_selection_returns(*args):
+                await original(*args)
+                await app.workers.wait_for_complete()
+            monkeypatch.setattr(screen, "_select_character", finish_page_before_selection_returns)
+            screen._pending_character_conversation_link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1", data_revision=db.get_character_conversation_search_revision(),
+            )
+            await screen._apply_pending_character_conversation_link()
+            await pilot.pause()
+            assert screen._pending_character_conversation_link is None
+            assert screen._compact_active_pane == "inspector"
+            listing = screen.query_one("#personas-conversations-list", ListView)
+            assert listing.has_focus
+            row = listing.highlighted_child
+            painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
+            assert screen.get_widget_at(*row.region.center)[0] in (row, *row.walk_children()), painted
+
+    @pytest.mark.parametrize("input_kind", ("pointer", "keyboard"))
+    async def test_late_compact_deep_link_allocates_back_to_console(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        input_kind,
+        late_link_database,
+    ):
+        from tldw_chatbook.Constants import (
+            CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+            ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION,
+        )
+        from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+            RoleplayReturnTarget,
+            serialize_roleplay_character_conversation_link,
+        )
+
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await _mounted(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1",
+                data_revision=db.get_character_conversation_search_revision(),
+                return_target=RoleplayReturnTarget.console_context_character(),
+            )
+            screen.apply_navigation_context(
+                {
+                    ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION: serialize_roleplay_character_conversation_link(
+                        link
+                    )
+                }
+            )
+            assert (
+                await screen._apply_pending_character_conversation_link()
+                is CharacterConversationLinkOutcome.APPLIED
+            )
+            await app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = 0
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            painted = "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            )
+            assert "Back to Console" in painted, painted
+            for label in (
+                "Resume chat",
+                "Send transcript to Console draft",
+                "Back to conversations",
+                "Open in Library",
+                "Hello there",
+            ):
+                assert label in painted, painted
+            back = screen.query_one("#personas-conversation-back-source", Button)
+            hit, _ = screen.get_widget_at(*back.content_region.center)
+            assert hit is back
+            if input_kind == "pointer":
+                if qa_root := os.environ.get("TASK_31243_QA_DIR"):
+                    app.save_screenshot(
+                        filename="roleplay-preview-return-52x20.svg", path=qa_root
+                    )
+                assert await pilot.click(back)
+            else:
+                screen.query_one("#personas-conversation-open-library", Button).focus()
+                await pilot.press("tab")
+                assert app.focused is back
+                await pilot.press("enter")
+            await pilot.pause()
+            assert app.nav_routes == [TAB_CHAT]
+            assert app.nav_contexts == [
+                {CHARACTER_NAV_CONTEXT_RETURN_FOCUS: "console-context-character"}
+            ]
+
+    @pytest.mark.parametrize("side", ("library", "inspector"))
+    async def test_compact_side_pane_resize_restores_wide_workspace(
+        self, mock_app_instance, stub_characters, stub_conversations, side
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await _mounted(pilot)
+            await app.workers.wait_for_complete()
+            screen.query_one(f"#personas-{side}-rail-open", Button).press()
+            await pilot.pause()
+            assert not screen.query_one("#personas-work-area").display
+            await pilot.resize_terminal(120, 50)
+            await pilot.pause()
+            work = screen.query_one("#personas-work-area")
+            assert work.display
+            for name in ("library", "inspector"):
+                pane = screen.query_one(f"#personas-{name}-pane")
+                assert not pane.styles._inline_styles.has_rule("width")
+                assert not pane.styles._inline_styles.has_rule("min_width")
+                handle = screen.query_one(f"#personas-{name}-rail-handle")
+                for rule in ("width", "min_width", "max_width"):
+                    assert not handle.styles._inline_styles.has_rule(rule)
+            action = screen.query_one("#personas-card-conversations", Button)
+            action.scroll_visible(immediate=True)
+            await pilot.pause()
+            hit, _ = screen.get_widget_at(*action.content_region.center)
+            assert hit is action
+            assert await pilot.click(action)
+            await pilot.pause()
+            await screen.conversations.open_conversation("conv-1")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            back = screen.query_one("#personas-conversation-back", Button)
+            hit, _ = screen.get_widget_at(*back.content_region.center)
+            assert hit is back
+
+    @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
+    async def test_task_31243_real_pilot_preview_back_and_focus_evidence(
+        self, mock_app_instance, stub_characters, stub_conversations, size
+    ):
+        """Exercise production widgets at the two task-mandated terminal sizes."""
+
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=size) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            if size[0] <= 60:
+                card_action = screen.query_one("#personas-card-conversations", Button)
+                assert str(card_action.label) == "Conversations (1)"
+                screen.query_one("#personas-library-rows", ListView).focus()
+                for _ in range(40):
+                    if pilot.app.focused is card_action:
+                        break
+                    await pilot.press("tab")
+                assert pilot.app.focused is card_action
+                await pilot.press("enter")
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                await pilot.pause()
+                assert pilot.app.focused is conversation_list
+                conversation_list.index = 0
+                await pilot.press("enter")
+            else:
+                await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.query_one("#personas-conversation-transcript-view").display
+
+            painted = "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            )
+            assert "Back to conversations" in painted, painted
+            assert "Hello there" in painted, painted
+            assert "Send transcript to Console draft" in painted, painted
+            assert "Open in Library" in painted, painted
+            if size[0] <= 60:
+                send = screen.query_one("#personas-conversation-continue-console", Button)
+                send_line = painted.splitlines()[send.content_region.y]
+                fragment_x = send_line.find(" In")
+                if fragment_x >= 0:
+                    owner, _ = screen.get_widget_at(fragment_x + 1, send.content_region.y)
+                    pytest.fail(f"Orphaned compact paint: {owner!r}; ancestors={list(owner.ancestors)!r}; line={send_line!r}")
+                assert sum(
+                    screen.query_one(selector).display
+                    for selector in (
+                        "#personas-library-pane",
+                        "#personas-work-area",
+                        "#personas-inspector-pane",
+                    )
+                ) == 1
+            back = screen.query_one("#personas-conversation-back", Button)
+            assert back.content_region.width >= len(str(back.label))
+            hit, _ = screen.get_widget_at(*back.content_region.center)
+            assert hit is back
+
+            qa_root = os.environ.get("TASK_31243_QA_DIR")
+            if qa_root:
+                pilot.app.save_screenshot(
+                    filename=f"roleplay-preview-{size[0]}x{size[1]}.svg",
+                    path=qa_root,
+                )
+
+            await pilot.click("#personas-conversation-back")
+            await pilot.pause()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            assert pilot.app.focused is conversation_list, (
+                conversation_list.display,
+                conversation_list.region,
+                conversation_list.can_focus,
+                screen._compact_active_pane,
+            )
+
+    @pytest.mark.parametrize("size", ((80, 24), (160, 50)), ids=("compact", "standard"))
+    async def test_conversation_actions_fit_production_css(
+        self, mock_app_instance, stub_characters, stub_conversations, size
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=size) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await screen.conversations.open_conversation("conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            actions = screen.query_one("#personas-conversation-actions")
+            for button in actions.query(Button):
+                assert button.region.x >= actions.content_region.x
+                assert button.region.right <= actions.content_region.right
+                assert button.region.y >= actions.content_region.y
+                assert button.region.bottom <= actions.content_region.bottom
+            assert screen.query_one("#personas-transcript-scroll").region.height > 0
+
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            send = screen.query_one(
+                "#personas-conversation-continue-console", Button
+            )
+            navigation = screen.query_one(
+                "#personas-conversation-navigation-actions"
+            )
+            back = screen.query_one("#personas-conversation-back", Button)
+            library = screen.query_one(
+                "#personas-conversation-open-library", Button
+            )
+            assert [
+                resume.region.height,
+                send.region.height,
+                navigation.region.height,
+                back.region.height,
+                library.region.height,
+            ] == [3, 3, 3, 3, 3]
+            assert send.region.y - resume.region.y == 3
+            assert navigation.region.y - send.region.y == 3
+            assert back.region.y == navigation.region.y == library.region.y
+
+    async def test_conversation_preview_f6_and_tab_order_start_at_resume(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            screen.query_one("#personas-library-rows").focus()
+            await pilot.press("f6")
+            await pilot.pause()
+            assert pilot.app.focused.id == "personas-conversation-resume"
+            expected = (
+                "personas-conversation-continue-console",
+                "personas-conversation-back",
+                "personas-conversation-open-library",
+                "personas-transcript-scroll",
+            )
+            for focus_id in expected:
+                await pilot.press("tab")
+                await pilot.pause()
+                assert pilot.app.focused.id == focus_id
+
+    async def test_conversation_resume_posts_normalized_id_only(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        callbacks = []
+        app = _NavCaptureApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            screen.conversations._open_conversation_id = "  conv-1  "
+            monkeypatch.setattr(
+                screen,
+                "set_timer",
+                lambda _delay, callback, **_kwargs: callbacks.append(callback),
+            )
+            screen.conversations.resume_in_console()
+            await pilot.pause()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+            assert app.nav_routes == [TAB_CHAT]
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"}
+            ]
+            app.open_chat_with_handoff.assert_not_called()
+
+            assert len(callbacks) == 1
+            callbacks[0]()
+            assert resume.disabled is False
+            assert str(resume.label) == "Resume chat"
+
+    async def test_deep_link_query_synchronizes_visible_search_without_event(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            searched = AsyncMock()
+            monkeypatch.setattr(screen.conversations, "search_conversations", searched)
+
+            screen.conversations.synchronize_deep_link_query("case file")
+            await pilot.pause()
+
+            assert screen.query_one("#personas-conversations-search", Input).value == "case file"
+            searched.assert_not_awaited()
+
+    @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
+    async def test_rejected_deep_link_is_visible_and_retries_same_immutable_link(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        size,
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=size) as pilot:
+            screen = await self._select_first_character(pilot)
+            authority = {"value": "other"}
+            db = SimpleNamespace(
+                get_local_authority_id=lambda: authority["value"],
+                get_character_card_by_id=lambda _character_id: {
+                    "id": 1,
+                    "name": "Detective Sam",
+                },
+            )
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey("wanted", 1), query="case"
+            )
+            screen._pending_character_conversation_link = link
+
+            outcome = await screen._apply_pending_character_conversation_link()
+            await pilot.pause()
+
+            assert outcome is CharacterConversationLinkOutcome.REJECTED
+            assert screen._pending_character_conversation_link is link
+            assert screen.query_one("#personas-character-link-recovery").display
+            retry = screen.query_one("#personas-character-link-retry", Button)
+            assert retry.region.height > 0
+            authority["value"] = "wanted"
+            assert (
+                await screen._apply_pending_character_conversation_link()
+                is CharacterConversationLinkOutcome.APPLIED
+            )
+            assert screen._pending_character_conversation_link is None
+            assert screen.conversations._conversation_query == "case"
+
+    async def test_deferred_deep_link_rolls_back_staged_selection_and_can_retry(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            before = replace(screen.state)
+            db = SimpleNamespace(
+                get_local_authority_id=lambda: "wanted",
+                get_character_card_by_id=lambda _character_id: {
+                    "id": 2,
+                    "name": "Lab Assistant",
+                },
+            )
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            original_select = screen._select_character
+
+            async def staged_failure(character_id, name):
+                screen.state.select_entity(
+                    entity_kind="character",
+                    entity_id=character_id,
+                    entity_name=name,
+                )
+                raise RuntimeError("render failed")
+
+            monkeypatch.setattr(screen, "_select_character", staged_failure)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey("wanted", 2), query="case"
+            )
+            screen._pending_character_conversation_link = link
+
+            outcome = await screen._apply_pending_character_conversation_link()
+
+            assert outcome is CharacterConversationLinkOutcome.DEFERRED
+            assert screen._pending_character_conversation_link is link
+            assert asdict(screen.state) == asdict(before)
+            assert screen.query_one("#personas-character-link-recovery").display
+            assert screen.query_one("#personas-character-link-retry", Button)
+            monkeypatch.setattr(screen, "_select_character", original_select)
+            assert (
+                await screen._apply_pending_character_conversation_link()
+                is CharacterConversationLinkOutcome.APPLIED
+            )
+            assert screen._pending_character_conversation_link is None
+
+    async def test_mounted_roleplay_escape_cancels_before_console_commit(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = _RoleplayActivationApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            target = LocalCharacterConversationTarget(
+                ResolvedLocalCharacterKey("authority", 1), "conv-1"
+            )
+            request = CharacterConversationActivationRequest(
+                target, "authority", 4
+            )
+            screen.conversations._conversation_activation_requests["conv-1"] = request
+
+            await pilot.click("#personas-conversation-resume")
+            await app.activation_started.wait()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert str(resume.label) == "Opening…"
+            assert app.screen is screen
+            await pilot.press("escape")
+            app.activation_release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app.screen is screen
+            assert str(resume.label) == "Retry"
+            assert app.activation_requests == [request]
+
+    async def test_resume_exception_releases_exact_attempt_and_offers_retry(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = _RaisingRoleplayActivationApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            request = CharacterConversationActivationRequest(
+                LocalCharacterConversationTarget(
+                    ResolvedLocalCharacterKey("authority", 1), "conv-1"
+                ),
+                "authority",
+                4,
+            )
+            screen.conversations._conversation_activation_requests["conv-1"] = request
+
+            await pilot.click("#personas-conversation-resume")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert str(resume.label) == "Retry"
+            assert resume.disabled is False
+            assert screen.conversations._resume_cancellation is None
+            assert screen.conversations._resume_in_flight_attempts == {}
+
+    async def test_conversation_resume_reselection_keeps_same_target_single_flight(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        stub_conversations.replace_pages(
+            [
+                _conversation_record(1, title="First case"),
+                _conversation_record(2, title="Second case"),
+            ]
+        )
+        callbacks = []
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            monkeypatch.setattr(
+                screen,
+                "set_timer",
+                lambda _delay, callback, **_kwargs: callbacks.append(callback),
+            )
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"}
+            ]
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"}
+            ]
+
+            await pilot.click("#personas-conversation-row-conv-2")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert resume.disabled is False
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"},
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-2"},
+            ]
+
+            assert len(callbacks) == 2
+            callbacks[0]()
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+            callbacks[1]()
+            assert resume.disabled is False
+            assert str(resume.label) == "Resume chat"
+
+    async def test_conversation_resume_single_flight_survives_browsing_away_and_back(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        stub_conversations.replace_pages(
+            [
+                _conversation_record(1, title="First case"),
+                _conversation_record(2, title="Second case"),
+            ]
+        )
+        callbacks = []
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            monkeypatch.setattr(
+                screen,
+                "set_timer",
+                lambda _delay, callback, **_kwargs: callbacks.append(callback),
+            )
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+
+            await pilot.click("#personas-conversation-row-conv-2")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert resume.disabled is False
+
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.click("#personas-conversation-resume")
+            await pilot.pause()
+            assert app.nav_contexts == [
+                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-1"}
+            ]
+            assert len(callbacks) == 1
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+
+    async def test_conversation_stale_same_target_fallback_keeps_new_attempt_busy(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        callbacks = []
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            monkeypatch.setattr(
+                screen,
+                "set_timer",
+                lambda _delay, callback, **_kwargs: callbacks.append(callback),
+            )
+            resume = screen.query_one("#personas-conversation-resume", Button)
+
+            resume.press()
+            await pilot.pause()
+            assert len(callbacks) == 1
+            callbacks[0]()
+            assert resume.disabled is False
+            await pilot.pause()
+
+            resume.press()
+            await pilot.pause()
+            assert len(callbacks) == 2
+            callbacks[0]()
+            assert resume.disabled is True
+            assert str(resume.label) == "Opening Console…"
+            callbacks[1]()
+            assert resume.disabled is False
+            assert str(resume.label) == "Resume chat"
+
+    async def test_conversation_resume_stale_row_stays_in_roleplay_with_exact_copy(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        notifications: list[str] = []
+        app = _NavCaptureApp(mock_app_instance)
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            screen.conversations._conversation_rows = {}
+            screen.conversations.resume_in_console()
+            await pilot.pause()
+        assert app.nav_routes == []
+        assert notifications == [
+            "This conversation is no longer available. Refresh conversations and "
+            "try again."
+        ]
+
+    async def test_conversation_disabled_resume_busy_label_meets_contrast_floor(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await screen.conversations.open_conversation("conv-1")
+            await pilot.app.workers.wait_for_complete()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            resume.label = "Opening Console…"
+            resume.disabled = True
+            await pilot.pause()
+            assert resume.styles.opacity == 1.0
+            style = _painted_style_of_text(app, resume.region, "Opening Console…")
+            assert style is not None
+            assert style.color is not None and style.bgcolor is not None
+            assert _contrast_ratio(style.color, style.bgcolor) >= 3.0
 
     async def test_continue_in_console_stages_payload(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -3840,22 +7329,6 @@ class TestConversationsPanel:
             for message, severity in notifications
         )
 
-    async def test_stale_conversation_rows_are_skipped(
-        self, mock_app_instance, stub_characters, stub_conversations
-    ):
-        """Rows for a character other than the current selection are dropped."""
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test(size=(160, 50)) as pilot:
-            screen = await self._select_first_character(pilot)
-            assert screen.state.selected_entity_id == "1"
-            await screen.conversations.apply_conversation_rows(
-                "999", (("conv-x", "X"),)
-            )
-            await pilot.pause()
-            rows = screen.query(".personas-conversation-row")
-            assert [_row_text(r) for r in rows] == ["First case"]
-            assert "conv-x" not in screen.conversations._conversation_rows
-
     async def test_stale_conversation_view_is_skipped(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -3865,7 +7338,11 @@ class TestConversationsPanel:
             screen = await self._open_conversation(pilot)
             assert screen.conversations._open_conversation_id == "conv-1"
             await screen.conversations.show_conversation_view(
-                "conv-stale", [{"role": "user", "content": "stale"}], "stale", False
+                "conv-stale",
+                [{"role": "user", "content": "stale"}],
+                "stale",
+                False,
+                object(),
             )
             await pilot.pause()
             assert screen.conversations._loaded_conversation_id == "conv-1"
@@ -4006,12 +7483,8 @@ class TestConsoleActions:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [
-                {"id": "conv-1", "title": "First case"}
-            ],
+        _install_conversation_db(
+            monkeypatch, [_conversation_record(1, title="First case")]
         )
         monkeypatch.setattr(
             conversations_controller_module,
@@ -4306,11 +7779,11 @@ class TestConsoleActions:
             observed_enabled: list[bool] = []
             original_loading = inspector.show_conversations_loading
 
-            async def assert_gate_synced_before_loading():
+            async def assert_gate_synced_before_loading(render_attempt=None):
                 observed_enabled.append(
                     not screen.query_one("#personas-attach-to-console", Button).disabled
                 )
-                return await original_loading()
+                return await original_loading(render_attempt)
 
             monkeypatch.setattr(
                 inspector,
@@ -4339,6 +7812,7 @@ class TestConsoleActions:
                 screen.character_handler, "load_character", load_character
             )
 
+            await screen._ensure_center_view("character-editor")
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
 
@@ -4374,6 +7848,7 @@ class TestConsoleActions:
 
             monkeypatch.setattr(screen, "_render_profile_rows", observe_render_rows)
 
+            await screen._ensure_center_view("persona-editor")
             await screen._after_profile_save({"id": "p-1", "name": "Archivist"})
             await pilot.pause()
 
@@ -4472,7 +7947,7 @@ class TestConsoleActions:
         local_detail = Mock(return_value=dict(local_card))
         local_page = Mock(return_value=[dict(local_card)])
         local_count = Mock(return_value=1)
-        local_conversations = Mock(return_value=[])
+        local_conversations = _install_conversation_db(monkeypatch, [])
         local_dictionaries = AsyncMock(return_value={"dictionaries": []})
         local_worldbooks = Mock(return_value=[])
         local_avatar = AsyncMock()
@@ -4495,11 +7970,6 @@ class TestConsoleActions:
             personas_screen_module,
             "count_character_page",
             local_count,
-        )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            local_conversations,
         )
         monkeypatch.setattr(
             PersonasScreen,
@@ -4594,7 +8064,7 @@ class TestConsoleActions:
         local_count.assert_not_called()
         local_detail.assert_not_called()
         local_avatar.assert_not_awaited()
-        local_conversations.assert_not_called()
+        assert local_conversations.calls == []
         local_dictionaries.assert_not_awaited()
         local_worldbooks.assert_not_called()
         app.open_chat_with_handoff.assert_called_once()
@@ -5085,7 +8555,7 @@ class TestServerCharacterSourceIsolation:
             save_worker = Mock()
             screen._full_character_record = full_record
             screen._save_character_worker = save_worker
-            screen._handle_edit_requested(EditCharacterRequested("7"))
+            await screen._handle_edit_requested(EditCharacterRequested("7"))
             screen._handle_save_requested(
                 CharacterSaveRequested({"name": "Must stay remote"})
             )
@@ -6686,11 +10156,7 @@ class TestPreviewIntegration:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [],
-        )
+        _install_conversation_db(monkeypatch, [])
 
     async def _select_first_character(self, pilot):
         screen = await _mounted(pilot)
@@ -8050,12 +11516,8 @@ class TestDelete:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [
-                {"id": "conv-1", "title": "First case"}
-            ],
+        _install_conversation_db(
+            monkeypatch, [_conversation_record(1, title="First case")]
         )
 
     @staticmethod
@@ -8322,12 +11784,8 @@ class TestBulkLibraryActions:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [
-                {"id": "conv-1", "title": "First case"}
-            ],
+        _install_conversation_db(
+            monkeypatch, [_conversation_record(1, title="First case")]
         )
 
     @staticmethod
@@ -8787,6 +12245,7 @@ class TestPersonaHumanIdentityRemoval:
             stub_scope_service.list_persona_profiles = AsyncMock(
                 return_value={"items": [renamed], "total": 1}
             )
+            await screen._ensure_center_view("persona-editor")
             await screen._after_profile_save({"id": "p-1", "name": "Chronicler"})
             await pilot.pause()
             assert screen.state.selected_entity_name == "Chronicler"
@@ -8833,12 +12292,8 @@ class TestCharactersEmptyStateGuidance:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [
-                {"id": "conv-1", "title": "First case"}
-            ],
+        _install_conversation_db(
+            monkeypatch, [_conversation_record(1, title="First case")]
         )
 
     @staticmethod
@@ -9047,12 +12502,8 @@ class TestKeyboardInteraction:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [
-                {"id": "conv-1", "title": "First case"}
-            ],
+        _install_conversation_db(
+            monkeypatch, [_conversation_record(1, title="First case")]
         )
         monkeypatch.setattr(
             conversations_controller_module,
@@ -9120,7 +12571,7 @@ class TestKeyboardInteraction:
             assert screen._edit_mode == "create"
             assert screen.query_one("#ccp-character-editor-view").display is True
 
-    async def test_escape_in_transcript_returns_to_card(
+    async def test_escape_in_conversation_transcript_returns_to_card(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
         app = PersonasTestApp(mock_app_instance)
@@ -9137,9 +12588,10 @@ class TestKeyboardInteraction:
             await pilot.pause()
             transcript = screen.query_one("#personas-conversation-transcript-view")
             assert transcript.display is True
-            # Opening a transcript focuses its scroll so arrow keys scroll it.
+            # Selection and asynchronous preview completion keep arrow-key
+            # browsing anchored in the conversations list.
             focused = pilot.app.focused
-            assert focused is not None and focused.id == "personas-transcript-scroll"
+            assert focused is not None and focused.id == "personas-conversations-list"
             await pilot.press("escape")
             await pilot.pause()
             assert transcript.display is False
@@ -9333,11 +12785,7 @@ class TestDirtyTracking:
         monkeypatch.setattr(
             character_handler_module, "_default_character_db", lambda: object()
         )
-        monkeypatch.setattr(
-            conversations_controller_module,
-            "list_character_conversations",
-            lambda db, character_id, limit=50, offset=0: [],
-        )
+        _install_conversation_db(monkeypatch, [])
 
     @staticmethod
     def _bypass_confirm(screen, answer: bool) -> list[bool]:
@@ -10621,6 +14069,8 @@ async def test_character_tts_population_requires_one_generation_and_observes_off
         assert screen._character_tts_snapshot is not None
         assert screen._character_tts_snapshot.repository_generation == 7
         card_control = screen.query_one("#personas-character-card-tts")
+        assert not list(screen.query("#personas-character-editor-tts"))
+        await screen._ensure_center_view("character-editor")
         editor_control = screen.query_one("#personas-character-editor-tts")
         assert card_control.presentation_state.selected_profile_id == (
             assigned_profile.profile_id
@@ -11595,3 +15045,411 @@ async def test_character_soft_delete_never_detaches_tts_assignment(
         await pilot.app.workers.wait_for_complete()
 
         assert service.detach_calls == []
+
+
+def _configure_persona_buddy(
+    mock_app_instance,
+    records: dict[str, dict],
+    *,
+    preferences: PersonaBuddyPreferences | None = None,
+) -> PersonaBuddyController:
+    def local_record(persona_id: str):
+        record = records.get(str(persona_id))
+        return dict(record) if record is not None else None
+
+    async def scoped_record(persona_id: str, *, mode: str):
+        assert mode == "local"
+        record = local_record(persona_id)
+        if record is None:
+            raise ValueError("persona missing")
+        return record
+
+    scope = SimpleNamespace(
+        local_service=SimpleNamespace(get_persona_profile=local_record),
+        list_persona_profiles=AsyncMock(
+            return_value={
+                "items": [dict(item) for item in records.values()],
+                "total": len(records),
+            }
+        ),
+        get_persona_profile=AsyncMock(side_effect=scoped_record),
+        delete_persona_profile=AsyncMock(
+            return_value={"status": "deleted", "persona_id": "p-1"}
+        ),
+    )
+    controller = PersonaBuddyController(
+        preferences=preferences,
+        local_persona_service=scope.local_service,
+        preference_writer=lambda _preferences: True,
+    )
+    mock_app_instance.runtime_backend = "local"
+    mock_app_instance.character_persona_scope_service = scope
+    mock_app_instance.persona_buddy_controller = controller
+    mock_app_instance.reconcile_persona_buddy_view = AsyncMock(return_value=True)
+    return controller
+
+
+async def test_workbench_highlight_never_retargets_buddy(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {
+        "p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False},
+        "p-2": {
+            **PROFILE,
+            "id": "p-2",
+            "name": "Navigator",
+            "version": 5,
+            "is_active": True,
+            "deleted": False,
+        },
+    }
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-2", "Navigator")
+        await pilot.pause()
+
+        assert controller.snapshot().selection == PersonaBuddySelection("local", "p-1")
+        mock_app_instance.reconcile_persona_buddy_view.assert_not_awaited()
+
+
+async def test_floating_buddy_close_refreshes_active_personas_inspector(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    records = {"p-1": {**PROFILE, "version": 2, "is_active": True, "deleted": False}}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            open=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    persisted: list[PersonaBuddyPreferences] = []
+    controller._preference_writer = lambda preferences: (
+        persisted.append(preferences) or True
+    )
+
+    async def unresolved_until_closed(*, cols: int, lines: int):
+        return None
+
+    controller.resolve_current_visual = unresolved_until_closed
+    app = PersonaBuddyWorkbenchApp(mock_app_instance)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        await app.reconcile_persona_buddy_view()
+        await pilot.pause()
+
+        assert screen.query_one(PersonaBuddyWidget).is_attached
+        assert screen.query_one("#personas-buddy-close", Button).disabled is False
+        assert screen.query_one("#personas-buddy-show", Button).disabled is True
+
+        await pilot.click("#persona-buddy-close")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert controller.current_preferences().open is False
+        assert persisted[-1].open is False
+        assert not list(screen.query(PersonaBuddyWidget))
+        show = screen.query_one("#personas-buddy-show", Button)
+        close = screen.query_one("#personas-buddy-close", Button)
+        assert show.disabled is False
+        assert close.disabled is True
+        assert close.tooltip == "Controls the current independent Buddy."
+
+
+async def test_stale_personas_screen_reconcile_skips_screen_local_buddy_hook(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    _configure_persona_buddy(
+        mock_app_instance,
+        {},
+        preferences=PersonaBuddyPreferences(open=False),
+    )
+    app = PersonaBuddyWorkbenchApp(mock_app_instance)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        stale = await _mounted(pilot)
+        await app.switch_screen(PersonasScreen(app))
+        hook = Mock(wraps=stale.sync_persona_buddy_reconciled_state)
+        stale.sync_persona_buddy_reconciled_state = hook
+
+        await app.reconcile_persona_buddy_view()
+
+        hook.assert_not_called()
+
+
+
+
+
+
+
+
+
+
+
+
+async def test_disabled_deleted_missing_persona_hides_but_preserves_enabled_selection(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    records = {"p-1": record}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    resolved = []
+
+    async def reconcile():
+        resolved.append(await controller.resolve_current_visual(cols=80, lines=24))
+        return True
+
+    mock_app_instance.reconcile_persona_buddy_view.side_effect = reconcile
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        before = controller.snapshot().profile_generation
+
+        for unavailable_record in (
+            {**record, "is_active": False},
+            {**record, "deleted": True},
+            None,
+        ):
+            if unavailable_record is None:
+                records.pop("p-1")
+            else:
+                records["p-1"] = unavailable_record
+            await screen._refresh_persona_buddy_lifecycle("p-1")
+
+        snapshot = controller.snapshot()
+        assert snapshot.profile_generation == before + 3
+        assert snapshot.enabled is True
+        assert snapshot.selection == PersonaBuddySelection("local", "p-1")
+        assert mock_app_instance.reconcile_persona_buddy_view.await_count == 3
+        assert [visual.available for visual in resolved] == [False, False, False]
+        assert {visual.reason for visual in resolved} == {
+            "persona_buddy_persona_unavailable"
+        }
+
+
+async def test_restore_reresolves_same_selection(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    record = {**PROFILE, "version": 3, "is_active": False, "deleted": False}
+    records = {"p-1": record}
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        records,
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            open=True,
+            collapsed=True,
+            selection=PersonaBuddySelection("local", "p-1"),
+        ),
+    )
+    resolved = []
+
+    async def reconcile():
+        resolved.append(await controller.resolve_current_visual(cols=80, lines=24))
+        return True
+
+    mock_app_instance.reconcile_persona_buddy_view.side_effect = reconcile
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        before = controller.snapshot().profile_generation
+        await screen._refresh_persona_buddy_lifecycle("p-1")
+        records["p-1"] = {
+            **record,
+            "version": 4,
+            "is_active": True,
+            "deleted": False,
+        }
+        await screen._refresh_persona_buddy_lifecycle("p-1")
+
+        preferences = controller.current_preferences()
+        assert preferences.selection == PersonaBuddySelection("local", "p-1")
+        assert preferences.enabled is True
+        assert preferences.open is True
+        assert preferences.collapsed is True
+        assert controller.snapshot().profile_generation == before + 2
+        assert [visual.reason for visual in resolved] == [
+            "persona_buddy_persona_unavailable",
+            "persona_buddy_binding_unavailable",
+        ]
+
+
+
+
+
+
+async def test_local_save_and_delete_refresh_only_the_same_buddy_selection(
+    monkeypatch,
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        mock_app_instance.character_persona_scope_service.delete_persona_profile = (
+            AsyncMock()
+        )
+        refresh = AsyncMock()
+        monkeypatch.setattr(screen, "_refresh_persona_buddy_lifecycle", refresh)
+        monkeypatch.setattr(screen, "_after_delete", AsyncMock())
+        monkeypatch.setattr(
+            screen.persona_handler,
+            "refresh_persona_list",
+            AsyncMock(return_value=[]),
+        )
+
+        screen.state.active_mode = "characters"
+        await screen._after_profile_save(
+            {**PROFILE, "id": "p-1", "version": 3}, source="local"
+        )
+        await screen._delete_entity("persona", "p-1", 3)
+
+        assert refresh.await_args_list == [call("p-1"), call("p-1")]
+
+
+async def test_server_profile_durable_changes_never_refresh_local_buddy(
+    monkeypatch,
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        mock_app_instance.character_persona_scope_service.delete_persona_profile = (
+            AsyncMock()
+        )
+        refresh = AsyncMock()
+        monkeypatch.setattr(screen, "_refresh_persona_buddy_lifecycle", refresh)
+        monkeypatch.setattr(screen, "_after_delete", AsyncMock())
+        monkeypatch.setattr(
+            screen.persona_handler,
+            "refresh_persona_list",
+            AsyncMock(return_value=[]),
+        )
+        monkeypatch.setattr(screen.persona_handler, "current_mode", lambda: "server")
+
+        screen.state.active_mode = "characters"
+        await screen._after_profile_save(
+            {**PROFILE, "id": "p-1", "version": 3}, source="server"
+        )
+        await screen._delete_entity("persona", "p-1", 3)
+
+        refresh.assert_not_awaited()
+
+
+
+
+
+
+async def test_persona_json_export_excludes_buddy_preferences(
+    mock_app_instance,
+    stub_characters,
+    tmp_path,
+) -> None:
+    record = {**PROFILE, "version": 2, "is_active": True, "deleted": False}
+    _configure_persona_buddy(mock_app_instance, {"p-1": record})
+    mock_app_instance.app_config = {
+        "persona_buddy": {
+            "enabled": True,
+            "source": "local",
+            "local_persona_id": "p-1",
+            "open": False,
+            "collapsed": True,
+            "x": 17,
+            "y": 9,
+            "width": 42,
+            "height": 14,
+        }
+    }
+    app = PersonasTestApp(mock_app_instance)
+    target = tmp_path / "persona.json"
+
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        await screen._select_profile("p-1", "Archivist")
+        await screen._export_selected_character(str(target), fmt="json")
+
+    exported = json.loads(target.read_text(encoding="utf-8"))
+    assert exported == record
+    assert "persona_buddy" not in exported
+
+
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_independent_buddy_actions_use_shared_coordinator_without_persona_selection(
+    mock_app_instance, stub_characters, size
+):
+    from tldw_chatbook.Persona_Buddy.preferences import BuddySelection
+    from tldw_chatbook.UI.Navigation.buddy_management import BuddyManagementCoordinator
+
+    controller = _configure_persona_buddy(
+        mock_app_instance,
+        {},
+        preferences=PersonaBuddyPreferences(
+            enabled=True, open=True, selection=BuddySelection("independent")
+        ),
+    )
+    mock_app_instance.app_config = {}
+    mock_app_instance.console_runtime = None
+    app = PersonasTestApp(mock_app_instance)
+    app._buddy_management = BuddyManagementCoordinator(app, controller=controller)
+    async with app.run_test(size=size) as pilot:
+        screen = await _mounted(pilot)
+        await screen._apply_mode("personas")
+        inspector = screen.query_one("#personas-inspector-pane")
+        screen._sync_inspector_buddy_status()
+        for selector, enabled, opened in (
+            ("#personas-buddy-close", True, False),
+            ("#personas-buddy-show", True, True),
+            ("#personas-buddy-disable", False, True),
+        ):
+            button = screen.query_one(selector, Button)
+            assert not button.disabled
+            button.focus(scroll_visible=True)
+            await pilot.pause(0.2)
+            await pilot.wait_for_scheduled_animations()
+            assert button.has_focus
+            assert button.region.bottom <= min(size[1], inspector.content_region.bottom)
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            screen._sync_inspector_buddy_status()
+            assert controller.current_preferences().selection == BuddySelection(
+                "independent"
+            )
+            assert controller.current_preferences().enabled is enabled
+            assert controller.current_preferences().open is opened
+        assert (
+            str(screen.query_one("#personas-buddy-use", Button).label) == "Manage Buddy"
+        )

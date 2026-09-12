@@ -17,6 +17,11 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
+from tldw_chatbook.UI.destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_callout,
+    sync_load_failure_callout,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 
 
@@ -31,16 +36,50 @@ class LibraryLandingRecentItem:
 
 
 @dataclass(frozen=True)
+class LibraryLandingContinueAction:
+    """Display copy and fixed route identity for the landing Continue action."""
+
+    label: str
+    row_id: str
+    adjustment: str = ""
+
+
+@dataclass(frozen=True)
+class LibraryLandingAttentionAction:
+    """Display copy and fixed recovery identity for one current issue."""
+
+    message: str
+    action_label: str
+    action_kind: str
+
+
+@dataclass(frozen=True)
 class LibraryLandingCanvasState:
     """Complete display snapshot for the retained Library landing canvas."""
 
     purpose: str
     counts_line: str
+    continue_action: LibraryLandingContinueAction | None = None
+    attention_action: LibraryLandingAttentionAction | None = None
+    # task-31632 (critique #5 P1): the source-snapshot failure, painted as
+    # ONE recovery callout with its own Retry. While it is set the hub
+    # withholds Continue -- it was the wall's only control and it led out
+    # of Library -- and ``counts_line`` stays empty, because the callout
+    # already carries what failed and why.
+    load_failure: DestinationRecoveryState | None = None
     recent_items: tuple[LibraryLandingRecentItem, ...] = ()
     lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED
     lifecycle_status: str = ""
     show_retry: bool = False
     show_explore: bool = False
+    # task-32072: the Get started steps are live controls that unlock in
+    # sequence, so the canvas needs the two facts that gate them.
+    has_any_content: bool = False
+    #: Whether a search result is actually STAGEABLE -- the same condition
+    #: `_stage_library_rag_result_in_console` enforces (review of PR #2531):
+    #: results alone unlocked the step, and pressing it then answered with the
+    #: staging refusal instead of Console, because nothing was selected.
+    search_result_selected: bool = False
 
 
 @dataclass(frozen=True)
@@ -133,6 +172,45 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         return recent
 
     @staticmethod
+    def _continue_button(action: LibraryLandingContinueAction) -> Button:
+        button = Button(
+            escape_markup(action.label),
+            id="library-hub-continue",
+            classes="library-hub-continue console-action-primary",
+            compact=True,
+            tooltip="Resume this Library view.",
+        )
+        button.row_id = action.row_id
+        return button
+
+    @staticmethod
+    def _attention_button(action: LibraryLandingAttentionAction) -> Button:
+        button = Button(
+            escape_markup(action.action_label),
+            id="library-hub-attention-action",
+            classes="library-hub-attention-action console-action-subdued",
+            compact=True,
+            tooltip=f"{action.action_label}: {action.message}",
+        )
+        button.action_kind = action.action_kind
+        return button
+
+    @staticmethod
+    def _continue_action(
+        state: LibraryLandingCanvasState,
+    ) -> LibraryLandingContinueAction | None:
+        """Return the Continue to offer, or ``None`` while sources failed.
+
+        task-31632 AC#3: Continue was the service wall's ONLY control and it
+        led away from Library. A load failure owns the canvas's recovery --
+        one callout, one Retry -- so this is the single place the rule lives,
+        shared by compose, the widget-set key, and the in-place sync.
+        """
+        if state.load_failure is not None:
+            return None
+        return state.continue_action
+
+    @staticmethod
     def _is_get_started(state: LibraryLandingCanvasState) -> bool:
         return state.lifecycle in (
             LibraryLifecycle.UNKNOWN,
@@ -140,8 +218,16 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         )
 
     @classmethod
-    def _widget_set_key(cls, state: LibraryLandingCanvasState) -> tuple[bool, bool, bool]:
-        return (cls._is_get_started(state), state.show_retry, state.show_explore)
+    def _widget_set_key(cls, state: LibraryLandingCanvasState) -> tuple[bool, ...]:
+        return (
+            cls._is_get_started(state),
+            state.show_retry,
+            state.show_explore,
+            cls._continue_action(state) is not None,
+            state.attention_action is not None,
+            state.load_failure is not None,
+            bool(state.recent_items),
+        )
 
     @staticmethod
     def _status(value: str, widget_id: str) -> Static:
@@ -149,8 +235,32 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         status.display = bool(value)
         return status
 
+    @staticmethod
+    def _failure_callout(failure: DestinationRecoveryState) -> ComposeResult:
+        """Compose the one load-failure callout, shared by both landing modes.
+
+        Qodo PR G finding 5: a source-snapshot failure is valid regardless
+        of lifecycle, so Get-started mode composes this too -- ABOVE the
+        starter content, which stays. This is the same callout the returning
+        (non-Get-started) landing has always painted; only the caller site
+        differs per mode.
+
+        PR M carry I1: the widget itself is the shared
+        ``load_failure_callout`` -- the browse row and the Media canvas
+        paint the same one, from the same builder.
+        """
+        yield load_failure_callout(
+            failure,
+            id="library-hub-load-failure",
+            copy_id="library-hub-load-failure-copy",
+            retry_id="library-source-retry",
+        )
+
     def compose(self) -> ComposeResult:
         get_started = self._is_get_started(self.state)
+        failure = self.state.load_failure
+        if get_started and failure is not None:
+            yield from self._failure_callout(failure)
         if get_started:
             yield Static(
                 "Get started",
@@ -169,19 +279,68 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
             "library-hub-lifecycle-status",
         )
         if get_started:
-            orientation = Static(
-                "1 Add · 2 Find · 3 Use",
-                id="library-hub-orientation",
-                classes="library-hub-meta",
-                markup=False,
-            )
-            orientation.display = self.state.lifecycle is LibraryLifecycle.STARTER
-            yield orientation
+            yield from self._compose_get_started_steps()
         else:
             yield Static(
                 self.state.counts_line,
                 id="library-hub-counts",
                 classes="library-hub-meta",
+                markup=False,
+            )
+        if not get_started and failure is not None:
+            # The same ``.ds-recovery-callout`` grammar as the "Needs
+            # attention" row below, tinted by severity: ``.is-blocked`` is
+            # the repo-wide error tint, so a timeout the next attempt may
+            # beat never paints like a hard failure.
+            yield from self._failure_callout(failure)
+        continue_action = self._continue_action(self.state)
+        if not get_started and continue_action is not None:
+            yield Static(
+                "Continue",
+                id="library-hub-continue-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            yield self._continue_button(continue_action)
+            adjustment = self._status(
+                continue_action.adjustment,
+                "library-hub-continue-adjustment",
+            )
+            yield adjustment
+        if not get_started and self.state.attention_action is not None:
+            yield Static(
+                "Needs attention",
+                id="library-hub-attention-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            with Horizontal(
+                id="library-hub-attention",
+                classes="ds-recovery-callout",
+            ):
+                yield Static(
+                    self.state.attention_action.message,
+                    id="library-hub-attention-copy",
+                    markup=False,
+                )
+                yield self._attention_button(self.state.attention_action)
+        if not get_started and self.state.recent_items:
+            yield Static(
+                "From your Library",
+                id="library-hub-from-library-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            recents = Vertical(id="library-hub-recents")
+            recents.styles.height = "auto"
+            with recents:
+                for item in self.state.recent_items:
+                    yield self._recent_button(item)
+        if not get_started:
+            yield Static(
+                "Quick actions",
+                id="library-hub-quick-actions-heading",
+                classes="destination-section",
                 markup=False,
             )
         with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
@@ -192,6 +351,13 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                 "ingest-media",
                 "library-hub-action-import",
             )
+            yield self._action_button(
+                "New note",
+                "Create a new note.",
+                LIBRARY_ROW_CREATE_NOTE,
+                LIBRARY_CANVAS_KIND_NOTES_CREATE,
+                "library-hub-action-new-note",
+            )
             if not get_started:
                 yield self._action_button(
                     "Search",
@@ -200,23 +366,69 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                     "search",
                     "library-hub-action-search",
                 )
-            yield self._action_button(
-                "New note",
-                "Create a new note.",
-                LIBRARY_ROW_CREATE_NOTE,
-                LIBRARY_CANVAS_KIND_NOTES_CREATE,
-                "library-hub-action-new-note",
-            )
             if self.state.show_explore:
                 yield Button("Explore all tools", id="library-hub-explore-all")
         if self.state.show_retry:
             yield Button("Retry source check", id="library-hub-retry-evidence")
-        if not get_started:
-            recents = Vertical(id="library-hub-recents")
-            recents.styles.height = "auto"
-            with recents:
-                for item in self.state.recent_items:
-                    yield self._recent_button(item)
+
+    #: task-32072: "1 Add · 2 Find · 3 Use" named three steps and gave a
+    #: control for only the first, so a first-timer had no path from "I
+    #: imported something" to "find it" and "use it in Console". Each step is
+    #: a control now, and each one that is not usable yet says why and what
+    #: to do first -- the same line, never colour alone.
+    _GET_STARTED_STEPS = (
+        ("import", "Import a file", "Add files, links, and transcripts."),
+        ("find", "Find it", "Search everything you have added."),
+        ("use", "Use it in Console", "Send a search result to Console as evidence."),
+    )
+
+    def _get_started_step_block(self, step: str) -> str:
+        """Return why a step cannot run yet, and the step that unlocks it."""
+        if step == "find" and not self.state.has_any_content:
+            return "Find it needs something to search — Import a file first."
+        if step == "use" and not self.state.search_result_selected:
+            if not self.state.has_any_content:
+                return "Use it in Console needs a search result — Import a file first."
+            return (
+                "Use it in Console needs a search result — run Find it and "
+                "pick one."
+            )
+        return ""
+
+    def _compose_get_started_steps(self) -> ComposeResult:
+        """Compose the three sequenced Get started controls and one reason."""
+        strip = Horizontal(id="library-hub-steps", classes="ds-toolbar")
+        strip.styles.height = "auto"
+        blocks: list[str] = []
+        with strip:
+            for step, label, tooltip in self._GET_STARTED_STEPS:
+                block = self._get_started_step_block(step)
+                if block:
+                    blocks.append(block)
+                button = Button(
+                    label,
+                    id=f"library-hub-step-{step}",
+                    classes="library-hub-action console-action-subdued",
+                    compact=True,
+                    tooltip=block or tooltip,
+                )
+                # TASK-716: a disabled Button never emits Pressed, so the
+                # explanation would be unreachable. Keep it pressable and let
+                # the handler say the same thing the hint below says.
+                button.set_class(bool(block), "library-source-action-blocked")
+                yield button
+        yield Static(
+            blocks[0] if blocks else "",
+            id="library-hub-steps-hint",
+            classes="library-hub-meta",
+            markup=False,
+        )
+
+    def _sync_load_failure(self, failure: DestinationRecoveryState) -> None:
+        """Patch the one load-failure callout's copy and tint in place."""
+        sync_load_failure_callout(
+            self.query_one("#library-hub-load-failure"), failure
+        )
 
     def sync_state(self, state: LibraryLandingCanvasState) -> None:
         """Patch stable fields, recomposing only when the widget set changes."""
@@ -231,13 +443,49 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         lifecycle_status = self.query_one("#library-hub-lifecycle-status", Static)
         lifecycle_status.update(state.lifecycle_status)
         lifecycle_status.display = bool(state.lifecycle_status)
+        if state.load_failure is not None:
+            self._sync_load_failure(state.load_failure)
         if self._is_get_started(state):
-            orientation = self.query_one("#library-hub-orientation", Static)
-            orientation.display = state.lifecycle is LibraryLifecycle.STARTER
+            blocks: list[str] = []
+            for step, _label, tooltip in self._GET_STARTED_STEPS:
+                block = self._get_started_step_block(step)
+                if block:
+                    blocks.append(block)
+                button = self.query_one(f"#library-hub-step-{step}", Button)
+                button.set_class(bool(block), "library-source-action-blocked")
+                button.tooltip = block or tooltip
+            self.query_one("#library-hub-steps-hint", Static).update(
+                blocks[0] if blocks else ""
+            )
             self._complete_targeted_sync()
             return
         self.query_one("#library-hub-counts", Static).update(state.counts_line)
-        self.call_later(self._replace_recent_rows, self._deferred_sync_serial)
+        continue_action = self._continue_action(state)
+        if continue_action is not None:
+            continue_button = self.query_one("#library-hub-continue", Button)
+            continue_button.label = escape_markup(continue_action.label)
+            continue_button.row_id = continue_action.row_id
+            adjustment = self.query_one(
+                "#library-hub-continue-adjustment", Static
+            )
+            adjustment.update(continue_action.adjustment)
+            adjustment.display = bool(continue_action.adjustment)
+        if state.attention_action is not None:
+            attention_copy = self.query_one("#library-hub-attention-copy", Static)
+            attention_copy.update(state.attention_action.message)
+            attention_button = self.query_one(
+                "#library-hub-attention-action", Button
+            )
+            attention_button.label = escape_markup(state.attention_action.action_label)
+            attention_button.tooltip = (
+                f"{state.attention_action.action_label}: "
+                f"{state.attention_action.message}"
+            )
+            attention_button.action_kind = state.attention_action.action_kind
+        if state.recent_items:
+            self.call_later(self._replace_recent_rows, self._deferred_sync_serial)
+            return
+        self._complete_targeted_sync()
 
     async def _replace_recent_rows(self, serial: int | None = None) -> None:
         """Converge queued replacements on the latest state after each await."""
@@ -245,7 +493,14 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         if not self._deferred_sync_is_current(serial):
             self._discard_stale_deferred_sync(serial)
             return
-        recents = self.query_one("#library-hub-recents", Vertical)
+        recents_matches = list(self.query("#library-hub-recents"))
+        if not self.is_mounted or len(recents_matches) != 1:
+            self._discard_stale_deferred_sync(serial)
+            return
+        recents = recents_matches[0]
+        if not isinstance(recents, Vertical):
+            self._discard_stale_deferred_sync(serial)
+            return
         if not self._deferred_sync_is_current(serial):
             self._discard_stale_deferred_sync(serial)
             return

@@ -63,7 +63,7 @@ The task was renumbered from the provisional TASK-14801 to TASK-14810 after the 
 
 ADR: existing `backlog/decisions/017-console-left-rail-usability.md`; no new ADR required.
 
-TASK-18912 status reconciliation (2026-08-20, latest `origin/dev` at
+TASK-19638 status reconciliation (2026-08-20, latest `origin/dev` at
 `a1d6df3f89244e918a1fb12facbd4ed0d927c24c`): the two former Confluence
 collection blockers no longer reproduce in the repository development
 environment (31 tests collect), and the focused rail-width budget file now

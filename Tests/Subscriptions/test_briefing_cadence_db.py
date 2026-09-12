@@ -297,3 +297,72 @@ def test_list_briefing_schedules_reads_inside_a_transaction(monkeypatch):
     db.list_briefing_schedules()
 
     assert called["transaction"] is True
+
+
+def test_briefing_settings_write_returns_the_atomic_schedule_receipt(tmp_path):
+    """The write result must describe the row committed by the same transaction.
+
+    This catches a split write/read implementation: a later read can race another
+    writer and cannot prove which cadence and generation choices were committed
+    together.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    watchlist_id = _make_watchlist(db, name="Threat Intel")
+    preset_id = db.insert_briefing_preset(
+        "Analyst",
+        roster_json="[]",
+        provider="anthropic",
+        model="claude-test",
+    )
+    complete_id = db.insert_briefing(watchlist_id, status="complete")
+    _force_created_at(db, complete_id, "2026-08-26 08:00:00")
+    failed_id = db.insert_briefing(watchlist_id, status="failed")
+    _force_created_at(db, failed_id, "2026-08-27 09:30:00")
+
+    receipt = db.set_watchlist_briefing_settings(
+        watchlist_id,
+        selection_mode="curated",
+        default_preset_id=preset_id,
+        briefing_cadence_seconds=86_400,
+    )
+
+    assert receipt == {
+        "watchlist_id": watchlist_id,
+        "name": "Threat Intel",
+        "briefing_selection_mode": "curated",
+        "default_briefing_preset_id": preset_id,
+        "default_preset_name": "Analyst",
+        "preset_provider": "anthropic",
+        "preset_model": "claude-test",
+        "briefing_cadence_seconds": 86_400,
+        "last_attempt_at": "2026-08-27 09:30:00",
+        "last_success_at": "2026-08-26 08:00:00",
+    }
+
+
+def test_invalid_optional_schedule_choice_rolls_back_every_field(tmp_path):
+    """A bad optional value must not leave the valid cadence half-written."""
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    watchlist_id = _make_watchlist(db)
+    preset_id = db.insert_briefing_preset("Known", roster_json="[]")
+    db.set_watchlist_briefing_settings(
+        watchlist_id,
+        selection_mode="auto",
+        default_preset_id=preset_id,
+        briefing_cadence_seconds=43_200,
+    )
+
+    with pytest.raises(ValueError):
+        db.set_watchlist_briefing_settings(
+            watchlist_id,
+            selection_mode="not-a-mode",
+            default_preset_id=None,
+            briefing_cadence_seconds=86_400,
+        )
+
+    row = db.conn.execute(
+        "SELECT briefing_selection_mode, default_briefing_preset_id, "
+        "briefing_cadence_seconds FROM watchlists WHERE id = ?",
+        (watchlist_id,),
+    ).fetchone()
+    assert tuple(row) == ("auto", preset_id, 43_200)

@@ -34,11 +34,50 @@ from textual._path import CSSPathType, _css_path_type_as_list
 from textual.app import App
 
 from tldw_chatbook.css import build_css
+from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 
 CSS_DIR = Path(build_css.__file__).parent
 
 #: The app bundle, for harnesses that want the app-CSS tier as well.
 BUNDLED_STYLESHEET = CSS_DIR / "tldw_cli_modular.tcss"
+
+#: TASK-25812/TASK-24459: the per-screen sheets split out of the
+#: screen-owned modules (agentic terminal, evals, scheduling). The REAL app
+#: parses these lazily, on first visit to the owning screen
+#: (`App._load_screen_css` via each screen's `CSS_PATH`), so at steady
+#: state they are part of the app's styling exactly as the bundle is. A
+#: harness that pins `CSS_PATH` to the bundle alone silently loses every
+#: moved rule; harnesses and contracts that mean "the app's styling"
+#: should use `APP_STYLESHEETS` / `app_css_text()` instead.
+AGENTIC_SPLIT_STYLESHEETS = tuple(
+    CSS_DIR / name for name in build_css.AGENTIC_SPLIT_SHEETS.values()
+)
+
+SCREEN_OWNED_SPLIT_STYLESHEETS = tuple(
+    CSS_DIR / filename
+    for split in build_css.SCREEN_OWNED_SPLITS
+    for filename in split.sheets.values()
+)
+
+#: Every app-tier stylesheet the running app ends up with: the boot bundle
+#: plus the lazily-loaded split sheets.
+APP_STYLESHEETS = (BUNDLED_STYLESHEET, *SCREEN_OWNED_SPLIT_STYLESHEETS)
+
+
+def app_css_text() -> str:
+    """Union text of the bundle and the split sheets.
+
+    For text-level contracts ("this rule is styled somewhere the app
+    loads"). Asserting on the bundle alone re-encodes the pre-split
+    packaging, which TASK-25812 deliberately changed.
+
+    Returns:
+        The concatenated text of every path in ``APP_STYLESHEETS``, joined
+        with newlines, in load order.
+    """
+    return "\n".join(
+        path.read_text(encoding="utf-8") for path in APP_STYLESHEETS
+    )
 
 #: The screen/modal sheets (TASK-15450), scope-prefixed stream first and self
 #: stream last -- the exact pair and order `TldwCli.CSS_PATH` brackets its app
@@ -91,6 +130,12 @@ class ConsolidatedCSSApp(App):
         # (possibly subclassed) type.
         effective = css_path if css_path is not None else self.CSS_PATH
         super().__init__(*args, css_path=_merge_screen_css_paths(effective), **kwargs)
+        # TASK-21115: same stylesheet the real app uses -- a consolidated
+        # class first-mounted DYNAMICALLY (post-boot) otherwise resolves
+        # against a stale parse where a base class's defaults still hold
+        # tie-breaker 0 and shadow the sheet's rules for that class. See
+        # `tldw_chatbook/css/tie_aware_stylesheet.py`.
+        self.stylesheet = TieAwareStylesheet(variables=self.get_css_variables())
 
     def _get_default_css(self):  # noqa: D102 - see module docstring
         return build_css.widget_defaults_sources(CSS_DIR) + super()._get_default_css()

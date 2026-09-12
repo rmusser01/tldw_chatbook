@@ -38,6 +38,16 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Local tool approval-state resolution failed": (),
         "Local tool approval callback failed": (),
     },
+    "tldw_chatbook/Agents/mcp_tool_provider.py": {
+        "MCPToolProvider: persona_policy_provider failed": (
+            "tool.name",
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/Agents/persona_policy.py": {
+        "Dropping non-mapping persona policy rule": ("type(entry).__name__",),
+        "Dropping malformed persona policy rule": ("type(exc).__name__",),
+    },
     "tldw_chatbook/Agents/run_log_eviction.py": {
         "continuation owner missing from payload": (),
         "run-log eviction failed for continuation history": ("type(exc).__name__",),
@@ -86,6 +96,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
         "Skipping malformed usage_json on message export": (),
     },
+    "tldw_chatbook/Character_Chat/local_character_persona_service.py": {
+        "Dropping malformed persona policy rule": ("type(exc).__name__",),
+    },
     "tldw_chatbook/Chat/console_fleet_attention.py": {
         "fleet unseen revision bump failed": ("type(exc).__name__",),
         "fleet unseen mark listing failed": ("type(exc).__name__",),
@@ -100,7 +113,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "wake send gate raised; deferring": ("type(exc).__name__",),
         "wake user-priority probe raised; deferring": ("type(exc).__name__",),
         "wake delivery failed": ("type(exc).__name__",),
-        "wake delivery ledger stamp failed": ("type(exc).__name__",),
+        "wake delivery ledger stamp failed (exception_type=": ("type(exc).__name__",),
+        "wake delivery ledger stamp failed after dispose": ("type(exc).__name__",),
         "wake mark listing failed": ("type(exc).__name__",),
         "wake ledger read failed": ("type(exc).__name__",),
         "wake session resolution failed": ("type(exc).__name__",),
@@ -142,13 +156,15 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
         "Unknown fts_match_construction; using conservative fallback": (),
     },
-    "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "tldw_chatbook/UI/Console_Modules/fleet.py": {
         "Console fleet completion handoff will retry": (
             "claim.revision",
             "type(exc).__name__",
         ),
         "console fleet wake mount-claim failed": ("type(exc).__name__",),
         "fleet survivor check failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
         "Pending sidebar-state write failed": ("type(error).__name__",),
     },
     "tldw_chatbook/UI/Console_Modules/video.py": {
@@ -160,7 +176,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "stream resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
-        "canvas sync failed": ("kind",),
+        "Pending Library lifecycle write failed during unmount.": (),
         "Library entry canvas repair attempt failed": (),
         "Strict Library entry shell synchronization failed": (),
         "Strict Library entry canvas removal failed": (),
@@ -168,25 +184,37 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Library snapshot shell reconciliation failed": (),
         "Library snapshot canvas replacement failed": (),
         "Library Search/RAG snapshot sync failed": (),
-        "Failed to continue the Database Notes folder navigator": (
-            "type(exc).__name__",
-        ),
-        "Failed to load the Database Notes folder navigator": ("type(exc).__name__",),
         "Database Notes move kept both placements": ("type(exc).__name__",),
         "Database Notes tree mutation": (
             "operation",
             "type(exc).__name__",
         ),
-        "Failed to load Library conversations page.": (),
         "in bulk delete": (),
         "Failed to restore a Library media item in bulk-delete undo": (
             "type(exc).__name__",
         ),
-        "Failed to persist a Library notes setting": (),
         "Failed to persist the Library ingest backend": (),
         "Failed to persist Library ingest options": (),
-        "Failed to restore a Library note": (),
-        "Failed to restore a Library Collection": (),
+        # "Failed to restore a Library note" moved to
+        # UI/Library_Modules/library_notes_controller.py in 9e13f0207c (the
+        # wave-8 notes decomposition); see that owner's entry below.
+        # Removed by 5dd1077df6 when generic Collection restore was retired.
+    },
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+        # task-32299: gained the metadata field when the traceback added
+        # by 593961cb9c (PR #2553, task-32144) was dropped again -- a
+        # reviewed diagnostic may change metadata, not start capturing
+        # exceptions.
+        "Failed to restore a Library note": ("type(exc).__name__",),
+    },
+    # "canvas sync failed" was dropped from this registry in 51533602c4
+    # (TASK-32089): that diagnostic now deliberately keeps its traceback
+    # (`logger.opt(exception=True)`) because discarding it left an
+    # AttributeError inside a state builder with no clue, so it is no longer
+    # a metadata-only diagnostic. It is not a persistent sink, and the
+    # inventory manifest still owns it.
+    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": {
+        "Failed to load Library conversations page.": (),
     },
     "tldw_chatbook/UI/Console_Modules/image.py": {
         "Console image edit cleanup failed": (
@@ -207,6 +235,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Image generation batch raised": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Lazy LLM view mount failed: view={}": ("safe_view",),
         "Managed GGUF inventory load failed": (),
     },
     "tldw_chatbook/UI/Screens/llm_screen.py": {
@@ -232,9 +261,20 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)",
         ),
     },
+    "tldw_chatbook/Chat/console_turn_context.py": {
+        "Console turn context: tool policy profile resolution failed": (
+            "type(exc).__name__",
+        ),
+    },
     "tldw_chatbook/UI/Console_Modules/session.py": {
         "Character swap: roleplay template seed failed": ("type(exc).__name__",),
         "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
+        "Console turn context: persona policy rules resolution failed": (
+            "type(exc).__name__",
+        ),
+        # The two "Console session startup: ..." diagnostics were removed by
+        # 11150b849d (independent Buddy management), which retired the
+        # startup persona/settings resolution they reported on.
     },
     "tldw_chatbook/UI/Console_Modules/workspace.py": {
         "Star-toggle cancellation re-sync failed": (),
@@ -276,6 +316,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Could not attach the world book": (),
         "Could not show the dictionary attach picker": (),
         "Could not show the world-book attach picker": (),
+        "Error saving persona policy rules": (
+            "len(rules)",
+            "type(exc).__name__",
+        ),
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard commit rejected non-owned sections": (),
@@ -343,6 +387,34 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         ),
         "Generated CSS is stale during module entry; rebuilding": (),
         "Generated CSS is stale during CLI entry; rebuilding": (),
+        "Deferred workspace agent provisioning wiring failed": (
+            "type(exc).__name__",
+        ),
+        "Workspace agent provisioning skipped": (),
+        "Workspace agent backfill failed during app wiring": (
+            "type(exc).__name__",
+        ),
+        "Workspace agent backfill provisioned": ("provisioned",),
+    },
+    "tldw_chatbook/Workspaces/agent_provisioning.py": {
+        "Workspace agent provisioning failed": ("type(exc).__name__",),
+        "Workspace agent backfill could not persist defaults": (
+            "type(exc).__name__",
+        ),
+        "Workspace agent backfill had failures": (),
+        "Workspace agent backfill completion flag could not be stored": (
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/Workspaces/registry_service.py": {
+        "Workspace agent provisioning hook failed": ("type(exc).__name__",),
+        "Workspace agent provisioning returned no defaults": (),
+        "Workspace agent defaults could not be persisted": (
+            "type(exc).__name__",
+        ),
+        "Ignoring malformed workspace assistant_defaults": (
+            "type(exc).__name__",
+        ),
     },
     "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
         "GGUF launch lease close failed": ("provider",),
@@ -412,7 +484,8 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
         "Managed model deletion failed": (1, ("type(exc).__name__",)),
     },
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": {
-        "Failed to load watchlist items": (2, ("type(exc).__name__",)),
+        "Failed to load watchlist items": (1, ("type(exc).__name__",)),
+        "Failed to load watchlist item page": (1, ("type(exc).__name__",)),
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard delete rejected non-owned sections": (1, ()),
@@ -425,10 +498,6 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
     },
     "tldw_chatbook/config.py": {
         "phase=precondition, error_type": (1, ("type(error).__name__",)),
-        "phase=locked_precondition, error_type": (
-            1,
-            ("type(error).__name__",),
-        ),
     },
 }
 
@@ -540,6 +609,20 @@ def _commit_available(revision: str) -> bool:
 
 _TASK_15743_STACKED = "fdee8a31f"
 _TASK_15743_REPAIRED = "afee9672a"
+_TASK_15743_CURRENT_OWNERS = {
+    (
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "console fleet wake mount-claim failed",
+    ): "tldw_chatbook/UI/Console_Modules/fleet.py",
+    (
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "fleet survivor check failed",
+    ): "tldw_chatbook/UI/Console_Modules/fleet.py",
+    (
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "Console fleet completion handoff will retry",
+    ): "tldw_chatbook/UI/Console_Modules/fleet.py",
+}
 
 
 def _task_15743_archaeology_available() -> bool:
@@ -600,9 +683,7 @@ def test_task_15743_final_rebase_diagnostics_are_metadata_only() -> None:
                         f"expected {list(expected_fields)!r}"
                     )
                 if captures_exception:
-                    failures.append(
-                        f"{relative}: {label!r} captures exception details"
-                    )
+                    failures.append(f"{relative}: {label!r} captures exception details")
 
     assert failures == []
 
@@ -814,6 +895,7 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
     ) == Counter(repair_rows)
 
     for owner, label in repair_rows:
+        current_owner = _TASK_15743_CURRENT_OWNERS.get((owner, label), owner)
         expected_fields = (
             ()
             if label in no_field_repairs
@@ -822,13 +904,14 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
             else ("type(exc).__name__",)
         )
         assert (
-            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+            REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(label)
             == expected_fields
         )
     for owner, labels in safe_rows.items():
         for label, expected_fields in labels.items():
+            current_owner = _TASK_15743_CURRENT_OWNERS.get((owner, label), owner)
             assert (
-                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(owner, {}).get(label)
+                REVIEWED_METADATA_ONLY_DIAGNOSTICS.get(current_owner, {}).get(label)
                 == expected_fields
             )
 
@@ -888,9 +971,7 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call) and node.args):
                     continue
-                if not diagnostic_inventory._is_diagnostic_call(
-                    node, logger_symbols
-                ):
+                if not diagnostic_inventory._is_diagnostic_call(node, logger_symbols):
                     continue
                 if not any(
                     "type(exc).__name__" in ast.unparse(argument)
@@ -909,6 +990,7 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
         )
     failures: list[str] = []
     for relative, label in sorted(expected):
+        relative = _TASK_15743_CURRENT_OWNERS.get((relative, label), relative)
         source = (REPO_ROOT / relative).read_text(encoding="utf-8")
         tree = ast.parse(source, filename=relative)
         logger_symbols = diagnostic_inventory._logger_symbols(tree)
@@ -928,7 +1010,15 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
             if "exception_type={}" not in message:
                 failures.append(f"{relative}: {label!r} does not render exception_type")
             positional = [ast.unparse(argument) for argument in call.args[1:]]
-            if "type(exc).__name__" not in positional:
+            # Receipt degradation also supports a missing exception. Only its
+            # literal fallback is safe; arbitrary conditional payloads are not.
+            if not any(
+                value in {
+                    "type(exc).__name__",
+                    "type(exc).__name__ if exc is not None else 'invalid_state'",
+                }
+                for value in positional
+            ):
                 failures.append(f"{relative}: {label!r} is not positional metadata")
             if any(keyword.arg == "exception_type" for keyword in call.keywords):
                 failures.append(f"{relative}: {label!r} leaves exception_type in extra")
@@ -1039,6 +1129,58 @@ def test_persistent_metadata_marker_cannot_be_forged_outside_its_owner() -> None
 def _digest(source: str) -> str:
     diagnostics, _sinks = diagnostic_inventory.scan_source(source)
     return diagnostic_inventory.diagnostic_digest(diagnostics)
+
+
+def test_build_inventory_projects_schema_v3_path_candidates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package_root = tmp_path / "tldw_chatbook"
+    package_root.mkdir()
+    (package_root / "sample.py").write_text(
+        'logger.info("Workspace {}", workspace_root)\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(diagnostic_inventory, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(diagnostic_inventory, "PACKAGE_ROOT", package_root)
+
+    inventory = diagnostic_inventory.build_inventory()
+
+    assert inventory["schema_version"] == 3
+    assert inventory["path_privacy_rules"]["candidate_status"] == ("legacy_unreviewed")
+    assert inventory["summary"]["path_privacy_candidate_calls"] == 1
+    assert inventory["path_privacy_candidates"] == [
+        {
+            "path": "tldw_chatbook/sample.py",
+            "candidates": [
+                {
+                    "method": "info",
+                    "call_digest": inventory["path_privacy_candidates"][0][
+                        "candidates"
+                    ][0]["call_digest"],
+                    "scope": "<module>",
+                    "path_expressions": ["workspace_root"],
+                    "status": "legacy_unreviewed",
+                }
+            ],
+        }
+    ]
+
+
+def test_build_inventory_uses_case_sensitive_posix_path_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    package_root = tmp_path / "tldw_chatbook"
+    package_root.mkdir()
+    for name in ("alpha.py", "Zeta.py"):
+        (package_root / name).write_text('logger.info("safe")\n', encoding="utf-8")
+    monkeypatch.setattr(diagnostic_inventory, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(diagnostic_inventory, "PACKAGE_ROOT", package_root)
+
+    inventory = diagnostic_inventory.build_inventory()
+
+    assert [owner["path"] for owner in inventory["owners"]] == [
+        "tldw_chatbook/Zeta.py",
+        "tldw_chatbook/alpha.py",
+    ]
 
 
 BASE_MODULE = (
@@ -3279,3 +3421,56 @@ def test_task_15103_review_ledger_semantic_atom_digest_is_scope_independent() ->
     moved = {**atom, "qualified_scope": "Another.place"}
 
     assert moved["semantic_digest"] == atom["semantic_digest"]
+
+
+@pytest.mark.parametrize("environment_name", [".venv", "developer-python"])
+def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment_name: str
+) -> None:
+    """Local dependency installations must not become application owners/sinks."""
+    package = tmp_path / "tldw_chatbook"
+    package.mkdir()
+    environment = package / environment_name
+    dependency = environment / "lib/python3.13/site-packages/foreign.py"
+    dependency.parent.mkdir(parents=True)
+    (environment / "pyvenv.cfg").write_text("home = /local/python\n")
+    dependency.write_text("logger.error('foreign')\nlogger.add('foreign.log')\n")
+    # A similarly named application module is still in scope.
+    application = package / "venv"
+    application.mkdir()
+    (application / "owner.py").write_text(
+        "logger.warning('owned')\nlogger.add('owned.log')\n"
+    )
+    monkeypatch.setattr(diagnostic_inventory, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(diagnostic_inventory, "PACKAGE_ROOT", package)
+
+    inventory = diagnostic_inventory.build_inventory()
+
+    assert [row["path"] for row in inventory["owners"]] == [
+        "tldw_chatbook/venv/owner.py"
+    ]
+    assert [row["path"] for row in inventory["persistent_sink_topology"]] == [
+        "tldw_chatbook/venv/owner.py"
+    ]
+    assert inventory["summary"] == {
+        "owner_files": 1,
+        "persistent_sink_files": 1,
+        "task_492_calls": 0,
+        "task_494_calls": 1,
+        "task_31551_calls": 0,
+        "path_privacy_candidate_calls": 0,
+    }
+
+
+def test_buddy_uat_lifecycle_diagnostics_do_not_capture_private_errors(monkeypatch):
+    owners = {
+        "tldw_chatbook/UI/LLM_Management_Window.py": {"Lazy LLM view mount failed: view={}": ("safe_view",)},
+        "tldw_chatbook/UI/Screens/library_screen.py": {
+            "Pending Library lifecycle write failed during unmount.": ()
+        },
+    }
+    for owner, labels in owners.items():
+        for label, fields in labels.items():
+            assert REVIEWED_METADATA_ONLY_DIAGNOSTICS[owner][label] == fields
+    monkeypatch.setitem(globals(), "REVIEWED_METADATA_ONLY_DIAGNOSTICS", owners)
+    test_reviewed_diagnostic_changes_are_metadata_only()

@@ -18,10 +18,11 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, ScrollableContainer
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static, LoadingIndicator
+from textual.widgets import Button, Label, Static
 from textual.reactive import reactive
 from textual.binding import Binding
 from loguru import logger
+from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 
 
 class DocumentGenerationModal(ModalScreen):
@@ -151,7 +152,7 @@ class DocumentGenerationModal(ModalScreen):
 
             # Loading state
             with Container(id="loading-container", classes="loading-container"):
-                yield LoadingIndicator()
+                yield PausableLoadingIndicator()
                 yield Label("", id="loading-message", classes="loading-message")
 
             # Document options

@@ -392,7 +392,8 @@ async def test_failed_fetch_marks_run_failed_and_bumps_failures_once(
     subscription_id = _add_due_source(
         subs_db, name="Dead page", type="url", source="https://example.com/gone"
     )
-    _serve_failure(monkeypatch, RuntimeError("connection refused"))
+    raw_canary = "SCHEDULED-FETCH-CANARY-22865 token=secret /private/watchlists.db"
+    _serve_failure(monkeypatch, RuntimeError(raw_canary))
     handler = _handler(subs_db)
 
     await handler.handle(_task(subscription_id))
@@ -400,13 +401,15 @@ async def test_failed_fetch_marks_run_failed_and_bumps_failures_once(
     rows = _run_rows(subs_db)
     assert len(rows) == 1, "a failed scheduled check must still record a run"
     assert rows[0]["status"] == "failed"
-    assert "connection refused" in (rows[0]["error_msg"] or "")
+    assert rows[0]["error_msg"] == "The source could not be reached."
+    assert raw_canary not in json.dumps(rows[0], default=str)
 
     row = subs_db.get_subscription(subscription_id)
     assert row["consecutive_failures"] == 1, (
         "auto-pause input must advance exactly once per failed check"
     )
-    assert "connection refused" in (row["last_error"] or "")
+    assert row["last_error"] == "The source could not be reached."
+    assert raw_canary not in json.dumps(row, default=str)
 
     await handler.handle(_task(subscription_id))
     assert subs_db.get_subscription(subscription_id)["consecutive_failures"] == 2, (
@@ -442,10 +445,13 @@ async def test_failure_around_execution_still_records_run_and_error(
     rows = _run_rows(subs_db)
     assert len(rows) == 1
     assert rows[0]["status"] == "failed", "the launched run must not stay queued"
-    assert "source vanished mid-run" in (rows[0]["error_msg"] or "")
+    assert rows[0]["error_msg"] == "The source could not be reached."
+    stats = json.loads(rows[0]["stats_json"])
+    assert stats["failure_category"] == "connection_failure"
     row = subs_db.get_subscription(subscription_id)
     assert row["consecutive_failures"] == 1
-    assert "source vanished mid-run" in (row["last_error"] or "")
+    assert row["last_error"] == "The source could not be reached."
+    assert "source vanished mid-run" not in json.dumps({"run": rows[0], "source": row})
 
 
 @pytest.mark.asyncio
@@ -466,11 +472,14 @@ async def test_failure_recorder_itself_raising_still_records_the_check_error(
     )
     service = _service(subs_db)
 
+    original_canary = "SCHEDULED-ORIGINAL-CANARY?token=secret /private/source.db"
+    recorder_canary = "SCHEDULED-RECORDER-CANARY CERTIFICATE-CANARY"
+
     async def exploding_execute_run(run_id):
-        raise RuntimeError("source vanished mid-run")
+        raise RuntimeError(original_canary)
 
     async def exploding_record_run_failure(run_id, **kwargs):
-        raise RuntimeError("the run table is unwritable")
+        raise RuntimeError(recorder_canary)
 
     monkeypatch.setattr(service, "execute_run", exploding_execute_run)
     monkeypatch.setattr(service, "record_run_failure", exploding_record_run_failure)
@@ -479,22 +488,28 @@ async def test_failure_recorder_itself_raising_still_records_the_check_error(
     loop = _loop(subs_db, handler)
     loop.queue.load()
 
-    # Through the real loop: an escaping exception here is what stops the
-    # scheduler dispatching every later task in the tick.
-    await loop.tick()
+    records: list[str] = []
+    sink_id = loguru_logger.add(lambda message: records.append(str(message)))
+    try:
+        # Through the real loop: an escaping exception here is what stops the
+        # scheduler dispatching every later task in the tick.
+        await loop.tick()
+    finally:
+        loguru_logger.remove(sink_id)
 
     row = subs_db.get_subscription(subscription_id)
-    assert "source vanished mid-run" in (row["last_error"] or ""), (
-        "the ORIGINAL error must survive, not the recorder's own failure"
-    )
+    assert row["last_error"] == "The source could not be reached."
     assert row["consecutive_failures"] == 1
+    rendered = "".join(records) + json.dumps(dict(row))
+    assert original_canary not in rendered
+    assert recorder_canary not in rendered
 
 
 @pytest.mark.asyncio
-async def test_failed_scheduled_check_is_logged_as_a_warning_with_the_error(
+async def test_failed_scheduled_check_is_logged_with_safe_recovery_only(
     tmp_path, monkeypatch
 ):
-    """A failed run must say so in the log, with its error text.
+    """A failed run must say so without putting raw transport detail in logs.
 
     It used to be reported at INFO as "check complete" with no error at all --
     so an unattended check of a dead source left a metric counter as its only
@@ -508,7 +523,8 @@ async def test_failed_scheduled_check_is_logged_as_a_warning_with_the_error(
     subscription_id = _add_due_source(
         subs_db, name="Dead page", type="url", source="https://example.com/gone"
     )
-    _serve_failure(monkeypatch, RuntimeError("connection refused"))
+    canary = "SCHEDULED-FETCH-CANARY?token=secret /private/watchlists.db"
+    _serve_failure(monkeypatch, RuntimeError(canary))
 
     records: list[tuple[str, str]] = []
     sink_id = loguru_logger.add(
@@ -523,12 +539,86 @@ async def test_failed_scheduled_check_is_logged_as_a_warning_with_the_error(
         loguru_logger.remove(sink_id)
 
     warnings = [text for level, text in records if level in ("WARNING", "ERROR")]
-    assert any("connection refused" in text for text in warnings), (
-        f"the failure's error text must reach the log at WARNING+; got {records}"
+    assert any("connection_failure" in text for text in warnings), (
+        f"the fixed failure category must reach the log at WARNING+; got {records}"
     )
+    assert canary not in "".join(warnings)
     assert not any("check complete" in text.lower() for _, text in records), (
         "a failed run must not also be announced as a completed one"
     )
+
+
+@pytest.mark.asyncio
+async def test_launch_failure_uses_safe_fallback_for_logs_and_source_row(
+    tmp_path, monkeypatch
+):
+    canary = (
+        "SCHEDULED-LAUNCH-CANARY?token=secret /private/watchlists.db "
+        "CERTIFICATE-CANARY"
+    )
+    subs_db = SubscriptionsDB(tmp_path / "subs.db")
+    subscription_id = _add_due_source(
+        subs_db, name="Dead launch", type="url", source="https://example.com/dead"
+    )
+    service = _service(subs_db)
+
+    async def exploding_launch_run(*, source_id):
+        assert source_id == subscription_id
+        raise RuntimeError(canary)
+
+    monkeypatch.setattr(service, "launch_run", exploding_launch_run)
+    records: list[str] = []
+    sink_id = loguru_logger.add(lambda message: records.append(str(message)))
+    try:
+        await _handler(subs_db, watchlists_service=service).handle(
+            _task(subscription_id)
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    source = dict(subs_db.get_subscription(subscription_id))
+    assert source["last_error"] == "The source could not be reached."
+    assert _run_rows(subs_db) == []
+    assert canary not in "".join(records) + json.dumps(source)
+
+
+@pytest.mark.asyncio
+async def test_final_scheduled_failure_write_cannot_escape_or_leak_to_loop_logs(
+    tmp_path, monkeypatch
+):
+    original_canary = "FINAL-ORIGINAL-CANARY?token=secret /private/source.db"
+    fallback_canary = "FINAL-FALLBACK-CANARY /private/watchlists.db CERTIFICATE-CANARY"
+    subs_db = SubscriptionsDB(tmp_path / "subs.db")
+    subscription_id = _add_due_source(
+        subs_db, name="Dead final fallback", type="url", source="https://example.com/dead"
+    )
+    service = _service(subs_db)
+
+    async def exploding_launch_run(*, source_id):
+        assert source_id == subscription_id
+        raise RuntimeError(original_canary)
+
+    def exploding_record_check_error(source_id, message):
+        assert source_id == subscription_id
+        assert message == "The source could not be reached."
+        raise RuntimeError(fallback_canary)
+
+    monkeypatch.setattr(service, "launch_run", exploding_launch_run)
+    monkeypatch.setattr(subs_db, "record_check_error", exploding_record_check_error)
+    loop = _loop(subs_db, _handler(subs_db, watchlists_service=service))
+    loop.queue.load()
+    records: list[str] = []
+    sink_id = loguru_logger.add(lambda message: records.append(str(message)))
+    try:
+        await loop.tick()
+    finally:
+        loguru_logger.remove(sink_id)
+
+    rendered = "".join(records)
+    assert "could not persist scheduled failure" in rendered.lower()
+    assert "handler failed" not in rendered.lower()
+    assert original_canary not in rendered
+    assert fallback_canary not in rendered
 
 
 @pytest.mark.asyncio

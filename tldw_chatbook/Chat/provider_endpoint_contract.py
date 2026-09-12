@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from ipaddress import ip_address
 from typing import Literal
 from unicodedata import category
@@ -18,6 +19,26 @@ EndpointForm = Literal[
 ]
 
 _LLAMA_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+#: Providers whose existing chat endpoint contract exposes a bounded models
+#: route suitable for an explicit, non-generating connection check.
+URL_BASED_PROVIDER_KEYS = frozenset(
+    {
+        "aphrodite",
+        "custom",
+        "custom_2",
+        "koboldcpp",
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_ollama",
+        "local_vllm",
+        "ollama",
+        "oobabooga",
+        "qwencloud",
+        "tabbyapi",
+        "vllm",
+    }
+)
 _PROVIDER_ALIASES = {
     "Custom": "custom",
     "Custom OpenAI": "custom",
@@ -73,6 +94,36 @@ class ProviderEndpointResolution:
     form: EndpointForm | None
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+
+
+class ConnectionProbeAvailability(StrEnum):
+    """Whether the provider draft has a meaningful non-generating probe."""
+
+    MODELS_ROUTE = "models_route"
+    UNAVAILABLE = "unavailable"
+
+
+def connection_probe_availability(
+    provider: str,
+    endpoint: str | None,
+) -> ConnectionProbeAvailability:
+    """Return probe availability without reading config or performing I/O.
+
+    Args:
+        provider: Provider identifier for the draft connection.
+        endpoint: Optional endpoint entered for that provider.
+
+    Returns:
+        Whether the provider exposes a valid non-generating models route.
+    """
+
+    provider_key = normalize_provider_key_for_contract(provider)
+    if provider_key not in URL_BASED_PROVIDER_KEYS:
+        return ConnectionProbeAvailability.UNAVAILABLE
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    if resolution.errors or resolution.models_url is None:
+        return ConnectionProbeAvailability.UNAVAILABLE
+    return ConnectionProbeAvailability.MODELS_ROUTE
 
 
 def resolve_provider_endpoint(
@@ -238,9 +289,7 @@ def normalize_provider_key_for_contract(provider: object) -> str:
     return provider_key
 
 
-def _invalid_resolution(
-    provider_key: str, error: str
-) -> ProviderEndpointResolution:
+def _invalid_resolution(provider_key: str, error: str) -> ProviderEndpointResolution:
     return ProviderEndpointResolution(
         provider_key=provider_key,
         normalized_input="",
@@ -281,9 +330,7 @@ def _terminal_suffix(
 
 
 def _contains_unsafe_unicode(value: str) -> bool:
-    return any(
-        category(character) in _UNSAFE_UNICODE_CATEGORIES for character in value
-    )
+    return any(category(character) in _UNSAFE_UNICODE_CATEGORIES for character in value)
 
 
 def _canonicalize_path(path: str) -> str | None:
@@ -295,9 +342,7 @@ def _canonicalize_path(path: str) -> str | None:
             if character.isascii():
                 canonical.append(character)
             else:
-                canonical.extend(
-                    f"%{octet:02X}" for octet in character.encode("utf-8")
-                )
+                canonical.extend(f"%{octet:02X}" for octet in character.encode("utf-8"))
             index += 1
             continue
 

@@ -1,0 +1,105 @@
+{
+  "evidence_path": "/private/tmp/tts-macos-burndown/higgs/live-wav-portaudio-02/evidence.json",
+  "evidence_sha256": "2918321ccc1575dbe24fde66b2552c3feceaf0a09ac1e46dcf191bcef98f3a1d",
+  "model": "/private/tmp/tts-macos-burndown/languages/whisper-small/536b0662742c02347bc0e980a01041f333bce120",
+  "model_files": {
+    "config.json": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "model.bin": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+  },
+  "runtime": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2"
+  },
+  "normalization": "Unicode case, punctuation and whitespace only; lexical differences preserved",
+  "device": "cpu",
+  "compute_type": "int8",
+  "success_audio_count": 3,
+  "clips": [
+    {
+      "transcript": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        23,
+        42
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "speech-lab",
+      "audio_sha256": "3f875d47fafe16431751e946882588baa599ab6d3b4a6553bd742c04bdb54b0b",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 3.96,
+          "text": " Silver compass rests by the quiet orchard under an amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        23,
+        42
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-warmup",
+      "audio_sha256": "1b8e0fb58d7be06185fee145298055c00b9882d7f3b955dc5137c0bac7fa722e",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 3.5,
+          "text": " Silver compass rests by the quiet orchard under an amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    },
+    {
+      "transcript": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "expected_text": "Silver compass rests by the quiet orchard under an amber sunrise.",
+      "anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "anchor_positions": [
+        0,
+        23,
+        42
+      ],
+      "anchors_complete": true,
+      "normalized_exact": true,
+      "phase_id": "console-successor",
+      "audio_sha256": "d764be6c18097f79b2874e5e8c0d0848bcd3cf655bf36a458b628c92152930d7",
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 3.08,
+          "text": " Silver compass rests by the quiet orchard"
+        },
+        {
+          "start": 3.08,
+          "end": 4.92,
+          "text": " under an amber sunrise."
+        }
+      ],
+      "detected_language": "en"
+    }
+  ],
+  "status": "content_passed"
+}

@@ -13,6 +13,10 @@ and advanced RAG (Retrieval-Augmented Generation) capabilities.
 import os
 import sys
 
+from .Utils.tiktoken_runtime import install_tiktoken_runtime as _install_tiktoken_runtime
+
+_install_tiktoken_runtime()
+
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
@@ -85,15 +89,13 @@ def _install_textual_compatibility_shims() -> None:
         )
 
 
-_install_textual_compatibility_shims()
-
-__version__ = "0.1.8.0"
+__version__ = "0.2.0"
 __author__ = "Robert Musser"
 __email__ = "contact@rmusser.net"
 __license__ = "AGPLv3+"
 
 # Version tuple for programmatic comparison
-VERSION_TUPLE = (0, 1, 8, 0)
+VERSION_TUPLE = (0, 2, 0)
 
 # Export key components when package is imported
 __all__ = [

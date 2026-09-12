@@ -1,0 +1,24 @@
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Rol  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+          Select a media item to read it here.
+
+
+
+
+
+
+
+
+---> --->
+
+
+
+
+
+
+
+
+
+  / focus search | F6 next pane | esc focus rail | F1 · Ctrl+P · Ctrl+Q

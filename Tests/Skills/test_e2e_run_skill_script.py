@@ -34,6 +34,7 @@ test_skill_remote_fetch.py``.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,6 +96,9 @@ class _E2EEnv:
     tool: Callable[[str, str, list], ToolResult]
     confirm_calls: list[dict[str, Any]]
     marker_path: Path
+    scratch_root: Path
+    bridge: ConsoleAgentBridge
+    run_id: str
     _trust_service: Any
     _skill_dir: Path
 
@@ -190,6 +194,10 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
             f"from pathlib import Path\nPath({str(marker_path)!r}).write_text('ran')\n",
             encoding="utf-8",
         )
+        (skill_dir / "scripts" / "produce.py").write_text(
+            "from pathlib import Path\nPath('artifact.txt').write_text('owned')\n",
+            encoding="utf-8",
+        )
         if trusted:
             trust_service.trust_current_skill(_SKILL_NAME, audit_event="e2e_setup")
 
@@ -245,6 +253,8 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
             provider_gateway=_PlainTextGateway(),
             skills_service=scope_service,
         )
+        scratch_root = tmp_path / "chat-scratch"
+        scratch_root.mkdir()
         bridge.run_reply(
             conversation_id="conv-e2e-script",
             session_id=session.id,
@@ -255,7 +265,11 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
             agent_messages=[{"role": "user", "content": "hi"}],
             should_cancel=lambda: False,
             request_skill_script_confirm=confirm_cb,
+            scratch_root=scratch_root,
+            scratch_lease=lambda: contextlib.nullcontext(scratch_root),
         )
+        run = db.latest_primary_run_metadata("conv-e2e-script")
+        assert run is not None
 
         assert real_agent_service is _RealAgentService  # sanity: patched the real class
         tool = captured.get("run_skill_script_tool")
@@ -265,6 +279,9 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
             tool=tool,
             confirm_calls=confirm_calls,
             marker_path=marker_path,
+            scratch_root=scratch_root,
+            bridge=bridge,
+            run_id=str(run["id"]),
             _trust_service=trust_service,
             _skill_dir=skill_dir,
         )
@@ -283,6 +300,31 @@ def test_agent_call_runs_a_real_script_and_returns_its_stdout(e2e_bridge_env):
     assert result.ok is True
     assert "hello from a real skill script" in result.content
     assert "exit_code: 0" in result.content
+
+
+def test_agent_retains_output_under_chat_scratch_without_disclosing_locator(
+    e2e_bridge_env,
+):
+    env = e2e_bridge_env(confirm={"allow": True, "remember": False})
+
+    result = env.tool("demo-skill", "scripts/produce.py", [])
+
+    assert result.ok is True
+    retained = list((env.scratch_root / "skill_script_output").glob("*/artifact.txt"))
+    assert len(retained) == 1
+    assert str(env.scratch_root) not in result.content
+    assert "output directory: skill_script_output/" in result.content
+
+
+def test_console_run_registers_private_in_memory_run_log_authority(e2e_bridge_env):
+    env = e2e_bridge_env(confirm={"allow": True, "remember": False})
+
+    authority = env.bridge._run_log_authority_for(env.run_id)
+
+    assert authority is not None
+    assert authority.root.is_relative_to(env.scratch_root)
+    assert env.bridge.run_log_available(env.run_id) is True
+    assert str(env.scratch_root) not in env.bridge.load_run_log_text(env.run_id)
 
 
 def test_denied_confirm_never_runs_the_script(e2e_bridge_env):

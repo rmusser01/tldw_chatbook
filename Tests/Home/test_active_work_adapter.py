@@ -1638,3 +1638,38 @@ def test_local_notification_adapter_treats_policy_refusal_quietly():
     assert not [w for w in warnings if "server event feed" in w], (
         f"policy refusal logged as warning: {warnings}"
     )
+
+
+def test_open_tasks_providers_feed_dashboard_input():
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        eval_open_runs_provider=lambda: {"pending": 1, "failed": 2},
+        read_later_count_provider=lambda: 5,
+    )
+    adapter.refresh_open_tasks_snapshot()
+    state = adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
+    assert state.pending_eval_run_count == 1
+    assert state.failed_eval_run_count == 2
+    assert state.read_later_count == 5
+
+
+def test_open_tasks_providers_degrade_quietly():
+    def boom():
+        raise RuntimeError("db unavailable")
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        eval_open_runs_provider=boom,
+        read_later_count_provider=boom,
+    )
+    adapter.refresh_open_tasks_snapshot()
+    state = adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
+    assert state.pending_eval_run_count == 0
+    assert state.failed_eval_run_count == 0
+    assert state.read_later_count is None
+
+
+def test_open_tasks_absent_providers_default_off():
+    adapter = LocalNotificationHomeActiveWorkAdapter()
+    adapter.refresh_open_tasks_snapshot()
+    state = adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
+    assert state.pending_eval_run_count == 0
+    assert state.read_later_count is None

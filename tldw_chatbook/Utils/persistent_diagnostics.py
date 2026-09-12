@@ -52,6 +52,10 @@ _TOKEN_FIELDS = frozenset(
         # label vocabulary in Metrics/metrics_logger.py rather than inventing a
         # second dialect for the same idea.
         "component",
+        "attempt_id",
+        "app_version",
+        "python_version",
+        "sqlite_version",
     }
 )
 _INTEGER_FIELDS = frozenset(
@@ -59,6 +63,7 @@ _INTEGER_FIELDS = frozenset(
         "status_code",
         "payload_length",
         "duration_ms",
+        "latency_ms",
         "retry_count",
         "unknown_argument_count",
         "result_size",
@@ -72,9 +77,17 @@ _INTEGER_FIELDS = frozenset(
         "threshold_ms",
         "mounts",
         "removes",
+        "sqlite_code",
+        "native_callback_count",
+        "native_fatal_status_bits",
+        "native_capture_overflows",
+        "native_invalid_frames",
+        "native_invalid_timing",
+        "native_capture_occupancy",
+        "native_render_occupancy",
     }
 )
-_BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled"})
+_BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_enabled"})
 _LIST_FIELDS = frozenset(
     {
         "argument_names",

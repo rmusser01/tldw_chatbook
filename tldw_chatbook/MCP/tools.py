@@ -283,17 +283,15 @@ class MCPTools:
             query: Search query
             limit: Maximum number of results
             media_types: Optional list of media types to filter
-            use_semantic: Whether to use semantic search (if available)
+            use_semantic: False forces media keyword search; true or omitted
+                follows the active RAG profile.
 
         Returns:
             List of search results with content and metadata
         """
         try:
-            # Perform search (both service methods are coroutines — they must
-            # be awaited directly, not dispatched via asyncio.to_thread, which
-            # would return the unawaited coroutine object)
-            if use_semantic and hasattr(self.rag_service, "semantic_search"):
-                results = await self.rag_service.semantic_search(
+            if use_semantic:
+                results = await self.rag_service.profile_search(
                     query=query,
                     limit=limit,
                     media_types=media_types,

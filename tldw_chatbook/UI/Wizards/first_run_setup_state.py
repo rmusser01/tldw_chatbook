@@ -522,16 +522,129 @@ def build_first_run_provider_commit(
     return mutation
 
 
+#: TASK-21143 (UAT S-1/M-2/N-7): how the last model-discovery probe for the
+#: CURRENT provider identity ended. "" means no failure is known — either
+#: the probe succeeded, never ran, or its identity was superseded (the
+#: wizard's existing per-discovery-key invalidation guarantees staleness
+#: never reaches these values).
+PROVIDER_PROBE_NONE = ""
+PROVIDER_PROBE_AUTH = "authentication"
+PROVIDER_PROBE_CONNECTION = "connection"
+
+
+def classify_discovery_failure(
+    discovery_state: str, failure_category: str
+) -> str:
+    """Collapse a discovery UI outcome into the trust-chain's three states.
+
+    Args:
+        discovery_state: The model step's discovery state string
+            ("available", "connection_failed", "listing_unavailable", ...).
+        failure_category: The human category rendered with a failure
+            ("authentication", "connection error", "request failed", ...).
+
+    Returns:
+        PROVIDER_PROBE_AUTH for credential rejections,
+        PROVIDER_PROBE_CONNECTION for any other failed probe, and
+        PROVIDER_PROBE_NONE when discovery did not fail (including
+        "listing_unavailable", which is a provider capability, not an
+        error in the user's setup).
+    """
+    if discovery_state != "connection_failed":
+        return PROVIDER_PROBE_NONE
+    if failure_category == "authentication":
+        return PROVIDER_PROBE_AUTH
+    return PROVIDER_PROBE_CONNECTION
+
+
+def probe_failure_summary_detail(probe_failure: str) -> str:
+    """The summary row's honest wording for a failed probe.
+
+    Args:
+        probe_failure: One of the PROVIDER_PROBE_* classifications.
+
+    Returns:
+        Human wording for the Provider row's detail, or "" when there is
+        no failure to describe.
+    """
+
+    if probe_failure == PROVIDER_PROBE_AUTH:
+        return "saved, but the key failed an authentication check"
+    if probe_failure == PROVIDER_PROBE_CONNECTION:
+        return "saved, but the server couldn't be reached when models were checked"
+    return ""
+
+
+def apply_probe_failure_to_summary_rows(
+    rows: tuple["SummaryRow", ...], probe_failure: str
+) -> tuple["SummaryRow", ...]:
+    """Overlay a known probe failure onto the config-derived summary rows.
+
+    ``build_summary_rows`` reads the config file, and a saved-but-broken
+    key is indistinguishable from a working one there — exactly the UAT
+    S-1 incident where the summary said "✓ Provider" minutes after the
+    probe got a 401. The overlay downgrades the Provider row to
+    ROW_ATTENTION with the failure spelled out; rows the config already
+    marks unconfigured are left alone (their message is more specific).
+    """
+    if not probe_failure:
+        return rows
+    detail = probe_failure_summary_detail(probe_failure)
+    return tuple(
+        replace(row, state=ROW_ATTENTION, detail=detail)
+        if row.label == "Provider" and row.state == ROW_CONFIGURED
+        else row
+        for row in rows
+    )
+
+
+def middle_truncate_path(path_text: str, max_chars: int) -> str:
+    """Middle-truncate a filesystem path for one-line display (UAT S-4).
+
+    The summary's config path used to hard-wrap mid-character across two
+    lines. Keeps the start (which disambiguates the profile root) and the
+    tail (the filename users recognize), joining with a single ellipsis.
+
+    Args:
+        path_text: The path to display.
+        max_chars: Display budget in cells; floored at 8.
+
+    Returns:
+        ``path_text`` unchanged when it fits, else head + "…" + tail at
+        exactly ``max_chars`` characters.
+    """
+    if max_chars < 8:
+        max_chars = 8
+    if len(path_text) <= max_chars:
+        return path_text
+    keep = max_chars - 1
+    head = keep // 2
+    tail = keep - head
+    return f"{path_text[:head]}…{path_text[-tail:]}"
+
+
 def build_first_run_summary_actions(
-    *, provider_configured: bool, model_configured: bool
+    *,
+    provider_configured: bool,
+    model_configured: bool,
+    provider_probe_failed: bool = False,
 ) -> tuple[FirstRunSummaryAction, FirstRunSummaryAction, FirstRunSummaryAction]:
-    """Return the exact primary, secondary, and tertiary summary hierarchy."""
+    """Return the exact primary, secondary, and tertiary summary hierarchy.
+
+    TASK-21143: ``provider_probe_failed`` covers the saved-but-broken case
+    (UAT S-1) — "configured" means written to disk, never "working", so a
+    key that failed its authentication probe still counted as configured
+    and the ``review_provider`` primary this function already had was
+    unreachable exactly when it mattered most.
+    """
 
     if type(provider_configured) is not bool or type(model_configured) is not bool:
         raise ValueError("Summary readiness must use booleans.")
+    if type(provider_probe_failed) is not bool:
+        raise ValueError("Summary probe state must use booleans.")
     primary: FirstRunSummaryAction = (
         "start_chatting"
-        if provider_configured and model_configured
+        if provider_configured and model_configured and not provider_probe_failed
         else "review_provider"
     )
     return primary, "explore_home", "review_settings"
@@ -741,6 +854,52 @@ def should_offer_wizard(
     return not any_provider_configured(app_config, environ)
 
 
+#: TASK-21147 (UAT E-1): one-time acknowledgement flag for env-key installs.
+ENV_KEY_NOTICE_KEY = "env_key_notice_shown"
+
+
+def env_keys_that_silenced_first_run(
+    app_config: Mapping[str, object], environ: Mapping[str, str]
+) -> tuple[str, ...]:
+    """Env var names whose keys made a fresh install skip the wizard offer.
+
+    TASK-21147 (UAT E-1): with a provider env var exported — the standard
+    developer pattern — a fresh install boots straight to Console with no
+    acknowledgement at all: no mention the key was found, no hint the
+    setup wizard (voice, tools, key encryption) exists. This names the
+    vars so the app can say so exactly once.
+
+    Returns:
+        The env var names (deduplicated, config order) to mention, or ()
+        when no notice is due: setup was started/completed, the notice was
+        already shown, an INLINE config key exists (that user actively
+        configured the app), or no env credential is present.
+    """
+    if _wizard_flag(app_config, SETUP_STARTED_KEY):
+        return ()
+    if _wizard_flag(app_config, SETUP_COMPLETED_KEY):
+        return ()
+    if _wizard_flag(app_config, ENV_KEY_NOTICE_KEY):
+        return ()
+    api_settings = app_config.get("api_settings")
+    if not isinstance(api_settings, Mapping):
+        return ()
+    names: list[str] = []
+    for settings in api_settings.values():
+        if not isinstance(settings, Mapping):
+            continue
+        if _is_real_provider_api_key(settings.get("api_key")):
+            return ()
+        env_var = settings.get("api_key_env_var")
+        if (
+            isinstance(env_var, str)
+            and env_var.strip()
+            and _is_real_provider_api_key(environ.get(env_var.strip()))
+        ):
+            names.append(env_var.strip())
+    return tuple(dict.fromkeys(names))
+
+
 def should_show_resume_toast(
     app_config: Mapping[str, object], environ: Mapping[str, str]
 ) -> bool:
@@ -786,7 +945,7 @@ class SetupProgressItem:
 
     step_id: str
     title: str
-    state: Literal["active", "complete", "upcoming"]
+    state: Literal["active", "complete", "upcoming", "attention"]
 
 
 # TASK-1301: Speech transcription joins the FULL track only, right after RAG
@@ -831,7 +990,7 @@ _SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
     STEP_RAG: {"embedding_model": str},
     STEP_SPEECH: {},
     STEP_TOOLS: {},
-    STEP_NOTES: {"auto_sync_enabled": bool},
+    STEP_NOTES: {},
     STEP_APPEARANCE: {"theme": str, "splash_card": str},
     STEP_PROTECT: {"encryption_enabled": bool},
     STEP_SUMMARY: {},
@@ -1080,6 +1239,10 @@ WIZARD_OWNED_SECTIONS = frozenset(
         "tools",
         "notes",
         "general",
+        # TASK-21146 (UAT H-1): the Summary step records the online
+        # model-list consent answer through the exact [model_catalog]
+        # contract the Console consent modal writes.
+        "model_catalog",
         "splash_screen",
         "transcription",
         "provider_setup.confirmed",
@@ -1092,20 +1255,83 @@ _API_SETTINGS_PREFIX = "api_settings."
 def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
     """Resolve the ordered active step ids for a track.
 
+    TASK-21148 (UAT N-6): STEP_PROTECT is always on both tracks. It used
+    to join only once a key was entered, which moved the goalposts
+    mid-flight — "Step 2 of 5" became "Step 3 of 6" the moment a key was
+    typed. A stable total beats a shorter one; the Protect step itself
+    renders a nothing-to-do state while no key exists.
+
     Args:
         track: TRACK_QUICK or TRACK_FULL (anything else falls back to full).
-        key_entered: Whether any secret was entered this run; gates STEP_PROTECT.
+        key_entered: Retained for call-site compatibility; no longer gates
+            any step.
     """
-    base = _QUICK_TRACK if track == TRACK_QUICK else _FULL_TRACK
-    if key_entered:
-        return base
-    return tuple(step for step in base if step != STEP_PROTECT)
+    del key_entered
+    return _QUICK_TRACK if track == TRACK_QUICK else _FULL_TRACK
+
+
+def setup_attention_ids(
+    wizard_data: Mapping[str, object] | None,
+    *,
+    probe_failed: bool = False,
+) -> frozenset[str]:
+    """Which visited steps must not wear the completion tick.
+
+    TASK-25818: the tracker only downgraded Provider/Model when a probe had
+    demonstrably failed, so a step the user walked through WITHOUT
+    configuring anything still showed the same ✓ as a finished one. The
+    summary screen already told the truth ("✗ Provider — no credentials or
+    saved endpoint") while the tracker above it showed five ticks, and the
+    tracker is what users read.
+
+    Scoped deliberately to Provider and Model. Skipping voice or key
+    encryption is legitimate under the wizard's skip-safe design, so
+    flagging those would cry wolf; these two decide whether the product can
+    reach a model at all.
+
+    Args:
+        wizard_data: Collected per-step values, keyed by step id. A
+            non-mapping (or missing step) counts as unconfigured.
+        probe_failed: Whether the provider probe demonstrably failed, which
+            flags both steps regardless of what was configured.
+
+    Returns:
+        frozenset[str]: Step ids that must render the attention marker
+        instead of the completion tick. Empty when both steps are
+        configured and no probe failure is known.
+    """
+
+    values = wizard_data if isinstance(wizard_data, Mapping) else {}
+
+    def _configured(step_id: str, field: str) -> bool:
+        step = values.get(step_id)
+        if not isinstance(step, Mapping):
+            return False
+        return bool(str(step.get(field) or "").strip())
+
+    flagged: set[str] = set()
+    if probe_failed:
+        flagged.update({STEP_PROVIDER, STEP_MODEL})
+    if not _configured(STEP_PROVIDER, "provider_key"):
+        flagged.add(STEP_PROVIDER)
+    if not _configured(STEP_MODEL, "model_id"):
+        flagged.add(STEP_MODEL)
+    return frozenset(flagged)
 
 
 def build_setup_progress(
-    active_ids: tuple[str, ...], current_index: int
+    active_ids: tuple[str, ...],
+    current_index: int,
+    attention_ids: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[SetupProgressItem, ...]:
-    """Project a resolved setup path into display-ready progress rows."""
+    """Project a resolved setup path into display-ready progress rows.
+
+    TASK-21143 (UAT N-7): a visited step whose probe demonstrably failed
+    must not wear the ✓ users read as "this part is OK" — ``attention_ids``
+    downgrades those completed steps to the "attention" state (rendered as
+    an amber "!"). Only completed steps downgrade: the active step keeps
+    its position marker, upcoming steps have nothing to report on yet.
+    """
 
     unknown_ids = tuple(step_id for step_id in active_ids if step_id not in STEP_TITLES)
     if unknown_ids:
@@ -1113,17 +1339,17 @@ def build_setup_progress(
     if not active_ids:
         return ()
     active_index = min(max(current_index, 0), len(active_ids) - 1)
+
+    def state_for(index: int, step_id: str) -> str:
+        if index < active_index:
+            return "attention" if step_id in attention_ids else "complete"
+        return "active" if index == active_index else "upcoming"
+
     return tuple(
         SetupProgressItem(
             step_id=step_id,
             title=STEP_TITLES[step_id],
-            state=(
-                "complete"
-                if index < active_index
-                else "active"
-                if index == active_index
-                else "upcoming"
-            ),
+            state=state_for(index, step_id),
         )
         for index, step_id in enumerate(active_ids)
     )
@@ -1266,30 +1492,6 @@ def tools_commit_delta(
     }
 
 
-def build_notes_commit(
-    *, sync_directory: str | None = None, auto_sync_enabled: bool
-) -> dict[str, dict[str, Any]]:
-    """Mutation for the notes-sync step.
-
-    ``sync_directory`` is optional: omit it (leave as None) to commit only
-    the enabled flag -- e.g. an OFF-transition on re-run, where the
-    directory should survive untouched. ``save_settings_to_cli_config``
-    merges per-key within a section, so a dict missing "sync_directory"
-    never clobbers the persisted value; passing an empty string here would.
-
-    Args:
-        sync_directory: The notes-sync directory to persist, or None to
-            omit the key entirely (see above).
-        auto_sync_enabled: Whether notes sync should be turned on.
-
-    Returns:
-        The section/value mapping to persist under ``notes``.
-    """
-    values: dict[str, Any] = {"auto_sync_enabled": auto_sync_enabled}
-    if sync_directory is not None:
-        values["sync_directory"] = sync_directory
-    return {"notes": values}
-
 
 def build_appearance_commit(
     *,
@@ -1431,8 +1633,6 @@ class WizardPrefill:
 
     provider_value: str = ""
     model_id: str = ""
-    sync_directory: str = ""
-    auto_sync_enabled: bool = False
     default_theme: str = ""
     tool_gates: tuple[tuple[str, bool], ...] = ()
     card_selection: str = ""
@@ -1548,15 +1748,12 @@ def read_provider_secret_presence(
 
 def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     chat_defaults = _section(app_config, "chat_defaults")
-    notes = _section(app_config, "notes")
     general = _section(app_config, "general")
     tools = _section(app_config, "tools")
     splash_screen = _section(app_config, "splash_screen")
     return WizardPrefill(
         provider_value=str(chat_defaults.get("provider") or ""),
         model_id=str(chat_defaults.get("model") or ""),
-        sync_directory=str(notes.get("sync_directory") or ""),
-        auto_sync_enabled=coerce_wizard_flag(notes.get("auto_sync_enabled")),
         default_theme=str(general.get("default_theme") or ""),
         tool_gates=tuple(
             (str(key), coerce_wizard_flag(value)) for key, value in tools.items()
@@ -1610,7 +1807,6 @@ def build_summary_rows(
     # committed endpoint (the one-click "Use this server" path).
     provider_ok = provider_summary_configured(app_config, environ)
     tools_on = [key for key, value in prefill.tool_gates if value]
-    notes_on = prefill.auto_sync_enabled and bool(prefill.sync_directory)
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
@@ -1712,11 +1908,21 @@ def build_summary_rows(
             "configured but not installed — revisit Lab ▸ Models",
         )
 
+    # TASK-21149 (UAT S-3): name the provider — "✓ Provider" confirmed
+    # nothing; "✓ Provider — OpenAI" confirms the one fact the user chose.
+    chat_defaults = app_config.get("chat_defaults")
+    provider_name = ""
+    if isinstance(chat_defaults, Mapping):
+        raw_name = chat_defaults.get("provider")
+        if isinstance(raw_name, str):
+            provider_name = raw_name.strip()
+    from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
+
     return (
         SummaryRow(
             "Provider",
             ROW_CONFIGURED if provider_ok else ROW_ATTENTION,
-            "" if provider_ok else "no credentials or saved endpoint",
+            (provider_name if provider_ok else "no credentials or saved endpoint"),
         ),
         model_row,
         rag_row,
@@ -1724,12 +1930,23 @@ def build_summary_rows(
         SummaryRow(
             "Tools",
             ROW_CONFIGURED if tools_on else ROW_DEFAULT,
-            f"{len(tools_on)} enabled" if tools_on else "all off (default)",
+            f"{len(tools_on)} enabled"
+            if tools_on
+            # task-32289 AC#1: name the destination -- Quick setup never
+            # shows the Tools step, and a Full-setup user who left every
+            # switch off has the same "nothing is enabled" state, so one
+            # detail string covers both without threading `track` through.
+            # task-32284 (Qodo #2600 #17): the path comes from
+            # `TOOL_GATES_PANE_PATH`, never retyped. The shortened
+            # "MCP ▸ Servers ▸ Tool gates" written here omitted the
+            # built-in server ROW, and the pane only exists inside that
+            # row's detail view -- so the breadcrumb did not lead anywhere.
+            else f"all off; turn them on under {TOOL_GATES_PANE_PATH}",
         ),
         SummaryRow(
-            "Notes sync",
-            ROW_CONFIGURED if notes_on else ROW_DEFAULT,
-            prefill.sync_directory if notes_on else "off",
+            "Notes folder sync",
+            ROW_DEFAULT,
+            "set up later in Library",
         ),
         SummaryRow(
             "Theme",

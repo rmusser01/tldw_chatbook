@@ -7,8 +7,6 @@ import re
 import pytest
 
 from tldw_chatbook.Agents.agent_models import (
-    AGENT_KIND_PRIMARY,
-    AGENT_KIND_SUBAGENT,
     RUN_DONE,
     RUNTIME_TOOL_NAMES,
     SEARCH_RUN_LOG_TOOL_NAME,
@@ -253,20 +251,9 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     the fix restores.
     """
     from tldw_chatbook.Agents import run_log as run_log_module
-    import tldw_chatbook.Tools.file_operation_tools as file_tools
-    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    sandbox = tmp_path / "sandbox"
-    sandbox.mkdir()
-    monkeypatch.setattr(file_tools, "_resolve_sandbox_config", lambda: str(sandbox))
-
-    def fake_get_cli_setting(section, key=None, default=None):
-        if section == "tools" and key == "read_file_enabled":
-            return True
-        return default
-
-    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
     # Marker sits at ~char 10,000: well past the old 400-char rendering
     # bug, safely inside the run's 16,000-char ceiling so it is genuinely
@@ -275,7 +262,18 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     # truncation on the recovery side) both actually fire.
     marker = "END_MARKER_7f3a9c"
     big_content = "A" * 10_000 + marker + "C" * 40_000
-    (sandbox / "big.txt").write_text(big_content, encoding="utf-8")
+
+    async def safe_calculator(_self, *, expression):
+        # Calculator output is eligible for durable recovery. File-tool
+        # output is intentionally omitted regardless of whether a test
+        # double happens to remove its usual path metadata.
+        return {
+            "expression": expression,
+            "result": big_content,
+            "result_type": "str",
+        }
+
+    monkeypatch.setattr(CalculatorTool, "execute", safe_calculator)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
@@ -287,7 +285,7 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
         calls.append(kwargs)
         round_idx = len(calls)
         if round_idx == 1:
-            return _svc_fence("read_file", {"file_path": "big.txt"})
+            return _svc_fence("calculator", {"expression": "1+1"})
         if round_idx == 2:
             # Follow the trailer's OWN pointer, extracted from the ACTUAL
             # truncated tool-result message the loop appended -- not a
@@ -310,7 +308,7 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
         config=AgentConfig(
             model="m",
             system_prompt="s",
-            allowed_tools=("read_file",),
+            allowed_tools=("calculator",),
             budget=RunBudget(),
         ),
         api_endpoint="llama_cpp",
@@ -333,6 +331,65 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     assert len(recovered_msg) > 400, (
         "recovered message must be far larger than the old 400-char bug"
     )
+
+
+def test_sensitive_large_result_has_no_recoverable_run_log_handle(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Agents import run_log as run_log_module
+    from tldw_chatbook.Agents.run_log_format import iter_records
+    import tldw_chatbook.Tools.file_operation_tools as file_tools
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(file_tools, "_resolve_sandbox_config", lambda: str(sandbox))
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    (sandbox / "private.txt").write_text("S" * 30_000, encoding="utf-8")
+    calls = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _svc_fence("read_file", {"file_path": "private.txt"})
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider(gate=_AllowGate()))
+    service = AgentService(db, registry, chat_call=chat)
+    _run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "read it"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("read_file",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    truncated = calls[1]["messages_payload"][-1]["content"]
+    assert "Re-issue the call with a narrower query" in truncated
+    assert "full result is recorded" not in truncated
+    assert "search_run_log(from_record=" not in truncated
+
+    run_dir = next(path for path in (tmp_path / ".agent-runs").iterdir() if path.is_dir())
+    records = [
+        record
+        for segment in sorted(run_dir.glob("logs.*.txt"))
+        for record in iter_records(segment.read_bytes())
+    ]
+    result_record = next(record for record in records if record.type == "tool_result")
+    assert result_record.content == "[local path withheld]"
 
 
 def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkeypatch):

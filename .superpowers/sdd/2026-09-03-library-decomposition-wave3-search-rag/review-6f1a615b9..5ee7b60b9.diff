@@ -1,0 +1,250 @@
+# Review package: 6f1a615b9..5ee7b60b9
+
+## Commits
+5ee7b60b9 docs(library): wave-3 fix wave — stale-claim polish, follow-up tasks filed
+
+## Files changed
+ .../test_library_modules_size_ratchet.py            | 10 +++++++++-
+ backlog/docs/library-decomposition-recipe.md        |  6 ++++--
+ ...ecomposition-wave-3-combined-searchRAG-series.md |  2 ++
+ ...wiring-cluster-membership-AST-re-census-guard.md | 21 +++++++++++++++++++++
+ ...nc-search-kind-screen-caller-AST-census-guard.md | 21 +++++++++++++++++++++
+ ...wave-stale-present-tense-shim-footer-comments.md | 21 +++++++++++++++++++++
+ .../library_rag_search_controller.py                |  5 +++--
+ tldw_chatbook/UI/Screens/library_screen.py          |  4 ++--
+ 8 files changed, 83 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/Tests/Architecture/test_library_modules_size_ratchet.py b/Tests/Architecture/test_library_modules_size_ratchet.py
+index 8419cfe21..3fc4df377 100644
+--- a/Tests/Architecture/test_library_modules_size_ratchet.py
++++ b/Tests/Architecture/test_library_modules_size_ratchet.py
+@@ -165,21 +165,29 @@ _BUDGETS: dict[str, int] = {
+     # module docstring's own already-corrected paragraph. Comment-only
+     # growth; no method body, mover count, or byte-for-byte canon content
+     # changed. 1890 -> 1895.
+     # 2026-09-03, wave-3 task 5 (wave close, stale-doc sweep): this
+     # module's own docstring claimed `LibraryScreen` "carries (task 2)"
+     # the two-prefix shim in present tense -- stale since task 4 deleted
+     # that shim. Corrected to past tense ("task 2 installed ... deleted
+     # at cleanup, task 4"), matching `library_export_controller.py`'s own
+     # correct precedent. Comment-only growth (+2 lines); no method body
+     # touched. 1895 -> 1897.
+-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1897,
++    # 2026-09-03, wave-3 final review fix wave: the generated shim block's
++    # OWN footer comment (near the bottom of the file, not the module
++    # docstring task 5 already fixed above) still said "the shim block
++    # `LibraryScreen` carries (task 2)" in present tense -- the same task-4
++    # deletion task 5 accounted for at the top of the file, missed at the
++    # bottom. Reworded to match the module docstring's corrected past-tense
++    # phrasing. Comment-only growth (+1 line); no method body touched.
++    # 1897 -> 1898.
++    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 1898,
+     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 760,
+     "tldw_chatbook/UI/Library_Modules/library_skills_browse_controller.py": 413,
+ }
+ 
+ #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
+ #: tolerance for the same reasoning at a larger scale): ordinary in-file
+ #: edits — a strengthened comment, a docstring fix — must not fail this
+ #: check. It exists only to catch a budget left stale-high after a
+ #: controller shrinks (a cleanup PR that forgot to lower its row), not to
+ #: pin every file to its exact byte count at all times.
+diff --git a/backlog/docs/library-decomposition-recipe.md b/backlog/docs/library-decomposition-recipe.md
+index b910fdfd5..a6cee15c5 100644
+--- a/backlog/docs/library-decomposition-recipe.md
++++ b/backlog/docs/library-decomposition-recipe.md
+@@ -2331,22 +2331,24 @@ task-4-report.md`).
+    file. It then grew twice more (Task 3's own fix round, Task 4's ruled
+    docstring fix), each growth re-pinned in the SAME commit as the change
+    that caused it (1857 -> 1890 -> 1895), per §17's re-pin-at-move flow
+    (identical to the screen ratchet's §6 rule). This is the governance
+    mechanism's first live exercise since task-31203 AC#4 landed it, and it
+    worked exactly as designed on the first subsystem to need it.
+ 8. **A battery run captured BEFORE a later edit does not verify that
+    edit -- re-measure fresh after every edit, not just after the first
+    one in a session.** Task 5 (wave close) ran the full ratchet battery
+    green, THEN fixed a stale docstring claim in `library_rag_search_
+-   controller.py` (lesson 5's mechanism, applied to a wave-1 file this
+-   time) as a separate, later step -- the rewrite needed 2 more lines to
++   controller.py` (this wave-3 file's OWN module docstring, not a moved
++   body -- unlike lesson 5's deferred-to-cleanup-PR mechanism, no
++   byte-for-byte canon deferral applied here) as a separate, later step
++   -- the rewrite needed 2 more lines to
+    read naturally, growing the file from 1895 to 1897 without re-running
+    the ratchet afterward. The drift sat unnoticed until a later,
+    unrelated fresh-measurement pass (`_measure()` called directly, not
+    through pytest) caught it; `test_controller_does_not_grow_past_its_
+    budget` confirmed red on re-run. Re-pinned 1895 -> 1897 same-commit,
+    battery re-confirmed green. The general lesson: "the battery was
+    green" is a claim about the tree AT THE TIME it ran, not a durable
+    property of the tree -- any edit after the last green run, however
+    small or comment-only it looks, needs its own fresh verification,
+    exactly the discipline lessons 4-5 above ask of evidence claims in
+diff --git a/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md b/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md
+index 87442f5da..78c457f97 100644
+--- a/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md	
++++ b/backlog/tasks/task-31203 - Library-decomposition-wave-3-combined-searchRAG-series.md	
+@@ -24,20 +24,22 @@ Wave-2 Task 8's entanglement gate fired: 8/14 search methods (57.1%) call or are
+ <!-- AC:END -->
+ 
+ ## Implementation Notes
+ 
+ <!-- SECTION:NOTES:BEGIN -->
+ AC#4 only (Task 1 of the wave-3 plan): decided option (a), exact per-file _BUDGETS rows in a new sibling guard, Tests/Architecture/test_library_modules_size_ratchet.py, discovered by glob (UI/Library_Modules/*_controller.py) so a new controller is born governed instead of needing a hand-edit. 12 current controller files pinned at their exact measured line counts (699-2023 lines). Mutation-tested both directions plus the self-defending unlisted-file property (all 4 fire correctly, reverted cleanly). Full decision, reasoning, re-pin flow, and measured rows recorded in backlog/docs/library-decomposition-recipe.md new section 17. This ticks AC#4 only -- AC#1-3 (the search+RAG extraction series itself) remain To Do; task stays not-Done.
+ 
+ AC#1-3 (Tasks 2-4 of the wave-3 plan, the extraction series itself): complete. Task 2 (state PR) re-derived the combined cluster fresh (60 raw "search"/"rag" name matches, 50 after excluding 3 Prompts-owned + 7 Media-owned) and moved 20 fields to LibraryRagSearchState (one combined object -- field-level census found all 20 consumed inside one lock-serialized call graph, so no search/rag split). Task 3 (controller PR) re-verified the single-controller decision independently at the method level and moved 42 of the 50 candidates to LibraryRagSearchController (8 excluded: 3 @work framework-decorator hazard, 1 module-globals-coupling exclusion found by running the battery, 4 instance-attribute-monkeypatch test bypasses); one fix round corrected two false-caller-count claims and a shipped-red path-census test. Task 4 (cleanup PR) deleted the screen's generated state shim (66 literal field references across 11 screen-resident methods retargeted to self._rag_search_state.<field> -- corrected in fix round 1 from an initial undercount of "35 across 9"); a wider census also flagged canvas_sync.py's _sync_library_canvas (a cross-module write of the flat name), but its only two callers forward the CONTROLLER as "screen" (which has no _rag_search_state attribute by design), so retargeting it broke a real test caught by this task's own sweep -- reverted, canvas_sync.py needed no change (see recipe §18 for the full trace). Pruned 12 of the 42 screen delegators with zero references anywhere outside their own body, removed 14 dead imports total (5 in the original PR, 9 more of the same kind found in the same import block during fix round 1), and fixed the one moved-body docstring Task 3's review had ruled out of scope for the controller PR itself.
+ 
+ Fix round 1 (post-review, commit a150fc766) also corrected this task's own record: the 9 additional dead imports above, the 35/9 -> 66/11 retarget-count correction, and a canvas_sync.py guard comment. Final pins (after fix round 1): library_screen.py 43977/1316 (task 2 start) -> 42940/1304 (task 4 final; 42949/1304 pre-fix-round); library_rag_search_controller.py born-governed at 1857 -> 1895. Full per-task detail in backlog/docs/library-decomposition-recipe.md §18 and .superpowers/sdd/2026-09-03-library-decomposition-wave3-search-rag/task-{2,3,4}-report.md. All four ACs now met; task moves to Done.
++
++The 1895 figure above was superseded twice more and is not the actual final: task 5 (wave close, stale-doc sweep) corrected a further stale present-tense docstring claim, repinning library_rag_search_controller.py 1895 -> 1897 (comment-only, no method body touched); the wave-3 final review fix wave found one more stale present-tense claim (the generated shim block's own footer comment, missed by task 5's docstring-only sweep) and repinned it again, 1897 -> 1898. The actual final pin is library_rag_search_controller.py born-governed at 1857 -> 1898; library_screen.py's pin is unaffected (still 42940/1304).
+ <!-- SECTION:NOTES:END -->
+ 
+ ## Renumbering provenance
+ 
+ Filed as `TASK-27021` on the wave-2 branch (2026-09-03 05:55, last
+ edited 07:30). Merging `origin/dev` (2026-09-03) surfaced a collision
+ with dev's own `TASK-27021` ("Console references wire expansion into
+ the send-path composer completion"), an unrelated, already-filed task
+ -- per the 2026-08-21 owner rule (TASK-19601) and the precedent
+ recorded in `backlog/docs/lessons-backlog-hygiene.md`, the OLDER
+diff --git a/backlog/tasks/task-31260 - Library-wiring-cluster-membership-AST-re-census-guard.md b/backlog/tasks/task-31260 - Library-wiring-cluster-membership-AST-re-census-guard.md
+new file mode 100644
+index 000000000..c0173d99c
+--- /dev/null
++++ b/backlog/tasks/task-31260 - Library-wiring-cluster-membership-AST-re-census-guard.md	
+@@ -0,0 +1,21 @@
++---
++id: TASK-31260
++title: Library wiring cluster-membership AST re-census guard
++status: To Do
++assignee: []
++created_date: '2026-09-04 05:44'
++labels: []
++dependencies: []
++---
++
++## Description
++
++<!-- SECTION:DESCRIPTION:BEGIN -->
++Recipe section 16 lesson 5 flagged the Library wiring-cluster method-name tuples (`_EXPORT_CLUSTER_METHOD_NAMES`, `_COLLECTIONS_CLUSTER_METHOD_NAMES`, and the equivalents now hand-kept by the conversations and search+RAG wiring tests) as frozen, hand-written snapshots that nothing re-verifies against the live LibraryScreen source. A future same-named method landing on the screen -- genuinely subsystem-owned or a same-named coincidence -- is invisible to every wiring and architecture test that exists today; it is not flagged as needing a cluster-membership decision. This closes the deferred gap recipe section 16 lesson 5 named as a wave-3-or-later candidate, now that a third and fourth hand-kept tuple (conversations, search+RAG) exist alongside the original two (export, collections).
++<!-- SECTION:DESCRIPTION:END -->
++
++## Acceptance Criteria
++<!-- AC:BEGIN -->
++- [ ] #1 A guard test fails when a search/rag/export/collections/conversations-named method is added to or removed from LibraryScreen without a matching update to its corresponding hand-kept wiring-cluster tuple
++- [ ] #2 The guard test passes against the current, unmodified tree, proving today's four hand-kept tuples (export, collections, conversations, search+RAG) are accurate at filing time
++<!-- AC:END -->
+diff --git a/backlog/tasks/task-31261 - canvas_sync-search-kind-screen-caller-AST-census-guard.md b/backlog/tasks/task-31261 - canvas_sync-search-kind-screen-caller-AST-census-guard.md
+new file mode 100644
+index 000000000..7e7b7fbe1
+--- /dev/null
++++ b/backlog/tasks/task-31261 - canvas_sync-search-kind-screen-caller-AST-census-guard.md	
+@@ -0,0 +1,21 @@
++---
++id: TASK-31261
++title: canvas_sync search-kind screen-caller AST census guard
++status: To Do
++assignee: []
++created_date: '2026-09-04 05:44'
++labels: []
++dependencies: []
++---
++
++## Description
++
++<!-- SECTION:DESCRIPTION:BEGIN -->
++canvas_sync.py's _sync_library_canvas dispatcher's "search"-kind branch (~line 477) writes the flat _library_rag_answer_render_key attribute directly on its screen argument, relying on a composed invariant that every "search"-kind caller forwards the CONTROLLER (LibraryRagSearchController) as screen, never the actual LibraryScreen, which has no _rag_search_state attribute and would silently grow a dead instance attribute instead of raising. That invariant is currently verified once by hand (a code comment reading 'no such caller exists, AST-verified') and not by any automated test. Tests/Library/test_library_rag_scope.py's test_library_screen_call_sites_never_pass_scope_kwarg already sketches the exact mechanism needed: a two-file AST census over library_screen.py and library_rag_search_controller.py that walks Call nodes and asserts an invariant across both files.
++<!-- SECTION:DESCRIPTION:END -->
++
++## Acceptance Criteria
++<!-- AC:BEGIN -->
++- [ ] #1 A guard test fails if a future _sync_library_canvas(..., "search", ...) call site is added directly on library_screen.py itself rather than on the controller
++- [ ] #2 The guard test passes against the current tree, confirming today's only two "search"-kind call sites both live in library_rag_search_controller.py
++<!-- AC:END -->
+diff --git a/backlog/tasks/task-31262 - Sweep-earlier-wave-stale-present-tense-shim-footer-comments.md b/backlog/tasks/task-31262 - Sweep-earlier-wave-stale-present-tense-shim-footer-comments.md
+new file mode 100644
+index 000000000..990460178
+--- /dev/null
++++ b/backlog/tasks/task-31262 - Sweep-earlier-wave-stale-present-tense-shim-footer-comments.md	
+@@ -0,0 +1,21 @@
++---
++id: TASK-31262
++title: Sweep earlier-wave stale present-tense shim-footer comments
++status: To Do
++assignee: []
++created_date: '2026-09-04 05:44'
++labels: []
++dependencies: []
++---
++
++## Description
++
++<!-- SECTION:DESCRIPTION:BEGIN -->
++This wave's final review found a shim-footer comment in library_rag_search_controller.py still claiming, in present tense, that LibraryScreen 'carries' a generated state shim block that an earlier cleanup task had already deleted. library_collections_controller.py and library_export_controller.py already carry the corrected past-tense phrasing and serve as the template. The same stale present-tense claim (a shim block 'the shim block LibraryScreen carries') survives, uncorrected, in two earlier-wave controllers whose own screen-side shim blocks were similarly deleted at their cleanup PRs: library_conversation_reader_controller.py (~line 913) and library_conversations_controller.py (~line 1712). Sweep these stragglers to match the corrected template.
++<!-- SECTION:DESCRIPTION:END -->
++
++## Acceptance Criteria
++<!-- AC:BEGIN -->
++- [ ] #1 library_conversation_reader_controller.py's shim-footer comment is reworded to past tense, matching library_collections_controller.py's corrected template phrasing
++- [ ] #2 library_conversations_controller.py's shim-footer comment is reworded the same way, and the controller-ratchet file's pinned line count for either file is re-measured and re-pinned in the same commit if the rewording changed it
++<!-- AC:END -->
+diff --git a/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py b/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py
+index 09691dd12..4243a81ca 100644
+--- a/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py
++++ b/tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py
+@@ -1860,22 +1860,23 @@ class LibraryRagSearchController:
+     @staticmethod
+     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
+         return library_rag_scope_summary(panel_state.scope)
+ 
+ 
+ # --- BEGIN generated search+rag-state shims (permanent; byte-for-byte canon) ---
+ # task 3: exposes every `LibraryRagSearchState` field under its original
+ # `_library_rag_<field>`/`_library_search_<field>` name on THIS controller
+ # too, reading/writing through the injected `rag_search_state_accessor`
+ # instead of a direct `self._rag_search_state` attribute (this class has
+-# none) -- same generator shape the shim block `LibraryScreen` carries
+-# (task 2) and `LibraryConversationsController`/`LibraryCollectionsController`
++# none) -- same generator shape task 2 installed on `LibraryScreen`
++# (deleted at cleanup, task 4, once this copy below made the screen's
++# copy dead) and `LibraryConversationsController`/`LibraryCollectionsController`
+ # carry, attached programmatically so the class body gains no `FunctionDef`s
+ # (the size ratchet counts those). `SEARCH_PREFIXED_STATE_FIELDS` is
+ # imported from `library_rag_search_state` -- the dataclass's own module --
+ # so this is not a third independent literal copy of the one-field prefix
+ # exception; see that module's own docstring for the drift-risk note this
+ # avoids from the start.
+ for _rsc_field in dataclasses.fields(LibraryRagSearchState):
+     _rsc_prefix = (
+         "_library_search_"
+         if _rsc_field.name in SEARCH_PREFIXED_STATE_FIELDS
+diff --git a/tldw_chatbook/UI/Screens/library_screen.py b/tldw_chatbook/UI/Screens/library_screen.py
+index 38bb8b667..d7b93df43 100644
+--- a/tldw_chatbook/UI/Screens/library_screen.py
++++ b/tldw_chatbook/UI/Screens/library_screen.py
+@@ -2132,22 +2132,22 @@ class LibraryScreen(BaseAppScreen):
+             "quizzes": None,
+         }
+         self._library_loaded = False
+         # Combined Search+RAG canvas state; see LibraryRagSearchState's own
+         # module docstring/field comments for the per-field detail that
+         # used to live here. `history` has a genuinely computed default
+         # (`self._load_library_search_history()`) so it is passed as a
+         # constructor argument here rather than folded into the
+         # dataclass's own default, preserving the original __init__
+         # evaluation order. `_load_library_search_history` stays a REAL,
+-        # full-bodied screen method (wave-3 task 3 test-bypass exclusion --
+-        # see `library_rag_search_controller.py`'s module docstring), so
++        # full-bodied screen method (wave-3 task 3 module-globals-coupling
++        # exclusion -- see `library_rag_search_controller.py`'s module docstring), so
+         # this eager call is safe at this early `__init__` position exactly
+         # as it always was -- unlike a delegator, it needs no controller to
+         # already exist.
+         self._rag_search_state = LibraryRagSearchState(
+             history=self._load_library_search_history()
+         )
+         self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = (
+             None
+         )
+         self._pending_library_source_open: tuple[str, str] | None = None

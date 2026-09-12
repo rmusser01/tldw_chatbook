@@ -16,14 +16,19 @@ from typing import Callable, Mapping
 import httpx
 from loguru import logger
 
-from tldw_chatbook.Utils.egress import (
+# task-19733: this module used to hand-MIRROR egress's strip tuple, kept
+# honest only by a drift-guard test that had to be remembered. The mirror is
+# gone -- the cross-origin header policy is now IMPORTED, one object, so the
+# two cannot diverge in the first place. ``CROSS_ORIGIN_SAFE_HEADERS`` is
+# imported (not just used) so the guard in Tests/Model_Artifacts can assert
+# identity with egress's object rather than equality with a copy of it.
+from tldw_chatbook.Utils.egress import (  # noqa: F401
+    CROSS_ORIGIN_SAFE_HEADERS,
     MAX_REDIRECT_HOPS,
     check_url_or_raise_async,
+    filter_cross_origin_headers,
+    strip_cross_origin_request_headers,
 )
-
-# Mirrors egress._STRIP_HEADERS (private there); the drift-guard test in
-# test_stream_fetch.py fails if the two sets ever diverge.
-_STRIP_HEADERS = ("authorization", "cookie", "proxy-authorization", "x-goog-api-key")
 
 _CHUNK_BYTES = 1024 * 1024
 
@@ -167,11 +172,15 @@ async def stream_fetch(
     for _hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(str(current), trusted_origins=trusted_origins)
         is_same_origin = _same_origin(origin, current)
-        send_headers = dict(request_headers)
-        if not is_same_origin:
-            for name in list(send_headers):
-                if name.lower() in _STRIP_HEADERS:
-                    del send_headers[name]
+        # Cross-origin hops carry only egress's CROSS_ORIGIN_SAFE_HEADERS.
+        # Range/If-Range are on that allowlist precisely because THIS module
+        # needs them: a catalog host redirecting to its CDN is the normal
+        # artifact download, and resume dies without them.
+        send_headers = (
+            dict(request_headers)
+            if is_same_origin
+            else filter_cross_origin_headers(request_headers)
+        )
         # Built explicitly (not passed straight to client.stream/client.get)
         # so cross-origin credential stripping can also reach headers the
         # CALLER attached at the client-construction level (e.g.
@@ -181,10 +190,16 @@ async def stream_fetch(
         # never sees them. Mirrors egress.py's guarded_fetch_httpx_async.
         request = client.build_request("GET", current, headers=send_headers)
         if not is_same_origin:
-            for _h in _STRIP_HEADERS:
-                request.headers.pop(_h, None)
+            strip_cross_origin_request_headers(request.headers)
+        send_kwargs: dict[str, object] = {"stream": True, "follow_redirects": False}
+        if not is_same_origin:
+            # httpx applies a CLIENT-level ``auth=`` inside send(), after
+            # build_request -- invisible to the header strip above. Explicit
+            # None (not omission, which leaves USE_CLIENT_DEFAULT in play)
+            # suppresses it for this hop. Mirrors egress.guarded_fetch_httpx.
+            send_kwargs["auth"] = None
         try:
-            response = await client.send(request, stream=True, follow_redirects=False)
+            response = await client.send(request, **send_kwargs)
         except httpx.HTTPError as exc:
             raise FetchTransportError(type(exc).__name__) from exc
         try:

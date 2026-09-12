@@ -1,0 +1,20 @@
+CREATE TABLE briefing_items (
+    briefing_id INTEGER NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL,
+    live_item_id INTEGER REFERENCES subscription_items(id) ON DELETE SET NULL,
+    selection_position INTEGER,
+    citation_position INTEGER,
+    featured INTEGER NOT NULL DEFAULT 0,
+    cited INTEGER NOT NULL DEFAULT 0,
+    item_title TEXT,
+    item_url TEXT,
+    item_published_date TEXT,
+    item_created_at TEXT,
+    item_effective_date TEXT,
+    source_id INTEGER,
+    source_name TEXT,
+    source_type TEXT,
+    source_url TEXT,
+    provenance_version INTEGER NOT NULL,
+    PRIMARY KEY (briefing_id, item_id)
+);

@@ -33,10 +33,11 @@ from tldw_chatbook.Agents.agent_service import AgentService as _RealAgentService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Skills_Interop.local_skills_service import ScriptPlan
 from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
+from Tests.console_provider_doubles import persisted_console_store
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -64,8 +65,14 @@ class _FakeApp:
     and ``Tests/UI/test_console_skill_install_confirm.py``.
     """
 
+    def __init__(self) -> None:
+        self.notifications: list[str] = []
+
     def call_from_thread(self, fn, *args, **kwargs):
         return fn(*args, **kwargs)
+
+    def notify(self, message, **_kwargs) -> None:
+        self.notifications.append(str(message))
 
 
 @pytest.fixture
@@ -94,7 +101,7 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     made: list[ConsoleChatController] = []
 
     def _make() -> ConsoleChatController:
-        store = ConsoleChatStore()
+        store = persisted_console_store()
         controller = ConsoleChatController(store=store, provider_gateway=object())
         controller.app = _FakeApp()
         controller.pending_skill_script_payloads = []
@@ -264,7 +271,7 @@ def _capture_run_skill_script_tool(
     )
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
@@ -295,9 +302,7 @@ def _capture_run_skill_script_tool(
 
 
 @pytest.fixture
-def bridge_closure_env(
-    tmp_path, monkeypatch
-) -> Callable[..., _ClosureEnv]:
+def bridge_closure_env(tmp_path, monkeypatch) -> Callable[..., _ClosureEnv]:
     """Factory fixture: builds a ``_ClosureEnv`` around the REAL closure.
 
     Every keyword configures one seam:
@@ -441,7 +446,9 @@ def test_always_allow_round_trip(make_controller):
     result = {}
 
     def worker():
-        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
 
     thread = threading.Thread(target=worker)
     thread.start()
@@ -462,7 +469,9 @@ def test_shutdown_denies_a_pending_confirm(make_controller):
     result = {}
 
     def worker():
-        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
 
     thread = threading.Thread(target=worker)
     thread.start()
@@ -472,7 +481,9 @@ def test_shutdown_denies_a_pending_confirm(make_controller):
     assert result["decision"]["allow"] is False
 
 
-def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(make_controller):
+def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(
+    make_controller,
+):
     """TASK-910 (AC#1/#2): `switch_session` no longer force-denies a pending
     script confirm -- it parks (a background session) or simply re-derives
     the mounted card (the owning session, switched away from and back),
@@ -502,7 +513,9 @@ def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(make_con
     controller.switch_session(other)
     time.sleep(0.05)
     assert "decision" not in result  # not denied by the switch
-    assert controller.pending_skill_script_payloads[-1] is None  # departing card cleared
+    assert (
+        controller.pending_skill_script_payloads[-1] is None
+    )  # departing card cleared
 
     controller.switch_session(owning)
     # The SAME round's card re-mounts on revisit.
@@ -517,8 +530,9 @@ def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(make_con
 def test_request_skill_script_confirm_parks_for_a_non_active_session(make_controller):
     """TASK-910 (AC#1): a round whose `session_id` differs from the store's
     ACTIVE session parks -- no card mount, the run-marker pending flag
-    flips, and `park_pending_approval` fires exactly once. Visiting the
-    owning session later mounts the SAME retained payload."""
+    flips and one app-owned sanitized notice is emitted. The retired screen
+    parking hook is never used. Visiting the owning session later mounts the
+    SAME retained payload."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 
     controller = make_controller()
@@ -526,8 +540,9 @@ def test_request_skill_script_confirm_parks_for_a_non_active_session(make_contro
     viewed = controller.store.ensure_session().id
     background = controller.store.create_session().id
     controller.store.switch_session(viewed)  # keep viewing the first session
-    parked: list[str] = []
-    controller.park_pending_approval = parked.append
+    controller.park_pending_approval = lambda _session_id: pytest.fail(
+        "background decisions must not use the legacy screen notice hook"
+    )
     result = {}
 
     def worker():
@@ -539,11 +554,12 @@ def test_request_skill_script_confirm_parks_for_a_non_active_session(make_contro
     thread.start()
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
 
-    assert parked == [background]
+    assert controller.app.notifications == [
+        "A Console session needs confirmation to run a skill script. "
+        "Return to Console to respond."
+    ]
     # Never mounted -- the viewed session's own (empty) surface is untouched.
-    assert all(
-        payload is None for payload in controller.pending_skill_script_payloads
-    )
+    assert all(payload is None for payload in controller.pending_skill_script_payloads)
     assert background in controller._pending_approvals
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
 
@@ -701,7 +717,9 @@ def test_resolve_with_no_request_id_is_dropped(make_controller):
     result = {}
 
     def worker():
-        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}
+        )
 
     thread = threading.Thread(target=worker)
     thread.start()
@@ -831,9 +849,7 @@ def test_tool_is_absent_on_an_unsupported_platform(tmp_path, monkeypatch):
     """
     import tldw_chatbook.Skills_Interop.skill_script_runner as skill_script_runner_module
 
-    monkeypatch.setattr(
-        skill_script_runner_module, "sandbox_supported", lambda: False
-    )
+    monkeypatch.setattr(skill_script_runner_module, "sandbox_supported", lambda: False)
 
     trust_service = _FakeTrustService(granted=False)
     scope = _FakeScopeService(
@@ -880,7 +896,9 @@ class _StubGateway:
     invoked directly -- no real streaming ever happens in these tests."""
 
     async def resolve_for_send(self, selection):
-        return _StubResolution()
+        # See `provider_resolution`: a ready resolution must carry the typed
+        # destination `_resolved_destination_for_context` requires.
+        return provider_resolution(provider="llama_cpp")
 
     async def stream_chat(self, resolution, messages, **kwargs):  # pragma: no cover
         yield "unused"
@@ -901,7 +919,7 @@ def _capturing_run_reply(captured: list[dict[str, Any]]):
 
 def _bridged_controller(tmp_path) -> tuple[ConsoleChatController, list[dict[str, Any]]]:
     gateway = _StubGateway()
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
@@ -1086,7 +1104,7 @@ def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch
     """
     from tldw_chatbook.Agents.run_context import use_run_id
 
-    store = ConsoleChatStore()
+    store = persisted_console_store()
     controller = ConsoleChatController(store=store, provider_gateway=object())
     controller.app = _FakeApp()
     controller.skill_script_confirm_timeout_seconds = lambda: 30.0
@@ -1162,9 +1180,7 @@ def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch
     worker.join(timeout=5)
     assert not worker.is_alive()
 
-    assert run_calls == [], (
-        "a revoked confirm executed the skill script for real"
-    )
+    assert run_calls == [], "a revoked confirm executed the skill script for real"
     assert trust_service.granted_names == [], (
         "a revoked confirm persisted a standing script-execution grant"
     )

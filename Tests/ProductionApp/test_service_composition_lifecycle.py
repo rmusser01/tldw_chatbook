@@ -160,6 +160,27 @@ def _assert_service_graph(app: TldwCli) -> None:
     )
     assert app.manual_sync_control_service.state_repository is app.sync_state_repository
     assert app.manual_sync_control_service.dataset_keys is app.sync_v2_dataset_keys
+    if app.notes_organization_repository is not None:
+        assert (
+            app.notes_organization_repository.server_profile_id == app.active_server_id
+        )
+        assert (
+            app.manual_sync_control_service.notes_organization_sync_service
+            is app.notes_organization_sync_service
+        )
+        assert (
+            app.manual_sync_control_service.notes_repository
+            is app.notes_organization_repository
+        )
+    else:
+        assert app.runtime_policy.state.active_source == "local"
+        assert app.notes_organization_sync_service is None
+        assert app.notes_scope_service.organization_sync_service is None
+        assert app.local_first_sync_service.notes_organization_repository is None
+        assert app.local_first_sync_service.notes_organization_sync_service is None
+        assert app.sync_restore_service.notes_organization_repository is None
+        assert app.manual_sync_control_service.notes_organization_sync_service is None
+        assert app.manual_sync_control_service.notes_repository is None
 
 
 async def _close_production_app(app: TldwCli) -> None:
@@ -288,4 +309,50 @@ async def test_production_app_scheduler_worker_settles_without_contract_error(
     finally:
         if sink_id is not None:
             app.loguru_logger.remove(sink_id)
+        await _close_production_app(app)
+
+
+@pytest.mark.asyncio
+async def test_runtime_backend_transition_detaches_and_rebinds_notes_organization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_splash(monkeypatch)
+    app = TldwCli()
+    app.app_config["_first_run"] = False
+    app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    app.app_config["tldw_api"] = {
+        "base_url": "https://notes-sync.example.test/api"
+    }
+
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            assert await app.handle_runtime_backend_changed("server") is True
+            server_profile_id = app.runtime_policy.state.active_server_id
+            first_service = app.notes_organization_sync_service
+            assert server_profile_id == "https://notes-sync.example.test/api"
+            assert first_service is not None
+            assert app.notes_organization_repository.server_profile_id == server_profile_id
+
+            assert await app.handle_runtime_backend_changed("local") is True
+            assert app.runtime_policy.state.active_source == "local"
+            assert app.runtime_policy.state.active_server_id == server_profile_id
+            assert app.active_server_id == server_profile_id
+            assert app.notes_organization_repository is None
+            assert app.notes_organization_sync_service is None
+            assert app.notes_scope_service.organization_sync_service is None
+            assert app.local_first_sync_service.notes_organization_repository is None
+            assert app.local_first_sync_service.notes_organization_sync_service is None
+            assert app.sync_restore_service.notes_organization_repository is None
+            assert (
+                app.manual_sync_control_service.notes_organization_sync_service is None
+            )
+            assert app.manual_sync_control_service.notes_repository is None
+
+            assert await app.handle_runtime_backend_changed("server") is True
+            assert app.runtime_policy.state.active_source == "server"
+            assert app.runtime_policy.state.active_server_id == server_profile_id
+            assert app.notes_organization_sync_service is not first_service
+            _assert_service_graph(app)
+    finally:
         await _close_production_app(app)

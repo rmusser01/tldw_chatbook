@@ -26,6 +26,10 @@ from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import VideoStore, parse_video_marker
+from tldw_chatbook.Widgets.Console.console_video_card import (
+    ConsoleVideoCard,
+    ConsoleVideoCardSpec,
+)
 
 from Tests.UI.app_factory import _build_test_app
 
@@ -44,9 +48,7 @@ def _video_meta(**overrides):
 
 
 def _ttl_config():
-    return SimpleNamespace(
-        retention="ttl", retention_ttl_hours=1, max_store_mb=2048
-    )
+    return SimpleNamespace(retention="ttl", retention_ttl_hours=1, max_store_mb=2048)
 
 
 def _video_controller(video_store: VideoStore) -> ConsoleVideoController:
@@ -61,6 +63,29 @@ def _video_controller(video_store: VideoStore) -> ConsoleVideoController:
         console_composer_or_none=lambda: None,
         clear_console_composer_draft=lambda: None,
     )
+
+
+def test_video_metadata_tombstone_discriminator_is_strict_and_backward_compatible():
+    assert "is_unavailable_tombstone" in VideoGenerationMetadata.__dataclass_fields__
+    live = _video_meta()
+    tombstone = VideoGenerationMetadata(
+        name=live.name,
+        prompt=live.prompt,
+        backend=live.backend,
+        is_unavailable_tombstone=True,
+    )
+    assert live.is_unavailable_tombstone is False
+    assert VideoGenerationMetadata.from_json(tombstone.to_json()) == tombstone
+
+    legacy = json.loads(live.to_json())
+    legacy["video_generation"].pop("is_unavailable_tombstone", None)
+    restored_legacy = VideoGenerationMetadata.from_json(json.dumps(legacy))
+    assert restored_legacy is not None
+    assert restored_legacy.is_unavailable_tombstone is False
+
+    invalid = json.loads(live.to_json())
+    invalid["video_generation"]["is_unavailable_tombstone"] = "yes"
+    assert VideoGenerationMetadata.from_json(json.dumps(invalid)) is None
 
 
 def _reload_video_messages(db, conversation_id):
@@ -109,6 +134,11 @@ class FakeVideoPersistence:
         return True
 
 
+class ExplodingVideoPersistence(FakeVideoPersistence):
+    def create_message(self, **kwargs):
+        raise RuntimeError("durable video create failed")
+
+
 @pytest.fixture
 def store_with_session():
     persistence = FakeVideoPersistence()
@@ -132,6 +162,21 @@ def test_append_video_message_marker_and_shape(store_with_session):
     assert not msg.content.startswith("[image] ")
 
 
+def test_video_card_owns_play_and_save_actions():
+    spec = ConsoleVideoCardSpec(
+        message_id="video-1",
+        meta=_video_meta(),
+        status="expired",
+    )
+
+    ids = [action.action_id for action in ConsoleVideoCard(spec).actions]
+
+    assert ids == [
+        "video-play",
+        "video-save-copy",
+    ]
+
+
 def test_append_video_message_persists_namespaced_payload(store_with_session):
     store, sid, persistence = store_with_session
     preallocated_id = "video-message-fixed-id"
@@ -150,8 +195,45 @@ def test_append_video_message_persists_namespaced_payload(store_with_session):
     # Never provenance keys, and never the v25 sidecar kwarg.
     assert '"interrupted"' not in payload
     assert "generation_metadata" not in created
-    # The persisted payload round-trips back to the original facts.
-    assert VideoGenerationMetadata.from_json(payload) == _video_meta()
+    # The persisted payload preserves the original facts plus its local-only
+    # exact terminal-attention receipt.
+    assert VideoGenerationMetadata.from_json(payload) == msg.video_metadata
+    assert msg.video_metadata is not None
+    assert msg.video_metadata.terminal_receipt_id
+    assert created["terminal_receipt_id"] == msg.video_metadata.terminal_receipt_id
+
+
+def test_failed_video_create_does_not_publish_ghost_store_state():
+    store = ConsoleChatStore(persistence=ExplodingVideoPersistence())
+    session = store.create_session(title="Atomic video")
+    anchor = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="anchor",
+    )
+    before_nodes = tuple(store._nodes_by_session[session.id])
+    before_path = tuple(
+        message.id for message in store._messages_by_session[session.id]
+    )
+    before_leaf = store._active_leaf_by_session[session.id]
+    before_updated_at = session.updated_at
+    before_payload = store.payload_revision(session.id)
+
+    with pytest.raises(RuntimeError, match="durable video create failed"):
+        store.append_video_message(
+            session.id,
+            video_metadata=_video_meta(),
+            persist=True,
+        )
+
+    assert tuple(store._nodes_by_session[session.id]) == before_nodes == (anchor.id,)
+    assert (
+        tuple(message.id for message in store._messages_by_session[session.id])
+        == before_path
+    )
+    assert store._active_leaf_by_session[session.id] == before_leaf
+    assert session.updated_at == before_updated_at
+    assert store.payload_revision(session.id) == before_payload
 
 
 @pytest.mark.integration
@@ -195,7 +277,8 @@ def test_content_update_rewrites_video_payload_not_provenance(store_with_session
     msg = store.append_video_message(sid, video_metadata=_video_meta(), persist=True)
     store._persist_existing_message(msg)
     update = persistence.content_updates[-1]
-    assert update["metadata_json"] == _video_meta().to_json()
+    assert msg.video_metadata is not None
+    assert update["metadata_json"] == msg.video_metadata.to_json()
 
 
 def test_metadata_flush_prefers_video_payload(store_with_session):
@@ -203,7 +286,8 @@ def test_metadata_flush_prefers_video_payload(store_with_session):
     msg = store.append_video_message(sid, video_metadata=_video_meta(), persist=True)
     store._persist_metadata_only(msg)
     flush = persistence.metadata_updates[-1]
-    assert flush["metadata_json"] == _video_meta().to_json()
+    assert msg.video_metadata is not None
+    assert flush["metadata_json"] == msg.video_metadata.to_json()
 
 
 def test_screen_state_round_trip_preserves_video_metadata(store_with_session):
@@ -288,7 +372,9 @@ def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
     video_store = VideoStore(root=tmp_path / "generated_videos", config=_ttl_config())
     persisted_id = "persisted-video-message"
     stored_path = video_store.save(
-        persisted_id, _video_meta().name, b"video-bytes",
+        persisted_id,
+        _video_meta().name,
+        b"video-bytes",
         extension="mp4",
     )
     message = ConsoleChatMessage(
@@ -318,7 +404,9 @@ def test_video_card_uses_native_id_when_message_is_not_persisted(tmp_path):
         video_metadata=_video_meta(),
     )
     assert message.persisted_message_id is None
-    stored_path = video_store.save(message.id, _video_meta().name, b"video-bytes", extension="mp4")
+    stored_path = video_store.save(
+        message.id, _video_meta().name, b"video-bytes", extension="mp4"
+    )
     screen = ChatScreen.__new__(ChatScreen)
     screen._video = _video_controller(video_store)
 
@@ -356,6 +444,9 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         )
         conversation_id = session.persisted_conversation_id
         assert conversation_id is not None
+        assert msg.video_metadata is not None
+        terminal_receipt_id = msg.video_metadata.terminal_receipt_id
+        assert terminal_receipt_id
 
         # ---- Simulate reload: persist -> DROP the store -> fresh store ----
         screen, reloaded = _reload_video_messages(db, conversation_id)
@@ -375,7 +466,10 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         assert specs[video_msg.id].file_path == str(stored_path)
 
         # The named card's facts and still-within-TTL bytes survive reload.
-        assert video_msg.video_metadata == _video_meta(container="webm")
+        assert video_msg.video_metadata == _video_meta(
+            container="webm",
+            terminal_receipt_id=terminal_receipt_id,
+        )
         assert video_msg.metadata is None
         assert parse_video_marker(video_msg.content) == "dusk-over-neon-tokyo"
 
@@ -388,8 +482,8 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         # renders the marker+metadata with no byte access and no error.
         payload = ConsoleMessageController._serialize_console_message(video_msg)
         assert payload["content"] == "[video] dusk-over-neon-tokyo"
-        assert VideoGenerationMetadata.from_json(payload["metadata_json"]) == _video_meta(
-            container="webm"
+        assert VideoGenerationMetadata.from_json(payload["metadata_json"]) == (
+            video_msg.video_metadata
         )
     finally:
         db.close_connection()

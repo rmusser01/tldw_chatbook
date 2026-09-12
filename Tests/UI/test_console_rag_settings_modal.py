@@ -13,21 +13,23 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Input, Static, Switch
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_RAG_SOURCE_TYPES,
 )
+from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
-from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
-    CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID,
+from tldw_chatbook.Widgets.Console.console_library_search_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
-    CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX,
-    ConsoleRagSettingsModal,
-    ConsoleRagSettingsResult,
+    ConsoleLibrarySearchModal as ConsoleRagSettingsModal,
+    ConsoleLibrarySearchResult as ConsoleRagSettingsResult,
     console_rag_source_toggle_label,
     normalize_console_rag_source_types,
+)
+from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX,
 )
 
 
@@ -40,6 +42,19 @@ def _retrieval_for(screen) -> ConsoleRetrievalController:
     owner._set_library_rag_source_scope = screen._set_console_library_rag_source_scope
     owner._set_library_rag_query = screen._set_console_library_rag_query
     owner._run_library_rag_action = screen._run_console_library_rag_from_visible_action
+    owner.app_instance = getattr(screen, "app_instance", None)
+    owner._push_screen = (
+        owner.app_instance.push_screen if owner.app_instance is not None else Mock()
+    )
+    owner._composer_draft = lambda: (
+        composer.draft_text()
+        if (composer := screen._console_composer_or_none()) is not None
+        else None
+    )
+    owner._library_rag_query = lambda: screen._console_library_rag_query
+    owner._build_console_retrieval_scope_state = (
+        ConsoleRetrievalScopeState.unscoped
+    )
     return owner
 
 
@@ -144,275 +159,6 @@ async def test_cancel_escape_and_backdrop_all_dismiss_without_changes():
         assert app.screen is not modal
 
     assert received == [None]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_auto_retrieve_switch_defaults_off_when_not_given_a_value():
-    """TASK-3170 (task 7): the Switch defaults to the constructor value --
-    the modal never reads config itself, the caller does (see the
-    ``chat_screen`` tests below) -- and the modal's own default is OFF."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(ConsoleRagSettingsModal())
-        await pilot.pause()
-        modal = app.screen
-        switch = modal.query_one("#console-rag-settings-auto-retrieve", Switch)
-        assert switch.value is False
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_auto_retrieve_switch_reflects_a_true_constructor_value():
-    """When the caller passes the persisted "on" value, the Switch opens on."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(ConsoleRagSettingsModal(auto_retrieve_on_send=True))
-        await pilot.pause()
-        modal = app.screen
-        switch = modal.query_one("#console-rag-settings-auto-retrieve", Switch)
-        assert switch.value is True
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_toggling_auto_retrieve_on_and_running_returns_the_flag_set():
-    """Flipping the switch on, then running, carries ``auto_retrieve_on_send``
-    through in the dismiss result -- the caller (chat_screen) is the one
-    that persists it to config."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    received: list[ConsoleRagSettingsResult | None] = []
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleRagSettingsModal(query="what changed in auth"),
-            callback=received.append,
-        )
-        await pilot.pause()
-
-        await pilot.click("#console-rag-settings-auto-retrieve")
-        await pilot.pause()
-
-        await pilot.click("#console-rag-settings-run")
-        await pilot.pause()
-        await pilot.pause()
-
-    assert received == [
-        ConsoleRagSettingsResult(
-            query="what changed in auth",
-            run=True,
-            auto_retrieve_on_send=True,
-        )
-    ]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_leaving_auto_retrieve_untouched_returns_the_flag_unset():
-    """Sanity companion: not touching the switch keeps the flag False in
-    the result, matching the constructor default."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    received: list[ConsoleRagSettingsResult | None] = []
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleRagSettingsModal(query="what changed in auth"),
-            callback=received.append,
-        )
-        await pilot.pause()
-        await pilot.click("#console-rag-settings-run")
-        await pilot.pause()
-        await pilot.pause()
-
-    assert received == [
-        ConsoleRagSettingsResult(
-            query="what changed in auth",
-            run=True,
-            auto_retrieve_on_send=False,
-        )
-    ]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_flipping_auto_retrieve_calls_back_immediately_once_per_toggle():
-    """TASK-3170 re-critique fix: "Auto-retrieve on send" is a standing
-    preference, not part of the query/source-type draft this modal
-    otherwise discards on Cancel/Escape/a backdrop click. Flipping the
-    switch invokes ``on_auto_retrieve_changed`` the instant it flips --
-    before any dismiss -- so the caller can persist it right away. Opening
-    the modal alone must not fire it."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    changes: list[bool] = []
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleRagSettingsModal(on_auto_retrieve_changed=changes.append)
-        )
-        await pilot.pause()
-        assert changes == []
-
-        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
-        await pilot.pause()
-        assert changes == [True]
-
-        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
-        await pilot.pause()
-        assert changes == [True, False]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_invariant_a_flip_then_escape_keeps_the_toggle_persisted():
-    """Invariant (a): flip + Escape -- the switch's callback already fired
-    (config updated in the real caller) before Escape ran, and Escape does
-    not re-fire it or claw it back, even though it discards the query
-    draft (dismiss result is None) exactly as before."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    changes: list[bool] = []
-    received: list[ConsoleRagSettingsResult | None] = []
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleRagSettingsModal(
-                query="draft text", on_auto_retrieve_changed=changes.append
-            ),
-            callback=received.append,
-        )
-        await pilot.pause()
-
-        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
-        await pilot.pause()
-        await pilot.press("escape")
-        await pilot.pause()
-        await pilot.pause()
-
-    assert received == [None]
-    assert changes == [True]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_invariant_b_flip_then_run_persists_exactly_once():
-    """Invariant (b): flip + Run -- the toggle callback fires exactly once
-    (from the flip); Run/dismiss must not duplicate it."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    changes: list[bool] = []
-    received: list[ConsoleRagSettingsResult | None] = []
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleRagSettingsModal(
-                query="what changed in auth",
-                on_auto_retrieve_changed=changes.append,
-            ),
-            callback=received.append,
-        )
-        await pilot.pause()
-
-        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
-        await pilot.pause()
-        await pilot.click("#console-rag-settings-run")
-        await pilot.pause()
-        await pilot.pause()
-
-    assert changes == [True]
-    assert received == [
-        ConsoleRagSettingsResult(
-            query="what changed in auth",
-            run=True,
-            auto_retrieve_on_send=True,
-        )
-    ]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_invariant_c_run_without_touching_the_switch_never_calls_back():
-    """Invariant (c): open + Run without touching the switch -- the
-    callback (and therefore the config write in the real caller) never
-    fires at all. Kills the old unconditional-write-on-every-dismiss
-    behavior."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    changes: list[bool] = []
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleRagSettingsModal(
-                query="what changed in auth",
-                on_auto_retrieve_changed=changes.append,
-            )
-        )
-        await pilot.pause()
-        await pilot.click("#console-rag-settings-run")
-        await pilot.pause()
-        await pilot.pause()
-
-    assert changes == []
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_invariant_d_cancel_after_flip_still_discards_the_source_type_draft():
-    """Invariant (d): the query/source-type draft-discard behavior is
-    unchanged by this fix -- a source-type edit is still lost on Cancel
-    (dismiss result None, same as ``test_cancel_discards_toggle_changes``)
-    even though the auto-retrieve toggle, flipped in the same session,
-    already persisted independently and survives the Cancel."""
-
-    class RagHost(ConsolidatedCSSApp):
-        pass
-
-    changes: list[bool] = []
-    received: list[ConsoleRagSettingsResult | None] = []
-    app = RagHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleRagSettingsModal(
-                query="what changed in auth",
-                source_types=CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
-                on_auto_retrieve_changed=changes.append,
-            ),
-            callback=received.append,
-        )
-        await pilot.pause()
-
-        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}prompts")
-        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
-        await pilot.pause()
-
-        await pilot.click("#console-rag-settings-cancel")
-        await pilot.pause()
-        await pilot.pause()
-
-    assert received == [None]
-    assert changes == [True]
 
 
 def _static_plain_text(widget: Static) -> str:
@@ -634,17 +380,14 @@ async def test_modal_summary_line_and_readiness_card_share_one_builder():
         summary = modal.query_one("#console-rag-settings-scope", Static)
 
         assert _static_plain_text(summary) == (
-            _retrieval_for(screen)._console_library_rag_scope_label()
-        )
-        assert _static_plain_text(summary) == (
-            "Sources: Notes, Conversations (Media, Prompts off)"
+            "This search only · Sources: Notes, Conversations (Media, Prompts off)"
         )
 
         await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}media")
         await pilot.pause()
         screen._console_library_rag_source_types = ("notes", "media", "conversations")
         assert _static_plain_text(summary) == (
-            _retrieval_for(screen)._console_library_rag_scope_label()
+            "This search only · Sources: Notes, Media, Conversations (Prompts off)"
         )
 
 
@@ -735,112 +478,6 @@ def test_modal_choice_stores_the_source_scope_before_running():
 
 
 @pytest.mark.unit
-def test_apply_choice_never_writes_config_the_toggle_persists_separately():
-    """TASK-3170 re-critique fix: ``_apply_console_rag_settings_choice`` no
-    longer touches config at all -- persistence moved to the modal's
-    ``on_auto_retrieve_changed`` callback, fired the instant the switch
-    flips (see the modal-level invariant tests above), not gated on this
-    dismiss handler. Guards against the fix regressing back to an
-    unconditional write on every Run."""
-    from tldw_chatbook.config import get_cli_setting
-
-    assert (
-        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
-    )
-
-    screen = Mock()
-    _retrieval_for(screen)._apply_console_rag_settings_choice(
-        ConsoleRagSettingsResult(
-            query="what changed", run=False, auto_retrieve_on_send=True
-        ),
-    )
-
-    # Still False: applying the dismissed choice must not write config --
-    # only flipping the switch (through the callback) does that.
-    assert (
-        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
-    )
-
-
-@pytest.mark.unit
-def test_modal_open_wires_the_auto_retrieve_callback_to_the_real_persist_worker():
-    """The modal's ``on_auto_retrieve_changed`` must be the screen's real
-    worker-backed persist method -- not left unwired, and not a
-    synchronous write in the dismiss callback (see the previous test)."""
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-    screen = Mock()
-    screen._console_library_rag_query = ""
-    screen._pending_console_launch_context = None
-    composer = Mock()
-    composer.draft_text.return_value = ""
-    screen._console_composer_or_none.return_value = composer
-
-    ChatScreen._open_console_rag_settings(screen)
-
-    modal = screen.app.push_screen.call_args.args[0]
-    assert modal._on_auto_retrieve_changed is (
-        screen._persist_console_rag_auto_retrieve_on_send
-    )
-
-
-@pytest.mark.unit
-def test_persist_worker_body_writes_through_to_config():
-    """TASK-3170 re-critique fix (IMPORTANT 2): the write moved into a
-    ``@work(thread=True)`` method, matching the sibling Console preference
-    writers (``_save_console_rail_preferences``, ``_save_console_
-    onboarding_flag``, ``_save_console_fleet_coachmark_flag``). ``@work``'s
-    dispatch (``self.run_worker(...)``) asserts ``self`` is a live, mounted
-    ``DOMNode``, which a bare test double is not -- so this reaches the
-    original function body directly through ``__wrapped__``
-    (``functools.wraps`` sets it), the same pattern already used elsewhere
-    in this suite, e.g. ``LibraryScreen._run_parakeet_v2_install.__wrapped__``
-    in ``Tests/UI/test_parakeet_v2_install_ui.py``. This is a genuine round
-    trip through the real production code, not a duplicate helper."""
-    from tldw_chatbook.config import get_cli_setting
-    assert (
-        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
-    )
-
-    screen = Mock()
-    ConsoleRetrievalController._persist_console_rag_auto_retrieve_on_send(screen, True)
-
-    assert (
-        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is True
-    )
-
-    # Not a one-way ratchet: flipping back off persists too.
-    ConsoleRetrievalController._persist_console_rag_auto_retrieve_on_send(screen, False)
-
-    assert (
-        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
-    )
-
-
-@pytest.mark.unit
-def test_modal_open_prefills_auto_retrieve_switch_from_the_persisted_config():
-    """The chip-open site reads the persisted default and hands it to the
-    modal -- the modal's own default (OFF, tested at the modal layer above)
-    only applies when nothing has been saved yet."""
-    from tldw_chatbook.config import save_setting_to_cli_config
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-    save_setting_to_cli_config("chat_defaults", "rag_auto_retrieve_on_send", True)
-
-    screen = Mock()
-    screen._console_library_rag_query = ""
-    screen._pending_console_launch_context = None
-    composer = Mock()
-    composer.draft_text.return_value = ""
-    screen._console_composer_or_none.return_value = composer
-
-    ChatScreen._open_console_rag_settings(screen)
-
-    modal = screen.app.push_screen.call_args.args[0]
-    assert modal._auto_retrieve_on_send is True
-
-
-@pytest.mark.unit
 def test_source_scope_survives_a_screen_state_round_trip():
     """A customized source scope is Console-local state, but it must not
     evaporate on a tab switch: it round-trips through the native Console
@@ -853,11 +490,27 @@ def test_source_scope_survives_a_screen_state_round_trip():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
-    from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_library_activity_controller,
+        stub_message_controller,
+    )
 
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
         screen._retrieval = Mock()
+        # Precede the `_console_chat_store` assignment: that setter reaches
+        # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`,
+        # which reads `self._fleet._console_wake_user_priority` (TASK-21381)
+        # and `self._library_activity.build_provider` (TASK-23144) unguarded.
+        stub_fleet_controller(screen, context="rag settings bare screen")
+        stub_library_activity_controller(
+            screen,
+            context="rag settings bare screen",
+            # Same no-harness-app declaration as the message stub below.
+            app_instance=NO_APP,
+        )
         screen._console_chat_store = store
         screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
         screen._console_visible_draft_session_id = None
@@ -940,15 +593,13 @@ def test_toggle_labels_come_from_the_one_library_label_table():
 
 
 @pytest.mark.unit
-def test_status_copy_is_honest_about_what_on_means():
-    """The modal explains that "on" == staged retrieved evidence."""
-    off = ConsoleRagSettingsModal()
-    assert "Library search is off" in off._status_copy()
-    assert "staged" in off._status_copy()
-
-    on = ConsoleRagSettingsModal(rag_active=True, staged_title="Incident Review")
-    assert "Library search is on" in on._status_copy()
-    assert "Incident Review" in on._status_copy()
+def test_status_copy_is_honest_about_manual_search_scope():
+    """The modal says a search is one-shot and does not edit policy."""
+    copy = ConsoleRagSettingsModal()._status_copy()
+    assert "Manual search" in copy
+    assert "this send only" in copy
+    assert "Automatic retrieval" in copy
+    assert "assistant Library access" in copy
 
 
 @pytest.mark.unit
@@ -1024,7 +675,7 @@ def test_visible_run_action_falls_back_to_the_composer_draft():
     ChatScreen._run_console_library_rag_from_visible_action(empty)
 
     empty.app_instance.notify.assert_not_called()
-    empty._open_console_rag_settings.assert_called_once()
+    empty._open_console_library_search.assert_called_once()
     empty._retrieval._stage_console_library_rag_launch.assert_not_called()
 
 
@@ -1049,11 +700,7 @@ def test_dedicated_query_still_wins_over_the_composer_draft():
 
 @pytest.mark.unit
 def test_modal_open_prefills_a_normal_question_draft():
-    """Sanity companion to the guard tests below: an ordinary question
-    draft still prefills the RAG settings modal (the chip-open site,
-    ``_open_console_rag_settings`` -- the run-fallback site's equivalent
-    is already covered by ``test_visible_run_action_falls_back_to_the_
-    composer_draft``)."""
+    """Manual search prefills the exact composer draft without guessing."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = Mock()
@@ -1062,102 +709,9 @@ def test_modal_open_prefills_a_normal_question_draft():
     composer = Mock()
     composer.draft_text.return_value = "  what   changed in auth  "
     screen._console_composer_or_none.return_value = composer
+    screen._retrieval = _retrieval_for(screen)
 
-    ChatScreen._open_console_rag_settings(screen)
+    ChatScreen._open_console_library_search(screen)
 
-    modal = screen.app.push_screen.call_args.args[0]
-    assert modal._query == "what changed in auth"
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "unsafe_draft",
-    [
-        pytest.param("/Users/x/notes.md", id="absolute-path"),
-        pytest.param("file:///Users/x/notes.md", id="file-uri"),
-        pytest.param("https://example.com/incident-notes", id="bare-url"),
-        pytest.param("x" * 201, id="oversized-201-chars"),
-    ],
-)
-def test_prefill_guards_reject_paths_urls_and_oversized_drafts_at_both_sites(
-    unsafe_draft,
-):
-    """RAG-43: a composer draft that IS (in its entirety) a dropped file
-    path, a ``file://`` URI, a bare URL, or longer than 200 chars must
-    never silently become the retrieval query -- live UAT saw a fixture
-    path prefill verbatim into the query field. Both prefill sites --
-    the RAG chip's modal-open prefill and the visible Run Library RAG
-    action's queryless fallback -- share one guard, so both must refuse
-    these drafts the same way.
-
-    Post-Task-2, the run-fallback's empty branch opens the settings
-    modal instead of toasting, so a guarded draft must land there too
-    (queryless, exactly like an empty draft) rather than being silently
-    stored and run.
-    """
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-    # Site 1: the RAG chip's modal-open prefill.
-    modal_screen = Mock()
-    modal_screen._console_library_rag_query = ""
-    modal_screen._pending_console_launch_context = None
-    modal_composer = Mock()
-    modal_composer.draft_text.return_value = unsafe_draft
-    modal_screen._console_composer_or_none.return_value = modal_composer
-
-    ChatScreen._open_console_rag_settings(modal_screen)
-
-    modal = modal_screen.app.push_screen.call_args.args[0]
-    assert modal._query == ""
-
-    # Site 2: the visible Run Library RAG action's queryless fallback.
-    run_screen = Mock()
-    run_screen._console_library_rag_query = ""
-    run_composer = Mock()
-    run_composer.draft_text.return_value = unsafe_draft
-    run_screen._console_composer_or_none.return_value = run_composer
-
-    ChatScreen._run_console_library_rag_from_visible_action(run_screen)
-
-    run_screen._set_console_library_rag_query.assert_not_called()
-    run_screen._retrieval._stage_console_library_rag_launch.assert_not_called()
-    run_screen.app_instance.notify.assert_not_called()
-    run_screen._open_console_rag_settings.assert_called_once()
-
-
-@pytest.mark.unit
-def test_prefill_allows_a_question_that_merely_mentions_a_url():
-    """Borderline ruling (RAG-43): only drafts that ARE a path/URL in
-    their *entirety* are guarded, not drafts that merely contain one
-    alongside other text. A question like this is still exactly the
-    text the user is about to send -- retrieval should look for it too,
-    same as any other question draft -- so it is deliberately NOT
-    guarded even though it embeds a URL."""
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-    draft = "check out https://example.com/incident-notes for context"
-
-    # Site 1: modal-open prefill.
-    modal_screen = Mock()
-    modal_screen._console_library_rag_query = ""
-    modal_screen._pending_console_launch_context = None
-    modal_composer = Mock()
-    modal_composer.draft_text.return_value = draft
-    modal_screen._console_composer_or_none.return_value = modal_composer
-
-    ChatScreen._open_console_rag_settings(modal_screen)
-
-    modal = modal_screen.app.push_screen.call_args.args[0]
-    assert modal._query == draft
-
-    # Site 2: run-fallback stores and runs with the draft as-is.
-    run_screen = Mock()
-    run_screen._console_library_rag_query = ""
-    run_composer = Mock()
-    run_composer.draft_text.return_value = draft
-    run_screen._console_composer_or_none.return_value = run_composer
-
-    ChatScreen._run_console_library_rag_from_visible_action(run_screen)
-
-    run_screen._set_console_library_rag_query.assert_called_once_with(draft)
-    run_screen._open_console_rag_settings.assert_not_called()
+    modal = screen.app_instance.push_screen.call_args.args[0]
+    assert modal._query == "  what   changed in auth  "

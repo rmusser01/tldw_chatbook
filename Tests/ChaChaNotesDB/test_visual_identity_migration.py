@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    open_current_chachanotes_from_legacy,
+)
+
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 
 
@@ -308,7 +312,11 @@ def test_visual_identity_schema_is_installed_by_migration_and_fresh_construction
     if construction == "upgrade_v38":
         tables_before, expression_table_before = _seed_v38_database(path, monkeypatch)
 
-    db = CharactersRAGDB(path, client_id="v39-open")
+    db = (
+        open_current_chachanotes_from_legacy(path, client_id="v39-open")
+        if construction == "upgrade_v38"
+        else CharactersRAGDB(path, client_id="v39-open")
+    )
     try:
         connection = db.get_connection()
         _assert_schema_contract(connection)

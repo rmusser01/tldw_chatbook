@@ -1,6 +1,12 @@
 """Library configuration defaults."""
 
+import tomllib
+
 import tldw_chatbook.config as config_module
+from tldw_chatbook.Utils.library_rail_width import LIBRARY_REFERENCE_WIDTH
+from tldw_chatbook.UI.Screens.settings_appearance_defaults import (
+    load_appearance_defaults,
+)
 
 
 def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
@@ -10,6 +16,135 @@ def test_load_settings_exposes_library_defaults(tmp_path, monkeypatch):
 
     assert settings["library"]["ingest_directory_scan_limit"] == 1000
     assert settings["library"]["ingest_options"] == {}
+    assert settings["library"]["reader"] == {
+        "library_open": True,
+        "custom_widths_enabled": False,
+        "library_width": LIBRARY_REFERENCE_WIDTH,
+    }
+    assert settings["library"]["media_reader"] == {
+        "items_open": True,
+        "items_width": 50,
+        "library_open": True,
+        "custom_widths_enabled": False,
+        "library_width": LIBRARY_REFERENCE_WIDTH,
+    }
+    for section in (
+        "conversations_reader",
+        "prompts_reader",
+        "skills_reader",
+    ):
+        assert settings["library"][section] == {
+            "items_open": True,
+            "items_width": 50,
+        }
+    assert settings["library"]["notes_reader"] == {
+        "items_open": True,
+        "items_width": 50,
+        "files_tree_open": True,
+        "files_tree_width": 50,
+    }
+
+
+def test_shipped_template_keeps_shared_reader_empty_and_legacy_reference_at_36():
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    assert template["library"]["reader"] == {}
+    assert (
+        template["library"]["media_reader"]["library_width"] == LIBRARY_REFERENCE_WIDTH
+    )
+
+
+def test_fresh_profile_uses_template_reference_without_materializing_shared_reader(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "fresh-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+    written = tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    assert written["library"]["reader"] == {}
+    assert (
+        written["library"]["media_reader"]["library_width"] == LIBRARY_REFERENCE_WIDTH
+    )
+    assert settings["library"]["reader"]["library_width"] == LIBRARY_REFERENCE_WIDTH
+
+
+def test_library_reader_environment_overrides_toml_for_settings(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[library.reader]
+library_open = true
+custom_widths_enabled = false
+library_width = 30
+
+[library.media_reader]
+items_open = true
+items_width = 41
+
+[library.conversations_reader]
+items_open = true
+items_width = 42
+
+[library.notes_reader]
+items_open = true
+items_width = 43
+files_tree_open = true
+files_tree_width = 47
+
+[library.prompts_reader]
+items_open = true
+items_width = 44
+
+[library.skills_reader]
+items_open = true
+items_width = 45
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("TLDW_LIBRARY_READER_LIBRARY_OPEN", "false")
+    monkeypatch.setenv("TLDW_LIBRARY_READER_CUSTOM_WIDTHS_ENABLED", "true")
+    monkeypatch.setenv("TLDW_LIBRARY_READER_LIBRARY_WIDTH", "36")
+    monkeypatch.setenv("TLDW_LIBRARY_NOTES_READER_FILES_TREE_OPEN", "false")
+    monkeypatch.setenv("TLDW_LIBRARY_NOTES_READER_FILES_TREE_WIDTH", "64")
+    for destination, width in (
+        ("MEDIA", 52),
+        ("CONVERSATIONS", 54),
+        ("NOTES", 56),
+        ("PROMPTS", 58),
+        ("SKILLS", 60),
+    ):
+        monkeypatch.setenv(f"TLDW_LIBRARY_{destination}_READER_ITEMS_OPEN", "false")
+        monkeypatch.setenv(f"TLDW_LIBRARY_{destination}_READER_ITEMS_WIDTH", str(width))
+
+    settings = config_module.load_settings(force_reload=True)
+    defaults = load_appearance_defaults(settings)
+
+    assert settings["library"]["reader"] == {
+        "library_open": False,
+        "custom_widths_enabled": True,
+        "library_width": 36,
+    }
+    assert defaults.library_reader_library_open is False
+    assert defaults.library_reader_custom_widths_enabled is True
+    assert defaults.library_reader_library_width == 36
+    for destination, width in (
+        ("media", 52),
+        ("conversations", 54),
+        ("notes", 56),
+        ("prompts", 58),
+        ("skills", 60),
+    ):
+        assert settings["library"][f"{destination}_reader"]["items_open"] is False
+        assert settings["library"][f"{destination}_reader"]["items_width"] == width
+        assert getattr(defaults, f"library_{destination}_items_open") is False
+        assert getattr(defaults, f"library_{destination}_items_width") == width
+    assert settings["library"]["notes_reader"]["files_tree_open"] is False
+    assert settings["library"]["notes_reader"]["files_tree_width"] == 64
+    assert defaults.library_notes_files_tree_open is False
+    assert defaults.library_notes_files_tree_width == 64
 
 
 def test_load_settings_coerces_library_scan_limit(tmp_path, monkeypatch):
@@ -52,4 +187,275 @@ def test_load_settings_reads_persisted_ingest_options(tmp_path, monkeypatch):
 
     assert settings["library"]["ingest_options"] == {
         "pdf": {"pdf_engine": "docling", "ocr": True}
+    }
+
+
+def test_load_settings_falls_back_from_legacy_media_reader_per_shared_key(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[library.search]
+history = ["oceans"]
+
+[library.media_reader]
+library_open = false
+items_open = true
+custom_widths_enabled = true
+library_width = 99
+items_width = 20
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    library = config_module.load_settings(force_reload=True)["library"]
+
+    assert library["search"] == {"history": ["oceans"]}
+    assert library["reader"] == {
+        "library_open": False,
+        "custom_widths_enabled": True,
+        "library_width": 48,
+    }
+    assert library["media_reader"] == {
+        "library_open": False,
+        "items_open": True,
+        "custom_widths_enabled": True,
+        "library_width": 99,
+        "items_width": 32,
+    }
+
+
+def test_load_settings_reader_partial_values_win_with_per_key_legacy_fallback(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    original = """
+[library.reader]
+library_open = true
+
+[library.media_reader]
+library_open = false
+custom_widths_enabled = true
+library_width = 36
+items_open = false
+items_width = 64
+future_key = "keep"
+"""
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    library = config_module.load_settings(force_reload=True)["library"]
+
+    assert library["reader"] == {
+        "library_open": True,
+        "custom_widths_enabled": True,
+        "library_width": 36,
+    }
+    assert library["media_reader"] == {
+        "library_open": False,
+        "custom_widths_enabled": True,
+        "library_width": 36,
+        "items_open": False,
+        "items_width": 64,
+        "future_key": "keep",
+    }
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_load_settings_preserves_saved_widths_while_custom_widths_are_disabled(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[library.reader]
+custom_widths_enabled = false
+library_width = 36
+
+[library.media_reader]
+items_width = 64
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    library = config_module.load_settings(force_reload=True)["library"]
+
+    assert library["reader"]["custom_widths_enabled"] is False
+    assert library["reader"]["library_width"] == 36
+    assert library["media_reader"]["items_width"] == 64
+
+
+def test_load_settings_preserves_explicit_shared_28_without_writing(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    original = """
+[library.reader]
+custom_widths_enabled = false
+library_width = 28
+"""
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+    defaults = load_appearance_defaults(settings)
+
+    assert settings["library"]["reader"]["library_width"] == 28
+    assert defaults.library_reader_custom_widths_enabled is False
+    assert defaults.library_reader_library_width == 28
+    enabled = load_appearance_defaults(
+        {
+            "library": {
+                "reader": {
+                    **settings["library"]["reader"],
+                    "custom_widths_enabled": True,
+                }
+            }
+        }
+    )
+    assert enabled.library_reader_library_width == 28
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_load_settings_preserves_legacy_28_without_writing(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    original = """
+[library.media_reader]
+custom_widths_enabled = false
+library_width = 28
+"""
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+    defaults = load_appearance_defaults(settings)
+
+    assert settings["library"]["reader"]["library_width"] == 28
+    assert defaults.library_reader_custom_widths_enabled is False
+    assert defaults.library_reader_library_width == 28
+    enabled = load_appearance_defaults(
+        {
+            "library": {
+                "reader": {
+                    **settings["library"]["reader"],
+                    "custom_widths_enabled": True,
+                }
+            }
+        }
+    )
+    assert enabled.library_reader_library_width == 28
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_load_settings_normalizes_all_destination_item_preferences(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[library.conversations_reader]
+items_open = false
+items_width = 48
+
+[library.notes_reader]
+items_open = true
+items_width = 52
+
+[library.prompts_reader]
+items_open = false
+items_width = 60
+
+[library.skills_reader]
+items_open = true
+items_width = 68
+future_key = "keep"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    library = config_module.load_settings(force_reload=True)["library"]
+
+    assert library["conversations_reader"] == {
+        "items_open": False,
+        "items_width": 48,
+    }
+    assert library["notes_reader"] == {
+        "items_open": True,
+        "items_width": 52,
+        "files_tree_open": True,
+        "files_tree_width": 50,
+    }
+    assert library["prompts_reader"] == {"items_open": False, "items_width": 60}
+    assert library["skills_reader"] == {
+        "items_open": True,
+        "items_width": 68,
+        "future_key": "keep",
+    }
+
+
+def test_load_settings_normalizes_folder_tree_preferences_independently(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[library.notes_reader]
+items_open = false
+items_width = 68
+files_tree_open = "not-a-bool"
+files_tree_width = 500
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    notes_reader = config_module.load_settings(force_reload=True)["library"][
+        "notes_reader"
+    ]
+
+    assert notes_reader == {
+        "items_open": False,
+        "items_width": 68,
+        "files_tree_open": True,
+        "files_tree_width": 50,
+    }
+
+
+def test_load_settings_normalizes_destination_values_without_rewriting_legacy_keys(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[library.media_reader]
+library_open = "sometimes"
+items_open = 2
+custom_widths_enabled = "no"
+library_width = "wide"
+items_width = true
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    media_reader = config_module.load_settings(force_reload=True)["library"][
+        "media_reader"
+    ]
+
+    assert media_reader == {
+        "library_open": "sometimes",
+        "items_open": True,
+        "custom_widths_enabled": "no",
+        "library_width": "wide",
+        "items_width": 50,
+    }
+
+    assert config_module.load_settings(force_reload=True)["library"]["reader"] == {
+        "library_open": True,
+        "custom_widths_enabled": False,
+        "library_width": LIBRARY_REFERENCE_WIDTH,
     }

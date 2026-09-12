@@ -134,7 +134,7 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
         bridge = _bridge_over(db_path)
         console._console_agent_bridge = bridge
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         # Precondition: nothing live -- the text below can only come from the
@@ -214,7 +214,7 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
 
         console._console_agent_bridge = _bridge_over(db_path)
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         console._sync_console_agent_section()
@@ -262,7 +262,7 @@ async def test_drilldown_row_click_retargets_the_full_log_to_that_run(
 
         console._console_agent_bridge = _bridge_over(db_path)
         console._console_agent_drilldown_run_id = None
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         # Overview: the affordance targets the conversation's latest primary.
@@ -429,7 +429,7 @@ async def test_drilldown_header_names_the_resumed_from_run(tmp_path):
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
         console._console_agent_bridge = _bridge_over(db_path)
-        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         console._agent._drill_into_console_agent_subagent(resumed_sub)

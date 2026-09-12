@@ -63,6 +63,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_rail_state import build_console_rail_preference_key
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
@@ -71,17 +72,24 @@ from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
 # expected is "hittable" | "hidden" | "clipped" -- pinned against the
 # production hierarchy and shipped stylesheet.
+# TASK-23197 changed the 120x30 column. The Inspector used to open ITSELF
+# between 118 and 128 columns, which tripped priority resolution and
+# force-collapsed Context to a stub -- so a one-column resize from 117 to 118
+# swapped which sidebar the user had. The automatic open is now declined when
+# it would evict a visible Context rail, so at 120x30 the default is Context
+# open with the Inspector collapsed to its handle: the same two-pane shape as
+# 117 columns, which is what makes the boundary stop being a cliff.
 _REGIONS: list[tuple[str, str, str, str]] = [
     ("#console-shell", "hittable", "hittable", "hittable"),
-    ("#console-left-rail", "hittable", "hittable", "hidden"),
-    ("#console-left-rail-body", "hittable", "hittable", "hidden"),
+    ("#console-left-rail", "hittable", "hittable", "hittable"),
+    ("#console-left-rail-body", "hittable", "hittable", "hittable"),
     ("#console-main-column", "hittable", "hittable", "hittable"),
-    ("#console-context-rail-handle", "hidden", "hidden", "hittable"),
-    ("#console-inspector-rail-handle", "hittable", "hittable", "hidden"),
+    ("#console-context-rail-handle", "hidden", "hidden", "hidden"),
+    ("#console-inspector-rail-handle", "hittable", "hittable", "hittable"),
     ("#console-control-bar", "hittable", "hittable", "hittable"),
     ("#console-mode-bar", "hidden", "hidden", "hidden"),
     ("#console-native-composer", "hittable", "hittable", "hittable"),
-    ("#console-run-inspector", "hidden", "hidden", "clipped"),
+    ("#console-run-inspector", "hidden", "hidden", "hidden"),
 ]
 
 _EXPECTED_BY_SIZE = {
@@ -160,8 +168,26 @@ def _assert_workspace_state_is_contained(
             child.region.y + (child.region.height - 1) // 2,
         )
         hit = screen.get_widget_at(*point)[0]
-        assert hit is child or child in hit.ancestors, (
-            f"{child.id} is not painted at {point}: hit={hit!r}"
+        # What this guards is OCCLUSION: no sibling workspace pane may paint
+        # over another's centre. Asserting DOM ancestry instead was a proxy
+        # that also runs at FIRST PAINT, where a freshly mounted descendant
+        # can already be painting while its `ancestors` list is still empty
+        # and its region not yet settled. TASK-23199 surfaced that by
+        # removing the Sessions section, which moved the Conversations search
+        # box onto the rail's centre point. Naming the real property makes
+        # the check independent of mount ordering without weakening it.
+        occluder = next(
+            (
+                sibling
+                for sibling in displayed
+                if sibling is not child
+                and (hit is sibling or sibling in hit.ancestors)
+            ),
+            None,
+        )
+        assert occluder is None, (
+            f"{child.id} centre {point} is painted over by sibling pane "
+            f"{occluder.id if occluder else None}: hit={hit!r}"
         )
 
     main = screen.query_one("#console-main-column")
@@ -238,7 +264,7 @@ async def _seed_resize_transcript(screen, pilot):
 @pytest.mark.parametrize(
     ("stacked", "left_width", "right_width", "left_label", "right_label"),
     [
-        (False, 13, 11, "Context->", "<-Inspect"),
+        (False, 13, 11, "Context ▸", "◂ Inspect"),
         (True, 3, 3, "C\no\nn\nt\ne\nx\nt", "I\nn\ns\np\ne\nc\nt\no\nr"),
     ],
 )
@@ -268,21 +294,21 @@ async def test_fresh_console_composes_saved_rail_label_style(
         assert str(right_badge.renderable) == right._display_badge()
         assert right_badge.tooltip == right.badge
 
-        await pilot.click("#console-context-rail-collapse")
+        console.query_one("#console-context-rail-collapse", Button).press()
         await pilot.pause()
         assert left.display is True
         assert console.query_one("#console-left-rail").display is False
-        await pilot.click("#console-context-rail-open")
+        console.query_one("#console-context-rail-open", Button).press()
         await pilot.pause()
         assert left.display is False
         assert console.query_one("#console-left-rail").display is True
 
         assert right.display is True
-        await pilot.click("#console-inspector-rail-open")
+        console.query_one("#console-inspector-rail-open", Button).press()
         await pilot.pause()
         assert right.display is False
         assert console.query_one("#console-right-rail").display is True
-        await pilot.click("#console-inspector-rail-collapse")
+        console.query_one("#console-inspector-rail-collapse", Button).press()
         await pilot.pause()
         assert right.display is True
         assert console.query_one("#console-right-rail").display is False
@@ -379,11 +405,60 @@ async def test_compact_workspace_grid_children_are_contained() -> None:
                 f"child={child.region}, screen={screen.region}"
             )
 
+        # TASK-23197: Context stays, the Inspector collapses to its handle.
         assert {child.id for child in displayed} == {
-            "console-context-rail-handle",
+            "console-left-rail",
             "console-main-column",
-            "console-right-rail",
+            "console-inspector-rail-handle",
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("size", "expected_displayed"),
+    [
+        pytest.param(
+            (120, 30),
+            {
+                "console-left-rail",
+                "console-main-column",
+                "console-inspector-rail-handle",
+            },
+            id="120x30-default-context-visible",
+        ),
+        pytest.param(
+            (80, 24),
+            {"console-main-column"},
+            id="80x24-default-single-pane",
+        ),
+    ],
+)
+async def test_bounded_rail_default_shell_matrix_is_compositor_contained(
+    size: tuple[int, int],
+    expected_displayed: set[str],
+) -> None:
+    """Default compact states keep hidden rails out of the hit-test plane."""
+
+    async with make_console_pilot(size=size) as pilot:
+        screen = pilot.app.screen
+        _assert_workspace_state_is_contained(
+            screen,
+            expected_displayed=expected_displayed,
+            default_context_only=False,
+        )
+        left = screen.query_one("#console-left-rail")
+        right = screen.query_one("#console-right-rail")
+        if size == (80, 24):
+            assert left.display is False
+            assert right.display is False
+            assert screen.query_one("#console-context-rail-handle").display is False
+            assert screen.query_one("#console-inspector-rail-handle").display is False
+        else:
+            # TASK-23197: at 120x30 the default now keeps Context and
+            # collapses the Inspector, instead of the Inspector opening
+            # itself and evicting Context.
+            assert left.display is True
+            assert right.display is False
 
 
 @pytest.mark.asyncio
@@ -461,6 +536,10 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         "left_open": stored_left_open,
         "right_open": stored_right_open,
     }
+    shared_key = build_console_rail_preference_key(layout_scope="global")
+    app.app_config.setdefault("console", {})["rail_state"] = {
+        shared_key.value: stored_preferences
+    }
     save_spy = Mock()
     pre_sync_observations = []
     queued_first_sync_states = []
@@ -491,11 +570,6 @@ async def test_exact_100_workspace_state_matrix_is_contained(
             screen.call_after_refresh(assert_first_paint_then_delegate_sync)
         return None
 
-    monkeypatch.setattr(
-        ChatScreen,
-        "_stored_console_rail_preferences",
-        lambda _self, _key, _fallback_key: stored_preferences,
-    )
     monkeypatch.setattr(ChatScreen, "_save_console_rail_preferences", save_spy)
     monkeypatch.setattr(
         ChatScreen,

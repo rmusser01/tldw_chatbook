@@ -26,6 +26,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_destination_shells import _build_test_app
+from Tests.console_provider_doubles import provider_resolution
 
 
 class _SequencedGateway:
@@ -41,17 +42,7 @@ class _SequencedGateway:
         self._calls = 0
 
     async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
+        return provider_resolution(base_url="http://127.0.0.1:9099")
 
     async def stream_chat(self, resolution, messages, **kwargs):
         text = self._replies[self._calls]
@@ -100,8 +91,8 @@ def _resume_into_fresh_store(db: CharactersRAGDB, conversation_id: str):
 
 
 @pytest.mark.asyncio
-async def test_console_branching_full_lifecycle_persist_resume_swipe():
-    db = CharactersRAGDB(":memory:", "test_client")
+async def test_console_branching_full_lifecycle_persist_resume_swipe(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chat.db"), "test_client")
     try:
         store, controller, session = _new_controller(
             db, replies=["A1", "A1-prime", "A2"]

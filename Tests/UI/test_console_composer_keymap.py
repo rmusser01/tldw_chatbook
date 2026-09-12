@@ -26,6 +26,7 @@ thing itself.
 from __future__ import annotations
 
 import pytest
+from textual.events import Key
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -103,6 +104,46 @@ async def test_ctrl_u_clears_the_whole_draft():
 
         assert composer.draft_text() == ""
         assert composer.cursor_index == 0
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_clears_an_unselected_focused_draft_and_is_undoable():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        composer = await _focused_composer(host, pilot, "throw me away")
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert composer.draft_text() == ""
+        assert composer.cursor_index == 0
+
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+
+        assert composer.draft_text() == "throw me away"
+        assert composer.cursor_index == len("throw me away")
+
+
+@pytest.mark.unit
+def test_ctrl_c_handler_records_history_and_posts_draft_changed(monkeypatch):
+    composer = ConsoleComposerBar()
+    composer.load_draft("throw me away")
+    composer.has_focus = True
+    posted: list[object] = []
+    monkeypatch.setattr(composer, "post_message", posted.append)
+
+    assert composer.handle_console_key(Key("ctrl+c", None)) is True
+
+    assert composer.draft_text() == ""
+    assert composer.cursor_index == 0
+    assert len(posted) == 1
+    message = posted[0]
+    assert isinstance(message, ConsoleComposerBar.DraftChanged)
+    assert message.composer is composer
+    assert message.is_insertion is False
+    assert composer.undo() is True
+    assert composer.draft_text() == "throw me away"
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +325,20 @@ async def test_an_edit_key_reaches_the_composer_while_nothing_is_focused():
 
         assert composer.draft_text() == "ac"
         assert composer.cursor_index == 1
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_does_not_clear_the_draft_while_nothing_is_focused():
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep me")
+        host.set_focus(None)
+        await pilot.pause()
+        assert host.focused is None
+
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+
+        assert composer.draft_text() == "keep me"

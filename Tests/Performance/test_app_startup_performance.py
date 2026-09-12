@@ -8,12 +8,12 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -147,6 +147,125 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
     assert payload["loaded"] == []
 
 
+def test_tool_pack_facade_export_is_lazy(tmp_path: Path) -> None:
+    """Package symbols must not pull service owners in until first access."""
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import json
+        import sys
+
+        import tldw_chatbook.Tool_Packs as tool_packs
+
+        before = "tldw_chatbook.Tool_Packs.service" in sys.modules
+        facade = tool_packs.ToolPackService
+        after = "tldw_chatbook.Tool_Packs.service" in sys.modules
+        print(json.dumps({"before": before, "after": after, "name": facade.__name__}))
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "before": False,
+        "after": True,
+        "name": "ToolPackService",
+    }
+
+
+def test_tool_pack_implementation_imports_only_in_deferred_worker(
+    tmp_path: Path,
+) -> None:
+    """App import stays cheap; the post-ready worker owns composition and I/O."""
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import json
+        import sys
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        import tldw_chatbook.app as app_module
+        from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+        from tldw_chatbook.Workspaces.registry_service import DeferredWorkspaceToolProfileGuard
+
+        guarded = (
+            "tldw_chatbook.Tool_Packs.service",
+            "tldw_chatbook.Tool_Packs.export",
+            "tldw_chatbook.Tool_Packs.publication",
+            "tldw_chatbook.Tool_Packs.importer",
+            "tldw_chatbook.Tool_Packs.activation",
+            "tldw_chatbook.Tool_Packs.receipt_store",
+            "tldw_chatbook.Tool_Packs.removal",
+        )
+        before = [name for name in guarded if name in sys.modules]
+        root = Path(__import__("os").environ["XDG_DATA_HOME"])
+        app_module.get_user_data_dir = lambda: root
+
+        class Registry:
+            def __init__(self, guard): self.guard = guard
+            def list_workspaces(self, *, include_archived=False): return ()
+            def get_workspace(self, workspace_id): return None
+            def attach_tool_profile_guard(self, guard): self.guard = guard
+            @property
+            def tool_profile_guard(self): return self.guard
+
+        bootstrap = DeferredWorkspaceToolProfileGuard()
+        registry = Registry(bootstrap)
+        fake = SimpleNamespace(
+            unified_mcp_service=SimpleNamespace(
+                permission_store=MCPPermissionStore(root / "permissions.json")
+            ),
+            local_mcp_control_service=object(),
+            workspace_registry_service=registry,
+            _tool_pack_guard_bootstrap=bootstrap,
+            tool_pack_service=None,
+            tool_pack_service_unavailable_reason="starting",
+            tool_pack_receipt_reconciliation_unavailable_reason="not_run",
+        )
+        fake.call_from_thread = lambda callback, *args: callback(*args)
+        fake._mark_tool_pack_service_unavailable = lambda category: (
+            app_module.TldwCli._mark_tool_pack_service_unavailable(fake, category)
+        )
+        fake._attach_tool_pack_service = lambda service, owner, guard_bootstrap: (
+            app_module.TldwCli._attach_tool_pack_service(
+                fake, service, owner, guard_bootstrap
+            )
+        )
+        fake._record_tool_pack_receipt_reconciliation = lambda service, category: (
+            app_module.TldwCli._record_tool_pack_receipt_reconciliation(
+                fake, service, category
+            )
+        )
+
+        app_module.TldwCli._compose_tool_pack_service_off_thread(fake)
+        after = [name for name in guarded if name in sys.modules]
+        print(json.dumps({
+            "before": before,
+            "after": after,
+            "attached": fake.tool_pack_service is not None and registry.guard is not None,
+            "root": str(fake.tool_pack_service.receipt_root),
+        }))
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["before"] == []
+    assert payload["after"] == [
+        "tldw_chatbook.Tool_Packs.service",
+        "tldw_chatbook.Tool_Packs.export",
+        "tldw_chatbook.Tool_Packs.publication",
+        "tldw_chatbook.Tool_Packs.importer",
+        "tldw_chatbook.Tool_Packs.activation",
+        "tldw_chatbook.Tool_Packs.receipt_store",
+        "tldw_chatbook.Tool_Packs.removal",
+    ]
+    assert payload["attached"] is True
+    assert payload["root"] == str(tmp_path / "data" / "tool_pack_receipts")
+
+
 @pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
 def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
     enabled: bool,
@@ -165,22 +284,34 @@ def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
     async def reconcile() -> None:
         return None
 
-    fake_app = SimpleNamespace(
-        set_timer=Mock(),
-        _schedule_footer_status_updates=Mock(),
-        _start_deferred_audio_service_initialization=Mock(),
-        _schedule_screen_preimport=Mock(),
-        schedule_media_cleanup=Mock(),
-        citation_artifact_ownership_coordinator=SimpleNamespace(writes_enabled=enabled),
-        _reconcile_citation_artifact_ownership=reconcile,
-        _create_deferred_startup_task=capture,
+    # A `Mock(spec=TldwCli)` rather than a hand-listed `SimpleNamespace`
+    # (TASK-21566). The namespace had to name every attribute the method
+    # touches, so each time deferred startup grew a step these tests died on
+    # the new one -- most recently `run_worker`, added by task-21106 to move
+    # Actor Pack recovery off the construction path. `spec=` tracks the class:
+    # a genuinely new dependency is satisfied, while a typo or an attribute
+    # that does not exist on TldwCli still raises. Only the seams under test
+    # are wired for real.
+    fake_app = Mock(spec=TldwCli)
+    fake_app.citation_artifact_ownership_coordinator = SimpleNamespace(
+        writes_enabled=enabled
     )
+    fake_app._reconcile_citation_artifact_ownership = reconcile
+    fake_app._create_deferred_startup_task = capture
 
     TldwCli._schedule_deferred_startup_work(fake_app)
 
-    assert len(scheduled) == expected_tasks
-    if scheduled:
-        assert scheduled[0][1] == "deferred_citation_artifact_reconciliation"
+    # Assert on this task by NAME, not by position or by the total. Deferred
+    # startup schedules unrelated work too (a subscription reconcile lands
+    # first, unconditionally), so a count or an index pins the shape of the
+    # whole method instead of the policy gate this test is about -- and breaks
+    # every time an unrelated step is added.
+    citation_tasks = [
+        name
+        for _, name in scheduled
+        if name == "deferred_citation_artifact_reconciliation"
+    ]
+    assert len(citation_tasks) == expected_tasks
 
 
 @pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
@@ -201,26 +332,23 @@ def test_legacy_citation_migration_is_deferred_and_policy_gated(
     async def migrate() -> None:
         return None
 
-    fake_app = SimpleNamespace(
-        set_timer=Mock(),
-        _schedule_footer_status_updates=Mock(),
-        _start_deferred_audio_service_initialization=Mock(),
-        _schedule_screen_preimport=Mock(),
-        schedule_media_cleanup=Mock(),
-        citation_artifact_ownership_coordinator=None,
-        citation_legacy_migration_service=SimpleNamespace(
-            writes_enabled=enabled,
-            ready=enabled,
-        ),
-        _migrate_legacy_citations_idle_unit=migrate,
-        _create_deferred_startup_task=capture,
+    # See the sibling test above for why this is a spec'd Mock and why the
+    # assertion is by name rather than by count (TASK-21566).
+    fake_app = Mock(spec=TldwCli)
+    fake_app.citation_artifact_ownership_coordinator = None
+    fake_app.citation_legacy_migration_service = SimpleNamespace(
+        writes_enabled=enabled,
+        ready=enabled,
     )
+    fake_app._migrate_legacy_citations_idle_unit = migrate
+    fake_app._create_deferred_startup_task = capture
 
     TldwCli._schedule_deferred_startup_work(fake_app)
 
-    assert len(scheduled) == expected_tasks
-    if scheduled:
-        assert scheduled[0][1] == "deferred_legacy_citation_migration"
+    migration_tasks = [
+        name for _, name in scheduled if name == "deferred_legacy_citation_migration"
+    ]
+    assert len(migration_tasks) == expected_tasks
 
 
 @pytest.mark.asyncio
@@ -668,6 +796,113 @@ async def test_tts_handler_initializes_on_first_use(monkeypatch) -> None:
     assert handler is app._tts_handler
     assert handler._profile_service_loader == app._ensure_tts_profile_service
     assert app._tts_profile_service is None
+
+
+@pytest.mark.asyncio
+async def test_tts_profile_open_keeps_helper_startup_off_the_ui_loop(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A slow fixed-helper open must not prevent the UI loop from advancing."""
+
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    worker_threads: list[int] = []
+
+    def blocked_worker_open(self) -> None:
+        worker_threads.append(threading.get_ident())
+        worker_started.set()
+        assert release_worker.wait(timeout=3)
+
+    monkeypatch.setattr(TTSProfileRepository, "_worker_open", blocked_worker_open)
+    repository = TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    open_task = asyncio.create_task(repository.open())
+    primary_error: BaseException | None = None
+    try:
+        assert await asyncio.to_thread(worker_started.wait, 3)
+        await asyncio.sleep(0)
+        assert open_task.done() is False
+        assert len(worker_threads) == 1
+        assert worker_threads[0] != threading.get_ident()
+    except BaseException as error:  # noqa: BLE001 - settle test ownership before redelivering the primary signal
+        primary_error = error
+    finally:
+        release_worker.set()
+        try:
+            try:
+                await open_task
+            except BaseException as error:  # noqa: BLE001 - opening failure must not skip repository cleanup
+                if primary_error is None:
+                    primary_error = error
+        finally:
+            try:
+                await repository.close()
+            except BaseException:
+                if primary_error is None:
+                    raise
+    if primary_error is not None:
+        raise primary_error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["assertion", "open", "assertion_and_open"])
+async def test_tts_ui_loop_guard_settles_owner_when_its_checks_fail(
+    monkeypatch, tmp_path, failure_phase
+):
+    """Exercise the guard's own failure path with its real executor owner."""
+    from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+
+    assertion_error = AssertionError("injected scheduling assertion")
+    open_error = RuntimeError("injected open failure")
+    close_error = RuntimeError("injected close diagnostic")
+    test_task = asyncio.current_task()
+    real_sleep = asyncio.sleep
+    real_open, real_close = TTSProfileRepository.open, TTSProfileRepository.close
+    owners, open_tasks, closed = [], [], []
+
+    async def observed_open(repository):
+        owners.append(repository)
+        open_tasks.append(asyncio.current_task())
+        await real_open(repository)
+        if failure_phase in {"open", "assertion_and_open"}:
+            raise open_error
+
+    async def observed_close(repository):
+        try:
+            await real_close(repository)
+        finally:
+            closed.append(repository)
+        raise close_error
+
+    async def fail_assertion(delay):
+        if asyncio.current_task() is test_task and failure_phase != "open":
+            raise assertion_error
+        await real_sleep(delay)
+
+    monkeypatch.setattr(TTSProfileRepository, "open", observed_open)
+    monkeypatch.setattr(TTSProfileRepository, "close", observed_close)
+    monkeypatch.setattr(asyncio, "sleep", fail_assertion)
+    try:
+        with pytest.raises(BaseException) as caught:
+            await test_tts_profile_open_keeps_helper_startup_off_the_ui_loop(
+                monkeypatch, tmp_path
+            )
+        expected = open_error if failure_phase == "open" else assertion_error
+        assert caught.value is expected
+        assert len(owners) == 1 and closed == owners
+        assert all(task.done() for task in open_tasks)
+        assert owners[0]._executor is None and owners[0]._executor_shutdown
+    finally:
+        # Even the expected RED against the old guard settles its test owner.
+        for task in open_tasks:
+            try:
+                await task
+            except BaseException:  # noqa: BLE001, S110 - consume injected test failure before owner teardown
+                pass
+        for owner in owners:
+            await real_close(owner)
 
 
 @pytest.mark.asyncio

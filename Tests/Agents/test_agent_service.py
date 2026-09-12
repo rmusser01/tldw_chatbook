@@ -1,6 +1,7 @@
 # Tests/Agents/test_agent_service.py
 """Service tests: scripted chat_call (no network) + real AgentRunsDB."""
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -11,9 +12,9 @@ import pytest
 
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
-    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     RUN_DONE,
     RUN_ERROR,
     RUN_STUCK,
@@ -25,6 +26,7 @@ from tldw_chatbook.Agents.agent_models import (
     RunBudget,
     ToolCatalogEntry,
     ToolBatchReady,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
     definition_fingerprint,
@@ -51,15 +53,26 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
+    FirstRequestSchemaPlan,
     _call_with_timeout,
     _usage_total_tokens,
+    build_first_request_schema_plan,
+    catalog_schema_tokens,
+)
+from tldw_chatbook.Agents.canvas_tool_provider import (
+    CANVAS_TOOL_NAMES,
+    CanvasToolProvider,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    FIND_TOOLS_SCHEMA,
+    LOAD_TOOLS_SCHEMA,
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Canvas.models import CanvasScope
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import join_fleet_children
@@ -361,6 +374,519 @@ CFG = AgentConfig(
     system_prompt="You are helpful.",
     allowed_tools=("calculator", "get_current_datetime", SPAWN_TOOL_NAME),
 )
+
+
+def _schema(name: str, description: str = "compact") -> ToolSchema:
+    return ToolSchema(
+        id=f"fake:{name}",
+        name=name,
+        description=description,
+        parameters={"type": "object", "properties": {}},
+    )
+
+
+def _canvas_schemas() -> tuple[ToolSchema, ...]:
+    return tuple(
+        _schema(name, f"{name} schema")
+        for name in (
+            "canvas_list",
+            "canvas_read",
+            "canvas_create",
+            "canvas_update",
+            "canvas_guide",
+        )
+    )
+
+
+class _NoopCanvasCoordinator:
+    def is_scope_current(self, _scope):
+        return True
+
+    def list_canvases(self, _scope):
+        return ()
+
+    def read_canvas(self, _scope, _canvas_id):
+        raise AssertionError("not invoked")
+
+    def create_canvas(self, _scope, **_kwargs):
+        raise AssertionError("not invoked")
+
+    def update_canvas(self, _scope, **_kwargs):
+        raise AssertionError("not invoked")
+
+
+def _canvas_registry():
+    provider = CanvasToolProvider(
+        _NoopCanvasCoordinator(),
+        scope=CanvasScope("session", "conversation", (), None, None, "run"),
+        enabled_reader=lambda: True,
+    )
+    authority = provider.issue_registration_authority()
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority)
+    allowed = tuple(entry.name for entry in provider.list_catalog())
+    return registry, allowed, provider, authority
+
+
+@pytest.mark.parametrize(
+    "disclosed_names",
+    (
+        {"canvas_create"},
+        {"canvas_update"},
+        {"canvas_guide"},
+        CANVAS_TOOL_NAMES - {"canvas_guide"},
+        CANVAS_TOOL_NAMES,
+    ),
+)
+@pytest.mark.parametrize("has_discovery_policy", [False, True])
+def test_model_request_guidance_tracks_the_exact_disclosed_canvas_schema_set(
+    db, disclosed_names, has_discovery_policy
+):
+    service = AgentService(
+        db=db, registry=ToolCatalogRegistry(), chat_call=lambda **_: {}
+    )
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
+
+    config = dataclasses.replace(
+        CFG,
+        native_tools=True,
+        system_prompt=f"s {CANVAS_OFFER_POLICY}" if has_discovery_policy else "s",
+    )
+    disclosed_schemas = tuple(
+        schema for schema in _canvas_schemas() if schema.name in disclosed_names
+    )
+
+    request = service._build_model_request(
+        config,
+        "openai",
+        [],
+        [{"role": "user", "content": "build it"}],
+        disclosed_schemas,
+    )
+    system = request.messages[0]["content"]
+
+    assert system.count(CANVAS_OFFER_POLICY) == 1
+    assert "If context does not establish consent, clarify." in system
+    for disclosed_name in disclosed_names:
+        assert disclosed_name in system
+    assert ("V1 supports inline HTML/CSS and classic scripts" in system) == (
+        bool(disclosed_names & {"canvas_create", "canvas_update"})
+    )
+    for undisclosed_name in CANVAS_TOOL_NAMES - disclosed_names:
+        assert undisclosed_name not in system
+
+
+def test_catalog_schema_tokens_measures_one_complete_native_schema_set(monkeypatch):
+    schemas = (_schema("alpha"), _schema("beta"))
+    measured: list[str] = []
+
+    def estimate(text, *_args, **_kwargs):
+        measured.append(text)
+        return 17
+
+    monkeypatch.setattr(agent_service, "estimate_tokens", estimate)
+    monkeypatch.setattr(
+        agent_service, "provider_supports_native_tools", lambda _endpoint, **_kwargs: True
+    )
+
+    assert (
+        catalog_schema_tokens(
+            schemas,
+            model="m",
+            api_endpoint="openai",
+            native_tools=True,
+        )
+        == 17
+    )
+    assert measured == [
+        json.dumps(
+            agent_service.schemas_to_openai_tools(list(schemas)),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    ]
+
+
+def test_catalog_schema_tokens_measures_one_complete_fence_protocol(monkeypatch):
+    schemas = (_schema("alpha"), _schema("beta"))
+    measured: list[str] = []
+
+    def estimate(text, *_args, **_kwargs):
+        measured.append(text)
+        return 19
+
+    monkeypatch.setattr(agent_service, "estimate_tokens", estimate)
+
+    assert (
+        catalog_schema_tokens(
+            schemas,
+            model="m",
+            api_endpoint="llama_cpp",
+            native_tools=False,
+        )
+        == 19
+    )
+    assert measured == [agent_service.render_tool_protocol(list(schemas))]
+
+
+class PlanningProvider:
+    def __init__(self, count: int):
+        self.schemas = tuple(_schema(f"tool_{index}") for index in range(count))
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(schema.id, schema.name, schema.description, "fake")
+            for schema in self.schemas
+        ]
+
+    def load_schema(self, tool_id):
+        return next(schema for schema in self.schemas if schema.id == tool_id)
+
+    def invoke(self, tool_id, args):
+        return ToolResult(ok=True, content=tool_id)
+
+
+def _planning_registry(count: int) -> tuple[ToolCatalogRegistry, tuple[str, ...]]:
+    provider = PlanningProvider(count)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    return registry, tuple(schema.name for schema in provider.schemas)
+
+
+def test_first_request_plan_direct_discloses_many_compact_schemas(monkeypatch):
+    registry, allowed = _planning_registry(25)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 999)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 500)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert len(plan.active_schemas) == 25
+    assert plan.offer_find_load is False
+    assert plan.system_prompt == "direct"
+
+
+def _fleet_schema_plan(monkeypatch, *, worktree_merge_enabled: bool):
+    registry, allowed = _planning_registry(1)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=2),
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 50)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 500)
+
+    return build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        agent_definitions=(
+            AgentDefinition(
+                name="researcher",
+                description="Find evidence",
+                instructions="Research the task.",
+            ),
+        ),
+        fleet_active=True,
+        worktree_merge_enabled=worktree_merge_enabled,
+    )
+
+
+def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeypatch):
+    """fleet_active alone still yields exactly the three fleet-coordination
+    names -- merge/discard require the Task 7 ruling's separate
+    worktree_merge_enabled gate (see the sibling test below)."""
+    plan = _fleet_schema_plan(monkeypatch, worktree_merge_enabled=False)
+
+    assert [schema.name for schema in plan.runtime_schemas] == [
+        "spawn_subagent",
+        "wait_agents",
+        "check_agents",
+        "send_to_agent",
+    ]
+    assert (
+        "researcher"
+        in plan.runtime_schemas[0].parameters["properties"]["agent"]["description"]
+    )
+
+
+def test_first_request_plan_adds_worktree_merge_schemas_only_when_enabled(
+    monkeypatch,
+):
+    """TASK-28238 phase 2 Task 7 ruling: merge/discard for a
+    worktree-isolated child is additionally gated on a run-entry confirm
+    surface existing (worktree_merge_enabled), like run_skill_script_enabled
+    -- no longer the bare fleet_active predicate Task 5 used."""
+    plan = _fleet_schema_plan(monkeypatch, worktree_merge_enabled=True)
+
+    assert [schema.name for schema in plan.runtime_schemas] == [
+        "spawn_subagent",
+        "wait_agents",
+        "check_agents",
+        "send_to_agent",
+        "merge_agent_worktree",
+        "discard_agent_worktree",
+    ]
+
+
+def test_first_request_plan_defers_large_or_history_cramped_catalog(monkeypatch):
+    registry, allowed = _planning_registry(5)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 900)
+    def count(messages, *_args, **_kwargs):
+        system = str(messages[0].get("content", ""))
+        return 9_000 if FIND_TOOLS_NAME in system else 9_901
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "history pressure"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.active_schemas == ()
+    assert plan.offer_find_load is True
+    assert plan.system_prompt == "discovery"
+
+
+def test_first_request_plan_drops_discovery_tools_when_only_no_tool_request_fits(
+    monkeypatch,
+):
+    registry, allowed = _planning_registry(1)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        response_reserve_tokens=10,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
+
+    def count(messages, *_args, **_kwargs):
+        rendered = str(messages[0].get("content", ""))
+        return 91 if "tool_0" in rendered or FIND_TOOLS_NAME in rendered else 80
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.request_fits is True
+    assert plan.active_schemas == ()
+    assert plan.runtime_schemas == ()
+    assert plan.offer_find_load is False
+    assert plan.system_prompt == "direct"
+
+
+@pytest.mark.parametrize("has_discovery_policy", [False, True])
+def test_first_request_plan_counts_canvas_guidance_before_direct_disclosure(
+    monkeypatch,
+    has_discovery_policy,
+):
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
+
+    registry, allowed, _provider, _authority = _canvas_registry()
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        native_tools=True,
+        response_reserve_tokens=10,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
+    monkeypatch.setattr(
+        agent_service, "provider_supports_native_tools", lambda *_a, **_k: True
+    )
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
+
+    measured_systems = []
+
+    def count(messages, *_args, **_kwargs):
+        system = str(messages[0].get("content", ""))
+        measured_systems.append(system)
+        return 91 if "V1 supports inline HTML/CSS and classic scripts" in system else 80
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "openai",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt=(
+            f"direct {CANVAS_OFFER_POLICY}" if has_discovery_policy else "direct"
+        ),
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.request_fits is True
+    assert plan.active_schemas == ()
+    assert plan.offer_find_load is True
+    assert plan.system_prompt == "discovery"
+    assert any(CANVAS_OFFER_POLICY in system for system in measured_systems)
+    assert all(system.count(CANVAS_OFFER_POLICY) <= 1 for system in measured_systems)
+
+
+def test_first_request_plan_stops_before_provider_when_even_no_tool_request_fails(
+    db, monkeypatch
+):
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 91)
+    service, chat = make_service(db, ["must not send"])
+    config = dataclasses.replace(
+        CFG,
+        allowed_tools=("calculator",),
+        response_reserve_tokens=10,
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-unfit-first-request",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert chat.calls == []
+    assert outcome.steps[0].summary == "first request exceeds model context budget"
+
+
+def test_first_request_plan_counts_workspace_context_note(monkeypatch):
+    """The always-sent workspace note participates in whole-request fit."""
+    registry, allowed = _planning_registry(1)
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        workspace_context_note="BOUND WORKSPACE AUTHORITY",
+        response_reserve_tokens=100,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 900)
+
+    def count(messages, *_args, **_kwargs):
+        system = str(messages[0].get("content", ""))
+        if FIND_TOOLS_NAME in system:
+            return 9_000
+        return 9_901 if "BOUND WORKSPACE AUTHORITY" in system else 500
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.active_schemas == ()
+    assert plan.offer_find_load is True
+
+
+@pytest.mark.parametrize("failure", [0, RuntimeError("unknown")])
+def test_first_request_plan_invalid_model_limit_fails_into_discovery(
+    monkeypatch, failure
+):
+    registry, allowed = _planning_registry(2)
+
+    def model_limit(*_args):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", model_limit)
+    config = AgentConfig(
+        model="m", system_prompt="direct", allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+    )
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.offer_find_load is True
+    assert plan.active_schemas == ()
 
 
 def test_initial_project_instruction_rows_are_verified_and_marked_before_provider(
@@ -973,6 +1499,51 @@ def test_native_subagent_turns_also_carry_tools(db):
     assert "tools" in child_call  # native_tools propagated to the child
 
 
+def test_managed_skill_proposal_schema_and_callback_are_primary_only(db):
+    chat = FleetChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    native_call(SPAWN_TOOL_NAME, {"task": "inspect only"}, "s1")
+                ],
+            },
+            "done",
+        ],
+        {"inspect only": ["child done"]},
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        prepare_managed_skill_promotion_tool=lambda _args: ToolResult(
+            ok=True, content="proposal"
+        ),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="managed-promotion-schema",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=CFG,
+        api_endpoint="groq",
+        should_cancel=lambda: False,
+    )
+    join_fleet_children(service)
+
+    assert outcome.status == RUN_DONE
+    primary_names = {
+        row["function"]["name"] for row in chat.parent_calls[0]["tools"]
+    }
+    child_names = {
+        row["function"]["name"]
+        for row in chat.child_calls["inspect only"][0]["tools"]
+    }
+    assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in primary_names
+    assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME not in child_names
+
+
 def test_malformed_native_arguments_error_is_echoed_and_recoverable(db):
     bad = {
         "id": "m1",
@@ -1197,6 +1768,42 @@ def test_spawn_creates_linked_child_with_clean_context(db):
     assert db.count_subagent_runs("c") == 1
 
 
+def test_inline_spawn_capture_failure_never_links_child_to_absent_step(db, monkeypatch):
+    original_insert = db.insert_steps_at_indices
+
+    def fail_spawn_capture(run_id, indexed_steps):
+        if any(step["kind"] == "spawn" for _index, step in indexed_steps):
+            raise RuntimeError("persistent spawn capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_spawn_capture)
+    service, _chat = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect"}),
+            "child done",
+            "parent done",
+        ],
+    )
+    parent_id, outcome = service.run_turn(
+        conversation_id="inline-spawn-capture",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    rows = db.list_runs("inline-spawn-capture", include_superseded=True)
+    parent = next(row for row in rows if row["id"] == parent_id)
+    child = next(row for row in rows if row["agent_kind"] == "subagent")
+    diagnostic = next(step for step in parent["steps"] if step["kind"] == "capture_failed")
+    diagnostic_id = f"agent-step:{parent_id}:{diagnostic['index']}"
+    assert child["spawn_event_id"] == diagnostic_id
+    assert next(
+        step for step in child["steps"] if step["kind"] == "agent_run_reserved"
+    )["parent_event_id"] == diagnostic_id
+
+
 def test_spawn_propagates_workspace_note_to_child_prompt(db):
     """A non-default workspace note rides the parent config onto the child's
     config, so a spawned sub-agent -- which operates on the same workspace
@@ -1366,7 +1973,7 @@ def test_child_cannot_spawn(db):
     assert db.count_subagent_runs("c") == 1  # no grandchildren
 
 
-def test_supersede_marks_old_tree_before_new_run(db):
+def test_supersede_marks_old_tree_before_new_run(db, monkeypatch):
     service, _ = make_service(db, ["first answer"])
     old_id, _ = service.run_turn(
         conversation_id="c",
@@ -1374,6 +1981,22 @@ def test_supersede_marks_old_tree_before_new_run(db):
         config=CFG,
         api_endpoint="llama_cpp",
     )
+    local_id = db.create_run(
+        conversation_id="c",
+        agent_kind="local_command",
+        task="Local command",
+    )
+    original_list_runs = db.list_runs
+    requested_kinds: list[str | None] = []
+
+    def exact_kind_only(conversation_id, *args, **kwargs):
+        kind = kwargs.get("agent_kind")
+        requested_kinds.append(kind)
+        if kind is None:
+            raise AssertionError("broad query would hydrate poison local-command steps")
+        return original_list_runs(conversation_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "list_runs", exact_kind_only)
     service2, _ = make_service(db, ["second answer"])
     new_id, _ = service2.run_turn(
         conversation_id="c",
@@ -1384,6 +2007,431 @@ def test_supersede_marks_old_tree_before_new_run(db):
     )
     assert db.get_run(old_id)["status"] == "superseded"
     assert db.get_run(new_id)["status"] == "done"
+    assert db.get_run(local_id)["status"] == "running"
+    assert requested_kinds == ["primary", "subagent"]
+    assert [
+        step["kind"]
+        for step in db.get_run(old_id)["steps"]
+        if step["kind"].startswith("agent_run_")
+    ] == [
+        "agent_run_created",
+        "agent_run_started",
+        "agent_run_completed",
+        "agent_run_superseded",
+    ]
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="supersede-reload")
+    runs = reopened.list_runs("c", include_superseded=True)
+    records = [
+        record
+        for turn in derive_trajectory(
+            messages=[],
+            usage_by_id={},
+            traj_rows=[],
+            variant_sets=[],
+            compaction_records=[],
+            agent_runs=runs,
+            agent_steps=[
+                {**step, "run_id": row["id"], "conversation_id": "c"}
+                for row in runs
+                for step in row["steps"]
+            ],
+        ).turns
+        for record in turn.records
+    ]
+    assert any(
+        record.run_id == old_id and record.kind == "agent_run_superseded"
+        for record in records
+    )
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    "failed_kind",
+    ["agent_run_created", "agent_run_started", "agent_run_completed"],
+)
+def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_reload(
+    db, monkeypatch, failed_kind
+):
+    original_insert = db.insert_steps_at_indices
+    original_terminal = db.set_terminal_with_step
+    failed = False
+
+    def fail_lifecycle_once(run_id, indexed_steps):
+        nonlocal failed
+        if not failed and any(
+            step["kind"] == failed_kind for _index, step in indexed_steps
+        ):
+            failed = True
+            raise RuntimeError("simulated lifecycle storage failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_lifecycle_once)
+
+    def fail_terminal_once(run_id, status, result, terminal_step):
+        nonlocal failed
+        if not failed and terminal_step["kind"] == failed_kind:
+            failed = True
+            raise RuntimeError("simulated lifecycle storage failure")
+        return original_terminal(run_id, status, result, terminal_step)
+
+    if failed_kind == "agent_run_completed":
+        monkeypatch.setattr(db, "set_terminal_with_step", fail_terminal_once)
+    service, _ = make_service(db, ["safe answer"])
+    run_id, outcome = service.run_turn(
+        conversation_id=f"capture-failure-{failed_kind}",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="lifecycle-failure-reload")
+    row = reopened.get_run(run_id)
+    assert row["status"] == RUN_DONE
+    steps = row["steps"]
+    diagnostics = [step for step in steps if step["kind"] == "capture_failed"]
+    expected_diagnostics = 0 if failed_kind == "agent_run_completed" else 1
+    assert len(diagnostics) == expected_diagnostics
+    lifecycle_kinds = [
+        step["kind"] for step in steps if step["kind"].startswith("agent_run_")
+    ]
+    assert len(lifecycle_kinds) == len(set(lifecycle_kinds))
+    if failed_kind == "agent_run_completed":
+        assert len([step for step in steps if step["kind"] == failed_kind]) == 1
+    else:
+        diagnostic = diagnostics[0]
+        assert failed_kind not in [step["kind"] for step in steps]
+        assert diagnostic["field_states"][failed_kind] == "not_observed"
+    event_ids = {
+        f"agent-step:{run_id}:{step['index']}" for step in steps
+    } | {f"agent-run:{run_id}"}
+    for step in steps:
+        assert step["parent_event_id"] in event_ids
+        assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+    if failed_kind == "agent_run_created":
+        started = next(step for step in steps if step["kind"] == "agent_run_started")
+        assert started["parent_event_id"] == (
+            f"agent-step:{run_id}:{diagnostic['index']}"
+        )
+    reopened.close()
+
+
+def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
+    db, monkeypatch
+):
+    original_insert = db.insert_steps_at_indices
+    runtime_waiting = threading.Event()
+    release_runtime = threading.Event()
+    blocked = False
+
+    def block_model_request_once(run_id, indexed_steps):
+        nonlocal blocked
+        if not blocked and any(
+            step["kind"] == "model_request_started"
+            for _index, step in indexed_steps
+        ):
+            blocked = True
+            runtime_waiting.set()
+            assert release_runtime.wait(5)
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", block_model_request_once)
+    service, _chat = make_service(db, ["safe answer"])
+    result: dict[str, object] = {}
+
+    def run():
+        result["value"] = service.run_turn(
+            conversation_id="owner-seq-race",
+            messages=[{"role": "user", "content": "q"}],
+            config=CFG,
+            api_endpoint="llama_cpp",
+        )
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert runtime_waiting.wait(5)
+    run_id = db.list_runs("owner-seq-race", include_superseded=True)[0]["id"]
+    assert db.set_status(run_id, "cancelled") is True
+    service._record_terminal_lifecycle(run_id, "cancelled")
+    release_runtime.set()
+    worker.join(5)
+    assert not worker.is_alive()
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="owner-seq-race-reload")
+    row = reopened.get_run(run_id)
+    owner_sequences = [
+        step["owner_seq"]
+        for step in row["steps"]
+        if step["owner_seq"] is not None
+    ]
+    assert len(owner_sequences) == len(set(owner_sequences))
+    assert sorted(owner_sequences) == list(
+        range(min(owner_sequences), max(owner_sequences) + 1)
+    )
+    inputs = {
+        "messages": [],
+        "usage_by_id": {},
+        "traj_rows": [],
+        "variant_sets": [],
+        "compaction_records": [],
+        "agent_runs": [row],
+        "agent_steps": [
+            {**step, "run_id": run_id, "conversation_id": "owner-seq-race"}
+            for step in row["steps"]
+        ],
+    }
+    projected = [
+        (record.event_id, record.source_seq)
+        for turn in derive_trajectory(**inputs).turns
+        for record in turn.records
+    ]
+    assert projected == [
+        (record.event_id, record.source_seq)
+        for turn in derive_trajectory(**inputs).turns
+        for record in turn.records
+    ]
+    projected_sequences = [
+        source_seq for _event_id, source_seq in projected if source_seq is not None
+    ]
+    assert projected_sequences == sorted(projected_sequences)
+    reopened.close()
+
+
+def test_transient_control_capture_recovery_has_unique_owner_sequence(db, monkeypatch):
+    original_insert = db.insert_steps_at_indices
+    failed = False
+
+    def fail_tool_call_once(run_id, indexed_steps):
+        nonlocal failed
+        if not failed and any(
+            step["kind"] == "tool_call" for _index, step in indexed_steps
+        ):
+            failed = True
+            raise RuntimeError("transient control capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_tool_call_once)
+    service, _chat = make_service(
+        db,
+        [fence("calculator", {"expression": "1+1"}), "safe answer"],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="control-capture-owner-seq",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="control-capture-owner-seq-reload")
+    row = reopened.get_run(run_id)
+    original = next(step for step in row["steps"] if step["kind"] == "tool_call")
+    diagnostic = next(
+        step
+        for step in row["steps"]
+        if step["kind"] == "capture_failed"
+        and f"failed_tool_call_{original['index']}" in step["field_states"]
+    )
+    owner_sequences = [
+        step["owner_seq"]
+        for step in row["steps"]
+        if step["owner_seq"] is not None
+    ]
+    assert diagnostic["owner_seq"] > original["owner_seq"]
+    assert len(owner_sequences) == len(set(owner_sequences))
+    projection_inputs = {
+        "messages": [],
+        "usage_by_id": {},
+        "traj_rows": [],
+        "variant_sets": [],
+        "compaction_records": [],
+        "agent_runs": [row],
+        "agent_steps": [
+            {**step, "run_id": run_id, "conversation_id": row["conversation_id"]}
+            for step in row["steps"]
+        ],
+    }
+    first = derive_trajectory(**projection_inputs)
+    second = derive_trajectory(**projection_inputs)
+    assert first == second
+    reopened.close()
+
+
+def test_terminal_recovery_does_not_duplicate_lifecycle_transition(db):
+    service, _ = make_service(db, ["safe answer"])
+    run_id, outcome = service.run_turn(
+        conversation_id="terminal-recovery",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    service._persist(run_id, outcome)
+
+    completed = [
+        step
+        for step in db.get_run(run_id)["steps"]
+        if step["kind"] == "agent_run_completed"
+    ]
+    assert len(completed) == 1
+
+
+def test_project_instruction_service_error_has_durable_causal_identity(
+    db, monkeypatch
+):
+    def fail_before_runtime(*_args, **_kwargs):
+        raise agent_service._ProjectInstructionPayloadError("delivery failed")
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", fail_before_runtime)
+    service, _ = make_service(db, [])
+    run_id, outcome = service.run_turn(
+        conversation_id="project-error",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_ERROR
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="project-error-reload")
+    row = reopened.get_run(run_id)
+    steps = row["steps"]
+    records = [
+        record
+        for turn in derive_trajectory(
+            messages=[],
+            usage_by_id={},
+            traj_rows=[],
+            variant_sets=[],
+            compaction_records=[],
+            agent_runs=[row],
+            agent_steps=[
+                {**step, "run_id": run_id, "conversation_id": "project-error"}
+                for step in steps
+            ],
+        ).turns
+        for record in turn.records
+    ]
+    assert [
+        record.kind
+        for record in records
+        if record.kind.startswith("agent_run_") or record.kind == "error"
+    ] == [
+        "agent_run_created",
+        "agent_run_started",
+        "error",
+        "agent_run_failed",
+    ]
+    error = next(step for step in steps if step["kind"] == "error")
+    started = next(step for step in steps if step["kind"] == "agent_run_started")
+    failed = next(step for step in steps if step["kind"] == "agent_run_failed")
+    error_event_id = f"agent-step:{run_id}:{error['index']}"
+    started_event_id = f"agent-step:{run_id}:{started['index']}"
+    assert error["owner_seq"] == 2
+    assert error["parent_event_id"] == started_event_id
+    assert error["source_event_id"] == started_event_id
+    assert failed["parent_event_id"] == error_event_id
+    assert failed["source_event_id"] == error_event_id
+    reopened.close()
+
+
+def test_service_error_capture_recovers_once_before_failed_lifecycle(
+    db, monkeypatch
+):
+    original_insert = db.insert_steps_at_indices
+    failed_once = False
+    attempts = 0
+
+    def fail_service_error_once(run_id, indexed_steps):
+        nonlocal attempts, failed_once
+        has_error = any(step["kind"] == "error" for _index, step in indexed_steps)
+        attempts += int(has_error)
+        if not failed_once and has_error:
+            failed_once = True
+            raise RuntimeError("simulated service error capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_service_error_once)
+    service, _ = make_service(
+        db,
+        [lambda: (_ for _ in ()).throw(RuntimeError("provider failed"))],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="error-capture-recovery",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_ERROR
+    assert attempts == 2
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="error-recovery-reload")
+    reloaded = reopened.get_run(run_id)["steps"]
+    errors = [step for step in reloaded if step["kind"] == "error"]
+    failed = [step for step in reloaded if step["kind"] == "agent_run_failed"]
+    assert len(errors) == len(failed) == 1
+    error_event_id = f"agent-step:{run_id}:{errors[0]['index']}"
+    assert failed[0]["owner_seq"] == errors[0]["owner_seq"] + 1
+    assert failed[0]["parent_event_id"] == error_event_id
+    assert failed[0]["source_event_id"] == error_event_id
+    reopened.close()
+
+
+def test_persistent_service_error_capture_is_diagnosed_without_dangling_links(
+    db, monkeypatch
+):
+    original_insert = db.insert_steps_at_indices
+    attempts = 0
+
+    def fail_service_error(run_id, indexed_steps):
+        nonlocal attempts
+        if any(step["kind"] == "error" for _index, step in indexed_steps):
+            attempts += 1
+            raise RuntimeError("persistent service error capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_service_error)
+    service, _ = make_service(
+        db,
+        [lambda: (_ for _ in ()).throw(RuntimeError("provider failed"))],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="persistent-error-capture",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_ERROR
+    assert attempts == 2
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="persistent-error-reload")
+    row = reopened.get_run(run_id)
+    assert row["status"] == RUN_ERROR
+    assert not any(step["kind"] == "error" for step in row["steps"])
+    assert not any(step["kind"] == "agent_run_failed" for step in row["steps"])
+    diagnostic = next(step for step in row["steps"] if step["kind"] == "capture_failed")
+    event_ids = {
+        f"agent-step:{run_id}:{step['index']}" for step in row["steps"]
+    } | {f"agent-run:{run_id}"}
+    assert diagnostic["status"] == "incomplete"
+    assert diagnostic["field_states"]["payload"] == "capture_failed"
+    for step in row["steps"]:
+        assert step["parent_event_id"] in event_ids
+        assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+    reopened.close()
 
 
 def test_stuck_run_persists_stuck_status(db):
@@ -1406,14 +2454,7 @@ def test_stuck_run_persists_stuck_status(db):
 
 
 class FakeBigProvider:
-    """A provider with more tools than DIRECT_DISCLOSE_THRESHOLD.
-
-    Mirrors Tests/Agents/test_tool_catalog.py's FakeBigProvider: a catalog
-    this large forces the find/load path (initial_disclosure defers
-    everything and offers find_tools/load_tools instead of disclosing
-    directly), which is the only path that exercises load_schemas' own
-    room-capping.
-    """
+    """A deterministic catalog provider used by discovery/load tests."""
 
     def list_catalog(self):
         return [
@@ -1423,7 +2464,7 @@ class FakeBigProvider:
                 one_line_description=f"tool {i}",
                 source="fake",
             )
-            for i in range(DIRECT_DISCLOSE_THRESHOLD + 3)
+            for i in range(19)
         ]
 
     def load_schema(self, tool_id):
@@ -1438,26 +2479,114 @@ class FakeBigProvider:
         return ToolResult(ok=True, content=f"invoked {tool_id}")
 
 
-def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
-    """F1 regression: disclosed_names must stay capped like the loop's
-    active list. Room is only 2, so requesting t0/t1/t2 must leave t2
-    ungated — the loop's own room-slicing keeps `active` at [t0, t1], and
-    the gate must refuse anything the loop didn't actually admit.
-    """
+def _forced_discovery_plan(system_prompt: str = "s") -> FirstRequestSchemaPlan:
+    return FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA),
+        offer_find_load=True,
+        log_active=False,
+        system_prompt=system_prompt,
+    )
+
+
+def test_run_turn_reuses_planned_runtime_schema_set_verbatim(db):
+    service, chat = make_service(db, ["done"])
+    plan = _forced_discovery_plan()
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "q"}],
+        config=dataclasses.replace(CFG, native_tools=True),
+        api_endpoint="groq",
+        first_request_schema_plan=plan,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert [tool["function"]["name"] for tool in chat.calls[0]["tools"]] == [
+        FIND_TOOLS_NAME,
+        LOAD_TOOLS_NAME,
+    ]
+
+
+def test_run_turn_reuses_planned_agent_roster_without_db_reread(db):
+    definition = AgentDefinition(
+        name="researcher",
+        description="Find evidence",
+        instructions="Research the task.",
+    )
+    plan = FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(agent_service.build_spawn_schema((definition,)),),
+        offer_find_load=False,
+        log_active=False,
+        system_prompt="s",
+        agent_definitions=(definition,),
+        fleet_max_live=1,
+    )
+    service, _chat = make_service(db, ["done"])
+
+    def unexpected_reread(*_args, **_kwargs):
+        raise AssertionError("planned roster must not be re-read")
+
+    db.list_agent_definitions = unexpected_reread
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-planned-roster",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=plan,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert service._turn_definitions == [definition]
+
+
+def test_run_turn_reuses_planned_fleet_gate(monkeypatch, db):
+    plan = FirstRequestSchemaPlan(
+        active_schemas=(),
+        runtime_schemas=(
+            agent_service.WAIT_AGENTS_SCHEMA,
+            agent_service.CHECK_AGENTS_SCHEMA,
+            agent_service.SEND_TO_AGENT_SCHEMA,
+        ),
+        offer_find_load=False,
+        log_active=False,
+        system_prompt="s",
+        agent_definitions=(),
+        fleet_max_live=3,
+    )
+    monkeypatch.setattr(agent_service, "_setting", lambda *_args: 1)
+    service, _chat = make_service(db, ["done"])
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c-planned-fleet",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=plan,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert service._fleet is not None
+    assert service._fleet.max_live == 3
+
+
+def test_load_tools_accepts_more_than_old_count_cap_when_request_fits(db):
+    """A fitting load is not truncated by any cumulative tool count."""
     registry = ToolCatalogRegistry()
     registry.register_provider(FakeBigProvider())
-    allowed = tuple(f"t{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD + 3))
+    allowed = tuple(f"t{i}" for i in range(19))
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=allowed,
-        budget=RunBudget(max_active_tools=2, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
             fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0", "fake:t1", "fake:t2"]}),
-            fence("t2", {}),  # beyond room — the loop refused it "no room"
-            fence("t0", {}),  # within room — must remain callable
+            fence("t2", {}),
+            fence("t0", {}),
             "done",
         ]
     )
@@ -1467,6 +2596,7 @@ def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
         messages=[{"role": "user", "content": "q"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
     )
 
     assert outcome.status == RUN_DONE and outcome.final_text == "done"
@@ -1475,12 +2605,8 @@ def test_load_tools_gate_disclosure_mirrors_loop_active_cap(db):
     assert len(tool_results) == 3
 
     load_result, t2_result, t0_result = tool_results
-    # The loop's own room-slicing already only admits 2 into `active`.
-    assert load_result["result"] == "loaded: t0, t1"
-    # The gate must refuse t2: the loop never put it in `active`.
-    assert "Tool not permitted: t2" in t2_result["result"]
-    # t0 stayed in room, so it must remain genuinely callable through
-    # the gate (a real provider invocation, not a permission error).
+    assert load_result["result"] == "loaded: t0, t1, t2"
+    assert t2_result["result"] == "invoked fake:t2"
     assert t0_result["result"] == "invoked fake:t0"
 
 
@@ -1508,21 +2634,22 @@ def test_provider_exception_persists_error_status(db):
 # list. ---
 
 
-def test_reload_already_disclosed_tool_does_not_desync_and_admits_next(db):
+def test_replacement_updates_permission_set_in_lockstep(db):
     registry = ToolCatalogRegistry()
     registry.register_provider(FakeBigProvider())
-    allowed = tuple(f"t{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD + 3))
+    allowed = tuple(f"t{i}" for i in range(19))
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=allowed,
-        budget=RunBudget(max_active_tools=2, max_steps=30),
+        budget=RunBudget(max_steps=30),
     )
     chat = ScriptedChat(
         [
             fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0"]}),
-            fence(LOAD_TOOLS_NAME, {"ids": ["fake:t0"]}),  # re-load: no room eaten
-            fence(LOAD_TOOLS_NAME, {"ids": ["fake:t1"]}),  # must still be admitted
+            fence("t0", {}),
+            fence(LOAD_TOOLS_NAME, {"ids": ["fake:t1"]}),
+            fence("t0", {}),
             fence("t1", {}),
             "done",
         ]
@@ -1533,21 +2660,18 @@ def test_reload_already_disclosed_tool_does_not_desync_and_admits_next(db):
         messages=[{"role": "user", "content": "q"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
     )
 
     assert outcome.status == RUN_DONE and outcome.final_text == "done"
     run = db.get_run(run_id)
     tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    load1, load2, load3, t1_result = tool_results
+    load1, t0_before, load2, t0_after, t1_result = tool_results
     assert load1["result"] == "loaded: t0"
-    # Re-loading t0 is filtered out before the room slice — the generic
-    # "no valid tools" message is an acceptable, cap-integrity-preserving
-    # trade-off per the review decision (it's indistinguishable from
-    # "all ids invalid" from the loop's point of view).
-    assert load2["result"] == "ERROR: No valid tools found to load"
-    # t1 must be genuinely admitted — the loop's active list was never
-    # polluted with a duplicate t0 entry, so room for t1 remains.
-    assert load3["result"] == "loaded: t1"
+    assert t0_before["result"] == "invoked fake:t0"
+    assert load2["result"] == "loaded: t1"
+    assert "Tool not permitted: t0" in t0_after["result"]
+    assert t0_after["tool_outcome"] == "blocked"
     assert t1_result["result"] == "invoked fake:t1"
 
 
@@ -1556,7 +2680,7 @@ def test_reload_already_disclosed_tool_does_not_desync_and_admits_next(db):
 # the only checkpoint. ---
 
 
-def test_initial_disclosure_excludes_disallowed_tools(db):
+def test_direct_disclosure_excludes_disallowed_tools(db):
     narrow = AgentConfig(
         model="m", system_prompt="s", allowed_tools=("calculator", SPAWN_TOOL_NAME)
     )
@@ -1580,7 +2704,7 @@ def test_find_and_load_tools_respect_allowed_tools(db):
         model="m",
         system_prompt="s",
         allowed_tools=("t0",),
-        budget=RunBudget(max_active_tools=5, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -1603,7 +2727,7 @@ def test_find_and_load_tools_respect_allowed_tools(db):
     find_result, load_result, t1_result = tool_results
     assert "t0" in find_result["result"]
     assert "t1" not in find_result["result"]
-    assert load_result["result"] == "loaded: t0"
+    assert load_result["result"] == "loaded: t0; invalid tool ids: fake:t1"
     assert "Tool not permitted: t1" in t1_result["result"]
 
 
@@ -1617,14 +2741,12 @@ def test_load_tools_with_bare_name_loads_via_resolve_name_fallback(db):
     the catalog id. load_tools(ids=["calculator"]) must load the tool."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    registry.register_provider(
-        FakeBigProvider()
-    )  # catalog > threshold: forces find/load
+    registry.register_provider(FakeBigProvider())  # schema cost forces discovery
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=("calculator", "get_current_datetime"),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -1653,7 +2775,7 @@ def test_load_tools_with_bare_name_loads_via_resolve_name_fallback(db):
 
 def test_load_tools_bare_name_still_respects_allow_list(db):
     """A resolvable bare name OUTSIDE config.allowed_tools stays refused
-    with the generic load error (Q7(c) gate unchanged)."""
+    with an explicit invalid-input category."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     registry.register_provider(FakeBigProvider())
@@ -1661,7 +2783,7 @@ def test_load_tools_bare_name_still_respects_allow_list(db):
         model="m",
         system_prompt="s",
         allowed_tools=("calculator",),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -1683,11 +2805,11 @@ def test_load_tools_bare_name_still_respects_allow_list(db):
     run = db.get_run(run_id)
     tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
     (load_result,) = tool_results
-    assert load_result["result"] == "ERROR: No valid tools found to load"
+    assert load_result["result"] == "ERROR: invalid tool ids: get_current_datetime"
 
 
-def test_load_tools_unresolvable_junk_still_errors_generically(db):
-    """ids=["definitely-not-a-tool"] -> 'No valid tools found to load'."""
+def test_load_tools_unresolvable_junk_reports_invalid_input(db):
+    """Unresolvable ids are reported deterministically as invalid inputs."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     registry.register_provider(FakeBigProvider())
@@ -1695,7 +2817,7 @@ def test_load_tools_unresolvable_junk_still_errors_generically(db):
         model="m",
         system_prompt="s",
         allowed_tools=("calculator",),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -1715,7 +2837,42 @@ def test_load_tools_unresolvable_junk_still_errors_generically(db):
     run = db.get_run(run_id)
     tool_results = [s for s in run["steps"] if s["kind"] == "tool_result"]
     (load_result,) = tool_results
-    assert load_result["result"] == "ERROR: No valid tools found to load"
+    assert load_result["result"] == "ERROR: invalid tool ids: definitely-not-a-tool"
+
+
+def test_load_tools_bounds_invalid_only_diagnostic_that_does_not_fit(db, monkeypatch):
+    huge_id = "missing:" + ("x" * 500)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_steps=20),
+    )
+    chat = ScriptedChat([fence(LOAD_TOOLS_NAME, {"ids": [huge_id]}), "done"])
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+
+    def result_fits(_config, _endpoint, request):
+        return len(str(request.messages[-1].get("content", ""))) < 100
+
+    monkeypatch.setattr(service, "_project_instruction_request_fits", result_fits)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "q"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
+    )
+
+    assert outcome.status == RUN_DONE
+    load_result = [
+        step for step in db.get_run(run_id)["steps"] if step["kind"] == "tool_result"
+    ][0]
+    assert load_result["result"] == (
+        "ERROR: tool selection details omitted because the request budget is exhausted"
+    )
+    assert huge_id not in load_result["result"]
 
 
 def test_idless_native_call_gets_synthesized_id_pairing_echo_and_result(db):
@@ -1757,14 +2914,12 @@ def test_load_tools_same_batch_name_and_id_aliases_load_once(db):
     (no duplicate schema, no phantom room-slot consumption)."""
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    registry.register_provider(
-        FakeBigProvider()
-    )  # catalog > threshold: forces find/load
+    registry.register_provider(FakeBigProvider())  # schema cost forces discovery
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=("calculator", "get_current_datetime"),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -1821,6 +2976,13 @@ def test_protocol_render_memoized_across_unchanged_turns(db, monkeypatch):
         config=CFG,
         api_endpoint="llama_cpp",
         should_cancel=lambda: False,
+        first_request_schema_plan=FirstRequestSchemaPlan(
+            active_schemas=(service.registry.load_schema("builtin:calculator"),),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt=CFG.system_prompt,
+        ),
     )
     assert outcome.status == RUN_DONE
     assert len(calls) == 1  # rendered once, reused twice
@@ -1829,31 +2991,19 @@ def test_protocol_render_memoized_across_unchanged_turns(db, monkeypatch):
         assert later["messages_payload"][0]["content"] == first_system  # byte-stable
 
 
-def test_protocol_rerenders_when_load_tools_admits_new_schema(db, monkeypatch):
+def test_protocol_rerenders_when_load_tools_admits_new_schema(db):
     """AC #2: the cache invalidates the moment load_tools grows the active
     set — the very next turn's protocol includes the new tool."""
-    import tldw_chatbook.Agents.agent_service as svc
-
-    real_render = svc.render_tool_protocol
-    calls = []
-
-    def counting_render(schemas):
-        calls.append(tuple(s.name for s in schemas))
-        return real_render(schemas)
-
-    monkeypatch.setattr(svc, "render_tool_protocol", counting_render)
-    # Mirror the file's existing find/load test setup (FakeBigProvider forces
-    # the load path). Script: load_tools fence -> calculator fence -> "done".
+    # Mirror the file's existing find/load setup (FakeBigProvider's complete
+    # schema payload selects discovery).
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    registry.register_provider(
-        FakeBigProvider()
-    )  # catalog > threshold: forces find/load
+    registry.register_provider(FakeBigProvider())  # schema cost forces discovery
     config = AgentConfig(
         model="m",
         system_prompt="s",
         allowed_tools=("calculator", "get_current_datetime"),
-        budget=RunBudget(max_active_tools=8, max_steps=20),
+        budget=RunBudget(max_steps=20),
     )
     chat = ScriptedChat(
         [
@@ -1868,18 +3018,139 @@ def test_protocol_rerenders_when_load_tools_admits_new_schema(db, monkeypatch):
         messages=[{"role": "user", "content": "2+2?"}],
         config=config,
         api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
     )
 
     assert outcome.status == RUN_DONE and outcome.final_text == "done"
-    # Assert: counting_render was called exactly twice; the second recorded
-    # name-tuple includes the newly loaded tool; the post-load turn's system
-    # content contains the new tool's name while the pre-load turn's does not.
-    assert len(calls) == 2
-    assert "calculator" in calls[1]
     pre_load_system = chat.calls[0]["messages_payload"][0]["content"]
     post_load_system = chat.calls[1]["messages_payload"][0]["content"]
     assert "calculator" not in pre_load_system
     assert "calculator" in post_load_system
+
+
+@pytest.mark.parametrize("native_tools", [False, True])
+def test_load_tools_adds_canvas_guidance_on_the_next_budgeted_request(db, native_tools):
+    from tldw_chatbook.Chat.console_agent_bridge import _append_canvas_discovery_hint
+    from tldw_chatbook.Canvas.guide import CANVAS_OFFER_POLICY
+
+    discovery_prompt = _append_canvas_discovery_hint("s", CANVAS_TOOL_NAMES)
+    registry, _allowed, _provider, _authority = _canvas_registry()
+    chat = ScriptedChat(
+        [
+            (
+                {
+                    "content": None,
+                    "tool_calls": [
+                        native_call(
+                            LOAD_TOOLS_NAME,
+                            {"ids": [f"canvas:{name}" for name in CANVAS_TOOL_NAMES]},
+                        )
+                    ],
+                }
+                if native_tools
+                else fence(
+                    LOAD_TOOLS_NAME,
+                    {"ids": [f"canvas:{name}" for name in CANVAS_TOOL_NAMES]},
+                )
+            ),
+            "done",
+        ]
+    )
+    config = AgentConfig(
+        model="m",
+        system_prompt=discovery_prompt,
+        native_tools=native_tools,
+        allowed_tools=tuple(CANVAS_TOOL_NAMES),
+        budget=RunBudget(max_steps=20, max_subagents=0),
+    )
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="canvas-guidance-load",
+        messages=[{"role": "user", "content": "build a visual"}],
+        config=config,
+        api_endpoint="openai" if native_tools else "llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(discovery_prompt),
+    )
+
+    assert outcome.status == RUN_DONE
+    pre_load_system = chat.calls[0]["messages_payload"][0]["content"]
+    post_load_system = chat.calls[1]["messages_payload"][0]["content"]
+    assert "V1 supports inline HTML/CSS and classic scripts" not in pre_load_system
+    assert "V1 supports inline HTML/CSS and classic scripts" in post_load_system
+
+    assert pre_load_system.count(CANVAS_OFFER_POLICY) == 1
+    assert post_load_system.count(CANVAS_OFFER_POLICY) == 1
+
+
+def test_protocol_rerenders_when_replacement_changes_same_named_schema(
+    db, monkeypatch
+):
+    """Replacing a tool definition under the same name invalidates the fence."""
+
+    class MutableSchemaProvider:
+        def __init__(self):
+            self.loads = 0
+
+        def list_catalog(self):
+            return [
+                ToolCatalogEntry(
+                    id="mutable:tool",
+                    name="mutable_tool",
+                    one_line_description="mutable schema",
+                    source="mutable",
+                )
+            ]
+
+        def load_schema(self, tool_id):
+            self.loads += 1
+            parameter = "first_argument" if self.loads == 1 else "second_argument"
+            return ToolSchema(
+                id=tool_id,
+                name="mutable_tool",
+                description="mutable schema",
+                parameters={
+                    "type": "object",
+                    "properties": {parameter: {"type": "string"}},
+                },
+            )
+
+        def invoke(self, tool_id, args):
+            return ToolResult(ok=True, content=tool_id)
+
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100_000)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 1)
+    registry = ToolCatalogRegistry()
+    registry.register_provider(MutableSchemaProvider())
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("mutable_tool",),
+        budget=RunBudget(max_steps=20),
+    )
+    chat = ScriptedChat(
+        [
+            fence(LOAD_TOOLS_NAME, {"ids": ["mutable:tool"]}),
+            fence(LOAD_TOOLS_NAME, {"ids": ["mutable:tool"]}),
+            "done",
+        ]
+    )
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
+    )
+
+    assert outcome.status == RUN_DONE
+    first_loaded_system = chat.calls[1]["messages_payload"][0]["content"]
+    replacement_system = chat.calls[2]["messages_payload"][0]["content"]
+    assert "first_argument" in first_loaded_system
+    assert "second_argument" in replacement_system
+    assert "first_argument" not in replacement_system
 
 
 def test_native_endpoint_anthropic_sends_tools_and_suppresses_fence(db):
@@ -2165,7 +3436,7 @@ def test_service_native_turn_reaches_batch_barrier_only_with_exact_raw_arguments
         invoke_tool=lambda call: ToolResult(ok=True, content="ok"),
         spawn=lambda task: ToolResult(ok=True),
         find_tools=lambda query: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: len(events) >= 3,
         clock=lambda: 0.0,
         continuation_context=ContinuationEventContext(
@@ -2315,6 +3586,177 @@ def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
     assert json.loads(result.content)["result"] == 4
 
 
+def test_make_invoke_tool_binds_exact_subagent_actor_on_timeout_thread(
+    db, monkeypatch
+):
+    """Provider capture sees child and parent identity on the actual tool thread."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import (
+        CurrentRunActor,
+        current_run_actor,
+    )
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    seen = []
+
+    def invoke_by_name(_name, _args):
+        seen.append(current_run_actor())
+        return ToolResult(ok=True, content="ok")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=1.0),
+    )
+    actor = CurrentRunActor("subagent", "run-child", "run-parent")
+    invoke_tool = service._make_invoke_tool(
+        cfg,
+        disclosed_names={"calculator"},
+        run_id=actor.run_id,
+        run_actor=actor,
+    )
+
+    assert invoke_tool(ToolCall(name="calculator", args={})).ok is True
+    assert seen == [actor]
+    assert current_run_actor() is None
+
+
+def test_primary_and_threaded_child_keep_exact_actor_at_review_and_tool_boundaries(
+    db, monkeypatch
+):
+    """A fleet child stays a subagent on both loop and tool daemon threads."""
+    from tldw_chatbook.Agents.run_context import current_run_actor
+
+    child_task = "calculate as a child"
+    chat = FleetChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    native_call(SPAWN_TOOL_NAME, {"task": child_task}, "spawn-1"),
+                    native_call("calculator", {"expression": "2+2"}, "parent-calc"),
+                ],
+            },
+            "parent done",
+        ],
+        {
+            child_task: [
+                {
+                    "content": None,
+                    "tool_calls": [
+                        native_call(
+                            "calculator", {"expression": "6*7"}, "child-calc"
+                        )
+                    ],
+                },
+                "child done",
+            ]
+        },
+    )
+    review_seen = []
+    tool_seen = []
+
+    def review(_calls, run_id):
+        review_seen.append(
+            (current_run_actor(), run_id, threading.current_thread().name)
+        )
+        return {}
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    original_invoke = registry.invoke_by_name
+
+    def invoke_by_name(name, args):
+        tool_seen.append(
+            (current_run_actor(), name, threading.current_thread().name)
+        )
+        return original_invoke(name, args)
+
+    monkeypatch.setattr(registry, "invoke_by_name", invoke_by_name)
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=review,
+    )
+
+    parent_run_id, outcome = service.run_turn(
+        conversation_id="run-actor-fleet",
+        messages=[{"role": "user", "content": "delegate and calculate"}],
+        config=dataclasses.replace(CFG, model="gpt-4o"),
+        api_endpoint="openai",
+    )
+    join_fleet_children(service)
+
+    assert outcome.status == RUN_DONE
+    child = next(
+        row
+        for row in db.list_runs("run-actor-fleet")
+        if row["agent_kind"] == "subagent"
+    )
+    assert all(actor is not None for actor, _run_id, _thread in review_seen)
+    assert all(actor is not None for actor, _name, _thread in tool_seen)
+    review_by_kind = {
+        actor.kind: (actor, run_id, thread)
+        for actor, run_id, thread in review_seen
+    }
+    tool_by_kind = {
+        actor.kind: (actor, name, thread) for actor, name, thread in tool_seen
+    }
+    primary_actor = review_by_kind["primary"][0]
+    assert review_by_kind["primary"][1] == parent_run_id
+    assert primary_actor.run_id == parent_run_id
+    assert primary_actor.parent_run_id is None
+    assert review_by_kind["subagent"][0].run_id == child["id"]
+    assert review_by_kind["subagent"][0].parent_run_id == parent_run_id
+    assert review_by_kind["subagent"][1] == child["id"]
+    assert tool_by_kind["primary"][0] == primary_actor
+    assert tool_by_kind["subagent"][0] == review_by_kind["subagent"][0]
+    assert {entry[1] for entry in tool_seen} == {"calculator"}
+    assert all(thread == "tool-calculator" for _actor, _name, thread in tool_seen)
+    assert {actor.kind for actor, _run_id, _thread in review_seen} == {
+        "primary",
+        "subagent",
+    }
+    assert {actor.kind for actor, _name, _thread in tool_seen} == {
+        "primary",
+        "subagent",
+    }
+    assert current_run_actor() is None
+
+
+def test_make_invoke_tool_binds_native_call_id_on_tool_thread(db, monkeypatch):
+    """Providers can scope one approval verdict to one native tool call."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import current_tool_call_id
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    seen = []
+
+    def invoke_by_name(_name, _args):
+        seen.append(current_tool_call_id())
+        return ToolResult(ok=True, content="ok")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=1.0),
+    )
+    invoke_tool = service._make_invoke_tool(
+        cfg,
+        disclosed_names={"calculator"},
+        run_id="run-1",
+    )
+
+    assert invoke_tool(ToolCall("calculator", {}, "native-call-7")).ok is True
+    assert seen == ["native-call-7"]
+    assert current_tool_call_id() == ""
+
+
 def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     """A blocking custom tool provider must not wedge the run past
     max_tool_call_seconds -- the boundary this task exists to add."""
@@ -2341,6 +3783,283 @@ def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is False
     assert "timed out" in result.error and "calculator" in result.error
+
+
+def test_make_invoke_tool_waits_for_definitive_watchlists_mutation(
+    db, tmp_path
+):
+    """Once an approved definitive mutation starts, neither a tiny runtime
+    budget nor cancellation may return before its transaction outcome."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    bundles = WatchlistBundleService(subscriptions)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def delayed_create(**kwargs):
+        entered.set()
+        if not release.wait(2):
+            raise AssertionError("mutation gate was never released")
+        return bundles.create_with_sources(**kwargs)
+
+    def unavailable(*_args, **_kwargs):
+        return None
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=delayed_create,
+        update_collection_sources=unavailable,
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _tool: EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+        )
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_create_collection",),
+        budget=RunBudget(max_tool_call_seconds=0.02),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_create_collection"},
+        should_cancel=cancelled.is_set,
+        run_id="run-definitive",
+    )
+    result_box: dict[str, ToolResult] = {}
+
+    worker = threading.Thread(
+        target=lambda: result_box.setdefault(
+            "result",
+            invoke_tool(
+                ToolCall(
+                    name="watchlists_create_collection",
+                    args={"name": "Threat intel", "if_exists": "auto_suffix"},
+                )
+            ),
+        )
+    )
+    worker.start()
+    assert entered.wait(2), "mutation never started"
+    cancelled.set()
+    time.sleep(0.1)
+    still_waiting = worker.is_alive()
+    before_release = bundles.list_watchlists()
+    release.set()
+    worker.join(2)
+
+    assert still_waiting, "the runtime returned while the mutation could still commit"
+    assert before_release == []
+    assert not worker.is_alive()
+    result = result_box["result"]
+    assert result.ok is True
+    assert json.loads(result.content)["status"] == "ok"
+    assert [row["name"] for row in bundles.list_watchlists()] == ["Threat intel"]
+
+
+def test_make_invoke_tool_cancels_definitive_call_before_start(db, monkeypatch):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    service = _service_with_chat(db, lambda **_kwargs: provider_reply("unused"))
+    invoked: list[str] = []
+    monkeypatch.setattr(
+        service.registry,
+        "execution_policy_for",
+        lambda _name: ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    monkeypatch.setattr(
+        service.registry,
+        "invoke_by_name",
+        lambda name, _args: invoked.append(name) or ToolResult(ok=True, content="late"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0.02),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"calculator"},
+        should_cancel=lambda: True,
+        run_id="run-cancel-before-start",
+    )
+
+    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+
+    assert result.ok is False
+    assert result.outcome == "cancelled"
+    assert invoked == []
+
+
+def test_definitive_result_observer_receives_structured_success_and_failure_only(
+    db, monkeypatch
+):
+    """Receipt capture observes results without changing the legacy callback."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    observed: list[tuple[str, str, str, ToolResult]] = []
+    legacy: list[tuple[str, str, str]] = []
+    service = AgentService(
+        db=db,
+        registry=ToolCatalogRegistry(),
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+        on_tool_terminal=lambda *args: legacy.append(args),
+        on_tool_result_terminal=lambda *args: observed.append(args),
+    )
+    monkeypatch.setattr(
+        service.registry,
+        "execution_policy_for",
+        lambda name: (
+            ToolExecutionPolicy.DEFINITIVE_AFTER_START
+            if name == "watchlists_check_sources"
+            else ToolExecutionPolicy.BOUNDED_ABANDONABLE
+        ),
+    )
+    results = iter(
+        (
+            ToolResult(ok=True, content='{"status":"accepted"}'),
+            ToolResult(ok=False, error="safe failure"),
+            ToolResult(ok=True, content="ordinary"),
+        )
+    )
+    monkeypatch.setattr(
+        service.registry, "invoke_by_name", lambda _name, _args: next(results)
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_check_sources", "calculator"),
+    )
+    invoke = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_check_sources", "calculator"},
+        run_id="run-receipt",
+    )
+
+    success = invoke(
+        ToolCall(name="watchlists_check_sources", args={}, call_id="success")
+    )
+    failure = invoke(
+        ToolCall(name="watchlists_check_sources", args={}, call_id="failure")
+    )
+    invoke(ToolCall(name="calculator", args={}, call_id="ordinary"))
+
+    assert [row[:3] for row in observed] == [
+        ("run-receipt", "success", "watchlists_check_sources"),
+        ("run-receipt", "failure", "watchlists_check_sources"),
+    ]
+    assert [row[3] for row in observed] == [success, failure]
+    assert legacy == [
+        ("run-receipt", "success", "watchlists_check_sources"),
+        ("run-receipt", "failure", "watchlists_check_sources"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure_factory",
+    [
+        lambda: SystemExit("secret system-exit detail"),
+        lambda: asyncio.CancelledError("secret cancellation detail"),
+        lambda: type("FatalToolFailure", (BaseException,), {})(
+            "secret base-exception detail"
+        ),
+    ],
+    ids=("system-exit", "cancelled-error-after-start", "custom-base-exception"),
+)
+def test_make_invoke_tool_scrubs_every_definitive_provider_terminal(
+    db, tmp_path, failure_factory
+):
+    """An approved definitive tool has one never-raise terminal contract.
+
+    These failures occur after dispatch has started.  They therefore must
+    not escape as process/control-flow exceptions, and a ``CancelledError``
+    here must not be confused with the pre-start cooperative-cancel result.
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+    from tldw_chatbook.Tools.watchlists_command_service import (
+        WatchlistsCommandService,
+    )
+
+    def crash(**_kwargs):
+        raise failure_factory()
+
+    def unavailable(*_args, **_kwargs):
+        return None
+
+    commands = WatchlistsCommandService(
+        runtime_source_loader=lambda: "local",
+        create_sources_batch=unavailable,
+        create_collection=crash,
+        update_collection_sources=unavailable,
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            watchlists_command_service=commands,
+            resolve_state=lambda _tool: EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+        )
+    )
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=lambda **_kwargs: provider_reply("unused"),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("watchlists_create_collection",),
+        budget=RunBudget(max_tool_call_seconds=0.001),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config,
+        disclosed_names={"watchlists_create_collection"},
+        should_cancel=lambda: False,
+        run_id="run-definitive-crash",
+    )
+
+    result = invoke_tool(
+        ToolCall(
+            name="watchlists_create_collection",
+            args={"name": "Threat intel", "if_exists": "auto_suffix"},
+            call_id="call-crash",
+        )
+    )
+
+    assert result.ok is False
+    assert result.error == "tool call failed: watchlists_create_collection"
+    assert "secret" not in result.error
+    assert result.outcome != "cancelled"
 
 
 def test_registry_timeout_for_reports_a_tools_own_ceiling():

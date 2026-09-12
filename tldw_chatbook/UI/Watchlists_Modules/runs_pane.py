@@ -14,6 +14,7 @@ from textual.widgets import Button, DataTable, Static
 from textual.worker import get_current_worker
 
 from ...Subscriptions.html_text import strip_control_characters
+from ...Subscriptions.watchlist_failure import project_watchlist_failure
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
@@ -33,6 +34,10 @@ class CancelRunRequested(Message):
     def __init__(self, run_id: Any) -> None:
         self.run_id = run_id
         super().__init__()
+
+
+class RefreshRunsRequested(Message):
+    """Posted when the user requests a fresh run list."""
 
 
 class RunProgressTick(Message):
@@ -55,8 +60,10 @@ class RunProgressTick(Message):
 class RerunRunRequested(Message):
     """Posted when the user requests re-running a source/job."""
 
-    def __init__(self, source_id: Any) -> None:
-        self.source_id = source_id
+    def __init__(self, *, runtime_backend: str, target_id: Any, name: str) -> None:
+        self.runtime_backend = runtime_backend
+        self.target_id = target_id
+        self.name = name
         super().__init__()
 
 
@@ -89,6 +96,13 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     #: was told.
     run_items_note = reactive("")
     runtime_backend = reactive("local")
+    #: The canonical operation identity selected by the screen. RunsPane only
+    #: presents membership in this value; the screen owns its construction.
+    selected_operation_key = reactive[str | None](None)
+    #: Shared Check-now/Re-run operations currently in flight on the screen.
+    busy_operation_keys = reactive[frozenset[str]](frozenset())
+    #: The subset of busy operations that originated from this pane's Re-run.
+    rerun_operation_keys = reactive[frozenset[str]](frozenset())
 
     # Plain attribute, not a reactive: mirrors SourcesPane's
     # `_highlighted_source_key` for the identical reason -- see that
@@ -96,15 +110,44 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     _highlighted_run_key: str | None = None
 
     def compose(self):
+        rerun_target, _ = self._rerun_target_and_name(
+            self.selected_run, self.runtime_backend
+        )
+        operation_key = self.selected_operation_key
+        rerun_busy = operation_key is not None and (
+            operation_key in self.busy_operation_keys
+            or operation_key in self.rerun_operation_keys
+        )
+        rerun_origin = (
+            operation_key is not None and operation_key in self.rerun_operation_keys
+        )
+        rerun_label = (
+            "Re-running..."
+            if rerun_origin
+            else "Checking..."
+            if rerun_busy
+            else "Re-run source"
+        )
         with Horizontal(id="runs-toolbar", classes="destination-filter-strip"):
             yield Button("Refresh", id="runs-refresh-button", variant="primary")
             yield Button("Cancel run", id="runs-cancel-button", disabled=True)
-            yield Button("Re-run source", id="runs-rerun-button", disabled=True)
+            yield Button(
+                rerun_label,
+                id="runs-rerun-button",
+                disabled=not self._has_rerun_target(rerun_target) or rerun_busy,
+            )
 
         selected_key = str(self.selected_run.get("id")) if self.selected_run else None
         table = DataTable(id="runs-table")
         table.add_columns(
-            "Source / Job", "Status", "Started", "Duration", "Found", "Processed", "Filtered", "Errors"
+            "Source / Job",
+            "Status",
+            "Started",
+            "Duration",
+            "Found",
+            "Processed",
+            "Filtered",
+            "Errors",
         )
         for run in self.runs:
             row_key = str(run.get("id") or id(run))
@@ -133,9 +176,9 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         with Vertical(id="runs-detail-pane"):
             yield Static("Run detail", classes="pane-title")
             # `Text`, not the bare string: the detail block names the run's
-            # source and watchlist (user-typed) and, on a failure, quotes the
-            # remote error verbatim -- a `Static` given a `str` renders it as
-            # console markup.
+            # source and watchlist (user-typed). A `Static` given a `str`
+            # renders it as console markup; fixed failure recovery copy is
+            # intentionally inert too.
             yield Static(
                 Text(self._stats_text(selected_run)),
                 id="runs-detail-stats",
@@ -254,8 +297,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         if watchlists:
             identity += f"Watchlists: {', '.join(watchlists)}\n"
         base = (
-            identity
-            + f"Status: {run.get('status', '-')}\n"
+            identity + f"Status: {run.get('status', '-')}\n"
             f"Started: {humane_timestamp(run.get('started_at'))}\n"
             f"Duration: {run.get('duration', '-')}\n"
             f"Found: {run.get('found_count', 0)} | "
@@ -312,6 +354,16 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             skipped = dispositions.get("skipped", 0)
             if skipped:
                 base += f" | {skipped} skipped (check already running)"
+        recovery = project_watchlist_failure(
+            run,
+            failed=str(run.get("status") or "").lower()
+            in {"failed", "error", "errored"},
+        )
+        if recovery is not None:
+            base += (
+                f"\nFailure: {recovery['error_message']}"
+                f"\nNext: {recovery['next_action']}"
+            )
         return base
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -430,8 +482,8 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         """Repaint `#runs-detail-logs` in place (task-2306).
 
         Args:
-            logs: The selected run's log text, rendered inert -- a failed run
-                quotes the remote error verbatim.
+            logs: The selected run's log text, rendered inert. Failed runs
+                carry only the normalizer's fixed recovery copy.
         """
         try:
             self.query_one("#runs-detail-logs", Static).update(Text(str(logs)))
@@ -491,9 +543,90 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             return
         run = self.selected_run
         can_cancel = run is not None and str(run.get("status", "")).lower() == "running"
-        can_rerun = run is not None
+        rerun_target, _ = self._rerun_target_and_name(run, self.runtime_backend)
+        operation_key = self.selected_operation_key
+        rerun_busy = operation_key is not None and (
+            operation_key in self.busy_operation_keys
+            or operation_key in self.rerun_operation_keys
+        )
+        rerun_origin = (
+            operation_key is not None and operation_key in self.rerun_operation_keys
+        )
+        recovery = project_watchlist_failure(
+            run,
+            failed=(
+                run is not None
+                and str(run.get("status") or "").lower()
+                in {"failed", "error", "errored"}
+            ),
+        )
+        can_rerun = self._has_rerun_target(rerun_target) and bool(
+            recovery and recovery["retry_capable"]
+        )
         cancel_button.disabled = not can_cancel
-        rerun_button.disabled = not can_rerun
+        rerun_button.disabled = not can_rerun or rerun_busy
+        rerun_button.label = (
+            "Re-running..."
+            if rerun_origin
+            else "Checking..."
+            if rerun_busy
+            else "Re-run source"
+        )
+
+    def watch_selected_operation_key(self, _value: str | None) -> None:
+        """Repaint action buttons without rebuilding the table.
+
+        Args:
+            _value: Newly selected operation key.
+        """
+        self._update_action_buttons()
+
+    def watch_busy_operation_keys(self, _value: frozenset[str]) -> None:
+        """Repaint shared Check-now busy state in place.
+
+        Args:
+            _value: Current set of busy operation keys.
+        """
+        self._update_action_buttons()
+
+    def watch_rerun_operation_keys(self, _value: frozenset[str]) -> None:
+        """Repaint Re-run-origin busy state in place.
+
+        Args:
+            _value: Current set of Re-run-origin operation keys.
+        """
+        self._update_action_buttons()
+
+    def watch_runtime_backend(self, _value: str) -> None:
+        """Re-evaluate backend-specific Re-run eligibility in place.
+
+        Args:
+            _value: Newly selected runtime backend.
+        """
+        self._update_action_buttons()
+
+    @staticmethod
+    def _has_rerun_target(target_id: Any) -> bool:
+        """Return whether a backend-specific launch id is present."""
+        return target_id is not None and bool(str(target_id).strip())
+
+    @classmethod
+    def _rerun_target_and_name(
+        cls, run: dict[str, Any] | None, runtime_backend: str
+    ) -> tuple[Any, str]:
+        """Choose the launch id and inert display name for a selected run."""
+        if not run:
+            return None, ""
+        backend = str(runtime_backend).lower()
+        if backend == "server":
+            target_id = run.get("job_id")
+            fallback = f"Job {target_id}" if cls._has_rerun_target(target_id) else ""
+            name = strip_control_characters(str(run.get("source_title") or "")).strip()
+            name = name or fallback
+        else:
+            target_id = run.get("source_id")
+            name = cls._run_identity(run)
+        return target_id, name
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
@@ -501,15 +634,23 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         if button_id == "runs-cancel-button" and run:
             self.post_message(CancelRunRequested(run.get("id")))
         elif button_id == "runs-rerun-button" and run:
-            self.post_message(RerunRunRequested(run.get("source_id")))
+            target_id, name = self._rerun_target_and_name(run, self.runtime_backend)
+            if self._has_rerun_target(target_id):
+                self.post_message(
+                    RerunRunRequested(
+                        runtime_backend=self.runtime_backend,
+                        target_id=target_id,
+                        name=name,
+                    )
+                )
         elif button_id == "runs-refresh-button":
-            self._update_action_buttons()
+            self.post_message(RefreshRunsRequested())
         event.stop()
 
     def _start_run_poll(self, run: dict[str, Any]) -> None:
         self.run_poll(run)
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="watchlists-runs-poll")
     async def run_poll(self, run: dict[str, Any]) -> None:
         """Poll the selected run while it is running.
 

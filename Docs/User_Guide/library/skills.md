@@ -1,5 +1,17 @@
 # Library Skills — create, import, review, and trust reusable skills
 
+## Skill repositories and framework repositories
+
+Review the detected package shape before importing:
+
+- A root skill has one `SKILL.md` at the selected root.
+- A multi-skill repository presents the discovered skill directories as separate candidates.
+- A generic framework repository is not silently treated as a Codex skill merely because it contains prompts, agents, or automation files.
+
+Local and cloned content remains untrusted during review. Import is not trust approval, and the UI reports the completed import result—not the result of a second submit that was refused while the first import was running. Wait for the active import to finish before selecting another path.
+
+If a repository is classified as a framework, follow its own installation documentation outside the skill importer or package it deliberately as a compatible skill. Classification alone does not install, execute, or grant permissions to the repository.
+
 ## What this screen is for
 
 A skill is a reusable instruction pack — a `SKILL.md` body plus optional
@@ -25,9 +37,9 @@ Library rail                 Skills list / editor
 ┌────────────────────┐       ┌──────────────────────────────────────────┐
 │ Browse             │       │ Skills (N)                               │
 │   Skills           │  ───▶ │ Filter skills…                           │
-│ Create             │       │ sort: Name        Import…                │
-│   New skill        │       │ ✓ code-review                            │
-└────────────────────┘       │ ⚠ summarize                              │
+│ Create             │       │ sort: Name        Import skill…          │
+│   New skill        │       │ ✓ code-review · trusted                  │
+└────────────────────┘       │ ⚠ summarize · needs review               │
                              └──────────────────────────────────────────┘
 ```
 
@@ -40,11 +52,15 @@ The list canvas, top to bottom:
 - **Filter** — "Filter skills… (Enter)".
 - **Toolbar** — "sort: Name" / "sort: Status" (press to open a one-row
   strip of Name / Status with ✓ on the active one and pick directly;
-  Status puts needs-review skills first) and "Import…".
+  Status puts needs-review skills first) and "Import skill…".
 - **Rows** — one per skill: **⚠ name** (blocked — needs review before use)
-  or **✓ name** (usable), with a dimmer description line underneath.
+  or **✓ name** (usable), each followed by its trust state in words —
+  `· trusted`, `· needs review`, or `· locked` — and a dimmer description
+  line underneath. A state the app does not recognise shows the glyph with
+  no word, rather than claiming a trust it cannot vouch for. The words are the row's real signal; the glyph repeats
+  them for scanning, and the canvas legend defines no trust glyph.
 - **Empty state** — "No skills yet — use Create ▸ New skill in the rail,
-  or Import… above." (a filter with no matches shows "No skills match your
+  or Import skill… above." (a filter with no matches shows "No skills match your
   filter." instead).
 
 Clicking a row opens the **editor**, with the **Trust** panel below it —
@@ -56,7 +72,7 @@ the canvas scrolls, so the trust panel may sit below the fold.
 
 | Line | Action button |
 |---|---|
-| "Skill trust isn't set up — set it up to review and use skills." | **Set up skill trust** |
+| "Skill trust isn't set up, so every skill reads “needs review” — set it up to review and use skills." | **Set up skill trust** |
 | "Skill trust needs to be set up again after an update." | **Set up skill trust** |
 | "Skill trust is temporarily unavailable — try again." | **Retry** |
 | "Skill trust is locked for this session." | **Unlock** |
@@ -69,12 +85,55 @@ the locked and set-up-again states. It two-step confirms with "Reset skill
 trust? Every skill will need re-approval. Your skills are not deleted."
 (**Reset** / **Cancel**).
 
+### Pager
+
+The pager under the list shows the item range, and — only when a second page
+exists — the page number, the boundary reason, and the **Previous** / **Next**
+controls. A list that fits on one page has nowhere to page to, so none of that
+chrome is drawn; this matches every other Library list.
+
 ### Importing
 
-**Import…** opens an inline row: an input with placeholder "SKILL.md file
+**Import skill…** opens an inline row: an input with placeholder "SKILL.md file
 or skill folder path… or GitHub/zip URL", plus **Browse…** (pick a
 SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
 **Cancel**. A `http(s)://` value fetches the skill from that URL.
+
+Only one skill import runs at a time. While Chatbook shows
+`Inspecting/importing…`, the path, Browse, Browse folder, Import, and Cancel
+controls are disabled. Library navigation remains available: leaving the
+Skills list does not cancel filesystem or network work, and returning shows
+the accepted import's current state or actual result. A forced repeat submit
+is refused with `An import is already in progress.` The result stays available
+until you choose **Cancel**, open **Review…**, or begin a new import draft.
+
+If the import is still running after about three seconds, the line becomes
+`Inspecting/importing… · still working · Cancel` and a **Cancel** button
+appears under it. Pressing it stops the wait and leaves
+"Import cancelled · check the skills list before retrying." — the import
+itself runs on a worker thread that cannot be interrupted, so it may still
+have landed, which is why the receipt says to check rather than promising
+nothing happened. The list behind that receipt is re-read when the cancel
+settles, so what it shows is the state after the run, not before it.
+
+Chatbook inspects a folder or archive before importing it:
+
+- A package with one installable skill proceeds to import and trust review.
+- A repository containing several skills opens **Choose one skill to import**.
+  Select one subdirectory and press **Import skill**; Chatbook never chooses or
+  batch-imports candidates. **Cancel** returns to the preserved import draft.
+- A valid repository with no installable skill reports `This repository is a
+  framework, not an installable Codex skill.` The row offers only generic next
+  steps: choose a subdirectory containing `SKILL.md`, use project instructions,
+  use the framework's external CLI outside Chatbook, or create a separately
+  reviewed wrapper skill.
+- A malformed or unsupported package is not imported. A remote fetch or access
+  failure offers **Retry** without displaying URL credentials, signed queries,
+  response bodies, or raw exception details.
+
+Remote candidate selection uses the already-inspected download; Chatbook does
+not fetch the branch again after you choose. Import still copies only the
+selected skill into the local skill store and never executes repository code.
 
 - Success: `Imported "name" · re-review it in the trust panel`, with a
   follow-up button `Review "name"…` that jumps straight to its trust
@@ -130,7 +189,7 @@ here to review and approve them (see [Trust panel](#trust-panel) above).
 The whole feature can be turned off — no scanning, no prompts, at either
 trigger — with `[skills] project_skills_prompt_enabled = false` in
 `config.toml`; it defaults to on. This does not affect the manual
-**Import…** row above, which is always available regardless of this
+**Import skill…** row above, which is always available regardless of this
 setting.
 
 ### Editor
@@ -210,6 +269,28 @@ Reload discards your edit and refetches it." with a **Reload** button.
 Leaving with unsaved edits is refused: "Unsaved skill changes — Save or
 Discard changes first."
 
+### Applying an Agent Lesson proposal
+
+Console may prepare an exact improvement proposal for a Chatbook-managed local
+skill after a foreground **Approve once** review. It cannot save the proposal or
+change trust itself. The returned proposal names the skill and records the
+public ID, current version, current trust state, current content digest, exact
+replacement text, verification, and evidence Note IDs.
+
+To apply it, open that same skill here and confirm that its current content and
+version still match the proposal. Paste the exact replacement into
+**Instructions**, then choose **Save changes**. A stale version is refused rather
+than overwriting a newer edit. A successful save increments the version and
+marks the skill as needing review; scroll to **Trust**, choose **Review changes**,
+inspect the content, then **Approve** and enter the trust passphrase. Only after
+that re-trust may the skill run again. You can then ask the foreground agent to
+re-read the skill and verify the result.
+
+Subagents can return evidence and candidate wording, but cannot open a promotion
+approval or apply it. Raw workspace file tools do not reach this managed store.
+Rejected, stale, failed, and applied outcomes remain non-authorizing unless you
+separately approve recording them in an ordinary Agent Lesson Note.
+
 ### Trust panel
 
 Below the editor, the **Trust** section shows the skill's state on one
@@ -252,7 +333,7 @@ parentheses when something differs from the trusted baseline.
    Ctrl+S). Then
    scroll to the Trust panel, **Review changes**, **Approve**, and enter
    your passphrase — now `$name` runs in Console.
-2. **Import from a GitHub URL.** In the list, click **Import…**, paste the
+2. **Import from a GitHub URL.** In the list, click **Import skill…**, paste the
    URL into the input, click **Import**, then click the `Review "name"…`
    follow-up to review and approve it.
 3. **Set up skill trust.** Click **Set up skill trust** (in the list
@@ -266,6 +347,10 @@ parentheses when something differs from the trusted baseline.
 5. **Revoke script access.** Open the skill, scroll to Trust, check the
    "Scripts:" line, and press **Revoke script access** — Console goes back
    to asking on every script run.
+6. **Apply a reviewed Agent Lesson proposal.** Re-check the proposal's skill,
+   version, trust state, and current digest; paste its exact Instructions;
+   **Save changes**; then **Review changes** and **Approve** the new trust
+   baseline. If anything is stale, stop and request a fresh proposal.
 
 ## Keyboard & commands
 
@@ -296,6 +381,12 @@ through (Esc also cancels the passphrase dialogs).
   [index](../index.md).
 
 ## Quirks & troubleshooting
+
+- **The "Chunking Lab | Try selected text" strip is not part of this
+  canvas.** It paints under the header on every Library canvas and opens a
+  full-screen developer tool for comparing chunking strategies; Escape does
+  not leave it. See [Library overview](../library.md); demoting it is
+  tracked as task-32064.
 
 - **Renaming isn't supported.** The Name field is locked on existing
   skills — create a new skill and delete the old one instead.
@@ -342,3 +433,37 @@ one-press toggles with their full option set now on the label —
 per-project discovery at startup and workspace creation, the fingerprint
 gated prompt ledger, the quarantine/trust-review expectation, and the
 `[skills] project_skills_prompt_enabled` kill-switch.)*
+
+*Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Skills
+reader's two pane grips are one column each, painting `‹`/`›` instead of the
+five-column `<---`/`--->` run; opened live at 235x52.)*
+
+*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32058: an
+accepted skill import now updates the rail count **and** the mounted list in
+place — the list previously kept its old rows until you left the Skills row and
+came back.)*
+
+*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073: the
+Library-wide "Chunking Lab | Try selected text" header strip, which paints
+on this canvas too, was undocumented everywhere; it is described once on
+the [Library overview](../library.md) and cross-referenced here. No other
+claim on this page changed.)*
+
+*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a skill
+import that outlives the patience window offers Cancel and never blocks
+leaving the screen).*
+
+*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32102: a
+cancelled import refreshes the skills list its own receipt tells you to
+check.)*
+
+*Verified against fix/library-crit9-shell — 2026-09-10 (task-32223: a list
+row carries its trust state as a word, so an approved and an unapproved skill
+no longer paint alike; task-32217: with no skill open the list takes the
+columns the "Select a skill to inspect it here." pane was holding).*
+
+*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32363: the
+trust banner says that with no trust store every skill reads "needs review",
+so an approval made earlier is unverifiable rather than lost; task-32354: the
+Skills pager drops "Page 1 of 1", its boundary reasons and the two dead
+controls when everything fits on one page).*

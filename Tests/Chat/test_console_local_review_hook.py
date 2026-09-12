@@ -4,21 +4,54 @@ The hook tests mirror build_mcp_review_hook's discipline: clear-first
 stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
+import asyncio
+import contextlib
 import json
+import threading
+import time
+import weakref
 from types import SimpleNamespace
 
 import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
-from tldw_chatbook.Agents.agent_models import ToolCall
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.agent_models import ToolCall, ToolResult
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LocalApprovalEffect,
+    LocalToolProvider,
+)
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
+    USER_DENIED_REFUSAL,
+    watchlists_operation_receipt_ids,
     build_combined_review_hook,
     build_local_review_hook,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
@@ -31,6 +64,115 @@ ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 #: writes is keyed by it. These tests each drive ONE run; the assertions
 #: are unchanged apart from that key.
 RUN = "run-1"
+
+
+def test_watchlists_receipt_capture_accepts_only_structured_canonical_ids():
+    secret = "private article body and arguments"
+    check_result = ToolResult(
+        ok=True,
+        content=json.dumps(
+            {
+                "status": "accepted",
+                "operations": [
+                    {"operation_id": "local:watchlist_run:7", "body": secret},
+                    {"operation_id": "local:watchlist_run:0"},
+                    {"operation_id": "external:mcp:8"},
+                ],
+                "arguments": {"source_ids": [secret]},
+            }
+        ),
+    )
+    briefing_result = ToolResult(
+        ok=True,
+        content=json.dumps(
+            {
+                "status": "accepted",
+                "operation_id": "local:briefing:9",
+                "body": secret,
+            }
+        ),
+    )
+
+    assert watchlists_operation_receipt_ids(
+        "watchlists_check_sources", check_result
+    ) == ("local:watchlist_run:7",)
+    assert watchlists_operation_receipt_ids(
+        "watchlists_generate_briefing", briefing_result
+    ) == ("local:briefing:9",)
+    assert (
+        watchlists_operation_receipt_ids(
+            "watchlists_check_sources",
+            ToolResult(ok=False, content=check_result.content),
+        )
+        == ()
+    )
+    assert watchlists_operation_receipt_ids("calculator", check_result) == ()
+    assert secret not in repr(
+        watchlists_operation_receipt_ids("watchlists_check_sources", check_result)
+    )
+
+
+def test_controller_retains_and_publishes_only_canonical_receipt_identity():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+    published: list[tuple[str, ...]] = []
+    controller.follow_watchlists_operations = published.append
+    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+
+    controller.observe_watchlists_operation_result(
+        "run-1",
+        "call-1",
+        "watchlists_generate_briefing",
+        ToolResult(
+            ok=True,
+            content=json.dumps(
+                {
+                    "status": "accepted",
+                    "operation_id": "local:briefing:9",
+                    "body": "never retain me",
+                }
+            ),
+        ),
+    )
+
+    assert controller._followed_watchlists_operation_ids == ("local:briefing:9",)
+    assert published == [("local:briefing:9",)]
+    assert "never retain me" not in repr(controller._followed_watchlists_operation_ids)
+
+
+def test_controller_unfollow_survives_view_detach_and_remount():
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+    controller.app = SimpleNamespace(call_from_thread=lambda callback: callback())
+    controller.observe_watchlists_operation_result(
+        "run-1",
+        "call-1",
+        "watchlists_generate_briefing",
+        ToolResult(
+            ok=True,
+            content=json.dumps(
+                {
+                    "status": "accepted",
+                    "operation_id": "local:briefing:9",
+                }
+            ),
+        ),
+    )
+
+    assert controller.unfollow_watchlists_operation("local:briefing:9") is True
+    assert controller.unfollow_watchlists_operation("server:briefing:9") is False
+
+    published: list[tuple[str, ...]] = []
+    controller.follow_watchlists_operations = None
+    controller.follow_watchlists_operations = published.append
+    controller.remount_watchlists_operation_receipts()
+
+    assert published == [()]
+    assert controller._followed_watchlists_operation_ids == ()
 
 
 @pytest.fixture(autouse=True)
@@ -76,6 +218,133 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     assert p._stamps == {(RUN, "fs_list"): "approve_once"}
 
 
+def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
+    """One denied collection target must not cancel its approved sibling."""
+    p = provider(ASK, tmp_path)
+    seen: list[list[MCPPendingCall]] = []
+
+    def decide(pending: list[MCPPendingCall]) -> dict[str, str]:
+        seen.append(pending)
+        return {
+            "call-denied": "deny",
+            "call-session": "approve_session",
+        }
+
+    hook = build_local_review_hook(p, decide)
+    verdicts = hook(
+        [
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Blocked target", "if_exists": "conflict"},
+                call_id="call-denied",
+            ),
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Approved target", "if_exists": "conflict"},
+                call_id="call-session",
+            ),
+        ],
+        RUN,
+    )
+
+    assert [row.call_id for row in seen[0]] == ["call-denied", "call-session"]
+    assert verdicts == {
+        "watchlists_create_collection": "proceed",
+        "call-denied": USER_DENIED_REFUSAL.format(name="watchlists_create_collection"),
+    }
+    assert p._stamps == {(RUN, "watchlists_create_collection"): "approve_session"}
+
+
+@pytest.mark.parametrize(
+    ("broad", "narrow"),
+    [
+        ("always_allow", "approve_session"),
+        ("always_allow", "approve_once"),
+        ("approve_session", "approve_once"),
+    ],
+)
+def test_local_same_name_broad_approval_scope_survives_later_narrow_scope(
+    tmp_path, broad, narrow
+):
+    """A later per-call approval must not downgrade the tool-level grant."""
+    p = provider(ASK, tmp_path)
+    hook = build_local_review_hook(
+        p,
+        lambda _pending: {
+            "call-broad": broad,
+            "call-narrow": narrow,
+        },
+    )
+
+    verdicts = hook(
+        [
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Broad", "if_exists": "conflict"},
+                call_id="call-broad",
+            ),
+            ToolCall(
+                name="watchlists_create_collection",
+                args={"name": "Narrow", "if_exists": "conflict"},
+                call_id="call-narrow",
+            ),
+        ],
+        RUN,
+    )
+
+    assert verdicts == {"watchlists_create_collection": "proceed"}
+    assert p.stamped(RUN, "watchlists_create_collection") == broad
+
+
+def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
+    gate = provider(ASK, tmp_path).pending_gate_for("fs_list", {"path": "."})
+
+    assert gate is not None
+    assert gate.effects == (LocalApprovalEffect.PRIVATE_READ,)
+
+
+def test_mounted_approval_row_carries_exact_descriptor_effects(tmp_path):
+    """The controller must pass the descriptor-owned effect through unchanged."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    gate = provider(ASK, tmp_path).pending_gate_for(
+        "fs_list", {"effects": ["network"], "path": "."}
+    )
+    assert gate is not None
+    call = MCPPendingCall(
+        llm_name=gate.llm_name,
+        server_key=gate.server_key,
+        tool_name=gate.tool_name,
+        server_label=gate.server_label,
+        arguments=gate.arguments,
+        reason=gate.reason,
+        effects=gate.effects,
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+    mounted: list[dict[str, object]] = []
+
+    def _mount(payload: dict[str, object] | None) -> None:
+        if payload is None:
+            return
+        mounted.append(payload)
+        controller.resolve_pending_approval(
+            {call.llm_name: "deny"}, round_id=str(payload["round_id"])
+        )
+
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda callback, *args: callback(*args)
+    )
+    controller.set_pending_approval = _mount
+    controller.park_pending_approval = lambda _session_id: None
+
+    assert controller.request_mcp_approvals([call], session_id=session.id) == {
+        call.llm_name: "deny"
+    }
+    row = mounted[0]["calls"][0]
+    assert row["effects"] == [LocalApprovalEffect.PRIVATE_READ]
+    assert row["effects"] != row["arguments"]["effects"]
+
+
 def test_hook_skips_non_ask_calls(tmp_path):
     p = provider(ALLOW, tmp_path)
     hook = build_local_review_hook(
@@ -84,7 +353,7 @@ def test_hook_skips_non_ask_calls(tmp_path):
     assert hook([ToolCall(name="fs_list", args={"path": "."})], RUN) == {}
 
 
-def test_combined_hook_merges_verdicts(tmp_path):
+def test_combined_hook_does_not_overwrite_a_local_refusal(tmp_path):
     p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
     hook = build_combined_review_hook(
         [
@@ -92,9 +361,10 @@ def test_combined_hook_merges_verdicts(tmp_path):
             build_local_review_hook(p2, lambda pending: {"fs_list": "deny"}),
         ]
     )
-    # each provider only gates what it owns; both see the batch
+    # This deliberately impossible double-owner arrangement pins the merge
+    # safety rule: a later refusal cannot be weakened to proceed.
     out = hook([ToolCall(name="fs_list", args={"path": "."})], RUN)
-    assert out == {"fs_list": "proceed"}
+    assert out == {"fs_list": USER_DENIED_REFUSAL.format(name="fs_list")}
 
 
 def test_combined_hook_empty_list_is_noop():
@@ -146,6 +416,93 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
     assert p2._stamps == {(RUN, "fs_list"): "deny"}  # fresh THIS-turn decision
 
 
+def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
+    """task-32280 fix round (Critical review finding).
+
+    Mirrors `test_mcp_tool_provider.py::
+    test_hook_level_card_deny_lands_in_the_execution_log_exactly_once`: a
+    hook-level deny is turned straight into the call's result by
+    `run_agent_loop`, which skips dispatch entirely, so
+    `LocalToolProvider.invoke_detailed()` -- the only thing that otherwise
+    records a local refusal -- never runs for it. Drives the REAL provider
+    through the REAL `build_local_review_hook` so a fake cannot paper over
+    the gap; the split `denied`/`denied-policy`/`denied-unresolved` tokens
+    added to `invoke_detailed()` are dead code for this path otherwise.
+    """
+    recorded: list[tuple[str, str]] = []
+    p = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    hook = build_local_review_hook(p, lambda pending: {"fs_list": "deny"})
+
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+    )
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"precondition: the denied call must not be dispatched: {verdicts}"
+    )
+    assert recorded == [("fs_list", "denied")], (
+        "the user's Deny left no row in the execution log: " f"{recorded}"
+    )
+
+
+def test_stop_mid_approval_records_only_the_unresolved_row(tmp_path):
+    """R23, local half: mirrors `test_mcp_tool_provider.py::
+    test_stop_mid_approval_records_only_the_unresolved_row`. A Stop while
+    the card is up already writes the honest `denied-unresolved` row from
+    the controller; the hook must not add a "Denied by you" one on top."""
+    from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
+
+    recorded: list[tuple[str, str]] = []
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        resolve_state=lambda hub: ASK,
+        record_decision=lambda hub, decision: recorded.append((hub.name, decision)),
+    )
+    cancel_rows: list[tuple] = []
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=SimpleNamespace(
+            record_tool_decision=lambda server_key, tool_name, **kw: cancel_rows.append(
+                (server_key, tool_name, kw.get("decision"))
+            )
+        ),
+    )
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_soon() -> None:
+        time.sleep(0.05)
+        # begin_shutdown() runs its owner-thread queue teardown inline when
+        # no owner loop is bound (none is, in this synchronous test), which
+        # trips the queue's cross-thread guard -- it still denies the
+        # unresolved approval first (in begin_shutdown's `finally`), so the
+        # assertions below hold; only the thread-local exception is noise.
+        with contextlib.suppress(Exception):
+            controller.begin_shutdown()
+
+    stopper = threading.Thread(target=_stop_soon)
+    stopper.start()
+    hook = build_local_review_hook(provider, controller.request_mcp_approvals)
+    with use_run_id(RUN):
+        verdicts = hook(
+            [ToolCall(name="fs_list", args={"path": "."}, call_id="c-1")], RUN
+        )
+    stopper.join()
+
+    assert verdicts.get("c-1", "proceed") != "proceed"
+    assert recorded == [], (
+        f"a Stop mid-approval recorded a user denial it never received: {recorded}"
+    )
+    assert [row[2] for row in cancel_rows] == [UNRESOLVED_DENIED_DECISION]
+
+
 # -- _compose_local_provider -------------------------------------------------
 
 
@@ -182,13 +539,75 @@ class _FakeService:
         )
 
 
+def _test_execution_context(
+    scratch_snapshot,
+    *,
+    session_id="test-chat",
+    tool_configuration=None,
+):
+    """Build the complete immutable turn authority production now requires."""
+    provider_selection = ConsoleProviderSelection(provider="deepseek")
+    return ConsoleTurnExecutionContext(
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session_id,
+            provider_selection=provider_selection,
+            scratch_space=scratch_snapshot,
+            tool_configuration=tool_configuration or {},
+        ),
+        library_authority=ConsoleTurnLibraryAuthority(
+            policy=ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=0,
+                source="test",
+            ),
+            direct_library_tools=False,
+            source_types=(),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), False),
+            provider_intent=ConsoleProviderIntent("deepseek", None, None),
+            attempt_id="test-attempt",
+        ),
+        resolved_destination=ConsoleResolvedDestination(
+            provider="deepseek",
+            model=None,
+            endpoint_identity="test",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
+    )
+
+
 def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
     controller.app = app
+    controller._agent_bridge = None
     controller._pending_approval_event = None
     controller._pending_approval_decisions = None
+    scratch_spaces = ConsoleScratchSpaceManager()
+    scratch_snapshot = scratch_spaces.snapshot("test-chat")
+    controller._scratch_spaces = scratch_spaces
+    controller._test_turn_context = _test_execution_context(
+        scratch_snapshot,
+        tool_configuration={
+            "local_tools_enabled": controller_mod.get_cli_setting(
+                "console",
+                "local_tools_enabled",
+                True,
+            )
+        },
+    )
+    weakref.finalize(controller, scratch_spaces.dispose)
     return controller
+
+
+def _compose_local_provider(controller, *args, **kwargs):
+    """Call the production composer with this harness's captured scratch."""
+    kwargs.setdefault("turn_context", controller._test_turn_context)
+    return ConsoleChatController._compose_local_provider(
+        controller,
+        *args,
+        **kwargs,
+    )
 
 
 def _console_settings(enabled=True, workspace_root=""):
@@ -208,7 +627,9 @@ def test_compose_local_provider_disabled_flag(monkeypatch, tmp_path):
         controller_mod, "get_cli_setting", _console_settings(enabled=False)
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_missing_master_key_defaults_enabled(
@@ -222,7 +643,9 @@ def test_compose_local_provider_missing_master_key_defaults_enabled(
     monkeypatch.setattr(controller_mod, "get_cli_setting", missing_master_setting)
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, hook = controller._compose_local_provider()
+    local_provider, hook = _compose_local_provider(
+        controller,
+    )
 
     assert isinstance(local_provider, LocalToolProvider)
     assert callable(hook)
@@ -243,7 +666,9 @@ def test_compose_local_provider_coerces_quoted_false_to_disabled(monkeypatch, tm
         controller_mod, "get_cli_setting", _console_settings(enabled="false")
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_path):
@@ -254,7 +679,9 @@ def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_
         _console_settings(enabled="true", workspace_root=str(tmp_path)),
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
-    local_provider, hook = controller._compose_local_provider()
+    local_provider, hook = _compose_local_provider(
+        controller,
+    )
     assert isinstance(local_provider, LocalToolProvider)
     assert callable(hook)
 
@@ -262,14 +689,18 @@ def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_
 def test_compose_local_provider_no_service(monkeypatch, tmp_path):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     controller = _bare_controller(SimpleNamespace())  # no unified_mcp_service
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_kill_switch_on(monkeypatch, tmp_path):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     app = SimpleNamespace(unified_mcp_service=_FakeService(kill_switch=True))
     controller = _bare_controller(app)
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_kill_switch_read_failure_fails_closed(
@@ -284,7 +715,9 @@ def test_compose_local_provider_kill_switch_read_failure_fails_closed(
     controller = _bare_controller(
         SimpleNamespace(unified_mcp_service=_RaisingService())
     )
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_eligible(monkeypatch, tmp_path):
@@ -296,10 +729,14 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     service = _FakeService()
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
 
-    local_provider, hook = controller._compose_local_provider()
+    local_provider, hook = _compose_local_provider(
+        controller,
+    )
 
     assert isinstance(local_provider, LocalToolProvider)
-    assert local_provider._root == tmp_path.resolve()
+    assert local_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
     assert callable(hook)
     catalog_ids = {entry.id for entry in local_provider.list_catalog()}
     assert {
@@ -312,6 +749,70 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     # resolve_state is the same payload source the MCP gate uses.
     gate = local_provider.pending_gate_for("fs_list", {"path": "."})
     assert gate is not None and gate.server_key == "local:__local__"
+
+
+def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
+    monkeypatch,
+    tmp_path,
+):
+    configured = tmp_path / "configured"
+    cwd = tmp_path / "cwd"
+    configured.mkdir()
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(enabled=True, workspace_root=str(configured)),
+    )
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = scratch_spaces.snapshot("chat-a")
+    context = _test_execution_context(
+        snapshot,
+        session_id="chat-a",
+        tool_configuration={
+            "local_tools_enabled": True,
+            "workspace_root": str(configured),
+        },
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+    controller._scratch_spaces = scratch_spaces
+
+    provider, review = _compose_local_provider(
+        controller,
+        session_id="chat-a",
+        turn_context=context,
+    )
+
+    assert provider.workspace_root == snapshot.root
+    assert callable(review)
+    assert scratch_spaces.dispose()
+
+
+def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = scratch_spaces.snapshot("chat-a")
+    context = _test_execution_context(
+        snapshot,
+        session_id="chat-a",
+        tool_configuration={"local_tools_enabled": True},
+    )
+    controller = _bare_controller(
+        SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+    )
+    controller._scratch_spaces = scratch_spaces
+    provider, _review = _compose_local_provider(
+        controller,
+        session_id="chat-a",
+        turn_context=context,
+    )
+
+    scratch_spaces.close("chat-a")
+    result = provider.invoke("local:fs_list", {"path": "."})
+
+    assert result.ok is False
+    assert result.error == LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL
+    assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 
 def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call(
@@ -347,7 +848,9 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
         subscriptions_db=database,
     )
     controller = _bare_controller(app)
-    provider, hook = controller._compose_local_provider()
+    provider, hook = _compose_local_provider(
+        controller,
+    )
     watchlists_service = provider._specs["watchlists_search_items"].handler.__self__
     assert watchlists_service._db_resolver() is database
 
@@ -377,6 +880,179 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
         ),
     }
     assert database.searches == 1
+
+
+@pytest.mark.asyncio
+async def test_compose_local_provider_wires_transactional_watchlists_commands(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+    database = SubscriptionsDB(tmp_path / "subscriptions.db")
+    local_service = LocalWatchlistsService(db_factory=lambda: database)
+    bundle_service = WatchlistBundleService(database)
+    controller = _bare_controller(
+        SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            subscriptions_db=database,
+            local_watchlists_service=local_service,
+            watchlist_bundle_service=bundle_service,
+        )
+    )
+
+    provider, _hook = _compose_local_provider(controller)
+    result = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_sources",
+        {"sources": [{"url": "https://example.test/feed?token=private"}]},
+    )
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload.get("results") == [
+        {
+            "input_index": 0,
+            "outcome": "created",
+            "source_id": "local:subscription:1",
+        }
+    ]
+    assert (
+        database.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+    )
+
+    created_collection = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_collection",
+        {"name": "Threat intel", "source_ids": ["local:subscription:1"]},
+    )
+    conflict = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_create_collection",
+        {"name": "threat INTEL", "if_exists": "conflict"},
+    )
+    assert json.loads(created_collection.content)["status"] == "ok"
+    assert json.loads(conflict.content) == {
+        "status": "conflict",
+        "retryable": False,
+        "message": "A collection with that name already exists.",
+    }
+
+
+def test_compose_local_provider_routes_schedule_through_shared_app_command_service(
+    monkeypatch, tmp_path
+):
+    """Console and Artifacts use the same app-owned schedule command seam."""
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    calls = []
+
+    def _record_schedule(arguments):
+        calls.append(dict(arguments))
+        return '{"status":"ok","reload_requested":true,"reload_acknowledged":true}'
+
+    def unavailable(_arguments):
+        return '{"status":"feature_unavailable"}'
+
+    commands = SimpleNamespace(
+        create_sources=unavailable,
+        create_collection=unavailable,
+        update_collection_sources=unavailable,
+        check_sources=unavailable,
+        generate_briefing=unavailable,
+        set_briefing_schedule=_record_schedule,
+        approval_source_destinations=lambda _arguments: {},
+    )
+    controller = _bare_controller(
+        SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            watchlists_command_service=commands,
+        )
+    )
+
+    provider, _hook = _compose_local_provider(controller)
+    result = provider.invoke(
+        "local:watchlists_set_briefing_schedule",
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+        },
+    )
+
+    assert result.ok is True
+    assert json.loads(result.content)["reload_acknowledged"] is True
+    assert calls == [
+        {
+            "collection_id": "local:watchlist:7",
+            "cadence": "every_24_hours",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    profile = tmp_path / "profile" / "config.toml"
+    profile.parent.mkdir()
+    profile.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+
+    class Coordinator:
+        def __init__(self):
+            self.checks = []
+            self.briefings = []
+
+        def submit_checks(self, source_ids):
+            self.checks.append(source_ids)
+            return [{"run_id": 7, "source_id": 3, "status": "queued"}]
+
+        def submit_briefing(self, watchlist_id, preset_id):
+            self.briefings.append((watchlist_id, preset_id))
+            return {"id": 11, "status": "generating"}
+
+    coordinator = Coordinator()
+    bundle = SimpleNamespace(list_sources=lambda watchlist_id: [3])
+    app = SimpleNamespace(
+        unified_mcp_service=_FakeService(state=ALLOW),
+        watchlists_operation_coordinator=coordinator,
+        watchlist_bundle_service=bundle,
+    )
+    provider, _hook = _compose_local_provider(_bare_controller(app))
+
+    check = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_check_sources",
+        {"collection_id": "local:watchlist:5"},
+    )
+    briefing = await asyncio.to_thread(
+        provider.invoke,
+        "local:watchlists_generate_briefing",
+        {"collection_id": "local:watchlist:5", "preset_id": 2},
+    )
+
+    assert json.loads(check.content)["operations"][0]["operation_id"] == (
+        "local:watchlist_run:7"
+    )
+    assert json.loads(briefing.content)["operation_id"] == "local:briefing:11"
+    assert coordinator.checks == [[3]]
+    assert coordinator.briefings == [(5, 2)]
 
 
 def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
@@ -450,7 +1126,9 @@ def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
                 subscriptions_db=database,
             )
         )
-        provider, _hook = controller._compose_local_provider()
+        provider, _hook = _compose_local_provider(
+            controller,
+        )
 
         search = provider.invoke("local:watchlists_search_items", {"query": "needle"})
         detail = provider.invoke(
@@ -466,14 +1144,46 @@ def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
         database.close()
 
 
-def test_compose_local_provider_empty_workspace_root_uses_cwd(monkeypatch, tmp_path):
+def test_compose_local_provider_empty_workspace_root_uses_scratch(
+    monkeypatch,
+    tmp_path,
+):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     monkeypatch.chdir(tmp_path)
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
-    assert local_provider._root == tmp_path.resolve()
+    assert local_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
+    assert local_provider.workspace_root != tmp_path.resolve()
+
+
+def test_console_run_without_admitted_roots_keeps_non_path_local_tools(tmp_path):
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+
+    provider, review = _compose_local_provider(controller, admitted_roots=())
+
+    names = {entry.name for entry in provider.list_catalog()}
+    assert {
+        "fs_list",
+        "fs_read",
+        "fs_write",
+        "fs_edit",
+        "fs_patch",
+        "fs_glob",
+        "fs_grep",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    }.isdisjoint(names)
+    assert {"web_search", "web_fetch", "watchlists_search_items"} <= names
+    assert callable(review)
 
 
 def test_local_provider_read_only_filters_write_specs_without_global_mutation(tmp_path):
@@ -504,13 +1214,18 @@ def test_compose_local_provider_selected_root_overrides_disabled_fallback(
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    legacy_provider, _ = controller._compose_local_provider()
-    selected_provider, _ = controller._compose_local_provider(
-        project_root=selected, allow_write=False
+    legacy_provider, _ = _compose_local_provider(
+        controller,
+    )
+    selected_provider, _ = _compose_local_provider(
+        controller, project_root=selected, allow_write=False
     )
 
-    assert legacy_provider._root == fallback.resolve()
-    assert selected_provider._root == selected.resolve()
+    assert legacy_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
+    assert legacy_provider.workspace_root != fallback.resolve()
+    assert selected_provider.workspace_root == selected.resolve()
     selected_names = {entry.name for entry in selected_provider.list_catalog()}
     assert {"fs_write", "fs_edit", "fs_patch"}.isdisjoint(selected_names)
 
@@ -524,7 +1239,8 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     controller = _bare_controller(
         SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
     )
-    local_provider, review = controller._compose_local_provider(
+    local_provider, review = _compose_local_provider(
+        controller,
         project_root=selected,
         project_root_identity=identity,
     )
@@ -536,19 +1252,23 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     (outside / "secret.txt").write_text("outside")
     selected.symlink_to(outside, target_is_directory=True)
 
-    assert review([ToolCall(name="fs_read", args={"path": "secret.txt"})]) == {}
+    assert (
+        review(
+            [ToolCall(name="fs_read", args={"path": "secret.txt"})],
+            "run-root-swap",
+        )
+        == {}
+    )
     result = local_provider.invoke("fs_read", {"path": "secret.txt"})
     assert result.ok is False
     assert "root changed" in result.error.lower()
     assert "outside" not in result.error
 
 
-def test_compose_local_provider_tilde_workspace_root_expands_home(
+def test_compose_local_provider_tilde_workspace_root_does_not_grant_home_access(
     monkeypatch, tmp_path
 ):
-    """A configured ``~/repo`` must expand against HOME (PR #1352 review):
-    without expanduser() the root would resolve to a literal "~" directory
-    under the cwd."""
+    """The retired configured root cannot replace a chat's private scratch."""
     home = tmp_path / "home"
     (home / "repo").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
@@ -560,9 +1280,14 @@ def test_compose_local_provider_tilde_workspace_root_expands_home(
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
-    assert local_provider._root == (home / "repo").resolve()
+    assert local_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
+    assert local_provider.workspace_root != (home / "repo").resolve()
 
 
 def test_compose_local_provider_persists_session_and_always_allow(
@@ -575,7 +1300,9 @@ def test_compose_local_provider_persists_session_and_always_allow(
     )
     service = _FakeService()
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
     (tmp_path / "a.txt").write_text("a")
 
@@ -597,7 +1324,9 @@ def test_compose_local_provider_session_approval_skips_reprompt(monkeypatch, tmp
     service = _FakeService()
     service.approve_for_session("local:__local__", "fs_list")
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
     assert local_provider.pending_gate_for("fs_list", {"path": "."}) is None
     (tmp_path / "a.txt").write_text("a")
@@ -614,7 +1343,9 @@ def _composed(monkeypatch, tmp_path, service):
         _console_settings(workspace_root=str(tmp_path)),
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
     assert local_provider is not None
     return local_provider
 
@@ -628,8 +1359,11 @@ def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
     r = local_provider.invoke("local:fs_list", {"path": "."})
 
     assert not r.ok
+    # task-32280 fix round: a tool configured Off is not a person saying no.
+    # Through the REAL wiring (the controller's `record_decision` seam into
+    # the service), not just the provider's own unit test.
     assert service.recorded_decisions == [
-        ("local:__local__", "fs_list", "denied", "agent", None)
+        ("local:__local__", "fs_list", "denied-policy", "agent", None)
     ]
 
 
@@ -703,7 +1437,9 @@ def test_compose_local_provider_without_session_registers_no_todo_spec(
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
     assert _registered_task_tools(local_provider) == set()
     assert "todo_write" not in {entry.name for entry in local_provider.list_catalog()}
@@ -733,7 +1469,7 @@ def test_compose_local_provider_wires_the_sessions_exact_todo_store(
         )
     )
 
-    local_provider, _hook = controller._compose_local_provider(session_id=target.id)
+    local_provider, _hook = _compose_local_provider(controller, session_id=target.id)
 
     created = local_provider.invoke("local:todo_create", {"content": "Ship it"})
 
@@ -758,7 +1494,7 @@ def test_compose_local_provider_unknown_session_registers_no_todo_spec(
     controller.store = ConsoleChatStore()
     controller._agent_bridge = SimpleNamespace(append_todo_marker=lambda *a: None)
 
-    local_provider, _hook = controller._compose_local_provider(session_id="ghost")
+    local_provider, _hook = _compose_local_provider(controller, session_id="ghost")
 
     assert _registered_task_tools(local_provider) == set()
 
@@ -779,6 +1515,75 @@ def test_compose_local_provider_without_bridge_registers_no_todo_spec(
     session = controller.store.create_session(workspace_id="ws")
     controller._agent_bridge = None
 
-    local_provider, _hook = controller._compose_local_provider(session_id=session.id)
+    local_provider, _hook = _compose_local_provider(controller, session_id=session.id)
 
     assert _registered_task_tools(local_provider) == set()
+
+
+def test_hook_passes_rationale_onto_local_pending_rows(tmp_path):
+    """Qodo review #10: the local owner receives each call's rationale.
+
+    Without this, every local approval row renders without the model's
+    advisory context even though MCP and builtin rows carry it.
+    """
+    p = provider(ASK, tmp_path)
+    seen: list[list[MCPPendingCall]] = []
+
+    def decide(pending: list[MCPPendingCall]) -> dict[str, str]:
+        seen.append(pending)
+        return {"fs_list": "deny"}
+
+    hook = build_local_review_hook(p, decide)
+    hook(
+        [
+            ToolCall(
+                name="fs_list",
+                args={"path": "."},
+                rationale="Listing the workspace to find the config",
+            ),
+            ToolCall(name="fs_list", args={"path": "sub"}),
+        ],
+        RUN,
+    )
+    assert seen[0][0].rationale == "Listing the workspace to find the config"
+    assert seen[0][1].rationale == ""
+
+
+def test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial(tmp_path):
+    """task-32280 (Qodo #2597 #8): `request_mcp_approvals` fails CLOSED when
+    no app is wired -- no card is ever shown, so no user decides anything.
+    It returned a bare `{key: "deny"}` dict, which `approval_was_unanswered`
+    reads as "answered", so THIS hook wrote `record_user_denial()` and the
+    local audit trail claimed a person pressed Deny.
+
+    Driven through the REAL `request_mcp_approvals` (not a stub returning
+    the same shape), because the bug lived in what that method returns.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ApprovalDecisions
+
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    assert controller.app is None  # the branch under test
+
+    p = provider(ASK, tmp_path)
+    denials: list[str] = []
+    p.record_user_denial = denials.append
+
+    seen: list[dict] = []
+
+    def _headless_round(pending):
+        decisions = controller.request_mcp_approvals(pending)
+        seen.append(decisions)
+        return decisions
+
+    hook = build_local_review_hook(p, _headless_round)
+    verdicts = hook(
+        [ToolCall(name="fs_list", args={"path": "."}, call_id="call-1")], RUN
+    )
+
+    # Fails closed, exactly as before.
+    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="fs_list")
+    assert isinstance(seen[0], ApprovalDecisions)
+    assert seen[0].unresolved_keys == frozenset({"call-1"})
+    assert denials == [], "a headless fail-closed deny was audited as the user's"

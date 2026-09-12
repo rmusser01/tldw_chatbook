@@ -29,7 +29,16 @@ _SCOPED, _SELF = build_css.screen_css_paths(_CSS_DIR)
 class ParityHost(App):
     """Real-CSS-stack host: scoped sheet, app bundle, then self sheet."""
 
-    CSS_PATH = [str(_SCOPED), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SELF)]
+    # TASK-25812: the split screen sheets carry the console/library/settings
+    # rules; the running app loads them after the bundle, so the harness does.
+    CSS_PATH = [
+        str(_SCOPED),
+        str(_CSS_DIR / "tldw_cli_modular.tcss"),
+        str(_CSS_DIR / "screen_agentic_console.tcss"),
+        str(_CSS_DIR / "screen_agentic_library.tcss"),
+        str(_CSS_DIR / "screen_agentic_settings.tcss"),
+        str(_SELF),
+    ]
 
     def compose(self) -> ComposeResult:
         # The reference for "what a selected/focused row looks like":

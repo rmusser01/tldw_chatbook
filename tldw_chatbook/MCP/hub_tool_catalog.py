@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 _MAX_TAGS = 5
-_RESERVED_EXTERNAL_PROFILE_ID = "__local__"
+_RESERVED_EXTERNAL_PROFILE_IDS = frozenset({"__local__", "__virtual_cli__"})
 
 
 @dataclass(frozen=True)
@@ -108,7 +108,7 @@ def local_tools_from_record(record: dict) -> list[HubTool]:
         empty list when there is no snapshot.
     """
     profile_id = _text(record.get("profile_id"))
-    if profile_id == _RESERVED_EXTERNAL_PROFILE_ID:
+    if profile_id in _RESERVED_EXTERNAL_PROFILE_IDS:
         return []
     snapshot = record.get("discovery_snapshot")
     if not isinstance(snapshot, Mapping):

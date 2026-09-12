@@ -3,21 +3,31 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 import pytest
 
+import tldw_chatbook.app as app_module
 from tldw_chatbook.Library.ingest_capabilities import (
     field_available_for_backend,
     get_capabilities,
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_OUTCOME_SKIPPED,
+)
 from tldw_chatbook.Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
+    _GLYPH_CANCELLED,
+    _GLYPH_FAILED,
     MEDIA_DB_UNAVAILABLE_COPY,
+    IngestQueueRow,
     LibraryIngestFormState,
+    group_ingest_queue_rows,
     _human_size,
     build_estimate_line,
+    build_ingest_queue_groups,
     build_library_ingest_state,
     build_type_breakdown_line,
     build_warning_lines,
@@ -462,7 +472,7 @@ def test_failed_row_line_appends_retry_suffix():
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     row = state.queue_rows[0]
-    assert row.line == "✗ failed · report.txt · bad codec · attempt 3"
+    assert row.line == "✗ failed · report.txt · bad codec · retry 2"
 
 
 def test_basename_used_for_nested_path():
@@ -1473,15 +1483,12 @@ def test_a_page_source_offers_its_scope_settings_in_the_canvas_state():
     """
     from tldw_chatbook.Library.ingest_capabilities import get_capabilities
     from tldw_chatbook.Library.ingest_preflight import analyze_path
-    from unittest.mock import MagicMock, patch
 
-    response = MagicMock()
-    response.__enter__ = MagicMock(return_value=response)
-    response.__exit__ = MagicMock(return_value=False)
-    with patch(
-        "tldw_chatbook.Library.ingest_preflight.urlopen", return_value=response
-    ):
-        preflight = analyze_path("https://example.com/some-post")
+    # (TASK-19556) The pre-flight no longer probes a URL by default -- that
+    # network call fired from the ingest field's typing debounce and made it
+    # an internal-host scanning oracle. Classification, which is what this
+    # test is about, needs no probe at all now.
+    preflight = analyze_path("https://example.com/some-post")
 
     assert list(preflight.type_groups) == ["web"], (
         "a page must reach the canvas as the web group, not as an unsupported file"
@@ -2325,8 +2332,8 @@ def test_skipped_jobs_render_neutral_and_count_separately():
         clear_finished_armed=True,
     )
     row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
-    assert row.glyph == "○"
-    assert row.line.startswith("○ skipped · photo.xyz")
+    assert row.glyph == "–"
+    assert row.line.startswith("– skipped · photo.xyz")
     assert row.can_retry is False
     assert row.can_dismiss is True
     assert state.queue_counts_line == "This queue: 1 done · 1 skipped"
@@ -2582,7 +2589,7 @@ def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
     """
     # (Qodo round) detected_type is appended by the parsing/writing
     # branches, so the marker must be the row's TRAILING element -- with a
-    # type present it used to read "… · attempt 2 · pdf".
+    # type present it used to read "… · retry 1 · pdf".
     for state_value, word, detected in (
         (IngestJobState.QUEUED, "queued", ""),
         (IngestJobState.PARSING, "parsing", "pdf"),
@@ -2599,8 +2606,8 @@ def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
             (job,), form=LibraryIngestFormState()
         ).queue_rows[0]
         assert row.line.startswith(f"● {word} · broken.pdf")
-        assert row.line.endswith("· attempt 2"), (
-            f"{word} row must show the attempt number: {row.line!r}"
+        assert row.line.endswith("· retry 1"), (
+            f"{word} row must show the retry number: {row.line!r}"
         )
 
     first = _job(job_id="ingest-job-2", state=IngestJobState.PARSING)
@@ -2733,6 +2740,179 @@ def test_analysis_hint_does_not_block_start() -> None:
         analysis_unready_hint="Analyze after import is on, but X is not ready.",
     )
     assert state.start_enabled is True
+
+
+# ---------------------------------------------------------------------------
+# task-28007 Task 3 (AC#1/AC#2): batch-analyze a run's analysis-skipped items
+# ---------------------------------------------------------------------------
+
+
+def _skipped_job(**overrides) -> LibraryIngestJob:
+    """A DONE job whose ``progress`` was built by the REAL producer.
+
+    (fix round 1, M-5) The old fixture hand-wrote
+    ``progress={"analysis_skipped": ...}``; nothing tied that literal key
+    to ``app._library_ingest_done_progress``, so renaming that key would
+    break the feature in production with a fully green suite. Building it
+    through the real function closes that gap.
+    """
+    source_path = overrides.get("source_path", "/tmp/notes.txt")
+    progress = overrides.pop("progress", None) or app_module._library_ingest_done_progress(
+        source_path,
+        was_duplicate=False,
+        payload={"analysis_skipped_reason": "no analysis provider is configured"},
+    )
+    defaults = dict(
+        job_id="ingest-job-1",
+        source_path=source_path,
+        state=IngestJobState.DONE,
+        media_id=7,
+        submitted_at=100.0,
+        finished_at=101.0,
+        progress=progress,
+    )
+    defaults.update(overrides)
+    return LibraryIngestJob(**defaults)
+
+
+def test_analyze_skipped_ids_exclude_a_non_done_job_even_with_a_skip_note():
+    """(fix round 1, M-6) The ``state == DONE`` guard: an analysis-skipped
+    note is only ever meaningful on a FINISHED import -- a job still
+    mid-flight (or one that failed) must never be offered, even if it
+    happens to carry the same progress key."""
+    running = _skipped_job(state=IngestJobState.WRITING, media_id=7)
+    state = build_library_ingest_state(
+        (running,), form=LibraryIngestFormState(), analysis_action_ready=True
+    )
+    assert state.analyze_skipped_media_ids == ()
+    assert state.show_analyze_skipped is False
+
+
+def test_analyze_skipped_action_hidden_without_skipped_items():
+    """No skipped rows -- the action never appears, ready or not."""
+    done = _job(
+        state=IngestJobState.DONE,
+        media_id=1,
+        progress={"message": "Imported x.txt"},
+    )
+    state = build_library_ingest_state(
+        (done,), form=LibraryIngestFormState(), analysis_action_ready=True
+    )
+    assert state.analyze_skipped_media_ids == ()
+    assert state.show_analyze_skipped is False
+
+
+def test_analyze_skipped_action_hidden_while_the_provider_is_not_ready():
+    """AC#1's gate: skipped items alone are not enough -- Task 1's reason
+    must ALSO be empty (re-offering the action would repeat the exact
+    failure it exists to fix)."""
+    state = build_library_ingest_state(
+        (_skipped_job(),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=False,
+    )
+    assert state.analyze_skipped_media_ids == ("7",)
+    assert state.show_analyze_skipped is False
+
+
+def test_analyze_skipped_action_shows_with_skipped_items_and_a_ready_provider():
+    state = build_library_ingest_state(
+        (_skipped_job(),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+    )
+    assert state.analyze_skipped_media_ids == ("7",)
+    assert state.show_analyze_skipped is True
+
+
+def test_analyze_skipped_ids_span_the_whole_visible_queue_not_one_batch():
+    """The action id is fixed/singular ("library-ingest-analyze-skipped"),
+    so it is ONE canvas-wide control over every skipped id currently in
+    the queue -- never one per batch (which could mount the same id
+    twice and crash)."""
+    first = _skipped_job(job_id="ingest-job-1", media_id=1, batch_id="local-aaa")
+    second = _skipped_job(job_id="ingest-job-2", media_id=2, batch_id="local-bbb")
+    state = build_library_ingest_state(
+        (first, second),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+    )
+    assert set(state.analyze_skipped_media_ids) == {"1", "2"}
+
+
+def test_analyze_skipped_excludes_an_id_this_action_already_fixed():
+    """N is the count of skipped rows that STILL have no analysis: an id
+    the screen's own outcomes map already marked ok=True drops out."""
+    state = build_library_ingest_state(
+        (_skipped_job(media_id=7),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+        analyze_outcomes={"7": (True, "")},
+    )
+    assert state.analyze_skipped_media_ids == ()
+    assert state.show_analyze_skipped is False
+
+
+def test_analyze_skipped_keeps_an_id_this_action_failed_on():
+    """A failed re-attempt still has no analysis -- it stays offered."""
+    state = build_library_ingest_state(
+        (_skipped_job(media_id=7),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+        analyze_outcomes={"7": (False, "analysis did not persist")},
+    )
+    assert state.analyze_skipped_media_ids == ("7",)
+
+
+def test_analyze_skipped_action_disabled_while_a_run_is_active():
+    state = build_library_ingest_state(
+        (_skipped_job(),),
+        form=LibraryIngestFormState(),
+        analysis_action_ready=True,
+        analyze_running=True,
+    )
+    assert state.show_analyze_skipped is True
+    assert state.analyze_skipped_running is True
+
+
+def test_analyze_outcome_paints_a_success_receipt_on_its_own_row():
+    """AC#2: rows ARE individually addressable in the Import canvas -- the
+    outcome overlays the row's OWN progress line, replacing the stale
+    "analysis skipped: ..." note with the receipt grammar (same glyphs
+    Task 2 used on the Media canvas)."""
+    job = _skipped_job(media_id=7, source_path="/tmp/notes.txt")
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        analyze_outcomes={"7": (True, "")},
+    )
+    row = state.queue_rows[0]
+    assert row.progress is not None
+    assert row.progress["message"] == "✓ analyzed · notes.txt"
+
+
+def test_analyze_outcome_paints_a_failure_receipt_with_its_reason():
+    job = _skipped_job(media_id=7, source_path="/tmp/notes.txt")
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        analyze_outcomes={"7": (False, "analysis did not persist")},
+    )
+    row = state.queue_rows[0]
+    assert row.progress["message"] == (
+        "✗ analysis failed · notes.txt · analysis did not persist"
+    )
+
+
+def test_analyze_outcome_is_a_no_op_for_a_job_without_a_media_id():
+    job = _skipped_job(media_id=None)
+    state = build_library_ingest_state(
+        (job,),
+        form=LibraryIngestFormState(),
+        analyze_outcomes={"7": (True, "")},
+    )
+    row = state.queue_rows[0]
+    assert "analysis skipped" in row.progress["message"]
 
 
 # --- task-3304 (MI-17): install commands recoverable at the warning ----------
@@ -4195,3 +4375,321 @@ def test_an_all_unsupported_folder_keeps_the_local_sentence_on_both_backends():
     assert state.start_quiet_line == (
         "Nothing in this selection can be imported — 2 unsupported files."
     ), state.start_quiet_line
+
+
+# --- task-32231: identical settled outcomes collapse into one row ---------
+
+
+def _failed_row(
+    job_id: str,
+    *,
+    basename: str = "note.md",
+    reason: str = "Parse pool could not start",
+    state: IngestJobState = IngestJobState.FAILED,
+    can_retry: bool = True,
+) -> IngestQueueRow:
+    """One settled queue row, shaped the way the state builder shapes it."""
+    word = state.value
+    # Read the shipped constants, never a copy of the glyph: task-32235
+    # changed the skipped glyph from "○" to "–" on a sibling branch and a
+    # duplicated literal here would have gone stale silently.
+    glyph = {
+        IngestJobState.FAILED: _GLYPH_FAILED,
+        IngestJobState.SKIPPED: LIBRARY_GLYPH_OUTCOME_SKIPPED,
+        IngestJobState.CANCELLED: _GLYPH_CANCELLED,
+    }[state]
+    return IngestQueueRow(
+        job_id=job_id,
+        glyph=glyph,
+        line=f"{glyph} {word} · {basename} · {reason}",
+        can_open=False,
+        can_retry=can_retry,
+        can_dismiss=True,
+        state=state,
+        source_path=f"/tmp/inbox/{basename}",
+        reason=reason,
+    )
+
+
+def test_identical_failures_group_into_one_row():
+    rows = tuple(
+        _failed_row(f"job-{n}", basename=f"note{n}.md", reason="Parse pool could not start")
+        for n in range(4)
+    )
+    groups = group_ingest_queue_rows(rows)
+    assert len(groups) == 1
+    assert groups[0].line == "✗ failed · 4 files · Parse pool could not start"
+    assert groups[0].members == rows
+    assert groups[0].expanded is False
+
+
+def test_rows_with_different_reasons_never_group():
+    rows = (
+        _failed_row("a", reason="Parse pool could not start"),
+        _failed_row("b", reason="Unsupported file type: .json."),
+    )
+    assert len(group_ingest_queue_rows(rows)) == 2
+
+
+def test_a_single_failure_keeps_its_own_filename_row():
+    row = _failed_row("a", basename="one.md", reason="Parse pool could not start")
+    groups = group_ingest_queue_rows((row,))
+    assert groups[0].line == row.line  # unchanged, no "1 files"
+
+
+def test_active_rows_never_group_however_identical():
+    """Per-file progress is the whole point of an in-flight row."""
+    rows = tuple(
+        IngestQueueRow(
+            job_id=f"job-{n}",
+            glyph="●",
+            line=f"● parsing · note{n}.md",
+            can_open=False,
+            can_retry=False,
+            state=IngestJobState.PARSING,
+        )
+        for n in range(3)
+    )
+    groups = group_ingest_queue_rows(rows)
+    assert len(groups) == 3
+    assert [group.line for group in groups] == [row.line for row in rows]
+
+
+def test_skipped_and_cancelled_group_under_their_own_word_and_glyph():
+    skipped = tuple(
+        _failed_row(
+            f"s{n}",
+            basename=f"s{n}.md",
+            reason="Already in the Library",
+            state=IngestJobState.SKIPPED,
+            can_retry=False,
+        )
+        for n in range(2)
+    )
+    cancelled = tuple(
+        _failed_row(
+            f"c{n}",
+            basename=f"c{n}.md",
+            reason="You stopped this import",
+            state=IngestJobState.CANCELLED,
+            can_retry=False,
+        )
+        for n in range(3)
+    )
+    groups = group_ingest_queue_rows(skipped + cancelled)
+    assert [group.line for group in groups] == [
+        f"{LIBRARY_GLYPH_OUTCOME_SKIPPED} skipped · 2 files · Already in the Library",
+        f"{_GLYPH_CANCELLED} cancelled · 3 files · You stopped this import",
+    ]
+
+
+def test_expanded_keys_mark_only_their_own_group():
+    rows = (
+        _failed_row("a", reason="Parse pool could not start"),
+        _failed_row("b", reason="Parse pool could not start"),
+        _failed_row("c", reason="Unsupported file type: .json."),
+        _failed_row("d", reason="Unsupported file type: .json."),
+    )
+    # The key is the group's own identity, not a member's job id (Qodo 5),
+    # so the expansion set is addressed with it.
+    second = group_ingest_queue_rows(rows)[1]
+    groups = group_ingest_queue_rows(rows, expanded={second.key})
+    assert [group.expanded for group in groups] == [False, True]
+    assert groups[0].key != groups[1].key
+
+
+def test_a_group_is_retryable_only_when_every_member_is():
+    retryable = (
+        _failed_row("a", reason="Timed out"),
+        _failed_row("b", reason="Timed out"),
+    )
+    assert group_ingest_queue_rows(retryable)[0].can_retry is True
+
+    mixed = (
+        _failed_row("a", reason="Timed out"),
+        _failed_row("b", reason="Timed out", can_retry=False),
+    )
+    assert group_ingest_queue_rows(mixed)[0].can_retry is False
+
+
+def test_grouping_never_reorders_the_queue():
+    """Only CONTIGUOUS runs collapse -- a later twin keeps its position."""
+    rows = (
+        _failed_row("a", reason="Timed out"),
+        _failed_row("b", reason="Unsupported file type: .json."),
+        _failed_row("c", reason="Timed out"),
+    )
+    groups = group_ingest_queue_rows(rows)
+    assert [group.members for group in groups] == [
+        (rows[0],),
+        (rows[1],),
+        (rows[2],),
+    ]
+
+
+def test_four_identical_failures_reach_the_canvas_state_as_one_group():
+    """End-to-end from the registry snapshot, not hand-built rows."""
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.FAILED,
+            error="Ingest worker pool could not start: [Errno 28] No space left on device",
+            finished_at=120.0,
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    groups = group_ingest_queue_rows(state.queue_rows)
+
+    assert len(groups) == 1, [row.line for row in state.queue_rows]
+    assert groups[0].line.startswith("✗ failed · 4 files · ")
+    assert "note0.md" not in groups[0].line
+
+
+def test_identical_successes_never_collapse():
+    """(review finding 6) The path this host could not live-exercise.
+
+    Two independent guards keep a successful import out of the grouping:
+    ``DONE`` is not a groupable state, AND the done builder never populates
+    ``reason``, so the key falls through to the per-``job_id`` one. Both are
+    load-bearing and neither is obvious from the call site.
+    """
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.DONE,
+            media_id=n + 1,
+            finished_at=120.0,
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+
+    assert all(row.reason == "" for row in state.queue_rows)
+    groups = group_ingest_queue_rows(state.queue_rows)
+    assert len(groups) == 4, [group.line for group in groups]
+    assert [group.line for group in groups] == [
+        row.line for row in state.queue_rows
+    ]
+
+
+def test_two_batches_with_identical_failures_stay_two_rows():
+    """(Qodo 2) A collapsed group must never span two submissions.
+
+    The canvas emits only the LEADING member's task-2221 batch header, so a
+    cross-batch collapse puts a per-submission count ("four-md — 4 files")
+    directly above a row counting both submissions ("5 files") and hides the
+    second header entirely. Observed live during task-32231's verification
+    and reported then as intended; it is a contradiction on screen.
+    """
+    jobs = tuple(
+        _job(
+            job_id=f"ingest-job-{n}",
+            source_path=f"/tmp/inbox/note{n}.md",
+            state=IngestJobState.FAILED,
+            error="Ingest worker pool could not start: [Errno 28]",
+            finished_at=120.0,
+            batch_id="batch-a" if n < 2 else "batch-b",
+        )
+        for n in range(4)
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    groups = group_ingest_queue_rows(state.queue_rows)
+
+    assert len(groups) == 2, [group.line for group in groups]
+    assert all(" · 2 files · " in group.line for group in groups), [
+        group.line for group in groups
+    ]
+    assert groups[0].key != groups[1].key
+
+
+def test_a_groups_key_survives_losing_its_leading_member():
+    """(Qodo 5) The key identifies the OUTCOME, not the first row in it.
+
+    Keyed by the leading job id, dismissing that one member re-keys the
+    whole run, and the panel's expansion set -- which stores keys -- then
+    collapses a group the user had open. The key is derived from what makes
+    the rows a group in the first place, so losing a member cannot change
+    it.
+    """
+    rows = tuple(
+        _failed_row(f"job-{n}", basename=f"note{n}.md", reason="Timed out")
+        for n in range(4)
+    )
+    whole = group_ingest_queue_rows(rows)
+    without_leader = group_ingest_queue_rows(rows[1:])
+
+    assert len(whole) == len(without_leader) == 1
+    assert whole[0].key == without_leader[0].key
+
+
+# --- task-32351 AC#1: a batch is named after the folder the user chose ------
+#
+# critique #10 (B D1): importing <profile>/inbox produced "nested — 6 files",
+# after the one file in inbox/nested/ that the recursive scan happened to
+# enumerate first.
+
+NOW = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+
+
+def _queued_job(job_id: str, *, source_path: str, batch_id: str):
+    return _job(job_id=job_id, source_path=source_path, batch_id=batch_id)
+
+
+def test_a_recursive_folder_import_is_named_after_the_folder_the_user_chose():
+    """The nested file leads here, which is the order that produced the bug.
+
+    A recursive scan enumerates subdirectories in whatever order the walk
+    yields them, so the first member's parent is not the folder the user
+    pointed at -- the common root of every member is.
+    """
+    jobs = tuple(
+        _queued_job(f"job-{n}", source_path=path, batch_id="b1")
+        for n, path in enumerate(
+            (
+                "/tmp/inbox/nested/deep-note.md",
+                "/tmp/inbox/reading-notes.md",
+                "/tmp/inbox/article.html",
+                "/tmp/inbox/lecture-transcript.txt",
+                "/tmp/inbox/export.json",
+                "/tmp/inbox/weird.xyz",
+            )
+        )
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert len(groups) == 1
+    assert groups[0].header_line.startswith("inbox — 6 files"), groups[0].header_line
+
+
+def test_a_url_batch_is_named_after_its_host():
+    """(review nit 5) URLs are not filesystem paths, so they never take the
+    common-root branch -- the first member's own parent names them, as before."""
+    jobs = (
+        _queued_job("a", source_path="https://example.com/one", batch_id="b1"),
+        _queued_job("b", source_path="https://example.com/two", batch_id="b1"),
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert groups[0].header_line.startswith("example.com — 2 files")
+
+
+def test_a_url_batch_across_two_hosts_is_not_named_after_the_scheme():
+    """(review finding 2) commonpath over these yields "https:", which names
+    nothing; the first member's host still does."""
+    jobs = (
+        _queued_job("a", source_path="https://example.com/one", batch_id="b1"),
+        _queued_job("b", source_path="https://other.example/two", batch_id="b1"),
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert groups[0].header_line.startswith("example.com — 2 files")
+
+
+def test_a_mixed_absolute_and_relative_batch_keeps_the_old_name():
+    """``commonpath`` refuses this pairing; the first member's parent stands."""
+    jobs = (
+        _queued_job("a", source_path="/tmp/inbox/one.md", batch_id="b1"),
+        _queued_job("b", source_path="downloads/two.md", batch_id="b1"),
+    )
+    groups, _latest = build_ingest_queue_groups(jobs, now=NOW)
+    assert groups[0].header_line.startswith("inbox — 2 files")

@@ -39,6 +39,15 @@ known, expensive to rediscover. Every entry states the incident that produced it
   **never pass a "next safe id" between tasks in a brief** — an ID is only safe at the
   instant it is derived, so re-derive it at filing time.
 
+- **2026-08-23, Console private scratch.** A task added at 08:11 as
+  `TASK-21161` rebased over a different `TASK-21161` added to `dev` at 10:22.
+  The first closeout command, `backlog task edit 21161 -s Done`, reported
+  success but resolved the later task file; the Console task visibly remained
+  In Progress. Add-commit provenance applied the older-arrival rule, the later
+  startup-order task moved to `TASK-21163`, and every reference moved with it.
+  The extra guard is important: after any rebase, verify the CLI's printed
+  **file path**, not merely its success message or requested ID.
+
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
 unmerged branches. And a *green* Backlog Guard at branch time proves nothing later —
 a duplicate can arrive from dev moving underneath you, in which case rebasing is the
@@ -49,6 +58,81 @@ throwaway task FIRST and read which ID the CLI assigned it. That is the CLI's an
 exposed before it is attached to anything real — delete the probe, then leapfrog past
 the swept maximum. All three P2ab collisions were caught this way, and no file ever
 carried a bad number.
+
+- **2026-08-31, hermes parity filing.** The sweep script itself was wrong and reported a
+  **false-low maximum**. The regex `s#.*task-([0-9]+)([.-].*)?\.md$#\1#p` requires the
+  character after the digits to be `.` or `-`, but task filenames are
+  `task-25712 - Console-….md` — a **space**. Every space-separated filename was silently
+  dropped, so the sweep answered **23113** when the true max was **25835**. Nothing errored;
+  the number just looked plausible. The CLI probe is what exposed it: it offered **25714**,
+  which is *above* the swept "max" — an impossible answer that proved the sweep wrong. Had the
+  probe been skipped, the batch would have collided with 122 IDs held by
+  `origin/fix/console-ux-review-batch1`. **Match on the id prefix only** —
+  `sed -nE 's#.*/task-([0-9]+).*#\1#p'` — and treat "the CLI offers a number above my swept
+  max" as proof the sweep is broken, never as CLI error.
+
+- **2026-09-02, Personal Context documentation closeout.** The feature branch resolved
+  a newly merged collision by renaming the younger upstream MCP `TASK-27019` to
+  `TASK-28228` and assigning `TASK-27019` to the older documentation task. A final gate
+  still demanded that every local/remote ref and every worktree contain only the new
+  filename. That gate could not pass before merge: `origin/dev` and historical worktrees
+  necessarily retained the pre-rename MCP snapshot, even though the proposed merge tree
+  was unique and GitHub's Backlog Guard was green. The correct closeout evidence is the
+  merge candidate itself: prove the winning task is the sole owner of the ID, the losing
+  path is absent, and the renamed task and all inbound references use the replacement ID.
+  Historical refs remain useful collision-discovery inputs, but they are immutable
+  snapshots—not a uniqueness invariant a feature PR can retroactively repair.
+
+- **2026-09-04, Console rail colour grammar (TASK-31429, formerly 31420).** A
+  one-command sweep, `git log --all --diff-filter=A --name-only -- backlog/`,
+  reported max **31419** and "0 files named task-31420" — and was wrong on the
+  second count within the hour: PR #2383 had landed a *different* `task-31420`
+  on dev as a **merge commit**, and `git log` without `-m` lists no file adds
+  for merge commits, so the sweep could see every branch commit that was still
+  around but not a squash/merge-only add. The collision surfaced only because
+  another session's memory note named the id. Fix was the older-keeps-id rule
+  (theirs: created 19:28; mine: 22:30 → mine renumbered to 31429 with
+  provenance). **Sweep with `git ls-tree -r --name-only <ref> backlog/` per
+  ref (the loop above) or add `-m` to any `git log --all` shortcut**, and
+  re-run the sweep right before pushing — the id was free at filing and taken
+  at PR time.
+
+- **2026-09-08, Library decomposition wave-8 close (TASK-32047, formerly 32041).**
+  The clean demonstration that a correct sweep is a *snapshot*, not a reservation.
+  The close swept 647 refs, found max **32033**, ran the CLI probe (which offered
+  **32014** — a false low, already held on an unmerged branch, exactly as this
+  section predicts), leapfrogged to 32040/32041, and was right at that instant.
+  Twenty-seven minutes EARLIER by `created_date`, dev's `553960448` had minted its
+  own `task-32041` in a batch claiming **32041-32046**; `973b4c039` then closed it.
+  Two different filenames for the same id, so `git merge` takes both without a
+  conflict and nothing goes red until `preflight.sh`'s duplicate-id check runs
+  **after** the merge. The eight-wave branch was long-lived, which is the whole
+  mechanism: the longer the branch, the more certain the sweep is stale.
+  Older-keeps-id resolved it cleanly (dev 14:36 vs ours 15:04 → ours moved to
+  32047), and the review caught it before the merge rather than the guard catching
+  it after.
+
+  **The sweep command that would have been robust, and now is the one to use:**
+
+  ```bash
+  git fetch origin
+  git rev-list --objects --all | grep -oE 'task-[0-9]+' | grep -oE '[0-9]+' | sort -rn | head -1
+  ```
+
+  One command, no per-ref loop. It walks every blob path reachable from **all**
+  refs, so it sees ids in files that were later renamed or deleted, and ids added
+  by merge-only commits — the exact blind spot that made the 2026-09-04
+  `git log --all --diff-filter=A` sweep report "0 files named task-31420" an hour
+  before that id bit. Against this repo it returned **32046** where the per-ref
+  `ls-tree`-of-tips loop above returns the same number only when every claimant is
+  still a tip. Costs a few seconds; verify the chosen id is free as a **content**
+  reference too (`git grep task-NNNNN` across refs), since a task can be cited
+  before its file lands.
+
+  **And the backstop that actually fires: run `./scripts/preflight.sh` AFTER the
+  reconciliation merge, not only before it.** The duplicate-id check can only see a
+  collision once both sides are in one tree. A green preflight on the branch before
+  merging says nothing at all about this failure mode.
 
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
@@ -67,6 +151,38 @@ against this repo, the lexicographic version reports **99** as the highest task 
 while the numeric version reports **838** -- it would have collided on essentially
 every filing. That mistake was in the first draft of this very file, which is a fair
 illustration of why these entries carry their evidence.
+
+**MAX+20 leapfrogging has now failed TWICE against concurrent minting — 2026-08-21
+(TASK-19573/TASK-19601).** Seven ids were each claimed by two unrelated task files,
+in two internally-clean batches: `16320`, `16322`, `16323`, `16324` (note `16321`
+was never duplicated) and `18912`, `18913`, `18915` (note `18914` was never
+duplicated). Each batch's minting session DID sweep and leapfrog past an observed
+maximum -- that is exactly why every id within a batch was unique. The failure was
+that two different sessions performed that sweep against the *same* pre-merge
+maximum from different worktrees/branches, so their two leapfrogged blocks
+overlapped wholesale. Leapfrogging further (MAX+30, MAX+50, ...) does not fix this
+class of failure -- it only widens the window a collision can hide in, because the
+race is not "did you leapfrog far enough," it is "did anyone else observe the same
+maximum before you merged."
+
+Four of the seven pairs were also **Done vs. Done**, which the standing "a Done
+task never moves" reading made unresolvable at the file level -- fixing only the
+three resolvable pairs would not have turned the guard green, since the other four
+still collided.
+
+**The fix was a tie-break rule, not more distance.** TASK-19601 decided: the
+OLDER arrival (by `created_date`) keeps the id regardless of status; the younger
+task renumbers, carrying a `## Renumbering provenance` section that names the old
+id, with every inbound reference (`dependencies:`, docs, plans, code comments)
+moved to match. `.github/workflows/backlog-guard.yml`'s failure message now states
+this rule directly, so the next collision is actionable without re-deriving policy
+from scratch.
+
+**What to do.** Sweeping and leapfrogging reduces collision probability but cannot
+eliminate it while multiple sessions mint ids from an observed maximum
+concurrently -- treat every freshly-claimed id as provisional until it lands on
+`origin/dev`, and when a collision is found anyway, apply the older-keeps-id rule
+instead of trying to out-sweep the next session.
 
 ---
 
@@ -123,6 +239,23 @@ the same markers, after the CLI's short summary.
 hand-edit to elaborate — never the other order. Diff the task file after any `--notes`
 call to confirm what survived.
 
+**Second instance, 2026-09-11 (critique-10 fix wave, task-32057).** Nearly four
+years of this file saying so did not stop it. Closing out the pagers branch,
+`backlog task edit 32057 --notes "<short summary>"` was run on a task that
+already carried hand-written notes for AC#2, AC#3 and AC#4 plus its modified-file
+list. The command printed success; the detail was gone. It was recoverable only
+because the task file had already been committed — `git checkout HEAD -- "<task
+file>"` brought it back, and the short summary was then re-applied by hand inside
+the markers. Had the notes been written and not yet committed, they were
+unrecoverable: nothing else holds a copy.
+
+The sharpened rule, because "run `--notes` first" is easy to forget an hour into
+a close-out: **`--notes` is a create-only flag. On a task that already has an
+`## Implementation Notes` section, never use it — edit the Markdown between
+`<!-- SECTION:NOTES:BEGIN -->` and `<!-- SECTION:NOTES:END -->` directly.** And
+commit the task file before any `backlog task edit`, so git is the backstop the
+CLI does not give you.
+
 ---
 
 ## Never `git add -A` while resolving a rebase conflict
@@ -133,6 +266,52 @@ auditing `git ls-files` against `git ls-tree origin/dev` afterwards.
 
 **What to do.** Stage conflicts **file by file**. After any rebase touching `backlog/`,
 diff your tree's task filenames against dev's.
+
+---
+
+## Parallel agents in one worktree share one Git index
+
+**TASK-22513, 2026-08-27.** The coordinator staged a two-line plan correction while
+the Task 7 implementer was finishing its slice in the same checkout. The implementer
+had already staged its production and test files, so the coordinator's next ordinary
+`git commit` captured both the plan correction and the complete implementation as
+`d5940b6100`. No file content was lost, and a cached-diff audit proved the captured
+changes were the intended ones, but the planned commit boundary disappeared and both
+agents' reports initially attributed the commit differently. Separate processes and
+separate path ownership did not provide separate staging areas: both were writing the
+same `.git/index`.
+
+**What to do.** In a shared worktree, serialize every stage/commit operation. Before
+committing, require the other actor to stop staging and inspect
+`git diff --cached --name-status`; after committing, inspect the commit's path list and
+confirm the index is empty. Prefer one commit owner with workers leaving changes
+unstaged, or give committing workers isolated worktrees. Explicit path arguments to
+`git add` protect the staging action, but they do not prevent an ordinary `git commit`
+from including paths another process staged first.
+
+---
+
+## The stash is repo-global — `git stash` in a worktree hands your work to another agent
+
+**task-32057, 2026-09-08.** Measuring whether a test failure was pre-existing, I ran the
+textbook A/B inside my own git worktree: `git stash -q`, run pytest, `git stash pop`. The
+pop restored two `library_media_*` files I had never touched, and both of my own edits were
+gone. `git stash list` then showed my entry present but, seconds later, `git log -1
+stash@{0}` named a completely different branch; a sweep of all 39 entries for either of my
+files found nothing. A peer agent working in a sibling worktree had pushed its own stash
+between my push and my pop, so my pop took theirs and — by the reflog shuffle — mine went
+to them. Stashes live in `.git/refs/stash` on the **shared** repository object store; a
+worktree gives you a separate working tree and index, not a separate stash stack. Nothing
+warns you, and `stash@{0}` is a moving target between any two commands.
+
+**What to do.** Never `git stash` in a repo other agents are working in — the numeric
+`stash@{N}` handle is unsafe the moment a second actor exists, and even `git stash push --`
+with explicit paths still pushes onto the shared stack. To A/B a change, either commit first
+and measure with `git checkout <sha> -- <files>`, or copy the files aside with `cp` and
+restore them with `cp` — plain file operations touch nothing shared. If you have already
+lost work this way: your untracked files survived (stash skips them by default), the
+foreign changes in your tree belong to someone else — save them to a patch and `git checkout
+--` them rather than committing them — and re-apply your own edits by hand.
 
 ---
 
@@ -521,6 +700,29 @@ then verify with `backlog task <id> --plain`.
 
 ---
 
+## In zsh, brace `"${b}:path"` — unbraced `"$b:path"` applies the `:t` modifier and the sweep lies
+
+**What happened.** 2026-08-21, the chunking-template-parity spec's §5 version
+sweep (`_CURRENT_SCHEMA_VERSION` across all refs). The loop ran
+`git show "$b:tldw_chatbook/DB/Client_Media_DB_v2.py"` per remote ref and
+returned the **same old version for every branch** — "clean, no collisions
+anywhere." That was the bug: in zsh, `:t` after a parameter inside quotes is
+a **history modifier** (`:t` = tail-of-path), so `"$b:path"` silently
+rewrote the ref. `git show` then resolved something other than the intended
+`<ref>:<path>` (or errored into the fallback), and the sweep reported a
+uniform answer that proved nothing about any ref. The spec's sweep results
+were only trusted after re-running with the braced form — which is also the
+form the sweep snippets in this file already use (`"${b}:backlog/..."` in
+the collision-sweep habit above, where the braces make it work).
+
+**What to do.** Any zsh loop that builds a `<ref>:<path>` or `<var><suffix>`
+string must brace the variable: `git show "${b}:path"`, `git log
+"${b}..HEAD"`. If a per-ref sweep returns an identical value for every ref,
+treat that as the sweep being broken, not as the board being clean — 200
+refs agreeing exactly is the signature of a loop that never varied its
+input. Sanity-check with one ref you know differs
+(`git show "${b}:path" | grep VERSION` against two refs you expect to
+disagree).
 ## ADR numbers collide across concurrent branches — re-verify at merge time
 
 **What happened.** 2026-08-20, two independent sessions in the same window: the
@@ -530,6 +732,11 @@ branch (PR #1832) drafted its server-offload ADR as 072 on 2026-08-19 and discov
 the collision only as a merge conflict in `backlog/decisions/README.md` — by merge
 time on 2026-08-21, dev had claimed 072 (checkpoint harness), 073, 074, AND 075 from
 other branches, forcing a rename to ADR-076 (file, `# ADR-NNN` header, README row,
+and the owning task's plan references) mid-merge. The thesis then recurred on
+itself: 076 was ALREADY claimed (library-lifecycle landed `1c567f3ae` at 14:24 the
+same day, four hours before the 18:44 renumber), caught only the next day, and the
+ADR renumbered again to 077 (TASK-19610) — the merge-time check must cover the
+number being renamed TO, not just the one being renamed FROM.
 and the owning task's plan references) mid-merge.
 
 **What to do.** ADR numbers have exactly the same collision dynamics as task IDs
@@ -537,6 +744,111 @@ and the owning task's plan references) mid-merge.
 as provisional until merge. At merge time, before resolving any README conflict:
 `git ls-tree --name-only origin/dev backlog/decisions/` for the authoritative taken
 list, plus a sweep of open PRs' changed files for `backlog/decisions/` claims. If
+renumbering, grep the repo for `NNN-<slug>` AND both header forms — `ADR-NNN`
+(hyphenated, ~90 files today) and `ADR NNN` (spaced, e.g. `# ADR 008 - ...`; a
+`ADR[- ]NNN` character class covers both) — the owning task's plan section
+references the ADR by number and path, and stale references in either form
+mislead the next session.
+
+## Backlog filenames must survive every supported checkout platform (TASK-21139)
+
+**What happened.** On 2026-08-22, commit `46cb7bc1f` added TASK-21130 with `>`
+in its tracked filename. Git for Windows fetched the repository, but
+`actions/checkout` exited 128 before project tests ran in runs `32617893248` and
+`32617893237`.
+
+**What to do.** Content may stay expressive, but direct files in the live,
+completed, and archived Backlog buckets must use Win32-compatible basenames.
+The shared stdlib guard is the authoring-time source of truth because Windows
+cannot run repository code before checkout succeeds.
+
+---
+
+## Rebase the feature commit, not a stale local dev ancestry
+
+**What happened.** TASK-22305 started from a clean local dev checkout, but
+`origin/dev` was later rewritten while the feature was in progress. A plain
+`git rebase origin/dev` replayed nine old local dev commits in addition to the
+feature commit. The branch looked successfully updated but now reintroduced
+tasks and plans that current dev had intentionally removed. Comparing
+`git log origin/dev..HEAD` exposed the unrelated ancestry before handoff.
+
+**What to do.** Before rebasing long-running work, inspect both
+`git log --oneline origin/dev..HEAD` and the merge base. If the range contains
+local dev history that is not part of the feature, replay only the feature
+range with `git rebase --onto origin/dev <feature-parent>` (or an equivalent
+cherry-pick onto a fresh branch). Afterward, require `origin/dev` to be an
+ancestor and review the exact commit count and branch-range diff.
+
+---
+
+## A background merge loop must hold a lock — `pkill -f` will not find its sibling
+
+**Incident.** PR #2260, 2026-08-31. I started a background merge loop
+(`/tmp/merge3.sh`), decided it was gating wrongly, wrote a replacement
+(`/tmp/merge3b.sh`), and killed the old one with `pkill -f merge3b.sh` — the
+NEW script's name. `merge3b.sh` is not a substring of `merge3.sh`, so nothing
+matched and the original kept running, invisible, for another forty minutes.
+
+Two loops then ran concurrently against one branch, each doing
+`fetch` → `rebase` → `push --force-with-lease`. The older one rebased my branch
+out from under a commit I had just pushed, leaving local and origin diverged
+(7 commits vs 4) with no error anywhere. Nothing was lost, but only by luck:
+branch protection refused its merge attempt, and its second pass happened to
+stop on an unrelated preflight failure instead of force-pushing through.
+
+That preflight failure was itself real and load-bearing — a `TASK-25713`
+collision with a task `dev` had landed fifteen minutes earlier — so the rogue
+loop caught, by accident, a problem I would otherwise have force-pushed past.
+
+**What to do.** Any background loop that mutates git state takes a single-instance
+lock (`mkdir /tmp/<name>.lock` succeeds atomically; `trap 'rmdir' EXIT` releases
+it) so a second copy exits instead of racing. Kill by the pattern you actually
+started (`pkill -f merge3` matches both), and **verify with `ps` that nothing
+survived** rather than trusting `pkill`'s silence — it is silent both when it
+kills something and when it matches nothing. Give the loop a hard stop on
+rebase conflict or preflight failure rather than letting it push through.
+
+**Corollary for long-lived branches.** A backlog task id reserved locally is not
+reserved on `dev`. Between `backlog task create` and pushing, `dev` can land the
+same id — it did here, by fifteen minutes. Re-run `./scripts/preflight.sh`
+immediately before every push, not just before the first one.
+
+---
+
+## A heredoc inside a `git commit -F -` heredoc eats the commit message
+
+**What happened.** 2026-09-05, Library decomposition wave-6 close. A single
+`bash` invocation chained `git commit -q -F - <<'MSG' … MSG` with a nested
+`python - <<PY … PY` on the same command line, so the outer heredoc could
+substitute the inner script into the message body. The commit SUCCEEDED and
+`git rev-parse HEAD` printed a hash, so every success signal was green — but
+the resulting commit's subject line was the Python source, with the real
+subject buried at the end of it. It was caught only by reading
+`git log --oneline` afterwards, not by anything the commit itself reported.
+
+**Why it is worth an entry.** The failure is silent in exactly the way this
+file's other entries describe: the tool reports success, the artifact is
+wrong, and nothing downstream checks. And a bad commit SUBJECT is durable —
+it is what every `git log`, blame view and PR listing shows forever.
+
+**The habits that make it cheap:**
+
+* Never nest a heredoc inside a `git commit -F -` heredoc. Write the message
+  to a file first (`git commit -F <path>`), or make the commit its own
+  invocation with nothing else on the command line.
+* **Read `git log --oneline -1` after every commit**, the same way the ID
+  sweep's own lesson says to read the CLI's printed FILE PATH rather than its
+  success message. A commit that succeeds is not a commit that says what you
+  meant.
+
+**Recovering it.** Check what pins the hash before rewriting. Here nothing
+did — the commit carried no `.git-blame-ignore-revs` entry and nothing was
+pushed — so `git reset --soft <parent>` and re-committing was clean, and the
+one document that cited the old hash was updated in the same operation. Had a
+blame-ignore entry pinned it, the rule is the opposite (recipe §10, §6): the
+message is immutable, and the correction lives in the report and the PR body.
+
 renumbering, grep the repo for both `NNN-<slug>` and `ADR-NNN` — the owning task's
 plan section references the ADR by number and path, and stale references there
 mislead the next session.
@@ -548,3 +860,112 @@ mislead the next session.
 - `lessons-testing-evidence.md`
 - `backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md`
 - `Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-reconciliation.md`
+
+
+---
+
+## `backlog task create`: `-l` and `--ac` have opposite comma semantics
+
+**What happened.** Filing 15 tasks on 2026-08-31, labels were passed as repeated flags
+(`-l agents -l reliability`) by analogy with `--ac`, which CLAUDE.md documents as needing
+repetition because it does *not* split on commas. Every task came out with **only the last
+label** — `-l` does not accumulate across repeats, and it *does* split on commas. The two
+flags are exactly inverted, and neither errors on the wrong form, so 14 tasks were filed with
+silently-wrong labels and needed a `backlog task edit` pass to repair.
+
+**The rule.**
+
+| flag | repeat to accumulate? | splits on comma? | correct form |
+|---|---|---|---|
+| `--ac` | **yes** | no | `--ac "one" --ac "two"` |
+| `-l` / `--labels` | **no** (last wins) | **yes** | `-l one,two` |
+
+**How to apply.** After any batch create, read the frontmatter back and assert it — the CLI
+accepts both wrong forms without complaint. A one-liner over the created files catches it
+before the batch is committed.
+
+**Same session, related trap: `backlog task edit --ac` RENAMES the file.** Adding one
+acceptance criterion to TASK-18927 re-slugified its title and moved
+`task-18927 - Local-fs-tools-self-recovery-wave.md` to
+`task-18927 - fs_-local-tools-self-recovery-wave.md` — the title contains `fs_*`, which the
+slugifier mangles. Nothing warned; it showed up only as an `R` line in `git status`. A task
+filename is referenced by PR bodies, close-out commits, doc links and other tasks'
+`dependencies:`, so a silent rename is a broken-link generator. **After any `backlog task
+edit`, check `git status` for an `R` and `git mv` the file back** if the rename was not the
+point of the edit.
+
+---
+
+## The sweep-at-commit-time discipline paid twice across one programme arc (schedules handoff + redesign, 2026-08-31 → 2026-09-04)
+
+The two entries above — *"Task IDs collide constantly"* and *"ADR numbers collide across
+concurrent branches"* — were both exercised inside a single eleven-PR arc. Neither cost
+anything, because both were re-checked at commit time rather than at plan time. Recording
+that here because a rule that only ever fires as a near-miss looks like ceremony until
+someone writes down what it caught.
+
+**The ADR half.** Redesign PR-3 drafted its inspector-editing ADR as **115**, and its own
+intermediate commit still carries that number in its subject line (`docs(scheduling):
+ADR-115 + 099 amendment + editing docs`). By the time PR-3 merged, `2516735cfd`
+(personas demand-mounted center views, PR #2364, 2026-09-03) had already landed **115** on
+dev from an unrelated branch. The merge-time re-check caught it and the ADR shipped as
+`backlog/decisions/116-schedules-inspector-editing.md` — file, `# ADR-116` header, README
+row, the 099 amendment's cross-reference, and PR-4's later edits all consistent. Exactly
+the dynamic the ADR entry describes: the drafted number was correct when drafted and stale
+four days later, and only the re-check at merge time knew that.
+
+**The task-ID half, observed first-hand at close-out (2026-09-04).** Filing this arc's
+follow-up tasks, the sweep across 117 remote refs plus 60 worktrees put the true maximum at
+**31392**. The CLI probe — the "create one throwaway task first and read the id" habit from
+the entry above — offered **31384**, which is *below* that and was already held on a remote
+branch. One probe, deleted immediately, converted a certain collision into a non-event; the
+seven tasks were filed at 31413-31419 instead.
+
+Note the difference in signature from the 2026-08-31 hermes case above, and use it to tell
+the two failures apart:
+
+| CLI offer vs swept max | what it means |
+|---|---|
+| offer **below** swept max | normal — the CLI sees only the local checkout; leapfrog past the swept max |
+| offer **above** swept max | **your sweep is broken** — an impossible answer; fix the sweep before filing anything |
+
+**What to do.** Nothing new — run both existing checks at *commit/merge* time, not at plan
+time. The point of this entry is only that across one arc, both fired, and each cost about
+a minute against a renumbering cleanup that has previously taken hours.
+
+## `dev` is strict + enforce-admins: a BEHIND PR cannot merge, `--admin` or not (media wave 4 PRs C/D, 2026-09-04)
+
+**The incident.** PR #2390 was green on every check on head `6856e48d66`, then dev took
+one unrelated commit. `gh pr merge --admin --merge` was refused twice with
+`Required status check "Derived artifacts reproduce from their sources" is expected` even
+though that check-run reported `completed/success` on the head. The branch protection on
+`dev` has `strict: true` (branch must be up to date) and `enforce_admins: true`, so the
+required check is re-evaluated against the moved base and the admin bypass does not exist.
+I had ruled "no second update-branch" from a mis-remembered treadmill lesson and lost
+about 25 minutes proving the merge could not happen. PR #2400 then needed **four**
+update-branches in 70 minutes — dev moved every 20-40 minutes that evening, against a
+15-minute Fast Lane + Derived cycle — and one of those moves was my own docs-only PR
+#2401 landing first.
+
+**What to do.**
+- A BEHIND PR has exactly one path: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`
+  the moment dev moves, then merge within the minute Derived reports success. The old
+  "never update-branch every round" note means *do not update while checks or Qodo are
+  still mid-run on the current head*; it never meant skip an update after dev moved.
+- Before each update, run `comm -12` over the two `git diff --name-only <merge-base>..`
+  lists. The one overlap that keeps recurring is the generated CSS bundle
+  (`tldw_chatbook/css/tldw_cli_modular.tcss`, PR #2389 vs #2390): fast-forward the
+  worktree to the merged head and run `python -m tldw_chatbook.css.build_css` +
+  `python tldw_chatbook/css/check_bundle_sync.py` before Derived gets there.
+- When one session holds a code PR and a docs PR, merge the **code PR first** — landing
+  the docs PR moves dev and puts the code PR straight back on the treadmill.
+
+- **2026-09-08, same wave, SECOND strike.** The replacement id 32047 (chosen from a
+  655-ref all-refs sweep hours earlier) was itself taken by dev within the next 30
+  commits, along with 32040 — both of the wave's filings collided in one endgame.
+  Two refinements now standing: (a) **landed-keeps-id trumps older-keeps-id** — a
+  task already on origin/dev never renumbers; the unmerged side moves regardless of
+  timestamps, because renumbering landed ids breaks external references; (b) at
+  dev's current minting rate, an id chosen before a multi-hour reconciliation is
+  STALE BY CONSTRUCTION — re-sweep and renumber, if needed, as the LAST commit
+  before push, not during the fix wave.

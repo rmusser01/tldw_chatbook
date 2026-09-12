@@ -1,0 +1,73 @@
+---
+id: TASK-32459
+title: Implement offer-first Canvas guide tool and inline skill
+status: Done
+assignee:
+  - '@codex'
+created_date: '2026-09-11 04:53'
+updated_date: '2026-09-11 20:08'
+labels:
+  - canvas
+  - skills
+dependencies: []
+documentation:
+  - Docs/superpowers/specs/2026-09-10-canvas-guidance-skill-design.md
+  - Docs/superpowers/plans/2026-09-10-canvas-guidance-skill-implementation.md
+  - backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Offer Canvas before proactive authoring and provide focused compatible authoring guidance after acceptance through the owning Console run and an optional trusted inline skill.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Ordinary Canvas discovery and loaded guidance offer before proactive source generation and respect explicit requests, requested edits, refusal, and absent consent.
+- [x] #2 The scoped canvas_guide tool exposes only four fixed documentation topics, caps serialized results at 12 KiB, preserves tool authority and metadata-only records, and refuses stale or disabled calls.
+- [x] #3 The optional canvas skill imports through existing trust controls and runs inline without a child run or expanded tool authority.
+- [x] #4 Packaged guides load from an installed wheel and all exact complete examples compile and execute their intended browser interactions with existing runtime profiles.
+- [x] #5 Targeted automated checks, static checks, documentation, independent reviews, and a recorded model-behavior sample support the delivered feature; unavailable evidence is explicitly retained as outstanding.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes (existing accepted decision)
+ADR path: backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md
+Reason: Direct implementation of the user-approved guide/skill decision, preserving ADR-121, ADR-124, and ADR-009.
+Follow Docs/superpowers/plans/2026-09-10-canvas-guidance-skill-implementation.md in five stages with spec and quality review after each. Independent browser/package verification and skill/trust files may proceed alongside provider work; shared provider/guidance edits remain sequential:
+1. Package fixed-topic bounded guides and exact examples, including unchanged Mermaid reuse.
+2. Add the scoped guide tool, coordinated reservations, closed safe projections, and live disable/context checks.
+3. Wire shared offer-first guidance and optional trusted inline canvas skill with targeted integration tests.
+4. Verify wheel resources and actual browser interactions of the exact guide examples.
+5. Record authorized model-behavior samples, final targeted checks/review, documentation, and truthful task closeout.
+Use test-first changes for new logic and existing local Python3.12 environment. No full-suite runs. No renderer/profile/storage changes or skill-child authority expansion. The parent owns Backlog and plan checkboxes; stage workers own their explicitly assigned implementation files.
+
+PR #2613 review follow-up (ADR-149 still applies; no new ADR): rebase on current dev, preserve both documentation additions, resolve task-ID collisions, deduplicate offer policy in projected and actual requests, route guide arguments through strict shared validation, document provider constructor behavior, then run targeted regressions/packaging/browser checks and address Qodo threads before merge.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented offer-first Canvas guidance, read-only canvas_guide(topic), and an optional trusted inline $canvas skill. The guide reads four fixed packaged topics, caps the complete result at 12 KiB, preserves live run authority, and stores only metadata. Existing create/update tools, pinned renderer/profile assets, and skill-child authority remain unchanged.
+
+Files cover Canvas/guide.py and guides, the scoped provider/catalog and Console discovery path, Docs/Examples/skills/canvas/SKILL.md, user documentation, and focused provider/trust/browser/package tests.
+
+Validation: 222 core regression checks; 40 skill/substitution checks; 10 policy/request checks; 49 reader/package checks including a fresh wheel/sdist; four exact-example Chromium checks plus eight inspected screenshots. These groups overlap. Ruff passes all 13 changed Python files. Nine files pass full formatting; four files have verified pre-existing formatting drift, with no new drift in changed lines. Independent stage spec/quality reviews and final overall review completed. No full suite was run.
+
+Browser evidence exposed CSS shorthand expansion outside the renderer allowlist; the examples now use supported longhands. Two stale test assumptions were corrected against existing production behavior, without changing the controller.
+
+ADR required: yes; implemented accepted backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md, preserving ADR-121, ADR-124, and ADR-009. Evidence: Docs/superpowers/qa/2026-09-10-canvas-guidance-skill.md.
+
+Live verification: the user authorized enabling ChatGPT/Codex Local Network permission after macOS logs identified the app-specific denial. The server was working; the earlier host-unreachable conclusion was incorrect. No further Firefox use occurred. Ten scenario classes ran through the real Console bridge/provider/Canvas path against Qwen3.8-27B and llama.cpp b10430. The model offered before creation, respected refusal/topic changes, created directly after explicit requests, read the expected parent before updating, and used the trusted skill inline with no children. Creation/edit/skill mutations returned no compatibility issues; final non-streaming runs confirmed temporary settlement. A false claim of an additional repair led to explicit stop-and-ask and successful-tool-result wording in the shared policy, skill, and repair guide; the same live case then stopped correctly.
+
+Limits: this is a bounded headless model sample, not a live Console UI/durable-persistence qualification. Editing used seeded reachable source from the accepted creation sample. Repair history was a synthetic failure report. Default streaming encountered the existing 90-second watchdog and text encoding issues; final mutation/skill checks used the normal non-streaming path with explicit temporary timeout/retry settings. Returned usage and the failed repair baseline remain in the QA evidence; no general model-obedience guarantee or measured comparative token savings is claimed. After the wording fix, 210 affected checks plus 40 packaging/skill-substitution checks passed; Ruff lint/format and evidence assertions passed.
+
+PR #2613 review: fixed duplicate offer-policy injection across all three request/budget paths; moved guide arguments into strict shared Pydantic validation; documented provider constructor contracts. Rebasing preserved both lessons and renumbered colliding Canvas records (design TASK-32460, delivery TASK-32459). Updated stale test doubles to supply app-owned skill and typed project authority snapshots without weakening production behavior. Final combined targeted check: 413 passed; separate 3 bridge and 4 Chromium checks passed. Scoped lint/format/whitespace and task-ID checks pass; independent review approved. Existing ADR-149 applies; detailed results and retained live limits are in the QA report.
+<!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+PR #2613 rebased onto dev at 8dd282bad9. This Canvas task originally used TASK-32313; the older upstream task retains that ID. The Canvas records were created at 04:29/04:53 UTC on September 11, after upstream add commits 4df384ae6d (03:47 UTC) and 1744d805eb (04:07 UTC). The local/remote ref and worktree sweep found maximum ID 32457; this record is now TASK-32459. Canvas document references move with it; historical live evidence and temporary paths retain their original names.

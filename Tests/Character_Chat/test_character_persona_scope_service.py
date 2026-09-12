@@ -2985,7 +2985,7 @@ def test_app_wires_character_persona_services(monkeypatch):
     )
 
     fake_app = Mock()
-    fake_app.chachanotes_db = object()
+    fake_app.chachanotes_db = Mock(spec=CharactersRAGDB)
     fake_app.service_policy_enforcer = object()
     fake_app.server_context_provider = object()
 

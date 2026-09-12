@@ -9,6 +9,12 @@ from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxPr
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
 
+class _AllowAllNotesAuthority:
+    @staticmethod
+    def is_note_dispatchable(note_id: str) -> bool:
+        return bool(note_id)
+
+
 def test_notes_producer_enqueues_encrypted_note_upsert_and_updates_summary(
     tmp_path,
 ) -> None:
@@ -17,6 +23,7 @@ def test_notes_producer_enqueues_encrypted_note_upsert_and_updates_summary(
     producer = NotesSyncV2OutboxProducer(
         state_repository=repo,
         dataset_keys={"dataset-1": dataset_key},
+        notes_db=_AllowAllNotesAuthority(),
     )
 
     result = producer.enqueue_note_upsert(
@@ -90,6 +97,7 @@ def test_notes_producer_enqueues_delete_without_plaintext_payload(tmp_path) -> N
     producer = NotesSyncV2OutboxProducer(
         state_repository=repo,
         dataset_keys={"dataset-1": dataset_key},
+        notes_db=_AllowAllNotesAuthority(),
     )
 
     result = producer.enqueue_note_delete(
@@ -129,7 +137,11 @@ def test_notes_producer_skips_without_local_first_profile_or_dataset_key(
         device_id="device-1",
         dataset_id="dataset-1",
     )
-    producer = NotesSyncV2OutboxProducer(state_repository=repo, dataset_keys={})
+    producer = NotesSyncV2OutboxProducer(
+        state_repository=repo,
+        dataset_keys={},
+        notes_db=_AllowAllNotesAuthority(),
+    )
 
     result = producer.enqueue_note_upsert(
         server_profile_id="server-a",
@@ -150,6 +162,88 @@ def test_notes_producer_skips_without_local_first_profile_or_dataset_key(
         )
         == []
     )
+
+
+def test_notes_producer_fails_closed_without_notes_dispatch_authority(tmp_path) -> None:
+    dataset_key = generate_dataset_key()
+    repo = _local_first_repo(tmp_path, dataset_key=dataset_key)
+    producer = NotesSyncV2OutboxProducer(
+        state_repository=repo,
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = producer.enqueue_note_upsert(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        note_id="note-unauthorized",
+        title="Must not leave",
+        content="No Notes owner was injected",
+        entity_version=1,
+    )
+
+    assert result == {"status": "skipped", "reason": "notes_authority_unavailable"}
+    assert repo.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        dataset_id="dataset-1",
+    ) == []
+
+
+def test_notes_producer_observes_keys_inserted_into_shared_cache_after_wiring(
+    tmp_path,
+) -> None:
+    dataset_key = generate_dataset_key()
+    repo = _local_first_repo(tmp_path, dataset_key=dataset_key)
+    shared_keys: dict[str, bytes] = {}
+    producer = NotesSyncV2OutboxProducer(
+        state_repository=repo,
+        dataset_keys=shared_keys,
+        notes_db=_AllowAllNotesAuthority(),
+    )
+
+    assert producer.dataset_keys is shared_keys
+    skipped = producer.enqueue_note_upsert(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        note_id="note-late-key",
+        title="Late key",
+        content="Unavailable at startup",
+    )
+    assert skipped == {"status": "skipped", "reason": "dataset_key_unavailable"}
+
+    shared_keys["dataset-1"] = dataset_key
+    enqueued = producer.enqueue_note_upsert(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        note_id="note-late-key",
+        title="Late key",
+        content="Available after recovery",
+    )
+
+    assert enqueued["status"] == "enqueued"
+    assert len(
+        repo.list_pending_sync_v2_outbox_envelopes(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            dataset_id="dataset-1",
+        )
+    ) == 1
+
+
+def test_notes_producer_without_key_cache_owns_a_private_mapping(tmp_path) -> None:
+    repo = _local_first_repo(tmp_path, dataset_key=generate_dataset_key())
+
+    first = NotesSyncV2OutboxProducer(state_repository=repo)
+    second = NotesSyncV2OutboxProducer(state_repository=repo)
+
+    assert first.dataset_keys == {}
+    assert second.dataset_keys == {}
+    assert first.dataset_keys is not second.dataset_keys
 
 
 def _local_first_repo(tmp_path, *, dataset_key: bytes) -> SyncStateRepository:

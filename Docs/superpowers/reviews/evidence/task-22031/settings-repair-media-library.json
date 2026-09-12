@@ -1,0 +1,27 @@
+{
+  "authority": "library",
+  "config_value": true,
+  "conversation_preference_value": true,
+  "destination": "media",
+  "disk_value": true,
+  "durable_value": true,
+  "generation_after_repair": 2,
+  "generation_before_refresh": 1,
+  "media_preference_value": true,
+  "mounted_effective_value": true,
+  "pane": "library",
+  "preference_value": true,
+  "svg": "settings-repair-media-library.svg",
+  "writes": [
+    [
+      "library.reader",
+      "library_open",
+      false
+    ],
+    [
+      "library.reader",
+      "library_open",
+      true
+    ]
+  ]
+}

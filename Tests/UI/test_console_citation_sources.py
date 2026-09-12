@@ -69,12 +69,18 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
 from Tests.UI.console_controller_stubs import (
+    NO_APP,
+    stub_fleet_controller,
     stub_image_controller,
+    stub_library_activity_controller,
     stub_message_controller,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.review_selection import (
+    ConsoleReviewSelectionController,
+)
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
@@ -474,7 +480,37 @@ def _bare_screen(
     app_db: object | None = None,
 ) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
+    # Both precede the `_console_chat_store` assignment on purpose: that
+    # setter reaches `ConsoleRuntime.attach_view` ->
+    # `ChatScreen.console_view_hooks`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
+    stub_fleet_controller(screen, context="_bare_screen")
+    stub_library_activity_controller(
+        screen,
+        context="_bare_screen",
+        # The harness app lands further down this function; nothing here
+        # calls the controller, whose seams are all raisers.
+        app_instance=NO_APP,
+    )
     screen._console_chat_store = _FakeStore(messages)
+    screen._review_selection = ConsoleReviewSelectionController(
+        store_accessor=lambda: screen._console_chat_store,
+        agent_conversation_id_accessor=lambda: None,
+        change_review_provider_accessor=lambda _conversation_id: None,
+        run_active_accessor=lambda: False,
+        run_active_for_root=lambda _root: False,
+        workspace_roots_accessor=lambda: None,
+        agent_runs_db_accessor=lambda: None,
+        capture_policy_bindings_accessor=lambda _session_id, _conv_id: None,
+        native_messages_accessor=lambda: messages,
+        run_worker=lambda *args, **kwargs: screen.run_worker(*args, **kwargs),
+        show_feedback_comment=lambda _action, _quote: None,  # type: ignore[arg-type]
+        dispatch_prompt=lambda _text: None,  # type: ignore[arg-type]
+        marshal_to_ui=lambda callback, *args: callback(*args),
+        present_trajectory=lambda _launch: None,
+        notify=lambda *args, **kwargs: None,
+    )
     screen._console_citation_counts = {}
     screen._console_annotation_previews = {}
     screen._console_annotation_loaded_conversation = None
@@ -486,6 +522,14 @@ def _bare_screen(
     screen._console_citation_repository_token = None
     screen._console_citation_request_generation = 0
     screen._last_native_transcript_refresh_key = None
+    # This detached fixture exercises citation rendering without a mounted
+    # Change Review runtime. Production wiring supplies the projection.
+    screen._change_review_projection = SimpleNamespace(
+        project=lambda projected_messages: projected_messages
+    )
+    screen._library_activity = SimpleNamespace(
+        sync_transcript=lambda _transcript: {}
+    )
     screen.app_instance = SimpleNamespace(
         citation_trace_repository=repository,
         chachanotes_db=app_db,
@@ -970,7 +1014,7 @@ async def test_zero_result_is_cached_and_not_requeried_on_unrelated_changes() ->
     transcript.set_citation_counts(screen._console_citation_counts)
     citation_row_ids = {
         row.message.id
-        for row in transcript._transcript_rows()
+        for row in transcript._flat_transcript_rows()
         if row.kind == "citations" and row.message is not None
     }
     assert citation_row_ids == {"assistant-2", "assistant-3"}
@@ -1006,9 +1050,21 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     screen._console_image_preparing = set()
     screen._native_console_transcript_fingerprint = lambda _messages: ("stable",)
     screen._sync_console_transcript_guidance = lambda: None
+    # `_sync_native_console_transcript` publishes Library-activity footer
+    # counts through the controller (task-19900.5). This test is about the
+    # CITATION count cache, and the `_FakeStore` above has no activity
+    # sidecar, so the whole projection is short-circuited to "nothing" --
+    # same style as the `_image` overrides above.
+    screen._library_activity.sync_transcript = lambda _transcript: {}
 
     transcript = SimpleNamespace(
         pending_selection_id=None,
+        # Read by `_sync_native_console_transcript` since `5d9b4bec5a`
+        # (fork-from-selection, #2152). `None` keeps the fork branch out of
+        # this test, which is about the citation-count cache.
+        selected_message_id=None,
+        set_fork_eligibilities=Mock(),
+        set_model_thinking_visible=Mock(),
         set_presentation_context=Mock(),
         set_change_review_provider_factory=Mock(),
         set_messages=Mock(),
@@ -1309,6 +1365,19 @@ def _citation_harness(
     )
     screen = ChatScreen.__new__(ChatScreen)
     Screen.__init__(screen)
+    # Both precede the `_console_chat_store` assignment on purpose: that
+    # setter reaches `ConsoleRuntime.attach_view` ->
+    # `ChatScreen.console_view_hooks`, which reads
+    # `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
+    stub_fleet_controller(screen, context="citation harness screen")
+    stub_library_activity_controller(
+        screen,
+        context="citation harness screen",
+        # `_CitationHarnessApp.__init__` below is what sets `app_instance`;
+        # this shell exercises no library-activity seam.
+        app_instance=NO_APP,
+    )
     screen._console_chat_store = _FakeStore([message])
     screen._console_citation_counts = {"assistant-1": 2}
     screen._console_citation_request_generation = 1

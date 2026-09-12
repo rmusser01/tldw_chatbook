@@ -1,5 +1,19 @@
 # MCP — MCP servers, tools, permissions, auth, and audit
 
+## Watchlists privacy boundary
+
+Console-local Watchlists tools can create and update sources and collections, run checks, generate and schedule briefings, search items, and open full item or briefing content after normal permission review.
+
+The external MCP surface is intentionally smaller. It publishes only:
+
+- source, collection, and briefing lists containing metadata
+- operation receipt lists
+- exact operation receipt status
+
+It does not publish source or collection mutation, checking, briefing generation, scheduling, search, item-body retrieval, or full briefing retrieval. Directly requesting a Console-only tool is refused even if a client guesses its name. Granting an MCP permission changes approval state for a published tool; it does not make an unpublished Console-only tool available.
+
+Use Console when an agent needs to read or summarize a complete briefing on your behalf. Use external MCP for discovery, receipts, and status automation without exporting private briefing bodies.
+
 > 🚧 **This page is a stub.** The full write-up is planned; the sections
 > below cover orientation only, except where a section says otherwise. See
 > the [guide index](index.md).
@@ -38,11 +52,15 @@ persistent URL or file ingestion.
 - **Built-in tools (9):** `chat_with_llm`, `chat_with_character`, `search_rag`, `search_conversations`, `create_note`, `search_notes`, `list_characters`, `get_conversation_history`, `export_conversation`
 - **Resource templates (5):** `conversation://{conversation_id}`, `note://{note_id}`, `character://{character_id}`, `media://{media_id}`, `rag-chunk://{chunk_uuid}`
 - **Prompts (5):** `summarize_conversation`, `generate_document`, `analyze_media`, `search_and_synthesize`, `character_writing`
-- **Library tools excluded from standalone (18):** `library_list_media`, `library_get_media`, `library_search_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
+- **Library tools excluded from standalone (24):** `library_list_media`, `library_get_media`, `library_search_media`, `library_get_media_structure`, `library_get_media_chunk`, `library_list_chunk_specs`, `library_save_chunk_spec`, `library_rechunk_media`, `library_list_notes`, `library_get_note`, `library_search_notes`, `library_save_note`, `library_list_prompts`, `library_get_prompt`, `library_search_prompts`, `library_list_skills`, `library_get_skill`, `library_search_skills`, `library_list_conversations`, `library_get_conversation`, `library_search_conversations`, `library_list_collections`, `library_get_collection`, `library_search_collections`
 
 ### Standalone behavior and controls
 
-All 18 Library tools are excluded from the standalone stdio catalog. They
+`use_semantic` remains a boolean compatibility switch: `false` forces media
+keyword search; `true` or omission follows the active RAG profile's `plain`,
+`semantic`, or `hybrid` search mode.
+
+All 24 Library tools are excluded from the standalone stdio catalog. They
 remain behind the in-app gated and logged direct Library action; raw in-app
 `tools/call` is refused.
 
@@ -57,7 +75,7 @@ honors its kill switch. An external `ask` state is refused because an
 external client cannot show Chatbook's approval card.
 
 > [!WARNING]
-> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists feed and article evidence through exposed tools, resources, and prompts. The external MCP client may send that content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
+> An external MCP client runs with the user's OS access. It can read private local Library data and private Watchlists source, collection, briefing-receipt, and operation metadata through exposed tools, resources, and prompts. It does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance. The external MCP client may send the exposed content off-device to a cloud model. Enable only what you mean to disclose, and trust both the client and the model provider.
 
 ## Configuring workspace, web, and Watchlists tools (Tools mode)
 
@@ -69,10 +87,13 @@ Registration is controlled by a `[tools]`/`[console]` config switch called a
 permission to in the first place.
 
 Under the local source, Tools mode now starts with an always-visible **Local
-workspace, web, and Watchlists tools** control. This provider is enabled by
-default and includes workspace file, read-only Git, web, and Watchlists tools
-(`web_search`, `web_fetch`, `web_crawl`, `watchlists_search_items`, and
-`watchlists_get_item`). The task tools `todo_create`, `todo_update`, `todo_get`,
+workspace, web, and Watchlists tools** control — a single toggle button whose
+label states its own on/off state in text (`…: on ▸` / `…: off ▸`), the same
+styling as the Servers-mode Tool gates rows it mirrors. This provider is
+enabled by default and includes workspace file, read-only Git, web, and
+Watchlists tools
+(`web_search`, `web_fetch`, `web_crawl`, plus Watchlists metadata and receipt
+reads). The task tools `todo_create`, `todo_update`, `todo_get`,
 and `todo_list` require Console session state and are not Hub tools. Turning
 the master switch off remains a supported opt-out. The same panel lets you set
 **Workspace root**, the directory that confines every `fs_*` path. A blank
@@ -86,11 +107,30 @@ kill switch remains authoritative. The controls read back persisted config
 truth after saving, and a failed save restores the persisted value instead of
 leaving an optimistic toggle on screen.
 
+Tools mode also lists a distinct **Virtual CLI (read-only)** local group. The
+model sees one structured `virtual_cli` tool, while this group exposes separate
+Allow/Ask/Off rows for `ls`, `cat`, `grep`, `find`, `stat`, `git_status`,
+`git_diff`, `git_log`, `git_blame`, and `git_branches`. These permissions are
+independent from equivalent `fs_*` and Git tool rows. The virtual tool accepts
+only a fixed command enum and an `argv` array, never a shell string; being
+listed in the catalog does not authorize a command, and an unset command stays
+Ask until it is approved.
+
+MCP authority is **not governed by Console's per-conversation Library
+controls**. Console's **Direct / RAG selector** chooses which built-in Library
+provider is eligible only after that conversation allows assistant access;
+it neither grants nor revokes an MCP server's tools. MCP registration gates,
+the permission matrix, risk floors, and the global kill switch continue to
+decide MCP availability independently.
+
 ## Other registration gates (Servers mode ▸ Tool gates)
 
 Select the built-in server's row in Servers mode; its detail pane has a
-**Tool gates** group under the existing enable/expose checkboxes, split
-into two subheadings:
+**Tool gates** group under the existing enable/expose checkboxes. Each gate
+is a button that spells its own state out in text — `Read file: off ▸`,
+`Read file: on ▸` — and presses toggle it; the tool's plain-language name
+and one-line description are the same copy the first-run setup wizard
+shows. The group is split into two subheadings:
 
 - **Agent built-ins** — the app's own file, note and library tools: read /
   list / write a file, glob / grep the workspace, create / update a note,
@@ -103,26 +143,34 @@ into two subheadings:
   **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
   direct Tools-mode control. `web_deep_search` (multi-query web research that
   may cost real money on paid providers) has an additional individual gate
-  underneath it. Unlike the local master and workspace root,
-  construction-time gates such as `web_deep_search` require an app restart.
+  underneath it, as does `ask_user`. The master switch and `ask_user` are
+  on by default; every `Agent built-ins` gate and `web_deep_search` default
+  to off.
 
 The master switch governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
 *external* MCP clients connecting to chatbook's own server — that is a
 separate switch, `[mcp] expose_local_tools`, unrelated to this pane.
 
-Every checkbox here saves immediately and reads back the real config value
-after saving — never an optimistic guess. The pane's restart note applies to
-the construction-time registration gates. This pane is still labeled as the
+Every gate here saves immediately and reads back the real config value
+after saving — the label you end up looking at is what is really stored,
+never an optimistic guess. **When a change takes effect:** every gate in
+this group applies to the *next Console agent run* — each run builds its
+tool catalog fresh — so no app restart is needed. The one caveat, called
+out in its own note under the group, is `web_deep_search`: when `[mcp]
+expose_local_tools` is on, it is also published to *external* MCP clients,
+and that list is built when the built-in server starts, so that half
+follows the next client launch. This pane is still labeled as the
 built-in *MCP server* (the stdio process `python -m tldw_chatbook.MCP`
-clients launch) even though these particular checkboxes control the
+clients launch) even though these particular gate buttons control the
 in-process *agent* tool catalog — a different subsystem sharing the same
 detail pane for discoverability.
 
 If the local master is off, both the Permissions matrix's legend and the
 Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
 `web_crawl` and point to the direct Tools-mode control. Other disabled gates
-still report the total number of gates that are off.
+still report the total number of gates that are off, and the legend names
+where they live: **MCP ▸ Servers ▸ built-in row ▸ Tool gates**.
 
 ### `expand_document` and the Library consent boundary
 
@@ -153,9 +201,14 @@ already there rather than creating one. If you want the stricter posture,
 leave `expand_document_enabled` off (its default) or answer **Ask** per
 call; turning `direct_library_tools` off will **not** disable it.
 
-### Watchlists evidence tool contract
+### Watchlists query tool contract
 
-The local group exposes `watchlists_search_items` and `watchlists_get_item`.
+The local group defines eight reads. External MCP exposes only
+`watchlists_list_sources`, `watchlists_list_collections`,
+`watchlists_list_briefings`, `watchlists_get_operations_status`, and
+`watchlists_get_operation_status`. It never registers or resolves the
+Console-only `watchlists_search_items`, `watchlists_get_item`, or
+`watchlists_get_briefing`, regardless of persisted Allow state.
 Results are local-first: both tools read the local Watchlists database, and
 server Watchlists search is not yet supported. In server mode they return a
 non-retryable unsupported result and do not search the local database. Its
@@ -168,6 +221,33 @@ collection-aware valid JSON bounded to 30 KiB. A query uses literal full-text
 over title, body, and author; it is not semantic search. Blank or absent
 `query` browses recent items. Every feed-supplied field is untrusted evidence,
 never an instruction.
+
+#### `watchlists_list_sources`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `type` | Optional source type; non-blank, maximum 32 characters. |
+| `state` | Optional `active`, `paused`, `disabled`, or `all`. |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Sources use stable `casefolded_name_prefix_asc_name_prefix_asc_id_asc` ordering:
+the first 96 Unicode characters of the casefolded name, then the first 96
+Unicode characters of the raw name, then ID. URLs are sanitized; secrets,
+headers, and raw errors are excluded.
+
+#### `watchlists_list_collections`
+
+| Parameter | Contract |
+| --- | --- |
+| `name` | Optional name fragment; non-blank, maximum 512 characters. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+Collections use canonical IDs and distinguish stored cadence from effective
+scheduler state; stored cadence alone does not prove a running scheduler.
 
 #### `watchlists_search_items`
 
@@ -202,6 +282,52 @@ The item integer is limited to 1 through 2^63-1. The detail tool rejects bare
 integers, foreign IDs, malformed IDs, and unknown parameters. Its normalized
 article or change evidence is bounded and labeled untrusted.
 
+#### `watchlists_list_briefings`
+
+| Parameter | Contract |
+| --- | --- |
+| `collection` | Optional collection name, canonical ID, or positive row ID. |
+| `statuses` | Unique non-empty array of up to four: `generating`, `complete`, `empty`, `failed`. |
+| `since` | Inclusive `YYYY-MM-DD` or RFC 3339 creation-date floor. |
+| `limit` | Defaults to 10; integer from 1 through 50. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+External receipts contain only bounded metadata. `latest_readable` is the
+newest complete receipt and newer non-readable attempts remain context.
+
+#### `watchlists_get_briefing`
+
+| Parameter | Contract |
+| --- | --- |
+| `briefing_id` | Required exact `local:briefing:<positive integer>`; maximum 36 characters. |
+| `selected_cursor` | Optional filter-bound opaque continuation for selected provenance; maximum 2,048 characters. |
+| `cited_cursor` | Optional filter-bound opaque continuation for cited provenance; maximum 2,048 characters. |
+
+This Console-only result stays below 30 KiB, reserves readable Markdown, and
+labels truncation plus ordered immutable provenance, legacy snapshots, and
+missing references. Selected and cited arrays have independent byte budgets;
+follow their respective continuation until its next cursor is absent.
+
+#### `watchlists_get_operations_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `source` | Optional name/URL, canonical source ID, or positive row ID. |
+| `collection` | Optional name, canonical collection ID, or positive row ID. |
+| `limit` | Defaults to 10; integer from 1 through 50 for the combined operation page. |
+| `cursor` | Filter-bound opaque continuation; maximum 2,048 characters. |
+
+The bounded overview omits raw logs, errors, paths, and result payloads.
+
+#### `watchlists_get_operation_status`
+
+| Parameter | Contract |
+| --- | --- |
+| `operation_id` | Required exact `local:watchlist_run:<id>` or `local:briefing:<id>`; maximum 40 characters. |
+
+The exact receipt includes owner, timestamps, normalized state, retry/cancel
+capability, bounded error category, and Runs/Artifacts destination.
+
 Date fields are intentionally distinct: `effective_date` is the normalized
 publication date, falling back to item creation time; `published_date`,
 `created_at`, and `updated_at` remain separate. Source `last_checked` and
@@ -212,7 +338,8 @@ permission; userinfo, query, and fragment are removed from every returned URL.
 Only absolute HTTP(S) URLs with a host are returned. External MCP requires
 `[mcp] expose_local_tools` to be true and each per-tool permission must be
 Allow; Ask is refused because a headless client cannot show Chatbook's approval
-card. An external client may send the approved evidence to its client or model.
+card. An external client may send approved metadata and receipts to its client
+or model; article and briefing content remains Console-only.
 Console Ask can show an approval card instead.
 
 ### Web research is not persistent ingestion
@@ -278,15 +405,17 @@ A completed run shows:
   or on its own — a line naming *why* the run was allowed to happen, e.g.
   "Ran because you approved this run (the tool is set to Ask)." or "Ran
   because this tool is set to Allow. Inherited from the global default."
-- **A weak-match notice**, when every scored row in the result bands weak:
+- **A weak-match notice**, when every similarity-bearing row is in the weak
+  result bands:
   "No strong semantic matches — results below are weak." beside the
   summary line — so a nonsense `search_rag` query that still comes back
   with rows reads as the weak match it is, not a bare `OK · N results`
-  that looks like a real hit. Keyword-mode rows carry no score at all
-  (FTS relevance is misleading, so no band beats a wrong one) — the notice
-  only ever fires for scored (semantic) rows, never for a pure
-  keyword-mode result, whatever it finds. A tool whose rows carry no
-  `score` at all (e.g. `list_characters`) never shows this notice either.
+  that looks like a real hit. The notice considers only rows carrying an
+  actual vector similarity: ordinary semantic rows use their score, hybrid
+  rows use the preserved vector leg when present, and FTS-only hybrid,
+  reranker, and unscored keyword rows do not trigger a cosine-similarity
+  claim. A tool whose rows carry no `score` at all (e.g.
+  `list_characters`) never shows this notice either.
 - **A collapsed "Raw response" section** with the full result as JSON —
   secrets redacted, capped at 20,000 characters — for whenever the summary
   isn't enough.
@@ -316,6 +445,55 @@ whether it needed your confirmation first. The table repopulates as soon
 as a run finishes — no need to press **r** — and each row records the
 argument *names* the run supplied (e.g. `query`, `limit`, `use_semantic`),
 never the values.
+
+Refusals are recorded with the same precision, so the Decision column and
+its filter can answer "what did I refuse?":
+
+- **Denied by you** — you pressed **Deny** on the approval card.
+- **Blocked (Off)** — the permissions refused the call; no card was shown.
+- **Blocked (kill switch)** — the kill switch refused the call; neither a
+  person nor a per-tool Allow/Ask/Off setting.
+- **Denied (timeout)** — the card expired before you answered.
+- **Denied (no decision)** — the approval round ended with no verdict (a
+  cancelled approval, a permission check that raised, a Hub test whose
+  two-press confirm went stale, a workspace root that moved underfoot).
+
+A Deny you press in Console lands here as its own row, exactly as each
+approval does.
+
+### Session approvals
+
+**Approve for session** lasts until Chatbook exits or you revoke it — it is
+never written to disk, and it is not a permission change (the tool's
+Allow/Ask/Off setting is untouched). A tool holding one gets a `(session)`
+suffix on its State cell in the Permissions matrix, and selecting any tool
+row lists every live grant in the inspector with a **Revoke** button next to
+each. Revoking takes effect immediately: the next call to that tool asks
+again.
+
+### Exact-input allow rules
+
+Alongside **Approve once** / **Approve for session** / **Always allow** /
+**Deny**, the approval card can offer a fifth choice: **Always allow this
+exact input**. Unlike **Always allow** — which sets the whole tool to
+Allow — this remembers only the *exact arguments shown on that card*: the
+same tool called again with different arguments still asks. It's scoped
+per tool, tied to that tool's current definition the same way **Always
+allow** is (a server that changes the tool's definition invalidates the
+rule, same rug-pull guard).
+
+The card does **not** offer it for a high-risk tool (one tagged `mutates`
+or `process`): the risk floor beats an argument rule, so such a rule would
+never quiet a call. If one is already stored — hand-written, or left by an
+earlier version — the inspector lists it as *Exact-input allow (not in
+effect: risk floor)*, with its **Remove** button still live.
+
+A tool that carries one or more of these rules gets a `≡` marker on its
+State cell in the Permissions matrix (see the legend line under the
+matrix). Selecting that tool's row lists each stored rule in the
+inspector — its (capped) argument summary and a **Remove** button — right
+below the permission explanation. Removing a rule takes effect
+immediately: the next call with those exact arguments asks again.
 
 ## Advanced (legacy control plane)
 
@@ -381,4 +559,44 @@ not a live screen): added "`expand_document` and the Library consent
 boundary" — expansion does not defer to `[console] direct_library_tools`
 (default on) but to its own `[tools] expand_document_enabled` gate
 (default off) plus the risk-tag Ask floor, and the raw-id read that
-implies is recorded with its mitigations.*
+implies is recorded with its mitigations. Docs pass 2026-09-10
+(task-32280, against code and tests, not a live screen): a card **Deny** now leaves an execution-log row
+of its own (it previously left none — the review hook refuses the call
+before the provider that was doing the recording ever runs), and the
+permissions-Off refusal moved to its own **Blocked (Off)** decision so it
+no longer shares the user's "Denied by you" bucket. Fix round, same day:
+every remaining producer of the bare "denied" token for a refusal the
+user did not make (MCP/local/virtual-CLI kill-switch paths, the Hub's Test
+Tool gate denial, a run stopped while a card was pending) now records the
+refuser that actually applies — **Blocked (kill switch)** is new; the rest
+land in the existing **Blocked (Off)** / **Denied (no decision)** buckets.
+Docs pass 2026-09-10 (task-32281, against code and tests, not a live
+screen): added "Exact-input allow rules" — the inspector now lists each
+stored rule with a Remove action, and the Permissions matrix marks a tool
+that carries one with a `≡` suffix. Fix round, same day: the card no
+longer offers this choice for a `mutates`/`process` tool (the risk floor
+makes such a rule inert), and an already-stored one is labelled "not in
+effect: risk floor" instead of being listed as if it were working. Docs pass 2026-09-10 (task-32284,
+against code and tests, not a live screen): the Tool gates rows are now
+buttons that state on/off in text under the tool's plain-language name
+(one copy table shared with the first-run wizard), and the old blanket
+"applies on next app restart" note is corrected — every gate here applies
+to the next Console agent run, with `web_deep_search`'s external-MCP
+publication the single next-client-launch exception. Fix round, same day:
+that exception now names its own precondition — the external-MCP half
+only applies when `[mcp] expose_local_tools` is on — and the master
+switch is corrected alongside `ask_user` as on by default (it was
+previously the only one credited). Docs pass 2026-09-10 (task-32291,
+against code and tests, not a live screen): added "Session approvals" —
+"Approve for session" grants are now listed in the inspector's permission
+block with a per-row **Revoke**, and the Permissions matrix marks a tool
+holding one with a ` (session)` suffix; until this pass a session grant
+was invisible and could only be dropped by restarting the app. Docs pass
+2026-09-10 (task-32283, against code and tests, not a live screen): the
+selected server's own group now leads both Tools mode and the Permissions
+matrix, and **Open tool catalog** drills straight to that server rather
+than to the top of an unfiltered list. Docs pass 2026-09-10 (task-32286,
+against code and tests, not a live screen): the Tools-mode master
+control is now a toggle button (it used to be a Checkbox plus a
+separate "Enabled"/"Disabled" label, which a bundle width escape hatch
+had clamped to a truncated seven-cell frame at wide terminal widths).*

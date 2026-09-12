@@ -23,6 +23,7 @@ import time
 
 import pytest
 
+from Tests.Chat.console_close_helpers import close_controller_session
 from tldw_chatbook.Chat.console_chat_controller import (
     _MCP_APPROVAL_POLL_SECONDS,
     ConsoleChatController,
@@ -99,6 +100,34 @@ def test_two_concurrent_rounds_for_different_sessions_each_get_their_own_decisio
 
     assert results["two"] is True
     assert results["one"] is False
+
+
+def test_close_session_denies_only_that_sessions_round(controller):
+    """Destructive close releases its exact decisions, never a sibling session."""
+    results = {}
+    thread_a = _arm(
+        controller, "https://x/one", controller.session_a, results, "one"
+    )
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    thread_b = _arm(
+        controller, "https://x/two", controller.session_b, results, "two"
+    )
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+    id_b = [
+        request_id
+        for request_id, state in controller._pending_skill_install_rounds.items()
+        if state["session_id"] == controller.session_b
+    ][0]
+
+    close_controller_session(controller, controller.session_a)
+    thread_a.join(timeout=3)
+    assert not thread_a.is_alive(), "closed session's decision was left armed"
+    assert results["one"] is False
+    assert thread_b.is_alive(), "closing A resolved B's unrelated decision"
+
+    controller.resolve_pending_skill_install(True, request_id=id_b)
+    thread_b.join(timeout=3)
+    assert results["two"] is True
 
 
 def test_a_decision_cannot_resolve_the_other_round(controller):

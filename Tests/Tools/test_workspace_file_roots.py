@@ -5,12 +5,20 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 from tldw_chatbook.Tools import workspace_file_roots as wfr
+from tldw_chatbook.Tools import file_operation_tools as file_tools
+
+
+_DRIFT_WARNING = (
+    "Workspace folder binding excluded because its path no longer resolves "
+    "to itself (symlink or mount drift)"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +37,42 @@ def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     registry.create_workspace(workspace_id="ws-a", name="Client A")
     registry.create_workspace(workspace_id="ws-b", name="Client B")
     return registry
+
+
+def _root_consumer_registry(locator: Path):
+    binding = SimpleNamespace(
+        binding_id="binding-1",
+        locator=str(locator),
+        metadata={"access": "rw"},
+    )
+    record = SimpleNamespace(name="Client A")
+
+    class Registry:
+        def get_workspace(self, _workspace_id):
+            return record
+
+        def list_folder_bindings(self, _workspace_id):
+            return (binding,)
+
+        def change_review_enabled(self, _workspace_id):
+            return True
+
+    return Registry()
+
+
+def _invoke_root_consumer(consumer, registry, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    if consumer == "allowed":
+        sandbox = tmp_path / "sandbox"
+        sandbox.mkdir(exist_ok=True)
+        with wfr.run_workspace("ws-a"):
+            wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
+        return
+    if consumer == "tracking":
+        wfr.folder_binding_roots("ws-a")
+        return
+    wfr.workspace_context_note("ws-a", launch_cwd=tmp_path, registry=registry)
 
 
 def test_roots_follow_run_workspace_not_active(tmp_path, monkeypatch) -> None:
@@ -88,6 +132,97 @@ def test_registry_failure_degrades_to_sandbox_only(tmp_path, monkeypatch) -> Non
         assert wfr.allowed_file_roots(write=True, sandbox_root=sandbox) == (sandbox,)
 
 
+def test_default_chat_ignores_folder_bindings_even_from_permissive_registry(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Default Chat stays scratch-only even if a registry violates its contract."""
+    scratch = tmp_path / "chat"
+    external = tmp_path / "external"
+    scratch.mkdir()
+    external.mkdir()
+
+    class PermissiveRegistry:
+        def list_folder_bindings(self, _workspace_id):
+            return (
+                type(
+                    "Binding",
+                    (),
+                    {"locator": str(external), "metadata": {"access": "rw"}},
+                )(),
+            )
+
+    monkeypatch.setattr(wfr, "_registry_factory", PermissiveRegistry)
+
+    with wfr.run_workspace(DEFAULT_WORKSPACE_ID):
+        roots = wfr.allowed_file_roots(write=False, sandbox_root=scratch)
+
+    assert roots == (scratch,)
+    assert wfr.folder_binding_roots(DEFAULT_WORKSPACE_ID) == ()
+
+
+def test_run_file_sandbox_overrides_global_only_inside_scope(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    global_root = tmp_path / "global"
+    scratch = tmp_path / "chat"
+    global_root.mkdir()
+    scratch.mkdir()
+    monkeypatch.setattr(
+        file_tools,
+        "_resolve_sandbox_config",
+        lambda: str(global_root),
+    )
+
+    with wfr.run_file_sandbox(scratch):
+        assert file_tools._tool_sandbox_root() == scratch.resolve()
+
+    assert file_tools._tool_sandbox_root() == global_root.resolve()
+
+
+def test_scratch_stays_first_when_workspace_bindings_are_available(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    registry = _registry(tmp_path)
+    binding = tmp_path / "binding"
+    binding.mkdir()
+    registry.add_folder_binding("ws-a", binding)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    scratch = tmp_path / "chat"
+    scratch.mkdir()
+
+    with wfr.run_file_sandbox(scratch), wfr.run_workspace("ws-a"):
+        roots = wfr.allowed_file_roots(
+            write=False,
+            sandbox_root=file_tools._tool_sandbox_root(),
+        )
+
+    assert roots == (scratch.resolve(), binding.resolve())
+
+
+def test_registry_failure_keeps_captured_scratch_as_only_root(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scratch = tmp_path / "chat"
+    scratch.mkdir()
+    monkeypatch.setattr(
+        wfr,
+        "_registry_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("registry unavailable")),
+    )
+
+    with wfr.run_file_sandbox(scratch), wfr.run_workspace("ws-a"):
+        roots = wfr.allowed_file_roots(
+            write=False,
+            sandbox_root=file_tools._tool_sandbox_root(),
+        )
+
+    assert roots == (scratch.resolve(),)
+
+
 def test_default_registry_factory_is_cached(tmp_path, monkeypatch) -> None:
     """Item E: the default factory must not rebuild WorkspaceDB on every call."""
     monkeypatch.setattr(
@@ -127,6 +262,138 @@ def test_symlink_replaced_root_excluded_from_allowed_roots(
         roots = wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
 
     assert roots == (sandbox,)
+
+
+def test_all_consumers_share_validation_and_write_prefilters(
+    tmp_path, monkeypatch
+) -> None:
+    registry = _registry(tmp_path)
+    ro_root = tmp_path / "ro"
+    rw_root = tmp_path / "rw"
+    ro_root.mkdir()
+    rw_root.mkdir()
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+    ro_binding = registry.add_folder_binding("ws-a", ro_root)
+    rw_binding = registry.add_folder_binding("ws-a", rw_root, allow_write=True)
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    seen: list[tuple[str, ...]] = []
+
+    def accept_all(bindings):
+        materialized = tuple(bindings)
+        seen.append(tuple(binding.binding_id for binding in materialized))
+        for binding in materialized:
+            yield binding, Path(binding.locator)
+
+    monkeypatch.setattr(wfr, "_iter_valid_folder_bindings", accept_all, raising=False)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+
+    with wfr.run_workspace("ws-a"):
+        assert wfr.allowed_file_roots(write=True, sandbox_root=sandbox) == (
+            sandbox,
+            rw_root,
+        )
+    assert set(wfr.folder_binding_roots("ws-a")) == {ro_root, rw_root}
+    note = wfr.workspace_context_note("ws-a", launch_cwd=tmp_path, registry=registry)
+    assert "  - ro (read-only)" in note.splitlines()
+    assert "  - rw" in note.splitlines()
+    assert seen == [
+        (rw_binding.binding_id,),
+        (ro_binding.binding_id, rw_binding.binding_id),
+        (ro_binding.binding_id, rw_binding.binding_id),
+    ]
+
+
+def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -> None:
+    registry = _registry(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+    registry.add_folder_binding("ws-a", root)
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    factory_calls = 0
+    calls = 0
+
+    def registry_factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        return registry
+
+    def accept_all(bindings):
+        nonlocal calls
+        calls += 1
+        for binding in bindings:
+            yield binding, Path(binding.locator)
+
+    monkeypatch.setattr(wfr, "_registry_factory", registry_factory)
+    monkeypatch.setattr(wfr, "_iter_valid_folder_bindings", accept_all, raising=False)
+    assert wfr.folder_binding_roots("ws-a") == (root,)
+    assert factory_calls == 1
+    assert calls == 1
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
+    assert wfr.folder_binding_roots("ws-a") == ()
+    assert factory_calls == 1
+    assert calls == 1
+
+    monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    registry.set_change_review_enabled("ws-a", False)
+    listing_calls = 0
+
+    def list_bindings(_workspace_id):
+        nonlocal listing_calls
+        listing_calls += 1
+        return ()
+
+    monkeypatch.setattr(registry, "list_folder_bindings", list_bindings)
+    assert wfr.folder_binding_roots("ws-a") == ()
+    assert listing_calls == 0
+    assert calls == 1
+
+
+@pytest.mark.parametrize("consumer", ("allowed", "tracking", "note"))
+@pytest.mark.parametrize("shape", ("symlink", "resolve-mismatch"))
+def test_consumers_share_exact_path_free_drift_warning(
+    tmp_path, monkeypatch, consumer, shape
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    if shape == "symlink":
+        locator = tmp_path / "linked-root"
+        locator.symlink_to(target, target_is_directory=True)
+    else:
+        locator = target / ".." / target.name
+    registry = _root_consumer_registry(locator)
+    records = []
+    sink_id = wfr.logger.add(
+        lambda message: records.append(message.record), level="WARNING"
+    )
+    try:
+        _invoke_root_consumer(consumer, registry, tmp_path, monkeypatch)
+    finally:
+        wfr.logger.remove(sink_id)
+
+    messages = [record["message"] for record in records]
+    assert messages.count(_DRIFT_WARNING) == 1
+    assert str(locator) not in "\n".join(messages)
+    assert str(target) not in "\n".join(messages)
+
+
+def test_missing_and_broken_symlink_bindings_remain_silent(tmp_path) -> None:
+    missing = SimpleNamespace(locator=str(tmp_path / "missing"))
+    broken = tmp_path / "broken"
+    broken.symlink_to(tmp_path / "absent-target", target_is_directory=True)
+    for binding in (missing, SimpleNamespace(locator=str(broken))):
+        records = []
+        sink_id = wfr.logger.add(
+            lambda message: records.append(message.record), level="WARNING"
+        )
+        try:
+            assert list(wfr._iter_valid_folder_bindings((binding,))) == []
+        finally:
+            wfr.logger.remove(sink_id)
+        assert records == []
 
 
 # --- Launched-location accessor (feat/workspace-agent-context-note) ---
@@ -175,9 +442,7 @@ def test_note_empty_for_no_workspace(tmp_path) -> None:
 
 def test_note_names_workspace_and_states_non_default(tmp_path) -> None:
     registry = _registry(tmp_path)
-    note = wfr.workspace_context_note(
-        "ws-a", launch_cwd=tmp_path, registry=registry
-    )
+    note = wfr.workspace_context_note("ws-a", launch_cwd=tmp_path, registry=registry)
     assert "NOT running in the default workspace" in note
     assert "Client A" in note
 

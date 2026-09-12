@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.cells import cell_len
+
 # task-4023 AC#7: no "on the left" -- at ≤100 columns the shell shows one
 # pane at a time (the rail fills the width and this canvas is hidden), so
 # spatial copy was width-dependent nonsense. The copy now holds at every
@@ -41,7 +43,7 @@ LIBRARY_ROW_CREATE_QUIZZES = "create-quizzes"
 # this row's target_id is "prompts" itself: it reuses the SAME canvas kind
 # Browse > Prompts targets. The screen distinguishes "opened via Browse" vs
 # "opened via New prompt" by view/selection state
-# (`_library_prompts_view == "editor"` plus a `prompt_id=None` sentinel),
+# (`_prompts_state.view == "editor"` plus a `prompt_id=None` sentinel),
 # not by a separate canvas kind -- see library_screen.py's
 # `_enter_library_prompt_create_editor`.
 LIBRARY_ROW_CREATE_PROMPT = "create-prompt"
@@ -75,6 +77,26 @@ LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
 
+# task-28242: the Media canvas's "Review selected" bulk action, same pair.
+LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP = (
+    "Select one or more items to review them."
+)
+LIBRARY_REVIEW_SELECTED_TOOLTIP = "Review the selected items, one by one."
+
+# task-28007 AC#4: the Media canvas's "Analyze selected" bulk action, same
+# pair. The provider-unready reason (from ``analysis_unavailable_reason``)
+# replaces the disabled tooltip when there is nothing to dispatch to.
+LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP = (
+    "Select one or more items to analyze them."
+)
+LIBRARY_ANALYZE_SELECTED_TOOLTIP = "Generate an analysis for the selected items."
+
+# task-32045 (critique #7 P2): Export/Review/Delete all gate on the same
+# "nothing selected" condition, so unlike Analyze (whose reason varies with
+# provider readiness) they share ONE inline reason line rather than one
+# per button.
+LIBRARY_BULK_ACTIONS_NO_SELECTION_REASON = "Select items to enable."
+
 # task-4023 AC#1 (RC-07): disabled state finally joins the product's
 # non-colour vocabulary. Every disabled Library action label carries a
 # leading "○" -- the existing ✓/○ pair's neutral glyph (ingest option
@@ -85,24 +107,71 @@ LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
 # _agentic_terminal.tcss; this marker is the structural half.
 LIBRARY_DISABLED_ACTION_MARKER = "○"
 
+# task-32235 (critique #9 row 4): one meaning per glyph across every Library
+# canvas. "○" used to carry three at once -- a disabled action, an unchecked
+# source toggle, and a settled "skipped" outcome -- so the marker above keeps
+# the meaning it was invented for (blocked/disabled, the only non-colour cue
+# on dozens of tooltip-gated buttons) and the other two move here. The full
+# legend, including the ones that already had a home: "█" leading is the
+# keyboard cursor, "▸/▾" is disclosure, "✓" leading in a chooser is the
+# active value (LIBRARY_CHOICE_ACTIVE_MARKER), "▸ " leading on a rail row is
+# the destination you are on.
+#: A checkbox the user toggles, checked.
+LIBRARY_GLYPH_SELECTED = "☑"
+#: The same checkbox, unchecked.
+LIBRARY_GLYPH_UNSELECTED = "☐"
+#: A settled outcome: this one finished.
+LIBRARY_GLYPH_OUTCOME_DONE = "✓"
+#: A settled outcome: this one failed.
+LIBRARY_GLYPH_OUTCOME_FAILED = "✗"
+#: A settled outcome: this one was never attempted.
+LIBRARY_GLYPH_OUTCOME_SKIPPED = "–"
+
 # F-018 reason for the list canvases' Select toggle while the rendered
 # list is empty -- previously the only disabled Library action with no
 # reason anywhere at the control ("click does nothing, says nothing",
 # re-critique RC-07).
 LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP = "Nothing here to select yet."
 
+# task-32172: Sort re-pages the folder tree, but filter results come back
+# ranked by the search seam, so the control cannot own their order. Reason
+# and next step on the same line.
+LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
+    "Filter results keep their own order. Clear the filter to sort."
+)
 
-def library_disabled_action_label(label: str, disabled: bool) -> str:
+
+#: Blank stand-in for the marker prefix, exactly as wide as it renders
+#: (task-31635, critique #5 item 4). The marker is part of the LABEL, so an
+#: action whose disabled state flips moved two cells under the cursor that
+#: had just flipped it -- measured on the select-mode bulk row, where
+#: crossing 0 -> 1 selected shifted "Delete" left as it became pressable.
+#: Derived from the marker rather than hard-coded so the two can never
+#: drift out of alignment.
+LIBRARY_ACTION_LABEL_PAD = " " * (cell_len(LIBRARY_DISABLED_ACTION_MARKER) + 1)
+
+
+def library_disabled_action_label(
+    label: str, disabled: bool, *, align: bool = False
+) -> str:
     """Prefix ``label`` with the non-colour disabled marker when disabled.
 
     Args:
         label: The action's plain enabled label.
         disabled: Whether the control renders disabled.
+        align: Whether the ENABLED label reserves the marker's own width, so
+            the word holds its column across a disabled flip. Off by default:
+            most Library actions never flip in place, and an unconditional
+            two-cell indent would cost every one of them two cells of a pane
+            whose floor is 36.
 
     Returns:
-        ``"○ <label>"`` while disabled, ``label`` unchanged otherwise.
+        ``"○ <label>"`` while disabled; ``label`` unchanged otherwise, or
+        blank-padded to the same width when ``align``.
     """
-    return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}" if disabled else label
+    if disabled:
+        return f"{LIBRARY_DISABLED_ACTION_MARKER} {label}"
+    return f"{LIBRARY_ACTION_LABEL_PAD}{label}" if align else label
 
 
 # task-4023 AC#5: "▸" carried three meanings on one screen -- selected-row
@@ -231,7 +300,7 @@ class LibraryRailRow:
     # while loading, count when known, no suffix when the source is off).
     count_loading: bool = False
     # LIB-15: True for a row whose count is not fetched yet but WILL be
-    # (e.g. Collections, whose count only loads on first canvas visit --
+    # (e.g. Collections, whose capture count only loads on first visit --
     # see ``count_loading``'s own docstring for why it is NOT used for this
     # row: showing a "(…)" placeholder before any fetch has even started
     # would misrepresent an idle row as actively loading). Distinct from a
@@ -240,7 +309,7 @@ class LibraryRailRow:
     # cases are indistinguishable from ``count``/``count_known`` alone.
     # ``_row_label``'s gloss-fit check reserves a stable minimum width for
     # this row's eventual count so the gloss's visibility does not flip the
-    # instant the count arrives (the observed "Collections — item sets" ->
+    # instant the count arrives (the observed "Collections — saved captures" ->
     # "(0)", gloss silently dropping on the SAME terminal width just
     # because the count went from absent to a single digit).
     count_pending: bool = False
@@ -279,6 +348,11 @@ class LibraryShellInput:
     skills_known: bool = True
     collections_count: int | None = None
     collections_known: bool = True
+    #: task-32103: True when the count read FAILED or timed out. The row
+    #: paints "(—)" instead of nothing, so a broken read is not mistaken for
+    #: a source whose count is off by design (Search / RAG). The Details
+    #: block carries the deadline sentence that explains it.
+    collections_count_unavailable: bool = False
     runtime_source: str = "local"
     server_label: str | None = None
     details_lines: tuple[str, ...] = ()
@@ -410,19 +484,20 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
-            subtitle="item sets",
-            # LIB-15: Collections' count is fetched lazily (on first canvas
+            count_display=" (—)" if state.collections_count_unavailable else "",
+            subtitle="saved captures",
+            # Collections' authority-qualified capture count is fetched lazily
+            # on first canvas
             # visit), unlike every other counts_loading row -- flagging it
             # pending (rather than "off", Search/RAG's case) lets the
             # gloss-fit check reserve stable width for the count that is
             # coming, so the gloss does not silently drop the instant the
             # count arrives at the same terminal width.
             count_pending=True,
-            # LIB-18: "Collections" (11 cells) fits the ~17-cell row budget
-            # only while its count stays single-digit; "Sets" (matching
-            # this row's own "item sets" gloss) is the fallback once a
+            # "Collections" fits the narrow rail only while its count stays
+            # short; "Captures" is the truthful fallback once a
             # longer count would otherwise force a mid-word cut.
-            short_title="Sets",
+            short_title="Captures",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_SEARCH,

@@ -17,7 +17,6 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     RUN_STUCK,
-    TERMINAL_RUN_STATUSES,
 )
 
 FLEET_STARTED = "fleet_started"
@@ -104,6 +103,12 @@ class FleetHandle:
     # this field is COMPUTED onto the copies ``get()``/``snapshot()``
     # return, so a stale handle copy can never disagree with the mailbox.
     queued_steering: int = 0
+    # TASK-28238 phase 2 T7 Qodo round, finding 7. The isolation mode this
+    # child was spawned/resumed with (``None`` or ``"worktree"``) --
+    # recorded here so `_retain_locked` can copy it onto the
+    # ``RetainedTranscript`` at retention time, letting a LATER resume
+    # re-admit a fresh worktree instead of silently sharing the tree.
+    isolation: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -133,6 +138,13 @@ class RetainedTranscript:
             claimed at retention time -- a resume seeds these (original
             labels) before the new supervisor message.
         retained_at: Coordinator-clock timestamp of the retention.
+        isolation: The original child's isolation mode (``None`` or
+            ``"worktree"``), copied off its ``FleetHandle`` at retention
+            time (TASK-28238 phase 2 T7 Qodo round, finding 7) -- a resume
+            reads this to re-admit a fresh worktree instead of silently
+            sharing the tree. Defaults to ``None`` for backward
+            compatibility with any coordination state that predates this
+            field.
     """
 
     handle_id: str
@@ -143,6 +155,8 @@ class RetainedTranscript:
     messages: tuple[dict, ...]
     steering: tuple[tuple[str, str], ...]
     retained_at: float
+    steering_with_causes: tuple[tuple[str, str, str | None], ...] = ()
+    isolation: str | None = None
 
 
 class FleetCoordinator:
@@ -160,6 +174,7 @@ class FleetCoordinator:
         *,
         retained_transcripts: int = DEFAULT_RETAINED_TRANSCRIPTS,
         retained_transcript_max_chars: int = DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
+        on_reserve: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the coordinator.
 
@@ -172,10 +187,17 @@ class FleetCoordinator:
             retained_transcript_max_chars: Serialized-size ceiling above
                 which a transcript is NOT retained (ruling #2: refuse,
                 never truncate); 0 retains none.
+            on_reserve: Best-effort observer invoked after a successful
+                reservation is visible. Observer failures never unwind an
+                already-admitted handle.
         """
         self._max_live = max_live
         self._clock = clock
         self._lock = threading.Lock()  # No reentrant calls, lock to catch bugs
+        # Terminal admission fence. Existing children remain visible and may
+        # settle normally, but no caller can reserve another child after a
+        # conversation/app close has begun.
+        self._fenced = False
         self._handles: dict[str, FleetHandle] = {}
         self._live_ids: set[str] = set()  # handle_ids with status != terminal
         self._events: list[FleetEvent] = []
@@ -183,7 +205,7 @@ class FleetCoordinator:
         # Guarded by the same lock as every other public method. A key
         # exists only while entries are queued (drain pops the whole
         # list), and dies with its handle in prune_terminal.
-        self._steering: dict[str, list[tuple[str, str]]] = {}
+        self._steering: dict[str, list[tuple[str, str, str | None]]] = {}
         # PR3b Task 4: retained transcripts of finished children, keyed by
         # handle id, insertion-ordered (Python dicts) so eviction is
         # oldest-first. DELIBERATELY SEPARATE from `_handles`:
@@ -194,8 +216,11 @@ class FleetCoordinator:
         self._retained_transcripts_cap = retained_transcripts
         self._retained_transcript_max_chars = retained_transcript_max_chars
         self._retained: dict[str, RetainedTranscript] = {}
+        self._on_reserve = on_reserve
 
-    def reserve(self, task: str, agent: str | None) -> FleetHandle | None:
+    def reserve(
+        self, task: str, agent: str | None, *, isolation: str | None = None
+    ) -> FleetHandle | None:
         """Reserve a slot for a new task, returning a handle or None if at cap.
 
         Emits FLEET_STARTED event on success.
@@ -203,6 +228,9 @@ class FleetCoordinator:
         Args:
             task: Human-readable task description.
             agent: Agent name, if applicable.
+            isolation: The isolation mode this child launches under
+                (``None`` or ``"worktree"``) -- recorded on the handle so
+                a later retention/resume can see it (finding 7).
 
         Returns:
             A copy of the new FleetHandle if a slot is available, else
@@ -216,7 +244,7 @@ class FleetCoordinator:
             attached later) -- so this is safe.
         """
         with self._lock:
-            if len(self._live_ids) >= self._max_live:
+            if self._fenced or len(self._live_ids) >= self._max_live:
                 return None
 
             handle_id = uuid.uuid4().hex
@@ -231,6 +259,7 @@ class FleetCoordinator:
                 error="",
                 started_at=started_at,
                 finished_at=None,
+                isolation=isolation,
             )
             self._handles[handle_id] = handle
             self._live_ids.add(handle_id)
@@ -243,7 +272,40 @@ class FleetCoordinator:
                     status="running",
                 )
             )
+            # Admission observers run before the coordinator lock is
+            # released. A close fence that acquires this lock afterward is
+            # therefore guaranteed to observe the matching lifecycle
+            # revision. Observers must not re-enter the coordinator; failures
+            # are isolated because the handle is already admitted.
+            if self._on_reserve is not None:
+                try:
+                    self._on_reserve()
+                except Exception:  # noqa: BLE001 -- observer cannot unwind admission
+                    pass
             return dataclasses.replace(handle)
+
+    def fence(self) -> None:
+        """Refuse new reservations without disturbing live work.
+
+        A fence is terminal once cancellation or shutdown begins. Before that
+        boundary, the bridge may withdraw an exact-generation provisional fence
+        with :meth:`abort_fence` if its lifecycle-revision recheck fails.
+        Cancellation and terminal draining remain separate operations so
+        existing handles keep their honest state until their workers settle.
+        """
+        with self._lock:
+            self._fenced = True
+
+    def abort_fence(self) -> None:
+        """Reopen admission when an unfired provisional close is withdrawn.
+
+        Exact generation ownership is enforced by the bridge before it calls
+        this low-level seam. No cancellation has begun on this path; existing
+        handles keep running and future reservations become legal again.
+        """
+
+        with self._lock:
+            self._fenced = False
 
     def attach_run(self, handle_id: str, run_id: str) -> None:
         """Attach a run ID to an existing handle.
@@ -288,7 +350,23 @@ class FleetCoordinator:
         with self._lock:
             if handle_id not in self._handles or handle_id not in self._live_ids:
                 return False
-            self._steering.setdefault(handle_id, []).append((source, text))
+            self._steering.setdefault(handle_id, []).append((source, text, None))
+            return True
+
+    def post_steering_with_cause(
+        self,
+        handle_id: str,
+        source: str,
+        text: str,
+        source_event_id: str,
+    ) -> bool:
+        """Queue steering with its durable causal event identity."""
+        with self._lock:
+            if handle_id not in self._handles or handle_id not in self._live_ids:
+                return False
+            self._steering.setdefault(handle_id, []).append(
+                (source, text, source_event_id)
+            )
             return True
 
     def drain_steering(self, handle_id: str) -> list[tuple[str, str]]:
@@ -305,6 +383,16 @@ class FleetCoordinator:
             The queued ``(source, text)`` entries in posting order; empty
             for an unknown handle or an empty mailbox.
         """
+        with self._lock:
+            return [
+                (source, text)
+                for source, text, _cause in self._steering.pop(handle_id, [])
+            ]
+
+    def drain_steering_with_causes(
+        self, handle_id: str
+    ) -> list[tuple[str, str, str | None]]:
+        """Return-and-clear causal steering entries for the runtime seam."""
         with self._lock:
             return self._steering.pop(handle_id, [])
 
@@ -423,6 +511,28 @@ class FleetCoordinator:
             return [
                 self._copy_with_queued(h) for h in self._handles.values()
             ]
+
+    def durable_handle_map(self) -> dict[str, str]:
+        """Snapshot process handles that still have a durable run identity.
+
+        Returns:
+            A new handle-id to run-id mapping. No transcript or task content
+            is exposed.
+        """
+        with self._lock:
+            mapping = {
+                handle_id: entry.run_id
+                for handle_id, entry in self._retained.items()
+                if entry.run_id
+            }
+            mapping.update(
+                {
+                    handle_id: handle.run_id
+                    for handle_id, handle in self._handles.items()
+                    if handle.run_id
+                }
+            )
+            return mapping
 
     def _copy_with_queued(self, handle: FleetHandle) -> FleetHandle:
         """A point-in-time copy carrying the CURRENT mailbox depth.
@@ -567,13 +677,28 @@ class FleetCoordinator:
             return False
         if self._retained_transcript_max_chars <= 0:
             return False
+
+        def retained_json_value(value):
+            from tldw_chatbook.Chat.thinking_blocks import (
+                ThinkingEnvelope,
+                dump_thinking_blocks_json,
+            )
+
+            if isinstance(value, ThinkingEnvelope):
+                # Measure the canonical body; its private repr omits all text.
+                return json.loads(dump_thinking_blocks_json(value))
+            return str(value)
+
         try:
-            size = len(json.dumps(messages, default=str))
+            size = len(json.dumps(messages, default=retained_json_value))
         except Exception:  # noqa: BLE001 — an unmeasurable transcript
             return False  # cannot be size-bounded, so it is not kept
         if size > self._retained_transcript_max_chars:
             return False
-        steering = tuple(self._steering.pop(handle_id, []))
+        steering_with_causes = tuple(self._steering.pop(handle_id, []))
+        steering = tuple(
+            (source, text) for source, text, _cause in steering_with_causes
+        )
         self._retained[handle_id] = RetainedTranscript(
             handle_id=handle_id,
             run_id=handle.run_id,
@@ -583,6 +708,8 @@ class FleetCoordinator:
             messages=tuple(dict(m) for m in messages),
             steering=steering,
             retained_at=self._clock(),
+            steering_with_causes=steering_with_causes,
+            isolation=handle.isolation,
         )
         self._evict_over_cap_locked()
         return True

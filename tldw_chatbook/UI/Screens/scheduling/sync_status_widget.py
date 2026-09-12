@@ -5,9 +5,18 @@ from __future__ import annotations
 from textual.widgets import Button, Static
 from textual.containers import Horizontal
 
+from .unified_rows import _format_local_timestamp
+
 
 class SyncStatusWidget(Horizontal):
-    """Bar showing current owner, last sync timestamps, and latest error."""
+    """Bar showing current owner, last sync timestamps, and latest error.
+
+    task-23105: when the owner is Local and no server connection exists,
+    the server plumbing (owner buttons, pull/push timestamps) collapses
+    to a single honest line, and Clear only appears once an error exists
+    (a hidden control carries its state better than a color-only
+    disabled one).
+    """
 
     BUNDLED_CSS = """
     SyncStatusWidget {
@@ -16,6 +25,10 @@ class SyncStatusWidget(Horizontal):
     }
     #scheduling-owner-local, #scheduling-owner-server {
         width: auto;
+    }
+    #scheduling-sync-local-note {
+        width: auto;
+        color: $text-muted;
     }
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
@@ -71,6 +84,7 @@ class SyncStatusWidget(Horizontal):
             disabled=not self.server_available,
             tooltip=server_tooltip,
         )
+        yield Static("", id="scheduling-sync-local-note")
         yield Static("Last pull: —", id="scheduling-last-pull")
         yield Static("Last push: —", id="scheduling-last-push")
         yield Static("", id="scheduling-sync-error")
@@ -79,6 +93,63 @@ class SyncStatusWidget(Horizontal):
             id="scheduling-clear-error",
             tooltip="Clear the latest scheduling sync error.",
         )
+
+    def on_mount(self) -> None:
+        """Apply the local-owner collapse and hide Clear until needed."""
+        self._apply_collapse()
+        self.query_one("#scheduling-clear-error", Button).display = False
+
+    def _apply_collapse(self) -> None:
+        """Collapse server plumbing to one line for local-only setups.
+
+        Deliberately NOT collapsed (task-23105 review F11): the error
+        Static and the Clear button. Honesty beats compactness -- a
+        persisted sync error from a since-removed server must stay
+        visible and clearable on a now-local-only profile, so collapsed
+        mode shows local note + error + Clear whenever an error exists.
+
+        redesign PR-2, Task 3: the width-triggered compact path
+        (`set_compact`/`self.has_class("compact")`) ALSO hides the
+        timestamps, folded into this same write rather than a second
+        independent one -- Textual widgets resolve `.display` from
+        whichever code last set it imperatively (inline styles beat
+        stylesheet rules), so a plain CSS `.compact { display: none }`
+        rule here would silently lose to this method's own explicit
+        `display = not collapsed` on every owner/server-state refresh.
+        Folding both triggers into one write keeps there being exactly
+        one place these two Statics' visibility is decided. The
+        owner-button collapse stays gated on `collapsed` alone -- compact
+        must not hide the owner indicator (plan ruling 4's "(b)").
+        """
+        collapsed = self.current_owner == "local" and not self.server_available
+        for selector in ("#scheduling-owner-local", "#scheduling-owner-server"):
+            self.query_one(selector).display = not collapsed
+        hide_timestamps = collapsed or self.has_class("compact")
+        for selector in ("#scheduling-last-pull", "#scheduling-last-push"):
+            self.query_one(selector).display = not hide_timestamps
+        note = self.query_one("#scheduling-sync-local-note", Static)
+        note.display = collapsed
+        note.update(
+            "Local schedules — no scheduling server connected; sync is off."
+            if collapsed
+            else ""
+        )
+
+    def set_compact(self, compact: bool) -> None:
+        """Width-triggered compact styling path (redesign PR-2, Task 3).
+
+        Additive: stores the trigger as a CSS class (`.compact`) and
+        re-runs `_apply_collapse` so the two triggers combine through
+        that one method rather than fighting over the same two Statics'
+        `.display` -- `_apply_collapse`'s own owner/server-based collapse
+        decision (and the owner-button/note halves of it) are unchanged.
+
+        Args:
+            compact: Whether the host rail is narrow enough to hide the
+                last-pull/last-push timestamps.
+        """
+        self.set_class(compact, "compact")
+        self._apply_collapse()
 
     def set_owner_state(
         self,
@@ -105,6 +176,7 @@ class SyncStatusWidget(Horizontal):
             if server_available
             else "Connect a scheduling server before switching Schedules ownership."
         )
+        self._apply_collapse()
 
     def update_status(
         self,
@@ -112,16 +184,22 @@ class SyncStatusWidget(Horizontal):
         last_push_at: str | None,
         sync_errors: list[dict],
     ) -> None:
+        # task-31711 AC#3: `last_pull_at`/`last_push_at` are raw, often
+        # microsecond-precision, ISO-8601 strings straight from the DB --
+        # render a human-readable LOCAL timestamp instead.
         self.query_one("#scheduling-last-pull", Static).update(
-            f"Last pull: {last_pull_at or '—'}"
+            f"Last pull: {_format_local_timestamp(last_pull_at)}"
         )
         self.query_one("#scheduling-last-push", Static).update(
-            f"Last push: {last_push_at or '—'}"
+            f"Last push: {_format_local_timestamp(last_push_at)}"
         )
         error_widget = self.query_one("#scheduling-sync-error", Static)
         if sync_errors:
             error_widget.update(str(sync_errors[-1].get("message", "")))
         else:
             error_widget.update("")
+        # Hidden until an error exists (task-23105): visibility carries the
+        # state, instead of a color-only disabled button.
         clear_button = self.query_one("#scheduling-clear-error", Button)
+        clear_button.display = bool(sync_errors)
         clear_button.disabled = not sync_errors

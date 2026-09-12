@@ -148,7 +148,7 @@ async def test_narrow_ingest_collapses_rail_and_keeps_source_contract_visible():
             f"screen={screen.size.width}, shell="
             f"{screen.query_one('#library-shell-grid').region.width}, "
             f"collapsed={screen._library_rail_collapsed}, "
-            f"auto={screen._library_ingest_auto_collapsed_rail}"
+            f"auto={screen._ingest_state.auto_collapsed_rail}"
         )
         assert screen.query_one("#library-rail-handle").display is True
         canvas = screen.query_one("#library-ingest-canvas")
@@ -270,7 +270,9 @@ async def test_ingest_footer_advertises_enter_start_and_esc_back():
         # filters reserved keys (F6) out of the context portion, and that
         # rendering evolves independently of this mode's registered set.
         footer = screen.query_one(AppFooterStatus)
-        assert "enter start" in footer.shortcut_text
+        # task-32364 AC#3: the path field is blank here, so the Start
+        # gate is shut and Enter validates rather than imports.
+        assert "enter check this path" in footer.shortcut_text
         assert "esc back" in footer.shortcut_text
 
 
@@ -290,9 +292,11 @@ def test_f1_help_in_ingest_mode_shows_the_same_shared_ingest_set(monkeypatch):
 
     # The footer and F1 read the same state-derived set. Retry is omitted
     # until a settled last submission exists.
+    # task-32364 AC#3 made the Enter label state-derived, so the shared
+    # per-mode set is the method, not the raw constant it starts from.
     assert (
         screen._library_footer_shortcuts_for_current_state()
-        == screen.LIBRARY_INGEST_SHORTCUTS
+        == screen._library_ingest_shortcuts_for_current_state()
     )
 
     pushed = []
@@ -312,9 +316,8 @@ def test_f1_help_in_ingest_mode_shows_the_same_shared_ingest_set(monkeypatch):
     assert isinstance(panel, WorkbenchHelpPanel)
     shortcuts = list(panel.state.shortcuts)
     # The shared per-mode set leads the panel, exactly as registered.
-    assert shortcuts[: len(screen.LIBRARY_INGEST_SHORTCUTS)] == list(
-        screen.LIBRARY_INGEST_SHORTCUTS
-    )
+    ingest_set = screen._library_ingest_shortcuts_for_current_state()
+    assert shortcuts[: len(ingest_set)] == list(ingest_set)
     keys = {key for key, _description in shortcuts}
     assert "enter" in keys
     assert "esc" in keys

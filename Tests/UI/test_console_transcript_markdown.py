@@ -138,6 +138,42 @@ def test_flavor_curly_quoted_speech_gets_speech_style():
     ]
 
 
+def test_flavor_single_quoted_thought_preserves_quotes_and_contraction():
+    """Removing legacy thought styling collapses the phrase into narration."""
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        _ACTION_STYLE,
+        _BOLD_STYLE,
+        _SPEECH_STYLE,
+    )
+
+    spans = _markdown_body_spans("She wondered, 'I don't know.'")
+
+    assert len(spans) == 2
+    assert spans[0] == "She wondered, "
+    thought, style = spans[1]
+    assert thought == "'I don't know.'"
+    assert "italic" in style
+    assert style not in {_ACTION_STYLE, _BOLD_STYLE, _SPEECH_STYLE}
+
+
+def test_flavor_curly_single_quoted_thought_preserves_curly_contraction():
+    """Curly thought delimiters and a word-internal apostrophe stay visible."""
+    from tldw_chatbook.Widgets.Console.console_transcript import _THOUGHT_STYLE
+
+    assert _markdown_body_spans("She wondered, ‘I don’t know.’") == [
+        "She wondered, ",
+        ("‘I don’t know.’", _THOUGHT_STYLE),
+    ]
+
+
+def test_flavor_ordinary_apostrophe_and_unclosed_thought_stay_literal():
+    """Contractions and incomplete thoughts never become thought spans."""
+    assert _markdown_body_spans("Don't panic.") == ["Don't panic."]
+    assert _markdown_body_spans("She wondered, 'not yet") == [
+        "She wondered, 'not yet"
+    ]
+
+
 def test_flavor_single_asterisk_action_gets_action_style():
     """*action* text styles with the action style, markers stripped."""
     from tldw_chatbook.Widgets.Console.console_transcript import _ACTION_STYLE
@@ -175,3 +211,14 @@ def test_flavor_quote_containing_action_marker_styles_as_speech():
     assert _markdown_body_spans('"I *mean* it"') == [
         ('"I *mean* it"', _SPEECH_STYLE),
     ]
+
+
+def test_flavor_outer_speech_swallows_nested_single_quotes():
+    """Outer speech precedence keeps nested single quotes in one span."""
+    from tldw_chatbook.Widgets.Console.console_transcript import _SPEECH_STYLE
+
+    straight = '"I said \'no\'."'
+    curly = "“I said ‘no’.”"
+
+    assert _markdown_body_spans(straight) == [(straight, _SPEECH_STYLE)]
+    assert _markdown_body_spans(curly) == [(curly, _SPEECH_STYLE)]

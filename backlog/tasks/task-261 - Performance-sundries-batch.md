@@ -1,6 +1,6 @@
 ---
 id: TASK-261
-title: Performance sundries: bg-effect frame cache, token-count gate, SELECT-1 ping, picker ctor I/O, MCP rebuild diffing, browser indexes
+title: 'Performance sundries: bg-effect frame cache, token-count gate, SELECT-1 ping, picker ctor I/O, MCP rebuild diffing, browser indexes'
 status: Done
 assignee: []
 created_date: '2026-07-16 14:30'

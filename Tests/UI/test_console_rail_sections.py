@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
+from dataclasses import replace
 
 import pytest
 from textual.app import App
@@ -10,7 +12,7 @@ from textual.app import App
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
@@ -18,10 +20,36 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextCompactionMode,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
+    ConsoleSettingsContextEstimate,
+    ConsoleSettingsReadiness,
+    ConsoleSettingsSummaryState,
+)
+from tldw_chatbook.Chat.console_settings_apply import (
+    ConsoleSettingsCommittedSubmission,
+    ConsoleSettingsDraftState,
+    ConsoleSettingsFieldDraft,
+    ConsoleSettingsFieldProvenance,
+    ConsoleSettingsLiveCommit,
+    ConsoleSettingsOrigin,
+    ConsoleSettingsSubmission,
+    ConsoleSettingsTransfer,
+)
 from tldw_chatbook.Widgets.Console.console_model_popover import (
-    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
+)
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    ConsoleContextControlState,
+    build_console_context_control_state,
+)
+from tldw_chatbook.Widgets.Console.console_settings_summary import (
+    ConsoleSettingsSummary,
+    build_console_readiness_presentation,
 )
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -57,6 +85,212 @@ class _HeaderApp(ConsolidatedCSSApp):
             open=False,
             id="header-under-test",
         )
+
+
+def _typed_unreachable_readiness() -> ConsoleSettingsReadiness:
+    return ConsoleSettingsReadiness(
+        label="READY legacy poison",
+        detail="PRIVATE http://127.0.0.1:9876 exception",
+        native_send_supported=False,
+        operability="not_ready",
+        blocker="endpoint_unreachable",
+        recovery_action="retry_connection",
+        provider_display_name="Ollama",
+        configuration="configured",
+        credential="not_required",
+        endpoint="unreachable",
+        endpoint_category="timeout",
+        model="unconfirmed",
+        generation="failed",
+        generation_category="timeout",
+    )
+
+
+class _ReadinessSummaryApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield ConsoleSettingsSummary(
+            ConsoleSettingsSummaryState(
+                provider_row="Provider: Ollama",
+                model_row="Model: llama3",
+                context_row="Context: unavailable",
+                sampling_row="Sampling: T 0.70, P 0.95",
+                identity_row="Assistant: General",
+                readiness_label="READY legacy poison",
+                readiness=_typed_unreachable_readiness(),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_renders_typed_operability_and_verification_evidence():
+    app = _ReadinessSummaryApp()
+    async with app.run_test(size=(72, 22)) as pilot:
+        await pilot.pause()
+        text = "\n".join(
+            str(getattr(item.renderable, "plain", item.renderable))
+            for item in app.query(Static)
+        )
+        assert "Not ready — endpoint unreachable" in text
+        assert "Endpoint · Unreachable — timed out" in text
+        assert "Generation · Failed — timed out" in text
+        assert "Retry connection" in str(
+            app.query_one("#console-settings-open", Button).label
+        )
+        assert "PRIVATE" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_uses_canonical_provider_and_honest_empty_copy():
+    """Raw provider keys and unavailable estimates must not leak into the rail."""
+    readiness = ConsoleSettingsReadiness(
+        label="Ready",
+        detail="Ready",
+        native_send_supported=True,
+        operability="ready_to_send",
+        provider_display_name="llama.cpp",
+        configuration="configured",
+        credential="not_required",
+        endpoint="not_tested",
+        model="unconfirmed",
+        generation="not_tested",
+    )
+    state = ConsoleSettingsSummaryState(
+        provider_row="Provider: llama_cpp",
+        model_row="Model: model-a",
+        context_row="Context: unavailable",
+        endpoint_row="Endpoint: provider default",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Assistant: General",
+        readiness=readiness,
+    )
+
+    class _HonestCopyApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield ConsoleSettingsSummary(state)
+
+    app = _HonestCopyApp()
+
+    async with app.run_test(size=(72, 22)):
+        provider = app.query_one("#console-settings-provider-row", Static)
+        context = app.query_one("#console-settings-context-row", Static)
+        endpoint = app.query_one("#console-settings-endpoint-row", Static)
+        assert str(provider.renderable) == "Provider: llama.cpp"
+        assert str(context.renderable) == "Context: Not estimated"
+        assert str(endpoint.renderable) == "Endpoint · Not tested"
+
+
+@pytest.mark.asyncio
+async def test_console_rail_summary_labels_genuine_provider_default_inheritance():
+    """An inherited endpoint must be named as a provider default, not raw copy."""
+    state = ConsoleSettingsSummaryState(
+        provider_row="Provider: OpenAI",
+        model_row="Model: gpt-5.6-terra",
+        context_row="Context: 10 / 4k",
+        endpoint_row="Endpoint: provider default",
+        sampling_row="Sampling: T 0.70, P 0.95",
+        identity_row="Assistant: General",
+    )
+
+    class _ProviderDefaultApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield ConsoleSettingsSummary(state)
+
+    app = _ProviderDefaultApp()
+    async with app.run_test(size=(72, 22)) as pilot:
+        endpoint = app.query_one("#console-settings-endpoint-row", Static)
+        assert str(endpoint.renderable) == "Endpoint: Provider default"
+
+        app.query_one(ConsoleSettingsSummary).sync_state(
+            ConsoleSettingsSummaryState(
+                provider_row="Provider: Anthropic",
+                model_row="Model: claude-sonnet",
+                context_row="Context: 20 / 8k",
+                endpoint_row="Endpoint: provider default",
+                sampling_row="Sampling: T 0.50, P 0.90",
+                identity_row="Assistant: General",
+            )
+        )
+        await pilot.pause()
+        assert str(endpoint.renderable) == "Endpoint: Provider default"
+
+
+@pytest.mark.parametrize(
+    ("readiness", "expected_rows"),
+    (
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="OpenAI",
+                configuration="configured",
+                credential="authenticated",
+                credential_source="stored",
+                endpoint="reachable",
+                model="confirmed",
+                generation="succeeded",
+            ),
+            (
+                "Credential · Authenticated",
+                "Endpoint · Reachable",
+                "Model · Confirmed",
+                "Generation · Succeeded",
+            ),
+        ),
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="Ollama",
+                configuration="configured",
+                credential="not_required",
+                endpoint="model_listing_unavailable",
+                model="unconfirmed",
+                generation="not_tested",
+            ),
+            (
+                "Credential · Not required",
+                "Endpoint · Reachable — model listing unavailable",
+                "Model · Listing unavailable",
+                "Generation · Not tested",
+            ),
+        ),
+        (
+            ConsoleSettingsReadiness(
+                "ignored",
+                "ignored",
+                True,
+                operability="ready_to_send",
+                provider_display_name="Ollama",
+                configuration="configured",
+                credential="not_required",
+                endpoint="changed_since_test",
+                model="unconfirmed",
+                generation="changed_since_test",
+            ),
+            (
+                "Credential · Not required",
+                "Endpoint · Changed since test",
+                "Model · Changed since test",
+                "Generation · Changed since test",
+            ),
+        ),
+    ),
+)
+def test_console_verification_evidence_rows_are_independent_of_operability(
+    readiness,
+    expected_rows,
+) -> None:
+    presentation = build_console_readiness_presentation(readiness)
+    assert (
+        presentation.credential_row,
+        presentation.endpoint_row,
+        presentation.model_row,
+        presentation.generation_row,
+    ) == expected_rows
 
 
 @pytest.mark.asyncio
@@ -125,7 +359,7 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
         workspace_label="Workspace: Default",
         authority_label="Authority: local registry ready",
         sync_label="Sync: not configured",
-        runtime_label="Runtime: none, file tools disabled",
+        runtime_label="Local file tools: Private scratch",
         conversation_rows=(),
         conversation_empty_copy="No conversations yet.",
         conversation_browser=build_console_conversation_browser_state(
@@ -411,33 +645,22 @@ async def test_setup_backdrop_seeded_rng_renders_flake_glyphs():
 
 
 @pytest.mark.asyncio
-async def test_setup_backdrop_tick_advances_positions_and_repaints():
+async def test_setup_backdrop_field_is_still_between_resizes():
+    """TASK-23021: the snow is a still frame -- positions and rendered text
+    must not change while the widget merely sits mounted."""
     app = _SnowBackdropApp(random.Random(42))
     async with app.run_test(size=(40, 10)):
         backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
         positions_before = [(flake.x, flake.y) for flake in backdrop._flakes]
         text_before = str(backdrop.renderable)
 
-        backdrop._tick()
+        # Longer than several of the retired animation's 0.4 s intervals.
+        await asyncio.sleep(1.0)
 
         positions_after = [(flake.x, flake.y) for flake in backdrop._flakes]
         text_after = str(backdrop.renderable)
-        assert positions_after != positions_before
-        assert text_after != text_before
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_tick_wraps_flake_past_bottom_to_top():
-    app = _SnowBackdropApp(random.Random(42))
-    async with app.run_test(size=(40, 10)):
-        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
-        flake = backdrop._flakes[0]
-        flake.y = backdrop._field_height - 0.05
-        flake.speed = 1.0
-
-        backdrop._tick()
-
-        assert flake.y == 0.0
+        assert positions_after == positions_before
+        assert text_after == text_before
 
 
 @pytest.mark.asyncio
@@ -448,22 +671,23 @@ async def test_setup_backdrop_resize_safe_at_tiny_size():
         await pilot.resize_terminal(1, 1)
         await pilot.pause()
         assert backdrop.flake_count >= 1
-        # Must not raise even at the smallest possible field.
-        backdrop._tick()
         await pilot.resize_terminal(40, 10)
         await pilot.pause()
         assert backdrop.flake_count == 10
 
 
 @pytest.mark.asyncio
-async def test_setup_modal_snow_timer_paused_until_blocking():
+async def test_setup_modal_backdrop_never_arms_a_timer_in_any_block_state():
+    """TASK-23021 retired the snow tick outright: blocking, unblocked, and
+    re-blocked states must all leave the backdrop with zero timers (the old
+    contract paused/resumed a real interval timer across these transitions)."""
     app = _SetupModalApp(_card_state())
     async with app.run_test(size=(100, 30)) as pilot:
         backdrop = app.query_one(
             f"#{CONSOLE_SETUP_MODAL_BACKDROP_ID}", ConsoleSetupBackdrop
         )
         # _SetupModalApp.on_mount() immediately syncs card-mode (blocking).
-        assert backdrop.timer_paused is False
+        assert len(backdrop._timers) == 0
 
         modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
         modal.sync_card_state(
@@ -474,7 +698,7 @@ async def test_setup_modal_snow_timer_paused_until_blocking():
             action_tooltip="Pick a model.",
         )
         await pilot.pause()
-        assert backdrop.timer_paused is True
+        assert len(backdrop._timers) == 0
 
         modal.sync_card_state(
             _card_state(),
@@ -482,43 +706,7 @@ async def test_setup_modal_snow_timer_paused_until_blocking():
             action_tooltip="Open provider settings.",
         )
         await pilot.pause()
-        assert backdrop.timer_paused is False
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_resume_before_mount_starts_timer_running():
-    # Regression: resume_snow() called before on_mount() creates the interval
-    # timer used to be a lost intent -- on_mount() unconditionally created the
-    # timer paused, so a resume() issued against the not-yet-existing timer
-    # never took effect. The widget must remember the intent and apply it once
-    # the timer exists.
-    backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
-    backdrop.resume_snow()
-
-    class _ResumeBeforeMountApp(ConsolidatedCSSApp):
-        def compose(self):
-            yield backdrop
-
-    app = _ResumeBeforeMountApp()
-    async with app.run_test(size=(40, 10)):
-        assert backdrop._snow_timer is not None
-        assert backdrop._snow_timer._active.is_set() is True
-        assert backdrop.timer_paused is False
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
-    backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
-
-    class _NoResumeApp(ConsolidatedCSSApp):
-        def compose(self):
-            yield backdrop
-
-    app = _NoResumeApp()
-    async with app.run_test(size=(40, 10)):
-        assert backdrop._snow_timer is not None
-        assert backdrop._snow_timer._active.is_set() is False
-        assert backdrop.timer_paused is True
+        assert len(backdrop._timers) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +718,8 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # no
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
+
+
 def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     def row(key, title, native=None, **kw):
         return ConsoleConversationBrowserInputRow(
@@ -627,14 +817,14 @@ async def test_switcher_enter_activates_first_result():
 
 
 @pytest.mark.asyncio
-async def test_switcher_f2_requests_rename_for_native_entry():
+async def test_switcher_f2_does_not_fall_back_from_search_to_native_entry():
     app = _SwitcherApp()
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.press("f2")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSwitcherChoice)
-        assert app.result.kind == "rename"
-        assert app.result.entry.native_session_id == "sess-1"
+        assert app.result == "unset"
+        feedback = app.screen.query_one("#console-switcher-feedback", Static)
+        assert "focus an open agent result" in str(feedback.renderable).lower()
 
 
 def _two_native_switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
@@ -724,10 +914,95 @@ async def test_switcher_rapid_refresh_does_not_duplicate_ids():
 _POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
 
 
+def _test_popover(
+    settings: ConsoleSessionSettings,
+    providers_models,
+    *,
+    overrides: ConsoleContextPolicyOverrides | None = None,
+    global_overrides: ConsoleContextPolicyOverrides | None = None,
+    context_state: ConsoleContextControlState | None = None,
+) -> ConsoleModelPopover:
+    origin = ConsoleSettingsOrigin("popover-session", None, 0)
+    draft = ConsoleSettingsDraftState(
+        settings=settings,
+        context_policy_overrides=overrides or ConsoleContextPolicyOverrides(),
+        field_drafts=tuple(
+            ConsoleSettingsFieldDraft(
+                name=name,
+                effective_value=getattr(settings, name),
+                profile_override=getattr(settings, name),
+                provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                dirty=False,
+            )
+            for name in ("temperature", "streaming")
+        ),
+        model_drafts=(),
+        endpoint_draft=None,
+    )
+
+    def rebase(state, **kwargs):
+        return replace(
+            state,
+            settings=replace(
+                state.settings,
+                provider=kwargs["provider"],
+                model=kwargs["model"],
+            ),
+        )
+
+    def commit(submission: ConsoleSettingsSubmission) -> ConsoleSettingsLiveCommit:
+        return ConsoleSettingsLiveCommit(
+            submission_id=submission.submission_id,
+            session_id=origin.session_id,
+            persisted_conversation_id=None,
+            conversation_binding_revision=0,
+            generation_revision=1,
+            context_policy_revision=1,
+            settings=submission.draft.settings,
+            context_policy_overrides=submission.draft.context_policy_overrides,
+        )
+
+    return ConsoleModelPopover(
+        origin=origin,
+        app_config={
+            "api_settings": {
+                "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+                "openai": {"api_key": "test-key"},
+                "openrouter": {"api_key": "test-key"},
+            }
+        },
+        initial_draft=draft,
+        providers_models=providers_models,
+        context_state=context_state
+        or build_console_context_control_state(
+            settings=settings,
+            estimate=ConsoleSettingsContextEstimate(
+                used_tokens=None, token_limit=None, label="unavailable"
+            ),
+            overrides=draft.context_policy_overrides,
+            global_overrides=global_overrides,
+        ),
+        scope_copy="Applies to this conversation",
+        durability_copy="Temporary until this chat is promoted",
+        draft_rebaser=rebase,
+        live_committer=commit,
+        default_readiness_resolver=lambda _provider, _model: ConsoleSettingsReadiness(
+            "Ready", "Ready.", True
+        ),
+    )
+
+
 class _PopoverApp(ConsolidatedCSSApp):
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        overrides: ConsoleContextPolicyOverrides | None = None,
+        global_overrides: ConsoleContextPolicyOverrides | None = None,
+    ):
         super().__init__()
         self.result = "unset"
+        self.overrides = overrides
+        self.global_overrides = global_overrides
 
     async def on_mount(self) -> None:
         settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -736,7 +1011,12 @@ class _PopoverApp(ConsolidatedCSSApp):
             self.result = result
 
         await self.push_screen(
-            ConsoleModelPopover(settings=settings, providers_models=_POPOVER_PROVIDERS),
+            _test_popover(
+                settings,
+                _POPOVER_PROVIDERS,
+                overrides=self.overrides,
+                global_overrides=self.global_overrides,
+            ),
             callback=_capture,
         )
 
@@ -755,11 +1035,47 @@ async def test_popover_apply_returns_replaced_settings():
         await pilot.pause()
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        assert app.result.model == "model-b"
-        assert app.result.provider == "llama_cpp"
+        assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+        committed = app.result.live_commit.settings
+        assert committed.model == "model-b"
+        assert committed.provider == "llama_cpp"
         # ConsoleSessionSettings defaults streaming True; one toggle flips it.
-        assert app.result.streaming is False
+        assert committed.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_popover_untouched_automatic_compaction_stays_inherited():
+    app = _PopoverApp(
+        global_overrides=ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.AUTOMATIC
+        )
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.live_commit.context_policy_overrides.compaction_mode is None
+
+
+@pytest.mark.asyncio
+async def test_popover_off_then_automatic_compaction_is_explicit():
+    app = _PopoverApp(
+        overrides=ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.OFF
+        )
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        select = app.screen.query_one("#console-popover-compaction-mode", Select)
+        select.value = ContextCompactionMode.AUTOMATIC.value
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert (
+        app.result.live_commit.context_policy_overrides.compaction_mode
+        is ContextCompactionMode.AUTOMATIC
+    )
 
 
 @pytest.mark.asyncio
@@ -768,12 +1084,36 @@ async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
     async with app.run_test(size=(90, 30)) as pilot:
         await pilot.click("#console-popover-full-settings")
         await pilot.pause()
-        assert app.result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS
+        assert isinstance(app.result, ConsoleSettingsTransfer)
+        assert app.result.origin.session_id == "popover-session"
     app2 = _PopoverApp()
     async with app2.run_test(size=(90, 30)) as pilot:
         await pilot.press("escape")
         await pilot.pause()
         assert app2.result is None
+
+
+@pytest.mark.asyncio
+async def test_popover_model_picker_escape_restores_then_dismisses_popover():
+    """The shared picker must not trap a second Escape in the quick popover."""
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        picker = app.screen.query_one(
+            "#console-popover-model-search", ModelSearchPicker
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, ConsoleModelPopover)
+        assert picker.value == "model-a"
+        assert app.result == "unset"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConsoleModelPopover)
+        assert app.result is None
 
 
 @pytest.mark.asyncio
@@ -786,8 +1126,8 @@ async def test_popover_apply_with_blank_temperature_clears_it():
         temperature_input.value = ""
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        assert app.result.temperature is None
+        assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+        assert app.result.live_commit.settings.temperature is None
 
 
 @pytest.mark.parametrize("invalid_text", ["nan", "5.5", "-1"])
@@ -798,15 +1138,10 @@ async def test_popover_apply_rejects_nan_and_out_of_range_temperature(invalid_te
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
         temperature_input = app.screen.query_one("#console-popover-temperature", Input)
-        prior_temperature = temperature_input.value
         temperature_input.value = invalid_text
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        # Mirrors ConsoleSettingsModal's [0.0, 2.0] bound (NaN always fails
-        # the range comparison too): an invalid value keeps the prior
-        # temperature rather than applying it.
-        assert app.result.temperature == float(prior_temperature)
+        assert app.result == "unset"
 
 
 @pytest.mark.asyncio
@@ -819,8 +1154,8 @@ async def test_popover_apply_accepts_in_range_temperature():
         temperature_input.value = "1.2"
         await pilot.click("#console-popover-apply")
         await pilot.pause()
-        assert isinstance(app.result, ConsoleSessionSettings)
-        assert app.result.temperature == 1.2
+        assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+        assert app.result.live_commit.settings.temperature == 1.2
 
 
 class _PopoverSearchScope:
@@ -874,9 +1209,7 @@ class _PopoverSearchApp(ConsolidatedCSSApp):
             self.result = result
 
         await self.push_screen(
-            ConsoleModelPopover(
-                settings=settings, providers_models=self.providers_models
-            ),
+            _test_popover(settings, self.providers_models),
             callback=_capture,
         )
 
@@ -977,7 +1310,8 @@ async def test_popover_custom_model_uses_shared_picker_escape_hatch():
         await pilot.pause()
 
     assert app.result is not None
-    assert app.result.model == "private/model-id"
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.live_commit.settings.model == "private/model-id"
 
 
 @pytest.mark.asyncio
@@ -1055,7 +1389,9 @@ def _overflow_conversation_browser():
         )
         for i in range(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
     )
-    return build_console_conversation_browser_state(rows=rows, active_workspace_id="ws-a")
+    return build_console_conversation_browser_state(
+        rows=rows, active_workspace_id="ws-a"
+    )
 
 
 class _OverflowTrayApp(ConsolidatedCSSApp):
@@ -1075,9 +1411,7 @@ async def test_rail_discloses_conversations_hidden_by_the_cap_in_no_query_view()
     Ctrl+K, instead of silently dropping the oldest with no affordance."""
     app = _OverflowTrayApp()
     async with app.run_test(size=(70, 40)):
-        status = app.query_one(
-            "#console-workspace-conversation-search-status", Static
-        )
+        status = app.query_one("#console-workspace-conversation-search-status", Static)
         text = str(getattr(status.renderable, "plain", status.renderable))
         assert "3 more" in text
         assert "Ctrl+K" in text

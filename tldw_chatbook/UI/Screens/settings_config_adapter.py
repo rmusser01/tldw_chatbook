@@ -17,33 +17,109 @@ else:
     import tomllib
 
 from ...config import (
+    ConfigFileSnapshot,
     delete_settings_from_cli_config,
     get_cli_config_path,
     load_cli_config_and_ensure_existence,
     read_cli_config_backup_serialized,
     read_cli_config_serialized,
+    read_cli_config_snapshot,
     replace_cli_config_serialized,
+    replace_cli_config_snapshot,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
+from ...Utils.path_validation import validate_path_simple
 from .settings_config_models import SettingsValidationResult
 
 
+#: ``NAME = value`` / ``NAME: value`` where the name itself declares a secret.
+#:
+#: TASK-23190 widened the separator from ``=`` to ``[:=]``. The name vocabulary
+#: is unchanged, so this cannot fire on prose that does not already name a
+#: credential -- but it is how every HTTP credential header is written
+#: (``X-Api-Key: <token>``, ``X-Auth-Token: <token>``), and those reached the
+#: Settings surface verbatim while the identical ``=`` spelling was redacted.
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?P<key>[A-Za-z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_-]*)"
-    r"(?P<sep>\s*=\s*)"
+    r"(?P<sep>\s*[:=]\s*)"
     r"(?P<value>[^\s,;]+)",
+    re.IGNORECASE,
+)
+
+#: ``Authorization: Bearer <token>``. The name that classifies this line is
+#: ``Authorization``, which matches none of the labels above, so before
+#: TASK-23190 the whole header -- token included -- was displayed unchanged.
+#: Anchored on the scheme keyword instead, exactly as ``log_sanitizer._BEARER``
+#: does for the log sinks.
+_BEARER_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<prefix>Bearer\s+)(?P<value>\S+)",
+    re.IGNORECASE,
+)
+
+#: A bare ``key`` query parameter -- ``...?key=<token>&cx=...`` is how Google's
+#: Custom Search credential travels. ``key`` is deliberately NOT added to the
+#: name vocabulary above (it would swallow any prose "key = ..."); it is
+#: recognised only in query-string position, where the preceding ``?``/``&``
+#: proves it is a parameter name rather than a word. ``api_key``/``apikey``
+#: already match the assignment rule wherever they appear.
+_QUERY_KEY_PATTERN = re.compile(
+    r"(?P<prefix>[?&]key=)(?P<value>[^\s&#,;]+)",
     re.IGNORECASE,
 )
 
 
 def redact_secret_text(text: str) -> str:
-    """Redact secret-looking assignment values from visible Settings output."""
+    """Redact secret-looking values from visible Settings output.
 
-    def _replace(match: re.Match[str]) -> str:
+    Covers three shapes: a ``NAME=value``/``NAME: value`` assignment whose name
+    declares a credential, an ``Authorization: Bearer <token>`` header, and a
+    bare ``?key=<token>`` query parameter. This is a denylist and denylists are
+    never complete -- an opaque token in none of those forms survives -- so it
+    remains defence in depth behind ``failure_status_text``, which keeps raw
+    exception text out of user-facing copy in the first place.
+
+    Args:
+        text: Any value destined for a visible Settings surface.
+
+    Returns:
+        ``text`` with recognised credential values replaced by ``<redacted>``.
+    """
+
+    def _replace_assignment(match: re.Match[str]) -> str:
         return f"{match.group('key')}{match.group('sep')}<redacted>"
 
-    return _SECRET_ASSIGNMENT_PATTERN.sub(_replace, str(text))
+    def _replace_prefixed(match: re.Match[str]) -> str:
+        return f"{match.group('prefix')}<redacted>"
+
+    result = _SECRET_ASSIGNMENT_PATTERN.sub(_replace_assignment, str(text))
+    result = _BEARER_PATTERN.sub(_replace_prefixed, result)
+    return _QUERY_KEY_PATTERN.sub(_replace_prefixed, result)
+
+
+def failure_status_text(summary: str, exc: BaseException, *, next_step: str) -> str:
+    """Compose a plain-language failure line for user-facing Settings output.
+
+    TASK-23108: raw exception text must never be the primary user-facing
+    message -- it can embed URLs, header dumps, or secret fragments, and it
+    reads as developer output. The exception contributes only its type name;
+    the caller is responsible for logging the full (redacted) detail so it
+    stays reachable. The composed line still passes through
+    ``redact_secret_text`` as defence in depth.
+
+    Args:
+        summary: Plain-language statement of what failed, without trailing
+            punctuation (e.g. ``"Model discovery failed"``).
+        exc: The caught exception; only ``type(exc).__name__`` is shown.
+        next_step: The suggested user action, as a full sentence.
+
+    Returns:
+        ``"<summary> (<ExcType>). <next_step> Details are in Logs (F3)."``
+    """
+    kind = type(exc).__name__
+    return redact_secret_text(
+        f"{summary} ({kind}). {next_step} Details are in Logs (F3)."
+    )
 
 
 def _is_toml_scalar_value(text: str) -> bool:
@@ -80,9 +156,26 @@ class SettingsConfigAdapter:
 
         return replace_cli_config_serialized(text, create_backup=True)
 
+    def read_snapshot(self) -> ConfigFileSnapshot:
+        """Read raw text and its effective file identity through the config owner."""
+
+        validate_path_simple(self.config_path(), require_exists=False)
+        return read_cli_config_snapshot()
+
+    def replace_snapshot(
+        self,
+        text: str,
+        snapshot: ConfigFileSnapshot,
+    ) -> tuple[dict[str, Any], Path | None, ConfigFileSnapshot]:
+        """Replace raw text only if the editor's exact file baseline still matches."""
+
+        validate_path_simple(self.config_path(), require_exists=False)
+        return replace_cli_config_snapshot(text, snapshot, create_backup=True)
+
     def read_backup_serialized(self) -> str:
         """Read the exact serialized advanced-editor backup."""
 
+        validate_path_simple(self.config_path(), require_exists=False)
         return read_cli_config_backup_serialized()
 
     def save_values(self, section: str, values: Mapping[str, Any]) -> bool:
@@ -164,4 +257,15 @@ class SettingsConfigAdapter:
                 False, "top-level TOML value must be a table"
             )
 
-        return SettingsValidationResult(True, "Config file TOML is valid")
+        # TASK-26039: advisory unknown/deprecated key report. Never affects
+        # validity -- a typo or a stale key must not block startup.
+        from tldw_chatbook.config import (
+            validate_config_keys,
+            format_config_key_report,
+        )
+
+        advisory = format_config_key_report(validate_config_keys(parsed))
+        message = "Config file TOML is valid"
+        if advisory:
+            message = f"{message}. {advisory}"
+        return SettingsValidationResult(True, message)

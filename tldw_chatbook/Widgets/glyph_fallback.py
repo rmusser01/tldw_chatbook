@@ -34,6 +34,7 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     # which mirrors these keys as literals.
     "●": "[*]",  # agent running / in progress
     "◆": "[!]",  # waiting for approval
+    "⚠": "[!]",  # stuck/blocked (STATUS_GLYPHS) -- same attention mark
     "✗": "[X]",  # failed
     "✓": "[x]",  # finished ok / done
     "◈": "[s]",  # background sub-agent ended -- unseen (PR3a-2 Task 4)
@@ -46,6 +47,7 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     "▸": ">",  # collapsed / active / collapse-right
     "◂": "<",  # collapse-left
     "▾": "v",  # expanded
+    "▢": "+",  # unset conversation-appearance slot (task-31207)
     # RAG scope source types.
     "▦": "[M]",  # media
     "✎": "[N]",  # note

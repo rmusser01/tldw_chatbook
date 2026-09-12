@@ -1,0 +1,5 @@
+{
+  "kind": "automated",
+  "result_name": "Tests/UI/test_library_multiselect_media.py::test_delete_selection_soft_deletes_via_real_db_and_updates_records_and_counts",
+  "status": "PASS"
+}

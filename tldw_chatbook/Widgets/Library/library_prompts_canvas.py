@@ -29,7 +29,10 @@ from tldw_chatbook.Library.library_prompts_state import (
     definition_state_display_label,
     prompt_editor_meta_line,
 )
-from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
+)
 from tldw_chatbook.Library.library_shell_state import (
     library_choice_label,
     library_choice_tooltip,
@@ -52,6 +55,7 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
@@ -127,8 +131,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             trailing "Unsaved changes" marker via ``prompt_editor_meta_line``
             on this initial compose. Per-keystroke updates never recompose
             this widget at all (the screen updates ``#library-prompt-meta``
-            in place instead -- see
-            ``LibraryScreen._update_library_prompt_meta_static``); this
+            in place instead -- see the prompts controller's
+            ``_update_library_prompt_meta_static``); this
             constructor argument only matters for the handful of flows that
             already do a full recompose while dirty (initial load, Duplicate,
             conflict entry/resolution).
@@ -142,6 +146,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         import_status: Muted outcome line shown below the Import row
             (e.g. ``"2 imported · 1 skipped (duplicate name)"``), or
             ``""`` when idle/not yet run.
+        identity_mismatch: Whether the selected Items identity differs from
+            the last successfully loaded Work identity. The editor remains
+            visible but read-only until the selection loads or is retried.
+        detail_notice: Truthful selected-versus-loaded loading or failure copy.
+        detail_retryable: Whether the current detail failure exposes Retry.
     """
 
     def __init__(
@@ -154,7 +163,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         pager: LibraryPagerDisplay | None = None,
         mode: str = "list",
         editor_state: PromptEditorState | None = None,
-        editor_mode: str = "advanced",
+        editor_mode: str = "basic",
         basic_unavailable_reason: str = "",
         conflict: bool = False,
         status: str = "",
@@ -177,6 +186,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         mutation_in_flight: bool = False,
         page_actions_disabled: bool = False,
         write_in_flight: bool = False,
+        bulk_read_only: bool = False,
+        bulk_included: bool | None = None,
+        identity_mismatch: bool = False,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -208,6 +222,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.mutation_in_flight = mutation_in_flight
         self.page_actions_disabled = page_actions_disabled
         self.write_in_flight = write_in_flight
+        self.bulk_read_only = bulk_read_only
+        self.bulk_included = bulk_included
+        self.identity_mismatch = identity_mismatch
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
         self.more_actions_open = False
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -215,11 +234,18 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     def compose(self) -> ComposeResult:
         if self.mode == "loading":
             yield Static(
-                "Loading prompt…",
+                self.detail_notice or "Loading prompt…",
                 id="library-prompt-loading",
                 classes="destination-purpose",
                 markup=False,
             )
+            if self.detail_retryable:
+                yield Button(
+                    "Retry",
+                    id="library-prompt-detail-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
             return
         if self.mode == "editor":
             yield from self._compose_editor()
@@ -251,10 +277,19 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         membership_state: PromptMembershipState | None,
         sort_choices_visible: bool,
         page_actions_disabled: bool,
-        editor_mode: str = "advanced",
+        mutation_status: str = "",
+        delete_receipt: LibraryPromptDeleteReceipt
+        | PromptBatchDeleteResult
+        | None = None,
+        editor_mode: str = "basic",
         basic_unavailable_reason: str = "",
         mutation_in_flight: bool = False,
         write_in_flight: bool = False,
+        bulk_read_only: bool = False,
+        bulk_included: bool | None = None,
+        identity_mismatch: bool = False,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
     ) -> None:
         """Apply a complete prompt snapshot within the mounted canvas.
 
@@ -282,7 +317,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             sort_choices_visible: Whether the sort chooser is expanded.
             page_actions_disabled: Whether stale retained rows and bulk actions
                 are read-only until an authoritative refresh succeeds.
+            mutation_status: Current list mutation outcome copy.
+            delete_receipt: Current single- or batch-delete receipt.
         """
+        self.preserve_same_id_focus_after_recompose()
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
@@ -307,8 +345,15 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.membership_state = membership_state
         self.sort_choices_visible = sort_choices_visible
         self.page_actions_disabled = page_actions_disabled
+        self.mutation_status = mutation_status
+        self.delete_receipt = delete_receipt
         self.mutation_in_flight = mutation_in_flight
         self.write_in_flight = write_in_flight
+        self.bulk_read_only = bulk_read_only
+        self.bulk_included = bulk_included
+        self.identity_mismatch = identity_mismatch
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
         self.refresh(recompose=True)
 
     async def set_editor_mode(self, mode: str) -> None:
@@ -318,17 +363,19 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         basic_region = self.query_one("#library-prompt-basic-region")
         advanced_region = self.query_one("#library-prompt-advanced-region")
         advanced_extras = self.query_one("#library-prompt-advanced-extras")
+        info_region = self.query_one("#library-prompt-info-region")
         focused_will_hide = bool(
             focused is not None
             and (
                 (
-                    requested == "advanced"
+                    requested in {"advanced", "info"}
                     and basic_region in focused.ancestors_with_self
                 )
                 or (
                     requested == "basic"
                     and (
                         advanced_region in focused.ancestors_with_self
+                        or info_region in focused.ancestors_with_self
                         or advanced_extras in focused.ancestors_with_self
                     )
                 )
@@ -346,6 +393,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.query_one("#library-prompt-advanced-region").display = (
             effective == "advanced"
         )
+        self.query_one("#library-prompt-info-region").display = effective == "info"
         self.query_one("#library-prompt-artifact-status").display = (
             effective == "advanced"
         )
@@ -355,10 +403,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             effective == "advanced"
         )
         self.query_one("#library-prompt-advanced-extras").display = (
-            effective == "advanced"
+            effective in {"advanced", "info"}
         )
         for selector in ("#library-prompt-system", "#library-prompt-user"):
-            self.query_one(selector, TextArea).read_only = effective != "basic"
+            self.query_one(selector, TextArea).read_only = (
+                effective != "basic"
+                or self.bulk_read_only
+                or self.identity_mismatch
+            )
         if focused_will_hide:
             self.call_after_refresh(
                 self._restore_editor_mode_focus,
@@ -372,12 +424,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         mode_control_ids = {
             "library-prompt-mode-basic",
             "library-prompt-mode-advanced",
+            "library-prompt-mode-info",
         }
         live_focus_is_hidden = bool(
             live_focus is not None
             and (
                 (
-                    effective_mode == "advanced"
+                    effective_mode in {"advanced", "info"}
                     and self.query_one("#library-prompt-basic-region")
                     in live_focus.ancestors_with_self
                 )
@@ -385,6 +438,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     effective_mode == "basic"
                     and (
                         self.query_one("#library-prompt-advanced-region")
+                        in live_focus.ancestors_with_self
+                        or self.query_one("#library-prompt-info-region")
                         in live_focus.ancestors_with_self
                         or self.query_one("#library-prompt-advanced-extras")
                         in live_focus.ancestors_with_self
@@ -402,6 +457,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         target = self.query_one(
             "#library-prompt-mode-basic"
             if effective_mode == "basic"
+            else "#library-prompt-mode-info"
+            if effective_mode == "info"
             else "#library-prompt-mode-advanced",
             Button,
         )
@@ -427,7 +484,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         if state is None:
             return
         is_new = state.prompt_id is None
-        busy = self.mutation_in_flight or self.write_in_flight
+        busy = self.mutation_in_flight or self.write_in_flight or self.bulk_read_only
         clean_saved = not self.conflict and not is_new and not self.dirty
         save = self.query_one("#library-prompt-save", Button)
         save.display = not self.conflict and (is_new or self.dirty)
@@ -437,6 +494,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         use_console = self.query_one("#library-prompt-insert-console", Button)
         use_console.display = clean_saved
         use_console.disabled = busy
+        # task-32074 (fix round 2): keep the row's own display in lockstep
+        # with its one control -- see the matching compose-time assignment.
+        self.query_one("#library-prompt-header-actions").display = clean_saved
         more = self.query_one("#library-prompt-more-actions", Button)
         more.display = clean_saved
         more.disabled = busy
@@ -461,6 +521,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     @on(Button.Pressed, "#library-prompt-more-actions")
     def _toggle_more_actions(self, event: Button.Pressed) -> None:
         event.stop()
+        if self.bulk_read_only:
+            return
         self.more_actions_open = not self.more_actions_open
         self.query_one("#library-prompt-more-actions-region").display = (
             self.more_actions_open
@@ -602,7 +664,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     classes="library-toolbar-count",
                     markup=False,
                 )
-            receipt_actions = Horizontal(classes="ds-toolbar")
+            receipt_actions = Horizontal(
+                id="library-prompts-delete-receipt-actions",
+                classes="ds-toolbar",
+            )
             receipt_actions.styles.height = "auto"
             with receipt_actions:
                 yield Button(
@@ -676,11 +741,19 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             zero_selection = state.total_selected == 0
             clear_disabled = zero_selection or self.mutation_in_flight
             selection_disabled = zero_selection or page_actions_disabled
-            management_toolbar = Horizontal(classes="ds-toolbar")
+            management_toolbar = Horizontal(
+                id="library-prompts-selection-management-actions",
+                classes="ds-toolbar",
+            )
             management_toolbar.styles.height = "auto"
             with management_toolbar:
                 yield Button(
-                    library_disabled_action_label("Select page", select_page_disabled),
+                    # task-31959 (batch-3 review, minor 3): padded too --
+                    # it sits auto-width LEFT of "Clear all" in this row, so
+                    # its own flip moved its padded neighbours two cells.
+                    library_disabled_action_label(
+                        "Select page", select_page_disabled, align=True
+                    ),
                     id="library-prompts-select-page",
                     classes="library-canvas-action",
                     compact=True,
@@ -698,7 +771,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     ),
                 )
                 yield Button(
-                    library_disabled_action_label("Clear all", clear_disabled),
+                    # task-31959: the enabled spelling reserves the "○"
+                    # marker's own width, so the word holds its column when
+                    # the first selection enables this action.
+                    library_disabled_action_label(
+                        "Clear all", clear_disabled, align=True
+                    ),
                     id="library-prompts-clear-selection",
                     classes="library-canvas-action",
                     compact=True,
@@ -730,7 +808,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 selection_toolbar.styles.height = "auto"
                 with selection_toolbar:
                     yield Button(
-                        library_disabled_action_label(label, selection_disabled),
+                        # task-31959: same marker-width reservation as
+                        # "Clear all" above -- these flip with the count too.
+                        library_disabled_action_label(
+                            label, selection_disabled, align=True
+                        ),
                         id=action_id,
                         classes="library-canvas-action",
                         compact=True,
@@ -924,9 +1006,21 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 # description) and must be escaped too, not just the name.
                 name = escape_markup(row.name)
                 secondary = escape_markup(row.secondary) if row.secondary else ""
-                artifact_summary = escape_markup(
-                    f"{row.type_label} · {row.source_label} · {row.lane_summary}"
-                )
+                # task-32364: the canvas is already titled Prompts, so a
+                # leading "Prompt · " on every row spent cells telling the
+                # reader where they already are. The other artifact types
+                # (Recipe, Template) still name themselves -- they are the
+                # ones the canvas title does NOT cover.
+                summary_parts = [
+                    part
+                    for part in (
+                        "" if row.artifact_type == "prompt" else row.type_label,
+                        row.source_label,
+                        row.lane_summary,
+                    )
+                    if part
+                ]
+                artifact_summary = escape_markup(" · ".join(summary_parts))
                 selection_prefix = ""
                 if state.select_mode:
                     selection_prefix = "☑ " if row.checked else "☐ "
@@ -935,7 +1029,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     artifact_summary,
                     secondary,
                 )
-                button = Button(
+                # task-31945: shared row press behaviour (no 0.2s flash
+                # swallowing the next click on the same row).
+                button = library_row_button(
                     library_disabled_action_label(
                         "\n".join(part for part in label_parts if part),
                         page_actions_disabled,
@@ -956,26 +1052,23 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
 
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
         """Render the controller-derived Prompt pager without recalculation."""
+        # task-32067: Media's one-page rule (task-28016 + task-31237), applied
+        # here too -- from the ONE helper that states it (task-32104).
+        layout = library_pager_layout(pager)
         with Vertical(id="library-prompts-pager"):
-            copy = " · ".join(part for part in (pager.range_copy, pager.page_copy) if part)
             yield Static(
-                copy,
+                " · ".join(layout.status_parts),
                 id="library-prompts-page-label",
                 markup=False,
             )
-            reasons = tuple(
-                dict.fromkeys(
-                    reason
-                    for reason in (pager.previous_reason, pager.next_reason)
-                    if reason
-                )
-            )
             yield Static(
-                " · ".join((pager.status_copy, *reasons)).strip(" ·"),
+                " · ".join((pager.status_copy, *layout.boundary_reasons)).strip(" ·"),
                 id="library-prompts-page-status",
                 classes="destination-purpose",
                 markup=False,
             )
+            if layout.controls_hidden:
+                return
             previous_disabled = pager.previous_disabled or self.mutation_in_flight
             next_disabled = pager.next_disabled or self.mutation_in_flight
             toolbar = Horizontal(classes="ds-toolbar")
@@ -1129,7 +1222,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         if editor_state is None:
             return
         effective_mode = (
-            "advanced" if self.basic_unavailable_reason else self.editor_mode
+            "advanced"
+            if self.editor_mode == "basic" and self.basic_unavailable_reason
+            else self.editor_mode
+        )
+        item_locked = (
+            self.mutation_in_flight
+            or self.bulk_read_only
+            or self.identity_mismatch
         )
         with Vertical(id="library-prompt-editor-shell"):
             with VerticalScroll(id="library-prompt-editor-content"):
@@ -1140,20 +1240,47 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         classes="destination-purpose",
                         markup=False,
                     )
+                bulk_status = Static(
+                    (
+                        "Read-only preview · Included in bulk selection"
+                        if self.bulk_included
+                        else "Read-only preview · Not included in bulk selection"
+                    ),
+                    id="library-prompt-bulk-status",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+                bulk_status.display = self.bulk_read_only
+                yield bulk_status
+                detail_status = Static(
+                    self.detail_notice,
+                    id="library-prompt-detail-status",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+                detail_status.display = self.identity_mismatch
+                yield detail_status
+                if self.identity_mismatch and self.detail_retryable:
+                    yield Button(
+                        "Retry",
+                        id="library-prompt-detail-retry",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
                 yield Button(
                     library_disabled_action_label(
-                        "‹ Back to list", self.mutation_in_flight
+                        "‹ Back to list", item_locked
                     ),
                     id="library-prompt-back",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 yield Static("Name", classes="library-prompt-field-label", markup=False)
                 yield Input(
                     value=editor_state.name,
                     id="library-prompt-name",
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 # Task 8b U4: rendered label only -- the DB/record field name
                 # (``details``, ``#library-prompt-details``) is untouched.
@@ -1163,7 +1290,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 yield Input(
                     value=editor_state.details,
                     id="library-prompt-details",
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 with Horizontal(id="library-prompt-mode-controls"):
                     basic_mode = Button(
@@ -1185,6 +1312,52 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         compact=True,
                         disabled=self.mutation_in_flight,
                     )
+                    yield Button(
+                        "Info",
+                        id="library-prompt-mode-info",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=self.mutation_in_flight,
+                    )
+                # task-32074: the prompt's primary outbound action, in the
+                # header directly under the mode tabs -- the same place the
+                # Media Reader keeps its own "Use in Console" (its action row
+                # sits beside the Read/Analysis/Highlights/Info row, not in
+                # it). At the bottom of the editor (row 49 of 52 live) it was
+                # below every field and the whole history region.
+                #
+                # Fix round 1: its OWN row, not a fourth control inside
+                # ``#library-prompt-mode-controls``. That row is a bare
+                # Horizontal with no overflow rule, and the prompts work pane
+                # floors at 48 cells: measured, a fourth ~16-cell control
+                # starts at column 48 and lands entirely outside a 44-cell
+                # canvas. Same ruling as task-30043 on the media canvas, where
+                # a fourth action got its own row for exactly this reason.
+                header_actions = Horizontal(
+                    id="library-prompt-header-actions", classes="ds-toolbar"
+                )
+                header_actions.styles.height = "auto"
+                with header_actions:
+                    use_console = Button(
+                        "Use in Console",
+                        id="library-prompt-insert-console",
+                        classes="library-canvas-action console-action-primary",
+                        compact=True,
+                        disabled=item_locked,
+                    )
+                    use_console.display = (
+                        not self.conflict
+                        and editor_state.prompt_id is not None
+                        and not self.dirty
+                    )
+                    yield use_console
+                # task-32074 (fix round 2): the row itself carries
+                # ``ds-toolbar`` (min-height 1, a raised background), so with
+                # the button hidden -- every dirty edit, every new prompt,
+                # the conflict state -- it still painted a bare full-width
+                # strip under the mode tabs. Only ONE control lives in this
+                # row today, so its display always follows the button's.
+                header_actions.display = use_console.display
                 yield Static(
                     self.basic_unavailable_reason,
                     id="library-prompt-mode-reason",
@@ -1232,13 +1405,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             host_owned_lifecycle=True,
                             id="library-prompt-block-editor",
                         )
-                        block_editor.disabled = self.mutation_in_flight
+                        block_editor.disabled = item_locked
                         yield block_editor
                         yield Checkbox(
                             "Include current text as starter content",
                             value=self.include_starter_content,
                             id="library-prompt-recipe-starter",
-                            disabled=self.mutation_in_flight,
+                            disabled=item_locked,
                         )
                     else:
                         yield Static(
@@ -1253,7 +1426,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action",
                             compact=True,
                             disabled=(
-                                self.mutation_in_flight
+                                item_locked
                                 or not editor_state.can_convert_as_new
                             ),
                         )
@@ -1279,7 +1452,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     )
                     yield TextArea(
                         basic_system,
-                        read_only=effective_mode != "basic",
+                        read_only=effective_mode != "basic" or item_locked,
                         id="library-prompt-system",
                     )
                     yield Static(
@@ -1295,14 +1468,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     )
                     yield TextArea(
                         basic_user,
-                        read_only=effective_mode != "basic",
+                        read_only=effective_mode != "basic" or item_locked,
                         id="library-prompt-user",
                     )
                 keywords = Input(
                     value=editor_state.keywords_csv,
                     placeholder="Keywords (comma-separated)",
                     id="library-prompt-keywords",
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 keywords.display = effective_mode == "advanced"
                 yield keywords
@@ -1317,7 +1490,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 author = Input(
                     value=editor_state.author,
                     id="library-prompt-author",
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 author.display = effective_mode == "advanced"
                 yield author
@@ -1326,6 +1499,26 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompt-meta",
                     markup=False,
                 )
+                info_region = Vertical(id="library-prompt-info-region")
+                info_region.display = effective_mode == "info"
+                with info_region:
+                    yield Static(
+                        (
+                            f"Persisted source: {editor_state.source.title()} · "
+                            f"{editor_state.artifact_type.title()} · "
+                            f"{definition_state_display_label(editor_state.definition_state)}"
+                        ),
+                        id="library-prompt-info-provenance",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                    yield Static(
+                        "History and collection memberships describe the saved Prompt; "
+                        "unsaved Basic or Advanced edits remain draft-only until Save.",
+                        id="library-prompt-info-lifecycle",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
                 if self.conflict:
                     yield Static(
                         "This item changed elsewhere — Reload the current version or "
@@ -1350,10 +1543,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             id="library-prompt-open-existing",
                             classes="library-canvas-action",
                             compact=True,
-                            disabled=self.mutation_in_flight,
+                            disabled=item_locked,
                         )
                 advanced_extras = Vertical(id="library-prompt-advanced-extras")
-                advanced_extras.display = effective_mode == "advanced"
+                advanced_extras.display = effective_mode in {"advanced", "info"}
                 with advanced_extras:
                     if self.membership_state is not None:
                         yield Static(
@@ -1373,7 +1566,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action",
                             compact=True,
                             disabled=not (
-                                not self.mutation_in_flight
+                                not item_locked
                                 and (
                                     self.membership_state.can_manage
                                     or self.membership_state.can_retry_load
@@ -1386,7 +1579,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action",
                             compact=True,
                             disabled=(
-                                self.mutation_in_flight
+                                item_locked
                                 or not self.membership_state.can_apply
                             ),
                         )
@@ -1405,7 +1598,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         current_compatible=self.history_current_compatible,
                         id="library-prompt-history-region",
                     )
-                    history_region.disabled = self.mutation_in_flight
+                    history_region.disabled = item_locked
                     yield history_region
 
             with Vertical(id="library-prompt-editor-actions"):
@@ -1416,7 +1609,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     classes="library-canvas-action console-action-primary",
                     compact=True,
                     disabled=(
-                        self.mutation_in_flight
+                        item_locked
                         or self.write_in_flight
                         or (
                             not is_new
@@ -1426,21 +1619,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 )
                 save.display = not self.conflict and (is_new or self.dirty)
                 yield save
-                use_console = Button(
-                    "Use in Console",
-                    id="library-prompt-insert-console",
-                    classes="library-canvas-action console-action-primary",
-                    compact=True,
-                    disabled=self.mutation_in_flight,
-                )
-                use_console.display = not self.conflict and not is_new and not self.dirty
-                yield use_console
+                # task-32074: "Use in Console" moved up into
+                # ``#library-prompt-mode-controls`` -- see the header above.
                 more = Button(
                     "More actions",
                     id="library-prompt-more-actions",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 more.display = not self.conflict and not is_new and not self.dirty
                 yield more
@@ -1449,7 +1635,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompt-conflict-save-new",
                     classes="library-canvas-action console-action-primary",
                     compact=True,
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 save_new.display = self.conflict
                 yield save_new
@@ -1458,7 +1644,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompt-conflict-reload",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=self.mutation_in_flight,
+                    disabled=item_locked,
                 )
                 reload_button.display = self.conflict
                 yield reload_button
@@ -1468,7 +1654,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     classes="library-canvas-action",
                     compact=True,
                     disabled=(
-                        self.mutation_in_flight
+                        item_locked
                         or self.write_in_flight
                     ),
                     tooltip=(
@@ -1508,7 +1694,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             id=widget_id,
                             classes=classes,
                             compact=True,
-                            disabled=self.mutation_in_flight,
+                            disabled=item_locked,
                         )
 
     @staticmethod
@@ -1566,10 +1752,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         manage = self.query_one("#library-prompt-memberships-manage", Button)
         manage.label = self._membership_manage_label(state)
-        manage.disabled = not (state.can_manage or state.can_retry_load)
+        interaction_locked = self.mutation_in_flight or self.bulk_read_only
+        manage.disabled = interaction_locked or not (
+            state.can_manage or state.can_retry_load
+        )
         self.query_one(
             "#library-prompt-memberships-apply", Button
-        ).disabled = not state.can_apply
+        ).disabled = interaction_locked or not state.can_apply
 
     def on_prompt_block_editor_block_field_changed(
         self, event: PromptBlockEditor.BlockFieldChanged

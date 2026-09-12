@@ -1,0 +1,9 @@
+{
+  "tested_at": "2026-09-05T22:16:27.801337+00:00",
+  "credential_source": "existing Codex OAuth login",
+  "endpoint": "wss://api.openai.com/v1/realtime?model=gpt-realtime",
+  "microphone_opened": false,
+  "conversation_or_audio_sent": false,
+  "handshake_accepted": true,
+  "first_event_type": "session.created"
+}

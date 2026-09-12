@@ -1,0 +1,16 @@
+{
+  "config_library_open": true,
+  "conversation_preference_open": true,
+  "durable_library_open": true,
+  "media_effective_open": true,
+  "media_preference_open": true,
+  "shared_generation": 2,
+  "svg": "shared-library-stale-skip-newer-failure.svg",
+  "writes": [
+    [
+      "library.reader",
+      "library_open",
+      true
+    ]
+  ]
+}

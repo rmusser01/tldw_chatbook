@@ -1,0 +1,743 @@
+{
+  "animations": {
+    "alert-idle": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "alert-idle-1",
+          "duration_ms": 1700
+        },
+        {
+          "asset_id": "alert-idle-2",
+          "duration_ms": 140
+        },
+        {
+          "asset_id": "alert-idle-3",
+          "duration_ms": 800
+        },
+        {
+          "asset_id": "alert-idle-4",
+          "duration_ms": 140
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "confused": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "confused-1",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "confused-2",
+          "duration_ms": 550
+        },
+        {
+          "asset_id": "confused-3",
+          "duration_ms": 500
+        },
+        {
+          "asset_id": "confused-4",
+          "duration_ms": 550
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "error": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "error-1",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "error-2",
+          "duration_ms": 500
+        },
+        {
+          "asset_id": "error-3",
+          "duration_ms": 900
+        },
+        {
+          "asset_id": "error-4",
+          "duration_ms": 500
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "happy": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "happy-1",
+          "duration_ms": 220
+        },
+        {
+          "asset_id": "happy-2",
+          "duration_ms": 240
+        },
+        {
+          "asset_id": "happy-3",
+          "duration_ms": 440
+        },
+        {
+          "asset_id": "happy-4",
+          "duration_ms": 300
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "idle": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "idle-1",
+          "duration_ms": 1700
+        },
+        {
+          "asset_id": "idle-2",
+          "duration_ms": 140
+        },
+        {
+          "asset_id": "idle-3",
+          "duration_ms": 1500
+        },
+        {
+          "asset_id": "idle-4",
+          "duration_ms": 140
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "pose-angry": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-angry",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-celebrate": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-celebrate",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-confused": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-confused",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-excited": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-excited",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-happy": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-happy",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-listening": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-listening",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-love": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-love",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-neutral": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-neutral",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-sad": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-sad",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-skeptical": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-skeptical",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-sleepy": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-sleepy",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-surprised": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-surprised",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-thinking": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-thinking",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-thumbs_up": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-thumbs_up",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-type": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-type",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "pose-wave": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "pose-wave",
+          "duration_ms": 1200
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "sleepy": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "sleepy-1",
+          "duration_ms": 850
+        },
+        {
+          "asset_id": "sleepy-2",
+          "duration_ms": 750
+        },
+        {
+          "asset_id": "sleepy-3",
+          "duration_ms": 850
+        },
+        {
+          "asset_id": "sleepy-4",
+          "duration_ms": 950
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "speaking": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "speaking-1",
+          "duration_ms": 240
+        },
+        {
+          "asset_id": "speaking-2",
+          "duration_ms": 160
+        },
+        {
+          "asset_id": "speaking-3",
+          "duration_ms": 240
+        },
+        {
+          "asset_id": "speaking-4",
+          "duration_ms": 160
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "think": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "think-1",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "think-2",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "think-3",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "think-4",
+          "duration_ms": 650
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "thinking": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "thinking-1",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "thinking-2",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "thinking-3",
+          "duration_ms": 400
+        },
+        {
+          "asset_id": "thinking-4",
+          "duration_ms": 650
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "thumbs-up": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "thumbs-up-1",
+          "duration_ms": 180
+        },
+        {
+          "asset_id": "thumbs-up-2",
+          "duration_ms": 260
+        },
+        {
+          "asset_id": "thumbs-up-3",
+          "duration_ms": 850
+        },
+        {
+          "asset_id": "thumbs-up-4",
+          "duration_ms": 260
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "type": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "type-1",
+          "duration_ms": 180
+        },
+        {
+          "asset_id": "type-2",
+          "duration_ms": 180
+        },
+        {
+          "asset_id": "type-3",
+          "duration_ms": 180
+        },
+        {
+          "asset_id": "type-4",
+          "duration_ms": 180
+        }
+      ],
+      "loop": true,
+      "preview_frame": 0
+    },
+    "wake-armed": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "alert-idle-3",
+          "duration_ms": 1000
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    },
+    "wave": {
+      "alignment": {
+        "x": 0.5,
+        "y": 1.0
+      },
+      "frames": [
+        {
+          "asset_id": "wave-1",
+          "duration_ms": 260
+        },
+        {
+          "asset_id": "wave-2",
+          "duration_ms": 180
+        },
+        {
+          "asset_id": "wave-3",
+          "duration_ms": 460
+        },
+        {
+          "asset_id": "wave-4",
+          "duration_ms": 300
+        }
+      ],
+      "loop": false,
+      "preview_frame": 0
+    }
+  },
+  "authored_triggers": [],
+  "fallbacks": {},
+  "manifest_version": 1,
+  "renderer_type": "sprite_frames",
+  "state_catalog": {
+    "mood.angry": {
+      "kind": "mood",
+      "label": "Angry"
+    },
+    "mood.celebrate": {
+      "kind": "mood",
+      "label": "Celebrate"
+    },
+    "mood.confused": {
+      "kind": "mood",
+      "label": "Confused"
+    },
+    "mood.excited": {
+      "kind": "mood",
+      "label": "Excited"
+    },
+    "mood.happy": {
+      "kind": "mood",
+      "label": "Happy"
+    },
+    "mood.listening": {
+      "kind": "mood",
+      "label": "Listening"
+    },
+    "mood.love": {
+      "kind": "mood",
+      "label": "Love"
+    },
+    "mood.neutral": {
+      "kind": "mood",
+      "label": "Neutral"
+    },
+    "mood.sad": {
+      "kind": "mood",
+      "label": "Sad"
+    },
+    "mood.skeptical": {
+      "kind": "mood",
+      "label": "Skeptical"
+    },
+    "mood.sleepy": {
+      "kind": "mood",
+      "label": "Sleepy"
+    },
+    "mood.surprised": {
+      "kind": "mood",
+      "label": "Surprised"
+    },
+    "mood.thinking": {
+      "kind": "mood",
+      "label": "Thinking"
+    },
+    "mood.thumbs_up": {
+      "kind": "mood",
+      "label": "Thumbs Up"
+    },
+    "mood.type": {
+      "kind": "mood",
+      "label": "Type"
+    },
+    "mood.wave": {
+      "kind": "mood",
+      "label": "Wave"
+    },
+    "pack_private.alert_idle": {
+      "kind": "pack_private",
+      "label": "Alert Idle"
+    },
+    "pack_private.confused": {
+      "kind": "pack_private",
+      "label": "Confused"
+    },
+    "pack_private.original_think": {
+      "kind": "pack_private",
+      "label": "Original Think"
+    },
+    "reaction.greeting": {
+      "kind": "reaction",
+      "label": "Greeting"
+    },
+    "reaction.happy": {
+      "kind": "reaction",
+      "label": "Happy"
+    },
+    "reaction.success": {
+      "kind": "reaction",
+      "label": "Success"
+    }
+  },
+  "states": {
+    "approval_needed": {
+      "animation_id": "pose-skeptical"
+    },
+    "error": {
+      "animation_id": "error"
+    },
+    "idle": {
+      "animation_id": "idle"
+    },
+    "listening": {
+      "animation_id": "pose-listening"
+    },
+    "mood.angry": {
+      "animation_id": "pose-angry"
+    },
+    "mood.celebrate": {
+      "animation_id": "pose-celebrate"
+    },
+    "mood.confused": {
+      "animation_id": "pose-confused"
+    },
+    "mood.excited": {
+      "animation_id": "pose-excited"
+    },
+    "mood.happy": {
+      "animation_id": "pose-happy"
+    },
+    "mood.listening": {
+      "animation_id": "pose-listening"
+    },
+    "mood.love": {
+      "animation_id": "pose-love"
+    },
+    "mood.neutral": {
+      "animation_id": "pose-neutral"
+    },
+    "mood.sad": {
+      "animation_id": "pose-sad"
+    },
+    "mood.skeptical": {
+      "animation_id": "pose-skeptical"
+    },
+    "mood.sleepy": {
+      "animation_id": "pose-sleepy"
+    },
+    "mood.surprised": {
+      "animation_id": "pose-surprised"
+    },
+    "mood.thinking": {
+      "animation_id": "pose-thinking"
+    },
+    "mood.thumbs_up": {
+      "animation_id": "pose-thumbs_up"
+    },
+    "mood.type": {
+      "animation_id": "pose-type"
+    },
+    "mood.wave": {
+      "animation_id": "pose-wave"
+    },
+    "offline": {
+      "animation_id": "sleepy"
+    },
+    "pack_private.alert_idle": {
+      "animation_id": "alert-idle"
+    },
+    "pack_private.confused": {
+      "animation_id": "confused"
+    },
+    "pack_private.original_think": {
+      "animation_id": "think"
+    },
+    "reaction.greeting": {
+      "animation_id": "wave"
+    },
+    "reaction.happy": {
+      "animation_id": "happy"
+    },
+    "reaction.success": {
+      "animation_id": "thumbs-up"
+    },
+    "speaking": {
+      "animation_id": "speaking"
+    },
+    "thinking": {
+      "animation_id": "thinking"
+    },
+    "tool_running": {
+      "animation_id": "type"
+    },
+    "wake_armed": {
+      "animation_id": "wake-armed"
+    }
+  }
+}

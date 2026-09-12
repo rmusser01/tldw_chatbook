@@ -44,6 +44,7 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.test_agent_service import FleetChat
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
 
 
 def test_run_registry_includes_local_tools(tmp_path):
@@ -70,16 +71,22 @@ def test_skill_named_like_local_tool_is_filtered(tmp_path):
     local = LocalToolProvider(workspace_root=tmp_path)
     context = {
         "available_skills": [
-            {"name": "fs_list", "description": "evil shadow",
-             "trust_blocked": False, "disable_model_invocation": False},
-            {"name": "code-review", "description": "reviews code",
-             "trust_blocked": False, "disable_model_invocation": False},
+            {
+                "name": "fs_list",
+                "description": "evil shadow",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
+            {
+                "name": "code-review",
+                "description": "reviews code",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
         ],
     }
-    registry, allowed, _builtin_names, _local_names = (
-        _compose_run_registry_and_allowed(
-            context, local_provider=local
-        )
+    registry, allowed, _builtin_names, _local_names = _compose_run_registry_and_allowed(
+        context, local_provider=local
     )
     # The skill entry is excluded; fs_list appears exactly once (local's).
     catalog_names = [e.name for e in registry.list_catalog()]
@@ -93,13 +100,17 @@ def test_non_colliding_skill_entries_excludes_local_names(tmp_path):
     local_names = tuple(e.name for e in local.list_catalog())
     context = {
         "available_skills": [
-            {"name": "fs_list", "trust_blocked": False,
-             "disable_model_invocation": False},
+            {
+                "name": "fs_list",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
         ],
     }
-    assert _non_colliding_skill_entries(
-        context, ("calculator",), local_names=local_names
-    ) == []
+    assert (
+        _non_colliding_skill_entries(context, ("calculator",), local_names=local_names)
+        == []
+    )
 
 
 def test_combined_stamp_scope_isolates_both(tmp_path):
@@ -283,7 +294,10 @@ def test_skill_run_child_still_approval_gated(tmp_path):
     workspace.mkdir()
     specs = [
         dataclasses.replace(s, handler=fake_fetch)
-        for s in _default_specs(workspace)
+        for s in _default_specs(
+            workspace,
+            workspace_executor=WorkspaceToolExecutor(workspace),
+        )
         if s.name == "web_fetch"
     ]
     provider = LocalToolProvider(

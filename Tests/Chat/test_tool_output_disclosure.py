@@ -261,3 +261,29 @@ def test_expanded_state_is_pruned_when_messages_leave_the_transcript():
         "expansion state outlived the message it belonged to: "
         f"{transcript._expanded_tool_output_ids}"
     )
+
+
+@pytest.mark.unit
+def test_toggle_ignores_unknown_and_nonexpandable_messages():
+    """The shared disclosure seam must not create dead expansion state."""
+    transcript = ConsoleTranscript()
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                id="user",
+                content="ordinary content",
+            ),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.TOOL,
+                id="empty-tool",
+                content="",
+            ),
+        ]
+    )
+
+    transcript.toggle_tool_output("unknown")
+    transcript.toggle_tool_output("user")
+    transcript.toggle_tool_output("empty-tool")
+
+    assert transcript._expanded_tool_output_ids == set()

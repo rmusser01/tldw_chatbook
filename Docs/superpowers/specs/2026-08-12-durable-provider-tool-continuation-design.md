@@ -335,11 +335,16 @@ conflict is raised even when visible content matches. Resume is blocked until
 one complete message version wins. Call arrays/results from different versions
 are never combined.
 
-Soft-deleted/off-branch assistant rows retain their sidecar only as the parent
-message record already does and are not eligible for resume. Regeneration
-creates/uses a distinct assistant variant row; it never overwrites another
-variant's checkpoint. Editing an ancestor invalidates/tombstones descendant
-checkpoints through existing branch operations.
+**Amendment (2026-08-27):** [ADR-090](../../../backlog/decisions/090-console-thinking-block-ownership-and-replay.md)
+supersedes the earlier sidecar-retention rule for Console assistant-generation
+deletion. A selected Console generation owns its answer, thinking, and provider
+continuation atomically, so edit or deletion clears the thinking and continuation
+with the answer rather than leaving private state on a tombstone. This prevents a
+deleted visible generation from retaining replayable generation state. An off-branch
+assistant row that has not been deleted may still retain its own sidecar and remains
+ineligible for resume while off branch. Regeneration creates/uses a distinct assistant
+variant row; it never overwrites another variant's checkpoint. Editing an ancestor
+invalidates/tombstones descendant checkpoints through existing branch operations.
 
 ## Export And Import
 

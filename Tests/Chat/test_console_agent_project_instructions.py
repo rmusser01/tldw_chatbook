@@ -31,13 +31,14 @@ from tldw_chatbook.Chat import console_chat_controller as controller_mod
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
+    ConsoleRunStatus,
     ProjectInstructionBindingRecovery,
     build_project_instruction_dispatch_notice,
+    capture_run_admitted_workspace_roots,
     commit_project_instruction_dispatch_decision,
     project_instruction_authority_is_current,
     resolve_project_instruction_binding,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
@@ -45,8 +46,12 @@ from tldw_chatbook.Chat.console_project_instructions import (
     project_instruction_notice_key,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+from Tests.console_provider_doubles import with_destination
+from Tests.console_provider_doubles import persisted_console_store
 
 
 SENTINEL = "AGENTS_AUTOMATIC_CHANNEL_SENTINEL_71f584"
@@ -261,7 +266,11 @@ def test_token_omission_notice_keeps_content_free_source_metadata(
             or "proceed"
         ),
     )
-    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 1)
+    # The base request fits; only the optional instruction row exceeds budget.
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 95)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "question"}],
@@ -738,6 +747,154 @@ def test_sole_eligible_binding_auto_selects_and_captures_fingerprint(tmp_path):
     )
 
 
+def test_disabled_named_workspace_admits_all_valid_bindings_by_stable_id(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    session = _session(ProjectInstructionControlState.legacy_disabled())
+    roots = capture_run_admitted_workspace_roots(
+        session=session,
+        registry=_BindingRegistry(
+            [
+                _binding(first, "folder-first", access="ro"),
+                _binding(second, "folder-second", access="rw"),
+            ]
+        ),
+    )
+
+    assert [root.alias for root in roots] == ["folder-first", "folder-second"]
+    assert [root.allow_write for root in roots] == [False, True]
+    assert [root.root for root in roots] == [first.resolve(), second.resolve()]
+
+
+@pytest.mark.parametrize("workspace_id", ["global", "workspace-default"])
+def test_default_workspaces_never_consult_binding_registry(workspace_id):
+    class UnexpectedRegistry:
+        def list_runtime_bindings(self, _workspace_id):
+            raise AssertionError("default workspace must not admit folder bindings")
+
+    roots = capture_run_admitted_workspace_roots(
+        session=SimpleNamespace(workspace_id=workspace_id),
+        registry=UnexpectedRegistry(),
+    )
+
+    assert roots == ()
+
+
+def test_project_instruction_selection_admits_only_selected_binding(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    session = _session(ProjectInstructionControlState.new_session())
+    registry = _BindingRegistry(
+        [_binding(first, "folder-first"), _binding(second, "folder-second")]
+    )
+    selection = controller_mod._validate_project_instruction_binding(
+        session, registry.get_runtime_binding("folder-second")
+    )
+
+    roots = capture_run_admitted_workspace_roots(
+        session=session,
+        registry=registry,
+        project_selection=selection,
+        project_authority_guard=lambda: True,
+    )
+
+    assert [root.alias for root in roots] == ["folder-second"]
+
+
+@pytest.mark.asyncio
+async def test_agent_provider_composition_uses_owning_workspace_admission(tmp_path):
+    own = tmp_path / "own"
+    active_other = tmp_path / "active-other"
+    own.mkdir()
+    active_other.mkdir()
+    registry = _BindingRegistry(
+        [
+            _binding(own, "own-binding"),
+            WorkspaceRuntimeBinding(
+                workspace_id="other-workspace",
+                binding_id="active-binding",
+                binding_kind="local-filesystem",
+                label="active-binding",
+                locator=str(active_other),
+                status="ready",
+                metadata={"access": "rw"},
+            ),
+        ]
+    )
+    session = SimpleNamespace(
+        id="session-1",
+        workspace_id="w1",
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
+    )
+    captured: dict[str, object] = {}
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(
+        workspace_registry_service=registry,
+        unified_mcp_service=None,
+    )
+    controller.store = SimpleNamespace(sessions=lambda: [session])
+
+    async def compose_mcp(*_args, **_kwargs):
+        return None
+
+    def compose_local(*_args, **kwargs):
+        captured.update(kwargs)
+        return None, None
+
+    controller._compose_mcp_provider = compose_mcp
+    controller._compose_local_provider = compose_local
+
+    await controller._compose_agent_request_providers(
+        session_id=session.id,
+        project_selection=None,
+        project_authority_guard=None,
+    )
+
+    assert [root.alias for root in captured["admitted_roots"]] == ["own-binding"]
+
+
+def test_run_admitted_guard_revokes_removal_retarget_and_access_downgrade(tmp_path):
+    original = tmp_path / "original"
+    replacement = tmp_path / "replacement"
+    original.mkdir()
+    replacement.mkdir()
+    binding = _binding(original, "folder-one", access="rw")
+    registry = _BindingRegistry([binding])
+    root = capture_run_admitted_workspace_roots(
+        session=_session(ProjectInstructionControlState.legacy_disabled()),
+        registry=registry,
+    )[0]
+
+    assert root.guard(False) is True
+    assert root.guard(True) is True
+
+    registry.bindings[binding.binding_id] = _binding(
+        original, binding.binding_id, access="ro"
+    )
+    assert root.guard(False) is False
+    assert root.guard(True) is False
+
+    registry.bindings[binding.binding_id] = _binding(
+        replacement, binding.binding_id, access="rw"
+    )
+    assert root.guard(False) is False
+
+    registry.bindings[binding.binding_id] = _binding(
+        original, binding.binding_id, access="rw"
+    )
+    retained = tmp_path / "retained-original"
+    original.rename(retained)
+    original.mkdir()
+    assert root.guard(False) is False
+
+    registry.bindings.pop(binding.binding_id)
+    assert root.guard(False) is False
+
+
 def test_binding_with_symlinked_ancestor_is_never_auto_selected(tmp_path):
     real_parent = tmp_path / "real"
     real_root = real_parent / "repo"
@@ -881,8 +1038,14 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 ):
     (tmp_path / "AGENTS.md").write_text(SENTINEL)
     binding = _binding(tmp_path)
-    registry = _BindingRegistry([binding])
-    store = ConsoleChatStore()
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="instruction-drift")
+    )
+    registry.create_workspace(workspace_id="w1", name="Workspace 1")
+    registry.save_runtime_binding(binding)
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
     session = store.create_session(workspace_id="w1")
     notices = []
     owning_loop_calls = []
@@ -925,14 +1088,16 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 
     class Gateway:
         async def resolve_for_send(self, _selection):
-            return ConsoleProviderResolution(
-                provider="OpenAI",
-                base_url="https://user:password@api.example/v1?secret=yes",
-                model="test-model",
-                ready=True,
-                readiness_key="openai",
-                execution_key="openai",
-                max_tokens=128,
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="OpenAI",
+                    base_url="https://user:password@api.example/v1?secret=yes",
+                    model="test-model",
+                    ready=True,
+                    readiness_key="openai",
+                    execution_key="openai",
+                    max_tokens=128,
+                )
             )
 
     gateway = Gateway()
@@ -958,6 +1123,67 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
     assert notices[0].session_id == session.id
     assert notices[0].destination_label == "OpenAI (https://api.example)"
     assert SENTINEL not in repr(notices[0])
+
+
+@pytest.mark.asyncio
+async def test_folderless_session_skips_optional_project_instructions_and_runs(
+    tmp_path,
+):
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="folderless")
+    )
+    registry.ensure_default_workspace()
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
+    session = store.create_session(workspace_id="workspace-default")
+    bridge_calls = []
+    setup_calls = []
+
+    class Bridge:
+        def run_reply(self, **kwargs):
+            bridge_calls.append(kwargs)
+            return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="")
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="DeepSeek",
+                    base_url="https://api.deepseek.com",
+                    model="deepseek-chat",
+                    ready=True,
+                    readiness_key="deepseek",
+                    execution_key="deepseek",
+                    max_tokens=128,
+                )
+            )
+
+    async def select_binding(*args):
+        setup_calls.append(args)
+        return "cancel", None
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        provider="deepseek",
+        model="deepseek-chat",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        select_project_instruction_binding=select_binding,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=registry,
+    )
+
+    result = await controller.submit_draft("question")
+
+    assert result.accepted is True
+    assert result.should_clear_draft is True
+    assert setup_calls == []
+    assert len(bridge_calls) == 1
+    assert bridge_calls[0]["startup_instruction_candidate"] is None
+    assert controller.run_state_for(session.id).status.value == "completed"
 
 
 def test_removed_or_retargeted_binding_never_silently_retargets(tmp_path):
@@ -992,3 +1218,96 @@ def test_disabled_session_does_not_consult_registry(tmp_path):
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ephemeral", [True, False])
+async def test_project_instruction_disable_terminalizes_and_allows_retry(
+    tmp_path, ephemeral
+):
+    """Disabling unavailable instructions must not strand the Console run."""
+
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="instruction-disable")
+    )
+    registry.create_workspace(workspace_id="w1", name="Workspace 1")
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
+    session = store.create_session(workspace_id="w1", ephemeral=ephemeral)
+    store.set_session_project_instruction_state(
+        session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="removed-binding",
+            working_folder_locator_fingerprint="f" * 64,
+        ),
+    )
+    provider_calls = []
+    bridge_calls = []
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            provider_calls.append(True)
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="OpenAI",
+                    base_url="http://127.0.0.1:18991/v1",
+                    model="gpt-4o-mini",
+                    ready=True,
+                    readiness_key="openai",
+                    execution_key="openai",
+                    max_tokens=128,
+                )
+            )
+
+    class Bridge:
+        def run_reply(self, **_kwargs):
+            bridge_calls.append(True)
+            return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    async def disable(_session_id, _options, _recovery_code):
+        return "disable", None
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        provider="openai",
+        model="gpt-4o-mini",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        select_project_instruction_binding=disable,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=registry,
+        call_from_thread=lambda callback: callback(),
+    )
+
+    first = await controller.submit_draft("first")
+
+    assert first.accepted is (not ephemeral)
+    assert first.visible_copy == (
+        "project_instructions_disabled"
+        if ephemeral
+        else "Accepted turn is retained for recovery."
+    )
+    assert session.project_instruction_state == (
+        ProjectInstructionControlState.legacy_disabled()
+    )
+    assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
+    assert bridge_calls == []
+
+    if not ephemeral:
+        # Durable acceptance owns the pending response until explicit recovery.
+        blocked = await controller.submit_draft("premature retry")
+        assert blocked.accepted is False
+        assert bridge_calls == []
+        assert store.dispatch_recovery_for_session(session.id) is not None
+        await controller.discard_dispatch_recovery(session.id)
+        assert store.dispatch_recovery_for_session(session.id) is None
+
+    second = await controller.submit_draft("second")
+
+    assert second.accepted is True
+    assert bridge_calls == [True]
+    assert len(provider_calls) == 2

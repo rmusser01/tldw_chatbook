@@ -16,8 +16,21 @@ import asyncio
 
 import pytest
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+    ConsoleVariant,
+    ConsoleVariantSet,
+)
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+)
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _store_with_answer():
@@ -30,6 +43,23 @@ def _store_with_answer():
     # Non-empty content already yields status "complete" via _initial_status;
     # this mirrors the existing regenerate tests that seed via append_message alone.
     return store, session, assistant.id
+
+
+def _thinking(text: str, *, block_id: str = "thinking-1") -> ThinkingEnvelope:
+    return ThinkingEnvelope(
+        (
+            DisplayableThinkingBlock(
+                block_id=block_id,
+                round_ordinal=0,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="think_tag",
+                status="complete",
+                text=text,
+            ),
+        )
+    )
 
 
 def test_begin_variant_stream_resets_buffer_and_keeps_base():
@@ -93,6 +123,203 @@ def test_finalize_variant_stream_appends_to_existing_set():
     assert final.variants.selected_index == 2
 
 
+def test_message_repr_hides_displayable_and_opaque_thinking() -> None:
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        thinking=_thinking("secret-visible-reasoning"),
+        opaque_thinking_json='{"version":99,"secret":"opaque-secret"}',
+    )
+
+    rendered = repr(message)
+
+    assert "secret-visible-reasoning" not in rendered
+    assert "opaque-secret" not in rendered
+
+
+def test_select_variant_swaps_complete_generation() -> None:
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationRound,
+        ProviderContinuationCheckpoint,
+    )
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store, _session, mid = _store_with_answer()
+    original = store._message_or_raise(mid)
+    original.thinking = _thinking("original thinking", block_id="original")
+    original.usage = ProviderUsage(uncached_input=2, output=3)
+    original.provider_continuation = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k3",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="original",
+                reasoning_blocks=("private reasoning",),
+                calls=(),
+            ),
+        ),
+    )
+    original.assistant_generation_state = "complete"
+    original_snapshot = store.get_message(mid)
+
+    store.begin_variant_stream(mid)
+    assert store.get_message(mid).thinking is None
+    store.replace_message_thinking(mid, _thinking("new thinking", block_id="new"))
+    store.append_stream_chunk(mid, "new answer")
+    new_usage = ProviderUsage(uncached_input=5, output=8)
+    store.set_message_usage(mid, new_usage)
+    finalized = store.finalize_variant_stream(mid)
+
+    assert finalized.thinking == _thinking("new thinking", block_id="new")
+    assert finalized.variants.current.assistant_generation_state == "complete"
+    restored = store.select_variant(mid, 0)
+    assert restored.content == "original"
+    assert restored.thinking == _thinking("original thinking", block_id="original")
+    assert restored.usage == original_snapshot.usage
+    assert restored.provider_continuation == original_snapshot.provider_continuation
+    assert restored.assistant_generation_state == "complete"
+    selected_again = store.select_variant(mid, 1)
+    assert selected_again.thinking == _thinking("new thinking", block_id="new")
+    assert selected_again.assistant_generation_state == "complete"
+
+
+def test_add_variant_keeps_original_generation_owned_by_original_variant() -> None:
+    store, _session, mid = _store_with_answer()
+    original = store._message_or_raise(mid)
+    original.thinking = _thinking("original thinking")
+    original.assistant_generation_state = "complete"
+
+    added = store.add_variant(mid, "manual alternative")
+
+    assert added.thinking is None
+    assert added.assistant_generation_state == "complete"
+    restored = store.select_variant(mid, 0)
+    assert restored.thinking == _thinking("original thinking")
+    assert restored.assistant_generation_state == "complete"
+
+
+@pytest.mark.parametrize("blocked_owner", [False, True])
+def test_select_variant_rejects_unpersistable_generation_before_live_mutation(
+    blocked_owner: bool,
+) -> None:
+    store, _session, mid = _store_with_answer()
+    message = store._message_or_raise(mid)
+    message.thinking_actions_enabled = not blocked_owner
+    message.variants = ConsoleVariantSet.from_generations(
+        turn_id=message.turn_id or message.id,
+        generations=[
+            ConsoleVariant(content="original"),
+            ConsoleVariant(
+                content="future",
+                opaque_thinking_json='{"version":99,"secret":"future"}',
+                thinking_actions_enabled=False,
+            ),
+        ],
+    )
+
+    with pytest.raises(ConsoleThinkingCompatibilityError):
+        store.select_variant(mid, 1)
+
+    unchanged = store.get_message(mid)
+    assert unchanged.content == "original"
+    assert unchanged.variants is not None
+    assert unchanged.variants.selected_index == 0
+    assert mid not in store._failed_retry_message_ids
+
+
+@pytest.mark.parametrize("terminal", ["mark_message_stopped", "mark_message_failed"])
+def test_abandoned_variant_restores_complete_generation(terminal: str) -> None:
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    store, _session, mid = _store_with_answer()
+    original = store._message_or_raise(mid)
+    original.thinking = _thinking("original thinking")
+    original.usage = ProviderUsage(uncached_input=1, output=2)
+    original.assistant_generation_state = "complete"
+
+    store.begin_variant_stream(mid)
+    store.replace_message_thinking(mid, _thinking("abandoned thinking", block_id="new"))
+    store.append_stream_chunk(mid, "abandoned answer")
+    getattr(store, terminal)(mid)
+    restored = store.get_message(mid)
+
+    assert restored.content == "original"
+    assert restored.thinking == _thinking("original thinking")
+    assert restored.usage == ProviderUsage(uncached_input=1, output=2)
+    assert restored.assistant_generation_state == "complete"
+
+
+@pytest.mark.parametrize(
+    ("terminal", "expected_status"),
+    [("mark_message_stopped", "stopped"), ("mark_message_failed", "failed")],
+)
+def test_normal_terminal_updates_thinking_envelope_status(
+    terminal: str, expected_status: str
+) -> None:
+    store, _session, mid = _store_with_answer()
+    live = store._message_or_raise(mid)
+    live.thinking = _thinking("partial thinking")
+    live.status = "streaming"
+
+    settled = getattr(store, terminal)(mid)
+
+    assert settled.thinking is not None
+    assert {block.status for block in settled.thinking.blocks} == {expected_status}
+
+
+@pytest.mark.parametrize(
+    ("terminal", "expected_status"),
+    [
+        ("mark_message_complete", "complete"),
+        ("mark_message_stopped", "stopped"),
+        ("mark_message_failed", "failed"),
+    ],
+)
+def test_terminal_settlement_only_updates_current_thinking_round(
+    terminal: str, expected_status: str
+) -> None:
+    store, _session, mid = _store_with_answer()
+    live = store._message_or_raise(mid)
+    live.thinking = ThinkingEnvelope(
+        (
+            DisplayableThinkingBlock(
+                block_id="earlier",
+                round_ordinal=0,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="think_tag",
+                status="failed",
+                text="earlier terminal reasoning",
+            ),
+            DisplayableThinkingBlock(
+                block_id="current",
+                round_ordinal=1,
+                provider="llama_cpp",
+                model="test-model",
+                protocol="chat_completions",
+                source_format="think_tag",
+                status="complete",
+                text="current reasoning",
+            ),
+        )
+    )
+    live.status = "streaming"
+
+    settled = getattr(store, terminal)(mid)
+
+    assert settled.thinking is not None
+    assert [block.status for block in settled.thinking.blocks] == [
+        "failed",
+        expected_status,
+    ]
+
+
 class _ScriptedGateway:
     """Async stream_chat that yields scripted chunks; resolve_for_send ready."""
 
@@ -100,11 +327,7 @@ class _ScriptedGateway:
         self._chunks = list(chunks)
 
     async def resolve_for_send(self, selection):
-        class _R:  # noqa: D401 - tiny stub
-            ready = True
-            visible_copy = ""
-
-        return _R()
+        return provider_resolution()
 
     async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in self._chunks:
@@ -140,20 +363,7 @@ async def test_regenerate_delegates_and_streams_incrementally():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_empty_stream_leaves_anchor_untouched_and_new_sibling_failed():
-    """TASK-6 supersedes the original Plan-B Task 1 finding here: under the
-    old in-place regenerate, a zero-chunk (empty-stream) regenerate had to
-    restore the anchor's own prior status so the turn did not silently drop
-    out of context (``_provider_messages_for_session(..., skip_failed=
-    True)``). Under the sibling/branching model that concern moves with the
-    node: regenerate ALWAYS forks a new node and makes it the active leaf,
-    so an empty-stream (zero-chunk) regenerate leaves that NEW node
-    "failed" (empty, retryable) as the active tip -- the anchor itself is
-    a completely separate, untouched node that simply drops off the active
-    path (not deleted, and not silently mutated to a failed status either).
-    Swiping back to the anchor (``set_active_leaf``) restores it -- and its
-    "complete" status/content -- to the active path and provider context.
-    """
+async def test_regenerate_empty_stream_retains_failed_sibling_and_restores_anchor():
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
     store, session, mid = _store_with_answer()
@@ -170,24 +380,18 @@ async def test_regenerate_empty_stream_leaves_anchor_untouched_and_new_sibling_f
     unchanged = store.get_message(mid)
     assert unchanged.status == "complete"
     assert unchanged.content == "original"
-    assert mid not in store.active_path_message_ids(session.id)
+    assert store.active_leaf(session.id) == mid
+    assert mid in store.active_path_message_ids(session.id)
 
-    new_leaf_id = store.active_leaf(session.id)
-    assert new_leaf_id != mid
-    new_sibling = store.get_message(new_leaf_id)
+    siblings, _index, count = store.siblings_at(mid)
+    assert count == 2
+    new_sibling = next(sibling for sibling in siblings if sibling.id != mid)
     assert new_sibling.status == "failed"
     assert new_sibling.content == ""
 
-    # The failed, empty new sibling is correctly excluded from context...
-    provider_messages = controller._provider_messages_for_session(session.id)
-    assert {"role": "assistant", "content": "original"} not in provider_messages
-    assert {"role": "assistant", "content": ""} not in provider_messages
-
-    # ...but swiping back to the anchor restores it to the active path
-    # (and therefore to context) exactly as before.
-    store.set_active_leaf(session.id, mid)
     provider_messages = controller._provider_messages_for_session(session.id)
     assert {"role": "assistant", "content": "original"} in provider_messages
+    assert {"role": "assistant", "content": ""} not in provider_messages
 
 
 @pytest.mark.asyncio
@@ -210,11 +414,7 @@ async def test_regenerate_stop_mid_stream_leaves_anchor_untouched_new_sibling_st
             self.release = asyncio.Event()
 
         async def resolve_for_send(self, selection):
-            class _R:  # noqa: D401 - tiny stub
-                ready = True
-                visible_copy = ""
-
-            return _R()
+            return provider_resolution()
 
         async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
@@ -256,6 +456,9 @@ async def test_regenerate_stop_mid_stream_leaves_anchor_untouched_new_sibling_st
     stopped_sibling = store.get_message(new_leaf_id)
     assert stopped_sibling.content == "partial regen "
     assert stopped_sibling.status == "stopped"
+    active_path = store.active_path_message_ids(session.id)
+    assert new_leaf_id in active_path
+    assert mid not in active_path
     # (stop_active_run's own "Response stopped by user." system row becomes
     # the new active leaf, parented under the stopped sibling above --
     # pre-existing behavior, unrelated to Task 6, not asserted here.)
@@ -268,13 +471,7 @@ class _UsageEmittingScriptedGateway(_ScriptedGateway):
     attribution)."""
 
     async def resolve_for_send(self, selection):
-        class _R:  # noqa: D401 - tiny stub
-            ready = True
-            visible_copy = ""
-            provider = "llama_cpp"
-            model = "test-model"
-
-        return _R()
+        return provider_resolution()
 
     async def stream_chat(self, resolution, messages, **kwargs):
         signals = kwargs.get("signals")

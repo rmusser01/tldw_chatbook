@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -32,11 +33,14 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_REASON_LENGTH,
     MAX_IMPORT_TEMPLATE_NAME_LENGTH,
     MAX_IMPORT_TITLE_LENGTH,
+    NON_IMPORTABLE_CLASSIFICATIONS,
+    WIKILINK_SCAN,
     ImportBounds,
     ImportClassification,
     ImportSourceKind,
     ParsedNotePayload,
     ProposedFolderMembership,
+    wikilink_target,
 )
 
 SUPPORTED_NOTE_EXTENSIONS = frozenset(
@@ -49,6 +53,15 @@ _KEYWORD_ALIASES = ("keywords", "tags")
 _CSV_RESERVED_HEADERS = frozenset(
     (*_TITLE_ALIASES, *_CONTENT_ALIASES, *_KEYWORD_ALIASES, "template")
 )
+_MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown"})
+_FRONTMATTER_KEYS = ("tags", "aliases")
+_ALIAS_KEYWORD_PREFIX = "alias: "
+"""Marks a keyword that came from `aliases:` rather than from `tags:`."""
+_MAX_FRONTMATTER_LINES = 200
+_MAX_WIKILINKS_PER_NOTE = 200
+_TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
+"""A `{{date}}`-style template placeholder, which never becomes a note title."""
+
 
 # ``csv.field_size_limit`` is process-global. Every CSV parse in this module holds
 # this lock while raising and restoring the limit so overlapping imports cannot
@@ -58,6 +71,14 @@ _CSV_FIELD_SIZE_LIMIT_LOCK = RLock()
 
 _MESSAGES = {
     "unsupported_extension": "This file type is not supported.",
+    # task-32262: a vault's own file types deserve the vault-aware copy
+    # `.obsidian` and `.trash` already get, not one generic sentence for
+    # everything from a canvas to a PDF.
+    "unsupported_canvas": "Obsidian canvas — not a note.",
+    "unsupported_base": "Obsidian base — not a note.",
+    "unsupported_image": "Image — not a note. Add it in Library ▸ Media.",
+    "unsupported_document": "Document — not a note. Add it in Library ▸ Media.",
+    "unsupported_media": "Audio or video — not a note. Add it in Library ▸ Media.",
     "source_changed": "This source changed during the import preview.",
     "source_unavailable": "This source could not be read safely.",
     "secure_read_unavailable": "Secure source reading is unavailable.",
@@ -65,6 +86,8 @@ _MESSAGES = {
     "max_total_bytes_exceeded": "The selected sources are too large in total.",
     "invalid_utf8": "This source is not valid UTF-8 text.",
     "invalid_content": "This source could not be parsed as notes.",
+    "empty_source": "Empty file — nothing to import.",
+    "not_a_note": "Not a note file (app configuration).",
     "empty_structured_source": "This source does not contain any notes.",
     "too_many_notes": "This source contains too many notes.",
     "too_many_keywords": "A note in this source contains too many keywords.",
@@ -74,10 +97,48 @@ _MESSAGES = {
     "selection_changed": "The discovered source set changed before parsing.",
 }
 
+_UNSUPPORTED_EXTENSION_REASONS = {
+    ".canvas": "unsupported_canvas",
+    ".base": "unsupported_base",
+    ".png": "unsupported_image",
+    ".jpg": "unsupported_image",
+    ".jpeg": "unsupported_image",
+    ".gif": "unsupported_image",
+    ".webp": "unsupported_image",
+    ".svg": "unsupported_image",
+    ".pdf": "unsupported_document",
+    ".docx": "unsupported_document",
+    ".epub": "unsupported_document",
+    ".mp3": "unsupported_media",
+    ".m4a": "unsupported_media",
+    ".wav": "unsupported_media",
+    ".mp4": "unsupported_media",
+    ".mov": "unsupported_media",
+    ".webm": "unsupported_media",
+}
+"""Reason code per non-note extension, keyed casefolded (task-32262).
+
+Anything absent keeps the generic ``unsupported_extension`` sentence: an
+honest "this file type is not supported" beats a confident wrong noun.
+"""
+
+
+# task-32130: every other parse failure stays FAILED.
+_FAILURE_CLASSIFICATIONS = {
+    "empty_source": ImportClassification.EMPTY,
+    "not_a_note": ImportClassification.SKIPPED,
+    # A well-formed document that simply holds no note is not broken either.
+    "empty_structured_source": ImportClassification.SKIPPED,
+}
+
 
 class _ParseFailure(ValueError):
-    def __init__(self, reason_code: str) -> None:
+    def __init__(self, reason_code: str, detail: str = "") -> None:
+        # task-32176: `detail` names the record that failed inside an otherwise
+        # valid structured document, so a 200-note export does not report one
+        # bad row as one unreadable file.
         self.reason_code = reason_code
+        self.detail = detail
         super().__init__(reason_code)
 
 
@@ -166,11 +227,11 @@ class ImportParseIssue:
             raise ValueError("display_path must be a safe relative path.")
         if not isinstance(self.source_path, Path):
             raise TypeError("source_path must be a Path.")
-        if not isinstance(self.classification, ImportClassification) or (
-            self.classification
-            not in {ImportClassification.UNSUPPORTED, ImportClassification.FAILED}
+        if (
+            not isinstance(self.classification, ImportClassification)
+            or self.classification not in NON_IMPORTABLE_CLASSIFICATIONS
         ):
-            raise ValueError("classification must be unsupported or failed.")
+            raise ValueError("classification must be a non-importable outcome.")
         if (
             not isinstance(self.reason_code, str)
             or not self.reason_code
@@ -248,6 +309,7 @@ def parse_import_sources(
     bounds: ImportBounds,
     *,
     destination_folder_segments: Iterable[str] | None = None,
+    obsidian_mode: bool = False,
 ) -> ParsedImportBatch:
     """Parse a discovered selection without writes or durable side effects.
 
@@ -255,6 +317,10 @@ def parse_import_sources(
         discovery: Previously admitted sources and safe discovery failures.
         bounds: Resource and diagnostic limits for parsing.
         destination_folder_segments: Optional manual destination for selected files.
+        obsidian_mode: Whether a detected vault's Markdown is read as Obsidian
+            notes: leading YAML frontmatter supplies the title and keywords and
+            leaves the body, and `[[wikilinks]]` are recorded for the executor.
+            It has no effect unless discovery detected a vault.
 
     Returns:
         Parsed note payloads, safe issues, and proposed folder paths.
@@ -268,6 +334,9 @@ def parse_import_sources(
         raise TypeError("discovery must be an ImportDiscovery.")
     if not isinstance(bounds, ImportBounds):
         raise TypeError("bounds must be an ImportBounds.")
+    if type(obsidian_mode) is not bool:
+        raise TypeError("obsidian_mode must be a boolean.")
+    obsidian = obsidian_mode and discovery.vault_detected
 
     destination = _validate_destination(
         discovery,
@@ -285,13 +354,17 @@ def parse_import_sources(
     parsed: list[ParsedImportSource] = []
     issues = [
         ImportParseIssue(
-            display_path=failure.display_path,
-            source_path=failure.source_path,
-            classification=ImportClassification.FAILED,
-            reason_code=failure.reason_code,
-            user_message=failure.user_message[: bounds.max_reason_length],
+            display_path=entry.display_path,
+            source_path=entry.source_path,
+            classification=classification,
+            reason_code=entry.reason_code,
+            user_message=entry.user_message[: bounds.max_reason_length],
         )
-        for failure in discovery.failures
+        for entries, classification in (
+            (discovery.failures, ImportClassification.FAILED),
+            (discovery.skips, ImportClassification.SKIPPED),
+        )
+        for entry in entries
     ]
     bytes_read = 0
     for candidate in discovery.candidates:
@@ -302,7 +375,9 @@ def parse_import_sources(
                     candidate,
                     bounds,
                     ImportClassification.UNSUPPORTED,
-                    "unsupported_extension",
+                    _UNSUPPORTED_EXTENSION_REASONS.get(
+                        extension, "unsupported_extension"
+                    ),
                 )
             )
             continue
@@ -312,7 +387,13 @@ def parse_import_sources(
             if bytes_read > bounds.max_total_bytes:
                 raise _ParseFailure("max_total_bytes_exceeded")
             text = raw_content.decode("utf-8-sig")
-            payloads = _parse_text(candidate, extension, text, bounds)
+            payloads = _parse_text(
+                candidate,
+                extension,
+                text,
+                bounds,
+                obsidian_mode=obsidian,
+            )
             folder_segments = _folder_segments(candidate, destination)
             memberships = tuple(
                 ProposedFolderMembership(
@@ -341,7 +422,13 @@ def parse_import_sources(
         except _ParseFailure as error:
             issues.append(
                 _issue(
-                    candidate, bounds, ImportClassification.FAILED, error.reason_code
+                    candidate,
+                    bounds,
+                    _FAILURE_CLASSIFICATIONS.get(
+                        error.reason_code, ImportClassification.FAILED
+                    ),
+                    error.reason_code,
+                    detail=error.detail,
                 )
             )
         except (
@@ -400,19 +487,44 @@ def _parse_text(
     extension: str,
     text: str,
     bounds: ImportBounds,
+    *,
+    obsidian_mode: bool = False,
 ) -> tuple[ParsedNotePayload, ...]:
+    # task-32130: an empty source is empty whatever its extension.
+    if not text.strip():
+        raise _ParseFailure("empty_source")
     if extension in {".txt", ".text", ".rst", ".md", ".markdown"}:
-        if not text.strip():
-            raise _ParseFailure("invalid_content")
-        title = PurePosixPath(candidate.source.display_path).stem
-        if extension in {".md", ".markdown"}:
-            for line in text.splitlines()[:10]:
-                if line.startswith("# ") and line[2:].strip():
-                    title = line[2:].strip()
-                    break
+        markdown = extension in _MARKDOWN_EXTENSIONS
+        metadata: Mapping[Any, Any] | None = None
+        # Links come from the note body only. For a frontmatter-only file the
+        # body is empty while the content stays the original YAML, so a
+        # `source: "[[README]]"` property is metadata and is never rewritten.
+        body = text
+        unimported_keys: tuple[str, ...] = ()
+        if obsidian_mode and markdown:
+            metadata, body = _split_frontmatter(text)
+            # A note that is only frontmatter (an Obsidian Properties-only file,
+            # a templated daily note) still has to import: keep the original
+            # text as the body rather than turning a note this mode understands
+            # BETTER into a failure it did not have before.
+            if body.strip():
+                text = body
+                # Only a stripped block loses anything (task-32262); a
+                # frontmatter-only note keeps every property in its content.
+                unimported_keys = _unimported_frontmatter_keys(metadata)
+        stem = PurePosixPath(candidate.source.display_path).stem
+        title = _frontmatter_title(metadata) or _text_title(text, stem, markdown)
         if len(title) > MAX_IMPORT_TITLE_LENGTH:
             raise _ParseFailure("invalid_content")
-        return (ParsedNotePayload(title=title, content=text),)
+        return (
+            ParsedNotePayload(
+                title=title,
+                content=text,
+                keywords=_frontmatter_keywords(metadata, bounds),
+                wikilinks=_wikilinks(body) if obsidian_mode and markdown else (),
+                unimported_frontmatter_keys=unimported_keys,
+            ),
+        )
     if extension == ".json":
         value = json.loads(text, object_pairs_hook=_unique_json_object)
         return _structured_payloads(value, bounds)
@@ -425,6 +537,146 @@ def _parse_text(
     if extension == ".csv":
         return _csv_payloads(text, bounds)
     raise _ParseFailure("invalid_content")
+
+
+def _text_title(text: str, stem: str, markdown: bool) -> str:
+    """Return the first usable `# ` heading, else the file stem.
+
+    A heading that is only a template placeholder (`# {{date:YYYY-MM-DD}}`) is
+    never a note title, so the stem is used instead.
+    """
+    if not markdown:
+        return stem
+    for line in text.splitlines()[:10]:
+        if line.startswith("# ") and line[2:].strip():
+            heading = line[2:].strip()
+            return stem if _TEMPLATE_PLACEHOLDER.search(heading) else heading
+    return stem
+
+
+def _split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
+    """Split one leading `---` YAML block from the note body.
+
+    Anything that is not a complete, safely loadable mapping is left in the body
+    exactly as written, so an odd block degrades to today's behaviour.
+    """
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None, text
+    for index, line in enumerate(lines[1 : _MAX_FRONTMATTER_LINES + 1], start=1):
+        if line.strip() not in {"---", "..."}:
+            continue
+        block = "\n".join(lines[1:index])
+        try:
+            for token in yaml.scan(block):
+                if isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)):
+                    return None, text
+            metadata = yaml.load(block, Loader=_UniqueKeySafeLoader)
+        except (yaml.YAMLError, _ParseFailure, RecursionError, ValueError, TypeError):
+            return None, text
+        if not isinstance(metadata, Mapping):
+            return None, text
+        return metadata, "\n".join(lines[index + 1 :]).lstrip("\n")
+    return None, text
+
+
+def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
+    """Return the frontmatter title, unless it is blank or a placeholder."""
+    if metadata is None:
+        return None
+    value = metadata.get("title")
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
+    if not title or _TEMPLATE_PLACEHOLDER.search(title):
+        return None
+    return title
+
+
+_IMPORTED_FRONTMATTER_KEYS = frozenset({"title", *_FRONTMATTER_KEYS})
+"""Frontmatter properties the import actually keeps."""
+
+_MAX_REPORTED_FRONTMATTER_KEYS = 12
+
+
+def _unimported_frontmatter_keys(
+    metadata: Mapping[Any, Any] | None,
+) -> tuple[str, ...]:
+    """Return the frontmatter property names this import drops, in file order.
+
+    Args:
+        metadata: One parsed frontmatter mapping, or None when there was none.
+
+    Returns:
+        Bounded, deduplicated property names that reach neither the title, the
+        keywords nor the stored body.
+    """
+    if metadata is None:
+        return ()
+    names: list[str] = []
+    for key in metadata:
+        if not isinstance(key, str):
+            continue
+        name = key.strip()
+        if not name or name.casefold() in _IMPORTED_FRONTMATTER_KEYS:
+            continue
+        names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
+    return tuple(dict.fromkeys(names))[:_MAX_REPORTED_FRONTMATTER_KEYS]
+
+
+def _frontmatter_keywords(
+    metadata: Mapping[Any, Any] | None,
+    bounds: ImportBounds,
+) -> tuple[str, ...]:
+    """Return `tags` then `aliases` as deduplicated keywords.
+
+    Aliases are alternate titles in Obsidian and there is no separate note
+    metadata store here, so they are kept as keywords: the note stays findable by
+    them and they are visible in Info. They carry an ``alias:`` prefix so a
+    reader can still tell an alternate name from a tag the author chose
+    (task-32178). Unusable metadata yields no keywords rather than failing the
+    whole note.
+    """
+    if metadata is None:
+        return ()
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for key in _FRONTMATTER_KEYS:
+        try:
+            values = _keywords(metadata.get(key), bounds)
+        except _ParseFailure:
+            continue
+        for value in values:
+            keyword = value if key == "tags" else f"{_ALIAS_KEYWORD_PREFIX}{value}"
+            if len(keyword) > MAX_IMPORT_KEYWORD_LENGTH:
+                # `_keywords` already bounded `value`, so only our display
+                # prefix pushed it over. Keep the alternate name findable
+                # un-prefixed rather than dropping it (PR #2556 review).
+                keyword = value
+            if keyword.casefold() in seen:
+                continue
+            seen.add(keyword.casefold())
+            keywords.append(keyword)
+    return tuple(keywords[: bounds.max_keywords_per_note])
+
+
+def _wikilinks(text: str) -> tuple[str, ...]:
+    """Return the note's non-embedded `[[targets]]` in first-use order.
+
+    Anything inside a code span is sample text, not a link, and is skipped here
+    exactly as the executor skips it when rewriting.
+    """
+    targets: list[str] = []
+    seen: set[str] = set()
+    for match in WIKILINK_SCAN.finditer(text):
+        target = wikilink_target(match)
+        if not target or target in seen or len(target) > MAX_IMPORT_TITLE_LENGTH:
+            continue
+        seen.add(target)
+        targets.append(target)
+        if len(targets) >= _MAX_WIKILINKS_PER_NOTE:
+            break
+    return tuple(targets)
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -445,9 +697,36 @@ def _structured_payloads(
         raise _ParseFailure("empty_structured_source")
     if len(records) > bounds.max_notes_per_file:
         raise _ParseFailure("too_many_notes")
-    if not all(isinstance(record, Mapping) for record in records):
-        raise _ParseFailure("invalid_content")
-    return tuple(_payload_from_mapping(record, bounds) for record in records)
+    note_shaped = tuple(_is_note_record(record) for record in records)
+    if not any(note_shaped):
+        # A well-formed document that holds no note record is configuration.
+        raise _ParseFailure("not_a_note")
+    if not all(note_shaped):
+        # Part note, part something else: a damaged export, not configuration.
+        raise _ParseFailure(
+            "invalid_content",
+            f"Record {note_shaped.index(False) + 1} of {len(records)} "
+            "has no note content.",
+        )
+    payloads: list[ParsedNotePayload] = []
+    for position, record in enumerate(records, start=1):
+        try:
+            payloads.append(_payload_from_mapping(record, bounds))
+        except _ParseFailure as error:
+            if error.reason_code != "invalid_content":
+                raise
+            raise _ParseFailure(
+                "invalid_content",
+                f"Record {position} of {len(records)} could not be read as a note.",
+            ) from error
+    return tuple(payloads)
+
+
+def _is_note_record(record: Any) -> bool:
+    """Report whether one structured record carries a note body at all."""
+    return isinstance(record, Mapping) and any(
+        alias in record for alias in _CONTENT_ALIASES
+    )
 
 
 def _payload_from_mapping(
@@ -461,6 +740,9 @@ def _payload_from_mapping(
         for aliases in (_TITLE_ALIASES, _CONTENT_ALIASES, _KEYWORD_ALIASES)
     ):
         raise _ParseFailure("invalid_content")
+    # Whether a record is note-shaped at all is decided for the whole document
+    # in _structured_payloads; a body-less record only reaches here from CSV,
+    # which always supplies one.
     content_value = record.get("content", record.get("body"))
     if not isinstance(content_value, str) or not content_value.strip():
         raise _ParseFailure("invalid_content")
@@ -563,7 +845,15 @@ def _csv_payloads(text: str, bounds: ImportBounds) -> tuple[ParsedNotePayload, .
                 mapping["keywords"] = row[keyword_index]
             if template_index is not None:
                 mapping["template"] = row[template_index] or None
-            payloads.append(_payload_from_mapping(mapping, bounds))
+            try:
+                payloads.append(_payload_from_mapping(mapping, bounds))
+            except _ParseFailure as error:
+                if error.reason_code != "invalid_content":
+                    raise
+                raise _ParseFailure(
+                    "invalid_content",
+                    f"Row {reader.line_num} could not be read as a note.",
+                ) from error
         if not payloads:
             raise _ParseFailure("empty_structured_source")
         return tuple(payloads)
@@ -638,20 +928,24 @@ def _issue(
     bounds: ImportBounds,
     classification: ImportClassification,
     reason_code: str,
+    *,
+    detail: str = "",
 ) -> ImportParseIssue:
     return ImportParseIssue(
         display_path=candidate.source.display_path,
         source_path=candidate.source.source_path,
         classification=classification,
         reason_code=reason_code,
-        user_message=_message(bounds, reason_code),
+        user_message=_message(bounds, reason_code, detail=detail),
     )
 
 
-def _message(bounds: ImportBounds, reason_code: str) -> str:
-    return _MESSAGES.get(reason_code, _MESSAGES["source_unavailable"])[
-        : bounds.max_reason_length
-    ]
+def _message(bounds: ImportBounds, reason_code: str, *, detail: str = "") -> str:
+    """Return one bounded reason, followed by any record-level detail."""
+    message = _MESSAGES.get(reason_code, _MESSAGES["source_unavailable"])
+    if detail:
+        message = f"{message} {detail}"
+    return message[: bounds.max_reason_length]
 
 
 def _reject_selection(bounds: ImportBounds, reason_code: str) -> None:

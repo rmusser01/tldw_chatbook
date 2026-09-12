@@ -1,0 +1,1070 @@
+{
+  "cases": [
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "pdf",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "pdf",
+      "planner_media_type": "pdf"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "document",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "document",
+      "planner_media_type": "document"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "ebook_chapters",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [
+          "chapter_outline"
+        ],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "ebook_chapters",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "ebook",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected ebook content; selected chapter-based chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "ebook",
+      "planner_media_type": "ebook"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "audio",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected transcript-like media; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "audio",
+      "planner_media_type": "audio"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "video",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected transcript-like media; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "video",
+      "planner_media_type": "video"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "web",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "html",
+      "planner_media_type": "web"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "web",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "article",
+      "planner_media_type": "web"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "plaintext",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "plaintext",
+      "planner_media_type": "plaintext"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "image",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "image",
+      "planner_media_type": "image"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "web",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "web_article",
+      "planner_media_type": "web"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "web",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "web_scraping",
+      "planner_media_type": "web"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "web",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "webpage",
+      "planner_media_type": "web"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "semantic",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "semantic",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "web",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected unstructured long text; selected semantic chunking.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "web_document",
+      "planner_media_type": "web"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 1000,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 150
+      },
+      "chunking_plan": {
+        "derived_views": [
+          "message_boundaries"
+        ],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 1000,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 150,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "email",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "Detected email content; selected message-friendly sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "email",
+      "planner_media_type": "email"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "code",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "code",
+      "planner_media_type": "code"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "mediawiki_page",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "mediawiki_page",
+      "planner_media_type": "mediawiki_page"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "mediawiki_dump",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "mediawiki_dump",
+      "planner_media_type": "mediawiki_dump"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "reading",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "reading",
+      "planner_media_type": "reading"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "media",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "media",
+      "planner_media_type": "media"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "unknown",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "unknown",
+      "planner_media_type": "unknown"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "book",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "book",
+      "planner_media_type": "book"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "zip",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "zip",
+      "planner_media_type": "zip"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "xml_document",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "xml_document",
+      "planner_media_type": "xml_document"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "xml",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "xml",
+      "planner_media_type": "xml"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "obsidian_note",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "obsidian_note",
+      "planner_media_type": "obsidian_note"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": null,
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": null,
+      "planner_media_type": null
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
+          "media_type": "unmapped_legacy_passthrough",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "unmapped_legacy_passthrough",
+      "planner_media_type": "unmapped_legacy_passthrough"
+    }
+  ],
+  "description": "Vendored auto_planner parity fixtures: plan_auto_chunking outputs for every auto_selection.MEDIA_TYPE_MAP key (mapped exactly as the tier-2 call site maps them) plus the None and unmapped-passthrough cases, at the chatbook capability flags. Generated with test mode explicitly off; re-run at every sync_chunking_engine.py execution.",
+  "flags": {
+    "chunking_mode": "auto",
+    "goal": "balanced",
+    "llm_available": false,
+    "perform_chunking": true,
+    "requested_llm": false,
+    "semantic_available": true
+  }
+}

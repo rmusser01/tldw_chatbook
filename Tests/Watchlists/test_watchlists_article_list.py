@@ -8,7 +8,7 @@ in-place row repaints, open-item pinning).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -16,6 +16,8 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Input, ListView, Select, Static
+
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 from tldw_chatbook.UI.Watchlists_Modules.article_list import (
     ArticleListPane,
@@ -34,8 +36,7 @@ from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
 pytestmark = pytest.mark.unit
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+_REFERENCE_NOW = datetime(2026, 8, 22, 12).astimezone()
 
 
 def _item(
@@ -48,15 +49,20 @@ def _item(
     created_offset_hours: float = 0.5,
     **flags,
 ) -> dict:
-    published = _now() - timedelta(hours=published_offset_hours)
-    created = _now() - timedelta(hours=created_offset_hours)
+    # Preserve the old helper's newest-call-wins tie-break without reading
+    # the real clock: fixture IDs increase with fixture creation order.
+    fixture_order = timedelta(microseconds=item_id)
+    published = _REFERENCE_NOW - timedelta(hours=published_offset_hours) + fixture_order
+    created = _REFERENCE_NOW - timedelta(hours=created_offset_hours) + fixture_order
     return {
         "id": f"local:watchlist_item:{item_id}",
         "item_id": item_id,
         "title": title or f"Article {item_id}",
         "source_name": source_name,
         "status": status,
-        "published_date": published.isoformat() if published_offset_hours >= 0 else None,
+        "published_date": published.isoformat()
+        if published_offset_hours >= 0
+        else None,
         "created_at": created.isoformat(),
         "content": f"Body of article {item_id} with enough text to snippet.",
         "queued_for_briefing": False,
@@ -66,12 +72,13 @@ def _item(
 
 
 class ArticleListHarness(App):
-    def __init__(self):
+    def __init__(self, *, reference_now: datetime = _REFERENCE_NOW):
         super().__init__()
+        self.reference_now = reference_now
         self.captured_messages = []
 
     def compose(self) -> ComposeResult:
-        yield ArticleListPane()
+        yield ArticleListPane(reference_now=self.reference_now)
 
     def on_item_selected(self, message: ItemSelected) -> None:
         self.captured_messages.append(("item_selected", message.item))
@@ -95,18 +102,16 @@ class ArticleListHarness(App):
 
 
 class ProductionCssArticleListHarness(ArticleListHarness):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(sheet) for sheet in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
-        pane = ArticleListPane(id="watchlists-items-pane")
+        pane = ArticleListPane(
+            id="watchlists-items-pane", reference_now=self.reference_now
+        )
+        pane.styles.height = "1fr"
+        pane.styles.min_height = 0
         pane.items = [
-            _item(index, published_offset_hours=index * 12 + 1)
-            for index in range(50)
+            _item(index, published_offset_hours=index * 12 + 1) for index in range(50)
         ]
         with Vertical(classes="watchlists-read-mode"):
             yield Vertical(
@@ -135,11 +140,7 @@ def _item_rows(pane: ArticleListPane) -> list:
 
 def _header_texts(pane: ArticleListPane) -> list[str]:
     list_view = pane.query_one("#items-table", ListView)
-    return [
-        str(node.render())
-        for node in list_view.children
-        if node.disabled
-    ]
+    return [str(node.render()) for node in list_view.children if node.disabled]
 
 
 async def test_unread_row_is_bold_with_dot_and_read_row_is_plain():
@@ -259,6 +260,37 @@ async def test_future_dated_item_lands_under_today():
         assert headers == ["Today"]
 
 
+@pytest.mark.parametrize(
+    ("reference_now", "expected_header", "expected_stamp"),
+    [
+        (
+            datetime(2026, 8, 22, 23, 59, 30).astimezone(),
+            "Today",
+            "11:59 PM",
+        ),
+        (
+            datetime(2026, 8, 23, 0, 0, 30).astimezone(),
+            "Yesterday",
+            "Yesterday",
+        ),
+    ],
+)
+async def test_day_header_changes_at_local_midnight(
+    reference_now: datetime, expected_header: str, expected_stamp: str
+):
+    published = datetime(2026, 8, 22, 23, 59).astimezone()
+    app = ArticleListHarness(reference_now=reference_now)
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        item = _item(1)
+        item["published_date"] = published.isoformat()
+        pane.items = [item]
+        await pilot.pause()
+
+        assert _header_texts(pane) == [expected_header]
+        assert expected_stamp in str(_item_rows(pane)[0].render())
+
+
 async def test_displayed_items_excludes_headers_and_preserves_order():
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -343,6 +375,20 @@ async def test_unread_filter_hides_read_items_but_pins_the_open_one():
         assert [item["item_id"] for item in pane.displayed_items()] == [1]
 
 
+async def test_contextual_unread_filter_is_visible_locked_and_explained():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.status_filter = "unread"
+        pane.status_filter_disabled_reason = "All Unread always shows unread items."
+        await pilot.pause()
+
+        select = pane.query_one("#items-status-select", Select)
+        assert select.value == "unread"
+        assert select.disabled is True
+        assert select.tooltip == "All Unread always shows unread items."
+
+
 async def test_all_filter_shows_triage_statuses_but_not_ignored_or_error():
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -365,7 +411,10 @@ async def test_search_query_narrows_rows():
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(ArticleListPane)
-        pane.items = [_item(1, title="Krebs on security"), _item(2, title="ArXiv digest")]
+        pane.items = [
+            _item(1, title="Krebs on security"),
+            _item(2, title="ArXiv digest"),
+        ]
         await pilot.pause()
 
         search = pane.query_one("#items-search-input", Input)
@@ -430,8 +479,20 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
         fixed_regions = (toolbar.region, legend.region, pager.region)
 
         detail = app.query_one("#watchlists-detail-pane")
+        pane = app.query_one(ArticleListPane)
         assert app.query_one("#watchlists-detail-title") in detail.children
-        assert app.query_one(ArticleListPane) in detail.children
+        assert pane in detail.children
+
+        def assert_contains(parent, child) -> None:
+            assert child.region.x >= parent.region.x
+            assert child.region.y >= parent.region.y
+            assert child.region.right <= parent.region.right
+            assert child.region.bottom <= parent.region.bottom
+
+        assert_contains(detail, pane)
+        assert_contains(pane, pager)
+        assert_contains(pager, app.query_one("#items-page-previous"))
+        assert_contains(pager, app.query_one("#items-page-next"))
 
         def composited_text(widget) -> str:
             strips = widget.screen._compositor.render_strips()
@@ -440,10 +501,15 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
                 "".join(segment.text for segment in strips[y])[
                     region.x : region.x + region.width
                 ]
-                for y in range(region.y, region.y + region.height)
+                for y in range(
+                    max(0, region.y), min(len(strips), region.y + region.height)
+                )
             )
 
-        assert table.region.height <= 40
+        # Read now owns the full-height Feed Items column in the permanent
+        # horizontal reader canvas. The list itself must scroll while its
+        # toolbar, legend, and pager remain fixed; its absolute height is a
+        # function of the terminal rather than a legacy stacked-pane cap.
         assert table.max_scroll_y > 0
         assert "Refresh" in composited_text(toolbar)
         for label in ("Previous", "Page 1", "Next"):
@@ -455,6 +521,8 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
 
         assert table.scroll_y == table.max_scroll_y
         assert (toolbar.region, legend.region, pager.region) == fixed_regions
+        assert_contains(detail, pane)
+        assert_contains(pane, pager)
         assert "Article 49" in composited_text(table)
         assert "Refresh" in composited_text(toolbar)
         assert "unread" in composited_text(legend)
@@ -539,7 +607,9 @@ async def test_apply_page_items_rebuilds_before_focusing_first_row():
         assert [item["item_id"] for item in pane.displayed_items()] == [2, 1]
         list_view = pane.query_one("#items-table", ListView)
         assert list_view.has_focus
-        assert isinstance(list_view.children[list_view.index], type(_item_rows(pane)[0]))
+        assert isinstance(
+            list_view.children[list_view.index], type(_item_rows(pane)[0])
+        )
         assert not [m for m in app.captured_messages if m[0] == "item_selected"]
 
 
@@ -607,9 +677,7 @@ async def test_repaints_never_write_back_to_the_stored_item_dict():
         assert items[0]["status"] == "new", (
             "the repaint must render the new status without writing it back"
         )
-        assert not items[0].get("queued_for_briefing"), (
-            "same for the queued flag"
-        )
+        assert not items[0].get("queued_for_briefing"), "same for the queued flag"
         rendered = str(_item_rows(pane)[0].render())
         assert "· ingested" in rendered and pane._QUEUED_GLYPH in rendered, (
             "and the row itself must still show both"
@@ -687,7 +755,9 @@ async def test_unread_filter_with_nothing_unread_says_all_caught_up():
         await pilot.pause()
 
         assert pane.query_one("#items-empty-state", Static)
-        assert "caught up" in str(pane.query_one("#items-empty-state", Static).renderable)
+        assert "caught up" in str(
+            pane.query_one("#items-empty-state", Static).renderable
+        )
 
 
 async def test_update_item_starred_cell_toggles_the_glyph_in_place():
@@ -739,11 +809,23 @@ async def test_the_client_side_filter_reads_content_and_author_too():
         }, "content- and author-only matches must survive the client filter"
 
 
-async def test_the_new_items_pill_shows_and_click_dismisses_and_reloads():
-    """TASK-3791 plan task 5: the pill is a notice you can act on, not a
-    verb -- it appears with the count a refresh produced, and clicking it
-    asks for a reload (the strip's existing RefreshItemsRequested) while
-    dismissing itself."""
+async def test_snapshot_count_copy_is_screen_seeded_and_updates_in_place():
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        count = pane.query_one("#items-snapshot-count", Static)
+
+        pane.snapshot_count = 50
+        await pilot.pause()
+        assert str(count.renderable) == "50 items in snapshot"
+
+        pane.snapshot_count = 1
+        await pilot.pause()
+        assert str(count.renderable) == "1 item in snapshot"
+
+
+async def test_the_new_items_pill_click_requests_refresh_without_dismissing():
+    """The committed arrival notice survives until refresh succeeds."""
     app = ArticleListHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(ArticleListPane)
@@ -766,7 +848,8 @@ async def test_the_new_items_pill_shows_and_click_dismisses_and_reloads():
 
         pane.on_click(SimpleNamespace(widget=pill, stop=lambda: None))
         await pilot.pause()
-        assert pill.display is False, "the click dismisses the pill"
+        assert pill.display is True, "the click must not pre-empt refresh success"
+        assert pane.new_items_note == "3 new items"
         assert ("refresh_items_requested", None) in app.captured_messages, (
             "the click asks for the same reload the refresh button posts"
         )

@@ -64,9 +64,12 @@ class DatasetLoader:
                 raise DatasetLoadingError.missing_required_fields(["dataset_name"])
 
             # Handle different dataset sources
-            if Path(dataset_name).exists():
+            if (
+                Path(dataset_name).exists()
+                or task_config.metadata.get("dataset_source") == "local_path"
+            ):
                 return DatasetLoader._load_local_dataset(dataset_name, max_samples)
-            elif HF_DATASETS_AVAILABLE and "/" in dataset_name:
+            elif "/" in dataset_name:
                 return DatasetLoader._load_huggingface_dataset(
                     task_config, split, max_samples
                 )
@@ -331,8 +334,14 @@ class DatasetLoader:
     ) -> List[EvalSample]:
         """Load HuggingFace dataset."""
         if not HF_DATASETS_AVAILABLE:
-            raise ImportError(
-                "HuggingFace datasets not available. Install with: pip install datasets"
+            raise DatasetLoadingError(
+                ErrorContext(
+                    category=ErrorCategory.DATASET_LOADING,
+                    severity=ErrorSeverity.ERROR,
+                    message="HuggingFace dataset support is unavailable",
+                    suggestion="Install it with: pip install datasets",
+                    is_retryable=False,
+                )
             )
 
         try:

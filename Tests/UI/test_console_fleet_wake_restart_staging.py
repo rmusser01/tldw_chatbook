@@ -39,7 +39,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_panel import _AGENT_SECTION_SIZE
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import (
-    StaticConversationTreeService,
+    SearchableConversationService,
     _click_console_workspace_conversation_for_id,
     _configure_grouped_browser_workspaces,
     _configure_native_ready_console,
@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
 
 async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
@@ -156,6 +157,11 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
     Live, the wake sat pending until an unrelated composer keystroke."""
     app = _build_test_app()
     _configure_native_ready_console(app)
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
+    assert save_setting_to_cli_config(
+        "console.conversation_browser", "expanded_workspace_ids", ["ws-a"]
+    )
+    app.app_config = load_settings()
     marks = _attach_real_dbs(app, tmp_path)
     # The conversation genuinely exists in ChaChaNotes (production shape:
     # it persisted before the restart) so the wake's SYSTEM notice row can
@@ -171,7 +177,6 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
             "content": "please research this in the background",
         }
     )
-    app.app_config.setdefault("console", {})["agent_runtime"] = False
     service = _configure_grouped_browser_workspaces(app)
     service.link_membership(
         "ws-a",
@@ -180,10 +185,15 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
         role="workspace-thread",
         title="Marked while away",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SearchableConversationService(
         {
             "conv-marked": {
-                "conversation": {"id": "conv-marked", "title": "Marked while away"},
+                "conversation": {
+                    "id": "conv-marked",
+                    "title": "Marked while away",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-a",
+                },
                 "root_threads": [
                     {
                         "id": "message-1",

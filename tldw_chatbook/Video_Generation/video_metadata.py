@@ -29,6 +29,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
 from tldw_chatbook.Video_Generation.video_formats import canonical_video_extension
 
 #: Top-level key namespacing this payload inside ``metadata_json``.
@@ -56,6 +59,11 @@ class VideoGenerationMetadata:
         source_image_message_id: For image-to-video, the persisted id of the
             image message this video was animated from (task-3401.8), or
             ``None``.
+        is_unavailable_tombstone: Process-local/persisted proof that this row
+            is a fork's canonical unavailable-video tombstone rather than a
+            live generated-video marker.
+        terminal_receipt_id: Opaque local-only receipt for exact Console
+            terminal attention, or ``""`` before durable terminal creation.
 
     Raises:
         ValueError: If ``name`` or ``backend`` is empty -- refused at
@@ -76,13 +84,26 @@ class VideoGenerationMetadata:
     ratio: str | None = None
     source_image_message_id: str | None = None
     container: str = "mp4"
+    is_unavailable_tombstone: bool = False
+    terminal_receipt_id: str = ""
 
     def __post_init__(self) -> None:
         if not str(self.name).strip():
-            raise ValueError("name must be non-empty (it is the only durable reference)")
+            raise ValueError(
+                "name must be non-empty (it is the only durable reference)"
+            )
         if not str(self.backend).strip():
             raise ValueError("backend must be non-empty")
+        if type(self.is_unavailable_tombstone) is not bool:
+            raise ValueError("is_unavailable_tombstone must be a bool")
         canonical_video_extension(self.container)
+        if self.terminal_receipt_id:
+            try:
+                ConversationLocalMarksService.validate_terminal_receipt_id(
+                    self.terminal_receipt_id
+                )
+            except ValueError as exc:
+                raise ValueError("terminal receipt id must be a canonical UUID") from exc
 
     def to_json(self) -> str:
         """Serialize for the ``messages.metadata_json`` column.
@@ -105,6 +126,8 @@ class VideoGenerationMetadata:
             "height": self.height,
             "ratio": self.ratio,
             "source_image_message_id": self.source_image_message_id,
+            "is_unavailable_tombstone": self.is_unavailable_tombstone,
+            "terminal_receipt_id": self.terminal_receipt_id,
         }
         return json.dumps({VIDEO_METADATA_TOP_KEY: payload}, sort_keys=True)
 
@@ -138,6 +161,9 @@ class VideoGenerationMetadata:
         if not isinstance(payload, dict):
             return None
         container = "mp4" if "container" not in payload else payload["container"]
+        tombstone = payload.get("is_unavailable_tombstone", False)
+        if type(tombstone) is not bool:
+            return None
         try:
             return cls(
                 name=_as_text(payload.get("name")),
@@ -152,7 +178,13 @@ class VideoGenerationMetadata:
                 width=_as_optional_int(payload.get("width")),
                 height=_as_optional_int(payload.get("height")),
                 ratio=_as_optional_text(payload.get("ratio")),
-                source_image_message_id=_as_optional_text(payload.get("source_image_message_id")),
+                source_image_message_id=_as_optional_text(
+                    payload.get("source_image_message_id")
+                ),
+                is_unavailable_tombstone=tombstone,
+                terminal_receipt_id=_as_terminal_receipt_id(
+                    payload.get("terminal_receipt_id")
+                ),
             )
         except ValueError:
             return None
@@ -195,3 +227,12 @@ def _as_optional_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _as_terminal_receipt_id(value: Any) -> str:
+    if type(value) is not str or not value:
+        return ""
+    try:
+        return ConversationLocalMarksService.validate_terminal_receipt_id(value)
+    except ValueError:
+        return ""

@@ -125,18 +125,49 @@ def test_citation_row_is_focusable_and_immediately_follows_owning_message() -> N
     transcript.set_citation_counts({"assistant-native-id": 2})
 
     rows = transcript._transcript_rows()
-    message_index = next(
-        index for index, row in enumerate(rows) if row.key == "message:assistant-native-id"
+    assistant_turn = next(
+        row for row in rows if row.key == "assistant-turn:assistant-native-id"
     )
-    citation_row = rows[message_index + 1]
+    assert [row.key for row in assistant_turn.nested_rows] == [
+        "message:assistant-native-id",
+        "citations:assistant-native-id",
+    ]
+    citation_row = assistant_turn.nested_rows[1]
     button = transcript._build_row_widget(citation_row, track=False)
 
     assert citation_row.kind == "citations"
     assert citation_row.key == "citations:assistant-native-id"
     assert isinstance(button, Button)
-    assert button.label.plain == "Sources (2)"
+    assert button.label.plain == "Cited sources (2)"
     assert button.id == "console-citation-sources-assistant-native-id"
     assert button.has_class("console-transcript-citation-sources")
+    assert button.native_message_id == "assistant-native-id"
+    assert button.can_focus
+
+
+def test_library_activity_affordance_follows_citations_and_owns_the_assistant() -> None:
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_transcript_messages())
+    transcript.set_citation_counts({"assistant-native-id": 2})
+    transcript.set_library_activity_counts({"assistant-native-id": 3})
+
+    rows = transcript._transcript_rows()
+    assistant_turn = next(
+        row for row in rows if row.key == "assistant-turn:assistant-native-id"
+    )
+    assert [row.key for row in assistant_turn.nested_rows] == [
+        "message:assistant-native-id",
+        "citations:assistant-native-id",
+        "library-activity:assistant-native-id",
+    ]
+    activity_row = assistant_turn.nested_rows[2]
+    button = transcript._build_row_widget(activity_row, track=False)
+
+    assert activity_row.kind == "library-activity"
+    assert isinstance(button, Button)
+    assert button.label.plain == "Library activity (3 actions)"
+    assert button.id == "console-library-activity-assistant-native-id"
+    assert button.has_class("console-transcript-library-activity")
     assert button.native_message_id == "assistant-native-id"
     assert button.can_focus
 
@@ -148,6 +179,17 @@ def test_zero_or_absent_citation_count_adds_no_row(counts: dict[str, int]) -> No
     transcript.set_citation_counts(counts)
 
     assert all(row.kind != "citations" for row in transcript._transcript_rows())
+
+
+@pytest.mark.parametrize("counts", [{}, {"assistant-native-id": 0}])
+def test_zero_or_absent_activity_count_adds_no_row(counts: dict[str, int]) -> None:
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_transcript_messages())
+    transcript.set_library_activity_counts(counts)
+
+    assert all(
+        row.kind != "library-activity" for row in transcript._transcript_rows()
+    )
 
 
 class _CitationTranscriptHarness(App):
@@ -191,9 +233,9 @@ async def test_count_only_change_reconciles_footer_without_rebuilding_messages()
             "#console-citation-sources-assistant-native-id", Button
         )
 
-    assert button.label.plain == "Sources (3)"
-    assert after["citations:assistant-native-id"] > before[
-        "citations:assistant-native-id"
+    assert button.label.plain == "Cited sources (3)"
+    assert after["assistant-turn:assistant-native-id"] == before[
+        "assistant-turn:assistant-native-id"
     ]
-    for message in _transcript_messages():
-        assert after[f"message:{message.id}"] == before[f"message:{message.id}"]
+    for row_key, build_count in before.items():
+        assert after[row_key] == build_count

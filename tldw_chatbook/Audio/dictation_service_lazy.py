@@ -38,6 +38,7 @@ from ..Utils.local_stt_providers import (
     installed_local_providers,
     provider_is_local,
 )
+from .duplex_contracts import AudioFrame
 
 
 @dataclass
@@ -201,6 +202,9 @@ class LazyLiveDictationService:
     #: `_audio_callback`'s inline comment for the exact rule. Reset to
     #: `False` in `start_dictation()` for each new capture.
     _capture_saw_first_frame: bool = False
+    #: Optional speculative path. Raw legacy microphone callbacks never feed
+    #: this engine; only explicit post-AEC admitted frames do.
+    transcript_engine: Optional[Any] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -216,6 +220,8 @@ class LazyLiveDictationService:
         max_buffer_bytes: Optional[int] = None,
         on_buffer_limit: Optional[Callable[[], None]] = None,
         transcription_service_factory: Optional[Callable[[], Any]] = None,
+        recorder_factory: Optional[Callable[..., Any]] = None,
+        transcript_engine: Optional[Any] = None,
     ):
         """Initialize dictation service with lazy loading.
 
@@ -240,6 +246,14 @@ class LazyLiveDictationService:
                 unless `max_buffer_bytes` is set.
             transcription_service_factory: Optional app-owned facade factory,
                 invoked only when transcription is first needed.
+            recorder_factory: Callable used to construct the recorder,
+                receiving the same kwargs `AudioRecordingService` would.
+                Defaults to `AudioRecordingService`. Exists so a caller can
+                substitute its own capture (meetings hand in a mixed
+                mic+system stream) and so tests can inject a fake.
+            transcript_engine: Optional rolling revision engine fed explicitly
+                with post-AEC admitted frames. It does not alter legacy Mic
+                capture, streaming, or silence-finalization behavior.
         """
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
@@ -250,6 +264,8 @@ class LazyLiveDictationService:
         self.max_buffer_bytes = max_buffer_bytes
         self.on_buffer_limit = on_buffer_limit
         self._transcription_service_factory = transcription_service_factory
+        self._recorder_factory = recorder_factory
+        self.transcript_engine = transcript_engine
 
         # Lazy-loaded services
         self._audio_service = None
@@ -320,6 +336,17 @@ class LazyLiveDictationService:
             f"LazyLiveDictationService initialized (services will load on demand) "
             f"provider: {transcription_provider}, privacy: {self.privacy_settings}"
         )
+
+    def submit_admitted_frame(self, frame: AudioFrame) -> None:
+        """Submit one post-AEC admitted frame to the optional revision engine.
+
+        Ordinary Mic dictation continues to enter through `_audio_callback`;
+        keeping this seam explicit prevents raw/pre-AEC audio from entering
+        the speculative transcript path.
+        """
+
+        if self.transcript_engine is not None:
+            self.transcript_engine.append_admitted_frame(frame)
 
     @classmethod
     def _resolve_stop_join_timeout(cls) -> float:
@@ -484,14 +511,13 @@ class LazyLiveDictationService:
                 from .recording_service import AudioRecordingService
 
                 # Try to initialize with preferences
-                self._audio_service = AudioRecordingService(
+                factory = self._recorder_factory or AudioRecordingService
+                self._audio_service = factory(
                     backend=self.audio_backend_preference,
                     use_vad=True,
                     vad_aggressiveness=self.vad_aggressiveness,
                     vad_preroll_ms=self.vad_preroll_ms,
-                    chunk_size=int(
-                        self.buffer_duration_ms * 16
-                    ),  # 16 samples/ms at 16kHz
+                    chunk_size=int(self.buffer_duration_ms * 16),
                     # Both default to None, so every caller that does not ask
                     # for a bound gets exactly the behaviour it had before.
                     max_buffer_bytes=self.max_buffer_bytes,
@@ -1376,13 +1402,22 @@ class LazyLiveDictationService:
             return []
 
     def set_buffer_duration(self, duration_ms: int):
-        """Set audio buffer duration dynamically."""
+        """Set audio buffer duration dynamically (in-memory only).
+
+        task-21124: this used to ALSO write `dictation.buffer_duration_ms`
+        to config.toml synchronously -- a full read-rewrite-reload cycle
+        holding the global config write lock, fired once per parsing
+        keystroke from `Dictation_Window_Improved.on_input_changed` (its
+        caller), and once more on every service init. Persistence of this
+        exact key already belongs to the owning widget, which batches it
+        into its debounced task-15470 settings snapshot (with an unmount
+        flush) -- the write here was a duplicate that turned each keystroke
+        into an event-loop config rewrite. The service now only updates its
+        in-memory value.
+        """
         self.buffer_duration_ms = max(
             100, min(2000, duration_ms)
         )  # Clamp between 100-2000ms
-        save_setting_to_cli_config(
-            "dictation", "buffer_duration_ms", self.buffer_duration_ms
-        )
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
 
     def _process_audio_buffer(self, audio_data: bytes):

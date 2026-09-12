@@ -14,6 +14,8 @@ import pytest
 from textual.app import App
 from textual.widgets import Input, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     PREVIEW_QUOTE_CAP,
     PREVIEW_TRUNCATION_MARKER,
@@ -23,7 +25,7 @@ from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
 QUOTE = "the quoted transcript text"
 
 
-class _CommentModalApp(App[None]):
+class _CommentModalApp(ConsolidatedCSSApp):
     CSS = """
     Screen { align: center middle; }
     """

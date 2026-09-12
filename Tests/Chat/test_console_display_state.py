@@ -5,7 +5,6 @@ import pytest
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON,
-    CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
@@ -13,7 +12,18 @@ from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_SYSTEM_PROMPT_LABEL_UNSET,
     ConsoleControlState,
     ConsoleInspectorState,
+    ConsoleLibraryPolicyDisplayState,
     ConsoleStagedContextState,
+    estimate_console_next_send_tokens,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
@@ -22,7 +32,12 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     state = ConsoleControlState.from_values(
         provider="OpenAI",
         model="gpt-5.5",
-        rag_enabled=True,
+        library_policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=2,
+            source="durable",
+        ),
         staged_source_count=3,
         tool_count=4,
         approval_count=1,
@@ -31,10 +46,75 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
     assert state.assistant_label == "Assistant: General"
-    assert state.rag_label == "Library search: on"
+    assert state.rag_label == "Library · Auto on · Agent blocked"
     assert state.sources_label == "Sources: 3"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
+
+
+@pytest.mark.parametrize(
+    ("automatic", "assistant", "expected"),
+    (
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            "Library · Auto off · Agent blocked",
+        ),
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            "Library · Auto on · Agent blocked",
+        ),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            "Library · Auto off · Agent allowed",
+        ),
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            "Library · Auto on · Agent allowed",
+        ),
+    ),
+)
+def test_library_policy_display_state_pins_the_four_fixed_order_combinations(
+    automatic: ConsoleAutoRetrieve,
+    assistant: ConsoleAssistantLibraryAccess,
+    expected: str,
+) -> None:
+    state = ConsoleLibraryPolicyDisplayState.from_snapshot(
+        ConsoleLibraryPolicySnapshot(
+            auto_retrieve=automatic,
+            assistant_access=assistant,
+            policy_revision=1,
+            source="durable",
+        )
+    )
+
+    assert state.chip_label == expected
+    assert state.auto_retrieve_label in {"Never", "Automatic"}
+    assert state.assistant_access_label in {"Blocked", "Allowed"}
+    assert "Sources" not in state.chip_label
+    assert "ready" not in state.chip_label.lower()
+
+
+def test_library_policy_display_state_fails_closed_when_authority_is_unavailable() -> (
+    None
+):
+    state = ConsoleLibraryPolicyDisplayState.from_snapshot(
+        ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=None,
+            source="unavailable",
+            error_code="policy_read_error",
+        )
+    )
+
+    assert state.chip_label == "Library: blocked · policy unavailable"
+    assert state.source_status == "Unavailable — using Never and Blocked"
+    assert state.editing_enabled is False
+    assert state.save_enabled is False
 
 
 def test_console_control_state_preserves_falsy_labels_and_generic_assistant_fallback():
@@ -167,14 +247,39 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert "Daily papers" in text
     assert "Provider: blocked" in text
     assert "Configure a provider before sending." in text
-    assert "Sources: missing index" in text
+    # TASK-24610: retrieval status is "Retrieval"; "Sources" is
+    # staged context only.
+    assert "Retrieval: missing index" in text
     assert "RAG/source:" not in text
     assert "Artifacts: save available after response" in text
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["Provider"].status == "blocked"
-    assert rows_by_label["Sources"].status == "blocked"
+    assert rows_by_label["Retrieval"].status == "blocked"
     assert "RAG/source" not in rows_by_label
     assert rows_by_label["Approvals"].status == "ready"
+
+
+def test_console_inspector_state_live_work_shows_waiting_for_approval():
+    """task-32345: a pending approval outranks the run/live-work title.
+
+    Unlike ``run_active``'s "Generating…", which is a fact about the model
+    (a generation is in flight), a pending approval is a fact about the
+    USER (a card is waiting on them) -- and it is the more current one.
+    """
+    state = ConsoleInspectorState.from_values(
+        live_work_title="Daily papers", run_active=True, approval_count=1
+    )
+
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["Live work"].value == "Waiting for your approval"
+    assert "Generating" not in rows_by_label["Live work"].value
+
+    # The ordinary run_active case (no pending approval) is unchanged.
+    running = ConsoleInspectorState.from_values(
+        live_work_title="Daily papers", run_active=True, approval_count=0
+    )
+    assert running.rows[1].label == "Live work"
+    assert running.rows[1].value == "Generating…"
 
 
 def test_console_inspector_state_omits_mcp_row_by_default():
@@ -269,7 +374,7 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
     # "no tools available", "not loaded" exposed the lazy-loading detail.
     assert "Tools: —" in text
     assert "not loaded" not in text
-    assert "Sources: missing source" in text
+    assert "Retrieval: missing source" in text
     assert "RAG/source:" not in text
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is False
     assert (
@@ -431,9 +536,7 @@ def test_chip_and_inspector_report_the_same_tool_count():
     control = ConsoleControlState.from_values(
         provider="OpenAI", model="gpt-4o", tool_count=0, mcp_tool_count=12
     )
-    inspector = ConsoleInspectorState.from_values(
-        tool_count=0, mcp_tool_count=12
-    )
+    inspector = ConsoleInspectorState.from_values(tool_count=0, mcp_tool_count=12)
 
     tools_rows = [r for r in inspector.rows if r.label == "Tools"]
     assert tools_rows, "inspector has no Tools row"
@@ -473,3 +576,262 @@ def test_permanently_dead_review_tool_call_action_is_gone():
     assert not any("Review tool call" in lbl for lbl in labels), (
         f"the dead action is still advertised: {labels}"
     )
+
+
+# --- Next-send token estimate (task-25836) ---------------------------------
+#
+# The Next Send tab's "~N tokens" header and the cost chip's first-send
+# readout both need "what will the next request actually carry": system
+# prompt + messages (draft included) + tool schemas + staged evidence.
+# These tests pin the shared pure estimator's counting and its guards.
+
+
+_FIRST_SEND_MESSAGES = [
+    {"role": "system", "content": "You are a thorough assistant. " * 5},
+    {"role": "user", "content": "hello, this is my first message"},
+]
+
+
+@pytest.mark.unit
+def test_next_send_estimate_counts_tools_on_top_of_messages():
+    without_tools = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES
+    )
+    with_tools = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        tools_info={
+            "native_schemas": [
+                {
+                    "name": "demo_tool",
+                    "description": "does demo things",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ]
+        },
+    )
+
+    assert without_tools is not None
+    assert with_tools is not None
+    assert with_tools > without_tools
+
+
+@pytest.mark.unit
+def test_next_send_estimate_does_not_double_count_duplicated_system_row():
+    """The payload's `system` field duplicates the leading system row in
+    `messages` (by design, so the viewer can show it at a glance) -- the
+    estimate must not count it twice."""
+    system_rows = [{"role": "system", "content": _FIRST_SEND_MESSAGES[0]["content"]}]
+    plain = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
+    duplicated = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        payload_system=system_rows,
+    )
+
+    assert duplicated == plain
+
+
+@pytest.mark.unit
+def test_next_send_estimate_counts_fallback_system_when_messages_have_none():
+    """`build_context_snapshot` can hand a `system` field whose rows are NOT
+    in `messages` (its fallback branch) -- that content still ships."""
+    user_only = [{"role": "user", "content": "hello"}]
+    without = estimate_console_next_send_tokens(payload_messages=user_only)
+    with_system = estimate_console_next_send_tokens(
+        payload_messages=user_only,
+        payload_system=[
+            {"role": "system", "content": "You are a thorough assistant." * 20}
+        ],
+    )
+
+    assert without is not None
+    assert with_system is not None
+    assert with_system > without
+
+
+@pytest.mark.unit
+def test_next_send_estimate_folds_extra_texts_and_skips_blank_ones():
+    """Staged evidence text rides along as an extra text (the preview payload
+    lists staged sources as label-only metadata); blank texts add nothing."""
+    base = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
+    with_staged = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        extra_texts=["", "   ", "staged evidence snippet " * 10],
+    )
+
+    assert base is not None
+    assert with_staged is not None
+    assert with_staged > base
+
+
+@pytest.mark.unit
+def test_next_send_estimate_ignores_tools_info_without_schemas():
+    """`tools_info` carries prose notes (`mcp_note`/`preview_note`) that are
+    not request content; an empty `native_schemas` contributes nothing."""
+    with_notes = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        tools_info={
+            "native_schemas": [],
+            "preview_note": "No native tools are configured for preview.",
+        },
+    )
+    without = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
+
+    assert with_notes == without
+
+
+@pytest.mark.unit
+def test_next_send_estimate_returns_none_when_nothing_to_send():
+    assert estimate_console_next_send_tokens() is None
+    assert (
+        estimate_console_next_send_tokens(
+            payload_messages=[],
+            payload_system=[],
+            tools_info={"native_schemas": []},
+            extra_texts=["   "],
+        )
+        is None
+    )
+
+
+@pytest.mark.unit
+def test_next_send_estimate_accepts_multimodal_part_list_content():
+    """Message content may be a provider part-list (text + image) -- the
+    estimator must not crash and must count the text part (plus the
+    non-text part allowance)."""
+    parts = [
+        {"type": "text", "text": "describe this image"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+    ]
+    total = estimate_console_next_send_tokens(
+        payload_messages=[{"role": "user", "content": parts}]
+    )
+
+    assert total is not None
+    assert total > 0
+
+
+@pytest.mark.unit
+def test_next_send_estimate_skips_schemas_that_cannot_serialize():
+    """Qodo finding 3: a schema object whose serialization raises must
+    degrade to "no tools row", not propagate out of the estimator."""
+
+    class _Unserializable:
+        def __str__(self):  # pragma: no cover - exercised via dumps
+            raise TypeError("no repr for you")
+
+    total = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        tools_info={"native_schemas": [{"name": _Unserializable()}]},
+    )
+    without = estimate_console_next_send_tokens(payload_messages=_FIRST_SEND_MESSAGES)
+
+    assert total == without
+
+
+# --- TASK-32330: staged rows that cannot deliver must not say "Ready" --------
+
+
+def test_non_deliverable_handoff_reference_is_labeled_listed_not_ready():
+    """TASK-32330 (task-2375 residual): a skills/watchlists handoff stages
+    an "available" reference whose source_type the send-side normalizer
+    REJECTS (not in _SOURCE_ALIASES), so the model receives nothing --
+    while the tray rendered "Ready". Such references now carry an honest
+    "listed" status with copy that says what will actually happen.
+    """
+    bundle = EvidenceBundle(
+        bundle_id="handoff-evidence",
+        query="Use the skill",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="local:skill:summarize-notes",
+                source_type="skills-context",
+                title="Local Agent Skill: summarize-notes",
+                snippet="Local Agent Skill summarize-notes staged.",
+                authority_label="local",
+                content_ref="local:skill:summarize-notes",
+            ),
+        ),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="skills",
+        title="Local Agent Skill: summarize-notes",
+        payload={"query": "Use the skill", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert state.source_rows, "handoff bundle reference must render a primary row"
+    row = state.source_rows[0]
+    assert row.status == "listed"
+    assert row.status.title() == "Listed"
+
+
+def test_deliverable_library_reference_stays_ready():
+    """A notes/media/conversation reference (in the normalizer allowlist)
+    keeps its honest Ready status."""
+    bundle = EvidenceBundle(
+        bundle_id="bundle-notes",
+        query="q",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="note-1",
+                source_type="notes",
+                title="Note",
+                snippet="Body",
+                authority_label="local",
+                status="available",
+            ),
+        ),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Note",
+        payload={"query": "q", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert state.source_rows[0].status == "ready"
+
+
+def test_deliverable_source_types_mirror_the_capture_allowlist():
+    """TASK-32330: the deliverable predicate must stay in sync with the
+    send-side normalizer's allowlist, or a future source kind would
+    silently regress to the "Ready but delivers nothing" lie."""
+    from tldw_chatbook.RAG_Search.local_citation_capture import _SOURCE_ALIASES
+    from tldw_chatbook.Chat.citation_evidence_models import (
+        DELIVERABLE_EVIDENCE_SOURCE_TYPES,
+    )
+
+    assert DELIVERABLE_EVIDENCE_SOURCE_TYPES == frozenset(_SOURCE_ALIASES)
+
+
+def test_server_owned_reference_is_labeled_listed_not_ready():
+    """Qodo 2614 #1: an "available" SERVER-owned reference of a deliverable
+    source kind never reaches the model either -- the capture path skips
+    non-local owners before the source-kind allowlist is even consulted,
+    so the tray must not call it Ready."""
+    bundle = EvidenceBundle(
+        bundle_id="bundle-remote",
+        query="q",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="media-9",
+                source_type="media",
+                title="Server media",
+                snippet="Body",
+                authority_label="server",
+                status="available",
+                source_owner="server",
+            ),
+        ),
+    )
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Server media",
+        payload={"query": "q", "evidence_bundle": bundle.to_payload()},
+        status="staged",
+    )
+    state = ConsoleStagedContextState.from_live_work(launch)
+    assert state.source_rows[0].status == "listed"

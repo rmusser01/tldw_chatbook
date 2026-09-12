@@ -71,6 +71,33 @@ def _snapshot(root: Path, *, root_delivered: bool = True) -> InstructionSnapshot
     )
 
 
+def test_ledger_revalidates_exact_promotion_snapshot(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("root-secret")
+    ledger = InstructionActivationLedger(_snapshot(tmp_path), nested_max_bytes=100)
+
+    promotion = ledger.snapshot_promotion_target("AGENTS.md")
+
+    assert ledger.revalidate_promotion_target(promotion).eligible is True
+    (tmp_path / "AGENTS.md").write_text("user edit")
+    stale = ledger.revalidate_promotion_target(promotion)
+    assert stale.eligible is False
+    assert stale.reason_code == "target_state_changed"
+
+
+def test_ledger_revalidation_detects_effective_chain_change(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("root-secret")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    ledger = InstructionActivationLedger(_snapshot(tmp_path), nested_max_bytes=100)
+    promotion = ledger.snapshot_promotion_target("nested/AGENTS.md")
+
+    (nested / "AGENTS.override.md").write_text("new override")
+
+    outcome = ledger.revalidate_promotion_target(promotion)
+    assert outcome.eligible is False
+    assert outcome.reason_code == "effective_chain_changed"
+
+
 def _payload(
     *,
     allowance: int | Exception = 10_000,

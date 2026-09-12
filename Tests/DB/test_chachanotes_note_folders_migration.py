@@ -7,7 +7,10 @@ import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
-from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from Tests.ChaChaNotesDB.historical_bootstrap import (
+    chachanotes_db_at_version,
+    open_current_chachanotes_from_legacy,
+)
 
 EXPECTED_FOLDER_TABLES = {"note_folders", "note_folder_memberships"}
 MANAGED_OWNER_INDEX = "idx_note_folder_memberships_managed_owner"
@@ -93,7 +96,9 @@ def test_v35_database_migrates_without_assigning_existing_notes(
     path = tmp_path / "v35.db"
     note_id = _seed_v35(path)
 
-    migrated = CharactersRAGDB(path, client_id="v36-open")
+    migrated = open_current_chachanotes_from_legacy(
+        path, client_id="v36-open"
+    )
     try:
         count = migrated.get_connection().execute(
             "SELECT COUNT(*) AS count FROM note_folder_memberships"

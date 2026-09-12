@@ -117,6 +117,10 @@ class AudioRecordingService:
     #: `vad_preroll_ms`.
     _preroll_frames: Deque[bytes] = deque(maxlen=0)
 
+    #: Class-level fallback for instances built via ``__new__`` (some tests
+    #: skip the constructor's backend probe); ``__init__`` always overrides it.
+    retain_audio: bool = True
+
     # Audio configuration defaults
     DEFAULT_SAMPLE_RATE = 16000  # 16kHz is standard for speech recognition
     DEFAULT_CHANNELS = 1  # Mono
@@ -152,6 +156,7 @@ class AudioRecordingService:
         vad_preroll_ms: int = VAD_PREROLL_MS,
         max_buffer_bytes: Optional[int] = None,
         on_buffer_limit: Optional[Callable[[], None]] = None,
+        retain_audio: bool = True,
     ):
         """
         Initialize audio recording service.
@@ -170,6 +175,11 @@ class AudioRecordingService:
             max_buffer_bytes: Optional hard limit for retained PCM bytes
             on_buffer_limit: Optional callback invoked once on a daemon
                 notification thread when the limit is reached
+            retain_audio: When False, delivered chunks go only to the
+                callback -- nothing is appended to ``audio_buffer`` or
+                ``audio_queue``. Long captures (meetings) that stream to
+                disk themselves set this; the default keeps every existing
+                caller's behaviour.
         """
         # Check for numpy requirement first
         if not NUMPY_AVAILABLE:
@@ -193,6 +203,7 @@ class AudioRecordingService:
             max(0, int(max_buffer_bytes)) if max_buffer_bytes is not None else None
         )
         self.on_buffer_limit = on_buffer_limit
+        self.retain_audio = bool(retain_audio)
         self.vad_preroll_ms = max(0, int(vad_preroll_ms))
         preroll_frame_count = max(
             0, round(self.vad_preroll_ms / self.VAD_FRAME_DURATION_MS)
@@ -548,12 +559,12 @@ class AudioRecordingService:
             )
 
         # Add to buffer
-        if retained:
+        if retained and self.retain_audio:
             self.audio_buffer.append(retained)
             self._audio_buffer_bytes += len(retained)
 
         # Add to queue
-        if retained:
+        if retained and self.retain_audio:
             self.audio_queue.put(retained)
 
         # Call callback if provided

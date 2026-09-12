@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.notes_organization_repository import (
+    NotesOrganizationRepository,
+)
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.manual_sync_control import ManualSyncControlService
+from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
+from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+    NotesOrganizationSyncService,
+)
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 
 pytestmark = pytest.mark.asyncio
@@ -437,3 +445,160 @@ async def test_manual_sync_failed_run_surfaces_retained_outbox_failure(tmp_path)
     assert result.conflict_reviews
     assert result.conflict_reviews[0].cause == "push_failed: temporary network split"
     assert result.conflict_reviews[0].recovery_options["retry"] == "available"
+
+
+async def test_manual_sync_advances_and_resumes_notes_adoption_review(tmp_path):
+    dataset_key = generate_dataset_key()
+    state = _repo_with_profile(tmp_path)
+    notes = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="manual-enrollment")
+    with notes.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO keywords(keyword, deleted, client_id, version, sync_id) "
+            "VALUES ('Visible keyword', 0, 'local', 1, "
+            "'00000000-0000-4000-8000-000000000001')"
+        )
+        local_id = str(cursor.lastrowid)
+        cursor.execute(
+            "INSERT INTO notes_organization_adoption_reviews("
+            "review_id, server_profile_id, dataset_id, domain, local_object_id, "
+            "remote_object_id, collision_key, display_name, state, created_at, updated_at) "
+            "VALUES ('review-1', 'server-a', 'dataset-1', 'notes.keyword', ?, "
+            "'00000000-0000-4000-8000-000000000002', 'visible keyword', "
+            "'Visible keyword', 'open', '2026-08-29T00:00:00Z', "
+            "'2026-08-29T00:00:00Z')",
+            (local_id,),
+        )
+
+    class Enrollment:
+        def __init__(self):
+            self.calls = []
+
+        async def advance_enrollment(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "status": "adoption_review" if len(self.calls) == 1 else "ready",
+                "dataset_id": "dataset-1",
+            }
+
+        def for_server_profile(self, server_profile_id):
+            assert server_profile_id == "server-a"
+            return self
+
+    enrollment = Enrollment()
+    sync_runner = RecordingLocalFirstSync()
+    sync_runner.server_service = object()
+    service = ManualSyncControlService(
+        state_repository=state,
+        local_first_sync_service=sync_runner,
+        dataset_keys={"dataset-1": dataset_key},
+        notes_organization_sync_service=enrollment,
+        notes_repository=NotesOrganizationRepository(
+            notes, server_profile_id="wrong-default-profile"
+        ),
+    )
+    arguments = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-a",
+    }
+
+    first = await service.run_once(**arguments)
+
+    assert first.status == "conflict"
+    assert first.conflict_reviews[0].conflict_review_id == "review-1"
+    assert service.list_conflict_reviews(**arguments)[0].item_label == "Visible keyword"
+    assert service.resolve_notes_organization_adoption(
+        **arguments, review_id="review-1", action="keep_local"
+    )
+    assert service.list_conflict_reviews(**arguments) == ()
+
+    second = await service.run_once(**arguments)
+
+    assert second.status == "success"
+    assert len(enrollment.calls) == 2
+    assert len(sync_runner.calls) == 1
+    assert enrollment.calls[0]["server_profile_id"] == "server-a"
+    notes.close_connection()
+
+
+async def test_production_manual_sync_derives_dependencies_and_syncs_complete_group(
+    tmp_path,
+):
+    dataset_key = generate_dataset_key()
+    state = _repo_with_profile(tmp_path)
+    notes = CharactersRAGDB(tmp_path / "production-notes.sqlite", client_id="device-a")
+    note_id = "00000000-0000-4000-8000-000000000041"
+    conversation_id = "00000000-0000-4000-8000-000000000042"
+    notes.add_note("Linked note", "private body", note_id=note_id)
+    notes.add_conversation(
+        {"id": conversation_id, "root_id": conversation_id, "title": "Conversation"}
+    )
+    with notes.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO notes_organization_sync_checkpoints("
+            "server_profile_id, dataset_id, local_state, server_state, "
+            "inventory_phase, updated_at) VALUES "
+            "('server-a', 'dataset-1', 'ready', 'ready', 'complete', "
+            "'2026-08-29T00:00:00+00:00')"
+        )
+    repository = NotesOrganizationRepository(notes, server_profile_id="server-a")
+    organization = NotesOrganizationSyncService(
+        notes_repository=repository,
+        state_repository=state,
+    )
+    organization.sync_subject_keywords(
+        subject_type="note",
+        subject_id=note_id,
+        keywords=("agent-lesson",),
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM notes_organization_sync_intents "
+            "WHERE acknowledged_at IS NULL"
+        )
+        .fetchone()[0]
+        == 2
+    )
+
+    class Enrollment:
+        def __init__(self):
+            self.calls = []
+
+        def for_server_profile(self, server_profile_id):
+            assert server_profile_id == "server-a"
+            return self
+
+        async def advance_enrollment(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"status": "ready", "dataset_id": "dataset-1"}
+
+    enrollment = Enrollment()
+    sync_runner = RecordingLocalFirstSync()
+    sync_runner.server_service = object()
+    service = ManualSyncControlService(
+        state_repository=state,
+        local_first_sync_service=sync_runner,
+        dataset_keys={"dataset-1": dataset_key},
+        notes_organization_sync_service=enrollment,
+        notes_repository=repository,
+    )
+
+    result = await service.run_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-a",
+    )
+
+    assert result.status == "success"
+    assert enrollment.calls[0]["enrolled_note_ids"] == {note_id}
+    assert enrollment.calls[0]["enrolled_conversation_ids"] == {conversation_id}
+    assert sync_runner.calls[0]["domains"] == [
+        "notes",
+        "chat",
+        *NOTES_ORGANIZATION_DOMAINS,
+    ]
+    notes.close_connection()

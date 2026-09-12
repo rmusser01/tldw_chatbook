@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "pid": 60109,
+  "started_utc": "2026-09-09T06:04:10.980981+00:00",
+  "phases": [
+    {
+      "id": "speech-lab",
+      "expected_text": "Silver compass opens this reply. The middle sentence describes a quiet orchard. This complete reply ends with amber sunrise.",
+      "language": "en-us",
+      "content_anchors": [
+        "silver compass",
+        "quiet orchard",
+        "amber sunrise"
+      ],
+      "started_at": 2169996.974173041,
+      "native_calls": [],
+      "states": [],
+      "outcomes": [],
+      "sink_events": [],
+      "devices": [],
+      "outcome": "running",
+      "request": {
+        "model_id": "kokoro",
+        "voice_id": "af_alloy",
+        "speed": 1.0
+      }
+    }
+  ],
+  "arguments": {
+    "engine": "pytorch",
+    "device": "cpu",
+    "model": "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth",
+    "voice": "af_heart",
+    "voice_dir": "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices",
+    "voices": null,
+    "language": "en-us",
+    "format": "wav",
+    "speed": 1.0,
+    "text_file": null,
+    "cancel_text_file": null,
+    "scenarios": "playback,cancel,repeat",
+    "repeats": 6,
+    "phase_timeout": 300,
+    "cleanup_timeout": 60,
+    "run_timeout": 1800,
+    "expected_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+    "output": "/private/tmp/tts-macos-burndown/harness/cpu-initial",
+    "play_audio": true,
+    "worker": true
+  },
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "executable": "/private/tmp/tts-macos-burndown/runtime-python312/bin/python",
+  "platform": "darwin",
+  "scope": "Mounted Speech pane and trusted Console handler, real models/codecs/device; no full-shell or acoustic loopback claim.",
+  "imported_package_root": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/tldw_chatbook",
+  "runner_sha256": "576d39133ad0307f534e658c40e19fb86bfce58531510ce7c61357ce02d5b72b",
+  "assets": {
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "/private/tmp/tts-runtime-recovery-validation/kokoro-model/config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "/private/tmp/tts-macos-burndown/languages/kokoro-model/voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "source_revision_if_git": "2e3389e694e93592a1c66e5c3416bf29a1057d6c",
+  "versions": {
+    "tldw_chatbook": "0.2.0",
+    "textual": "8.2.8",
+    "numpy": "2.5.3",
+    "sounddevice": "0.5.6",
+    "soundfile": "0.14.0",
+    "kokoro": "0.9.4",
+    "kokoro-onnx": "0.6.1",
+    "torch": "2.14.0",
+    "onnxruntime": "1.29.0",
+    "misaki": "0.9.4",
+    "spacy": "3.8.16",
+    "en-core-web-sm": "3.8.0"
+  },
+  "output_device": {
+    "name": "MacBook Pro Speakers",
+    "index": 1,
+    "hostapi": 0,
+    "max_input_channels": 0,
+    "max_output_channels": 2,
+    "default_low_input_latency": 0.01,
+    "default_low_output_latency": 0.017958333333333333,
+    "default_high_input_latency": 0.1,
+    "default_high_output_latency": 0.027291666666666665,
+    "default_samplerate": 48000.0
+  },
+  "memory_before_model": {
+    "at": 2169961.097405,
+    "threads": 2,
+    "rss_bytes": 224821248,
+    "peak_rss_bytes": 224821248
+  },
+  "runtime_files": {
+    "torch._C": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/torch/_C.cpython-312-darwin.so",
+      "sha256": "b5b5b86566d6e00ee22b73c51e6c243bd894ffbf06f12c58d0bab0549b1840ac"
+    },
+    "kokoro.model": {
+      "path": "/private/tmp/tts-macos-burndown/runtime-python312/lib/python3.12/site-packages/kokoro/model.py",
+      "sha256": "301c55350a068c4ed3b4cbd1209d2afb848bebca72db5657405e47e9dfb604db"
+    }
+  },
+  "cleanup_errors": [],
+  "final_resources": {
+    "generation_owner": 0,
+    "stream_owner": 0,
+    "file_owner": 0,
+    "active_tasks": 0,
+    "retained_io": 0,
+    "retained_cleanup": 0,
+    "admitted_operations": 0,
+    "responses": 0,
+    "leases": 0,
+    "backend_tasks": 0,
+    "native_calls": 0,
+    "player_processes": 0
+  },
+  "notices": [
+    {
+      "message": "TTS generation failed: Kokoro PyTorch generation failed. Retry from the STTS Playground.",
+      "severity": "error"
+    }
+  ],
+  "completions": [],
+  "memory_after_cleanup": {
+    "at": 2169997.618268458,
+    "threads": 2,
+    "rss_bytes": 1193426944,
+    "peak_rss_bytes": 1476345856,
+    "mps_allocated_bytes": 0,
+    "mps_driver_bytes": 458752
+  },
+  "source_unchanged": true,
+  "cleanup_joined": true,
+  "failure": {
+    "type": "ValueError",
+    "message": "Fresh Speech Lab voice/speed did not follow configured defaults",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1165, in main\n    asyncio.run(run_live(args, evidence))\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown/scripts/validate_live_tts.py\", line 1008, in run_live\n    raise ValueError(\nValueError: Fresh Speech Lab voice/speed did not follow configured defaults\n"
+  },
+  "ended_utc": "2026-09-09T06:04:53.528809+00:00",
+  "packaging": {
+    "original_path": "/private/tmp/tts-macos-burndown/harness/cpu-initial/evidence.json",
+    "original_sha256": "97ba0d5467b79a6ea60531288477e46bf74f97b4887b4e87151e933723f93164",
+    "source_map_references": {
+      "source_hashes": {
+        "path": "../../provenance/source-hashes.json",
+        "overrides": {
+          "TTS/backends/alltalk.py": "f6697f4e7195c90bc0cd4d5f8d3fd88b54b2c98cda997483623eadef9494782f",
+          "TTS/backends/higgs.py": "a25bea9694ef07611ae7f5be91574f897d9b273eacd792abf4c6c9779e1914ac",
+          "TTS/backends/kokoro.py": "e4c11a435049e68b29d425a1f2c29874638cd57ad4f6a16e9e9c4acf39d2c54b",
+          "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+          "TTS/legacy_catalogs.py": "eb5a3d485e0b77357af39e67be87f627311bd1b26f02b6156c5f8b6206db1c79",
+          "UI/Speech/speech_playground_model.py": "5402c6ae3058ce0cb16a58b4d9e31e3acea3b9e4384afbf6692f4bd40ac65b5e",
+          "UI/Speech/speech_playground_pane.py": "1c6a130a3edde05221d17d30fc5eb7fa151d3fe0aa131540cd7ac83e3fbb715c",
+          "UI/Speech/speech_settings_mixin.py": "cbd45a236b9a3049dab1ecacac12c4e984ca6853448f27f08b2331e8969c1158",
+          "UI/Speech/speech_settings_model.py": "10cf8447c7a68b499b5c9116e0a11521008a3b29049898a827a89d3611a44f7c"
+        },
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "37de228afe0e88bc0f7402c919661a17835d789daa87f9ee3b13f582e2f68bc8"
+      },
+      "source_hashes_after": {
+        "path": "../../provenance/source-hashes.json",
+        "overrides": {
+          "TTS/backends/alltalk.py": "f6697f4e7195c90bc0cd4d5f8d3fd88b54b2c98cda997483623eadef9494782f",
+          "TTS/backends/higgs.py": "a25bea9694ef07611ae7f5be91574f897d9b273eacd792abf4c6c9779e1914ac",
+          "TTS/backends/kokoro.py": "e4c11a435049e68b29d425a1f2c29874638cd57ad4f6a16e9e9c4acf39d2c54b",
+          "TTS/kokoro_pytorch.py": "596c443a425510cf20b42a9db239681abb479aec9fc31817d1dcc6a0fab7fe0e",
+          "TTS/legacy_catalogs.py": "eb5a3d485e0b77357af39e67be87f627311bd1b26f02b6156c5f8b6206db1c79",
+          "UI/Speech/speech_playground_model.py": "5402c6ae3058ce0cb16a58b4d9e31e3acea3b9e4384afbf6692f4bd40ac65b5e",
+          "UI/Speech/speech_playground_pane.py": "1c6a130a3edde05221d17d30fc5eb7fa151d3fe0aa131540cd7ac83e3fbb715c",
+          "UI/Speech/speech_settings_mixin.py": "cbd45a236b9a3049dab1ecacac12c4e984ca6853448f27f08b2331e8969c1158",
+          "UI/Speech/speech_settings_model.py": "10cf8447c7a68b499b5c9116e0a11521008a3b29049898a827a89d3611a44f7c"
+        },
+        "remove": [],
+        "file_count": 2253,
+        "canonical_sha256": "37de228afe0e88bc0f7402c919661a17835d789daa87f9ee3b13f582e2f68bc8"
+      }
+    },
+    "transformation": "Only source_hashes/source_hashes_after are factored into the shared hash map. All remaining original JSON fields are retained."
+  }
+}

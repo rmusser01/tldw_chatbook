@@ -6,6 +6,7 @@ escape allowed directories.
 """
 
 import os
+import stat
 import time
 from pathlib import Path
 from typing import Optional, Sequence, Union
@@ -28,11 +29,7 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 #: transcript_truncation` (Tests/Utils/test_path_validation_multi.py) for
 #: the actual truncation math, not just an estimate.
 #:
-#: Qodo PR #1074 finding 3: the ORIGINAL pointer ("create a workspace +
-#: bind a folder") baked in the Default-workspace assumption unconditionally
-#: -- misleading for the common case of a run already in a normal, named
-#: workspace, where the actual fix is just "bind a folder" (creating
-#: another workspace would be actively wrong advice there). This function's
+#: The pointer is deliberately workspace-agnostic. This function's
 #: caller, `validate_path_multi` below, has no cheap way to know which
 #: workspace the denied run belongs to: it is a generic multi-root path
 #: validator with no workspace awareness, called from three sites in
@@ -42,28 +39,50 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 #: active-workspace logic, across a Utils -> Tools/Workspaces layering
 #: boundary this module does not otherwise cross, just to pick a copy
 #: variant. So the pointer stays workspace-agnostic and universally
-#: correct instead, and the Default-specific caveat moves to
-#: `ROOT_DENIAL_RECOVERY_HINT` below, reworded as an explicit conditional
-#: rather than an assertion.
-ROOT_DENIAL_RECOVERY_POINTER = "Fix: bind a folder in Settings > Workspaces."
+#: correct instead: external-folder access belongs to named Workspaces, while
+#: an ordinary Chat remains valid with its private scratch space.
+ROOT_DENIAL_RECOVERY_POINTER = "Need that folder? Add it to a named Workspace."
 
-#: Fuller explanation appended AFTER the pointer above and the (now
-#: second-priority) path/consulted-roots detail (TASK-1231, fleet-UX review
-#: F3; reworded to a conditional per Qodo PR #1074 finding 3): on a fresh
-#: install every session starts on the Default workspace, which cannot
-#: hold folder bindings -- the FIRST file-tool call a model makes there is
-#: always rejected. Phrased as an "if" (not "you are in Default") because
-#: this exact denial also fires for a normal, already-named workspace that
-#: simply has no folder bound yet -- for that run, "create a NEW
-#: workspace" would be wrong; it only needs the bind-a-folder step the
-#: pointer above already covers. This is the part truncation is allowed to
-#: eat into (along with the consulted-roots list) -- it is not the user's
-#: only route to the fix, `ROOT_DENIAL_RECOVERY_POINTER` above is.
+#: Fuller explanation appended after the short pointer and path detail. This
+#: is the part truncation is allowed to eat into: the pointer still gives the
+#: recovery route, while this sentence makes clear that a Chat itself is not
+#: missing required setup.
 ROOT_DENIAL_RECOVERY_HINT = (
-    "The Default workspace cannot hold folder bindings -- create a named "
-    "workspace first if this run is in Default, then bind a folder to it "
-    "and use a session in that workspace."
+    "Chats do not need a folder. To give local file tools access outside "
+    "private scratch, bind that folder in Settings > Workspaces and use a "
+    "chat in that Workspace."
 )
+
+
+def validate_canonical_directory(value: os.PathLike[str] | str) -> Path:
+    """Validate an existing absolute directory without normalizing aliases.
+
+    Args:
+        value: Directory spelling that must already be canonical, including
+            every ancestor. Hidden profile directories are permitted.
+
+    Returns:
+        The validated canonical directory. Callers must still pin descriptors
+        and enforce their own authority and containment during filesystem use.
+
+    Raises:
+        ValueError: If the value is not an existing canonical directory. The
+            error contains no path content.
+    """
+    try:
+        raw = os.fspath(value)
+        if type(raw) is not str or not raw or "\x00" in raw:
+            raise ValueError
+        path = Path(raw)
+        if not path.is_absolute() or str(path) != raw:
+            raise ValueError
+        if path.resolve(strict=True) != path:
+            raise ValueError
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            raise ValueError
+        return path
+    except (OSError, TypeError, ValueError, RuntimeError):
+        raise ValueError("Canonical directory required") from None
 
 
 def validate_path(
@@ -475,6 +494,27 @@ def validate_path_simple(
         raise ValueError(f"Invalid path: {user_path}")
 
 
+def validate_existing_absolute_directory(user_path: Union[str, Path]) -> Path:
+    """Return one normalized existing directory without imposing a root.
+
+    This is the central mode for explicitly host-authorized process working
+    directories. It validates and normalizes the path, but intentionally does
+    not claim workspace confinement.
+    """
+    try:
+        path = Path(user_path)
+        path_text = str(path)
+        path_text.encode("utf-8")
+        if "\x00" in path_text or not path.is_absolute():
+            raise ValueError
+        normalized = path.resolve(strict=True)
+        if not normalized.is_dir():
+            raise ValueError
+        return normalized
+    except (OSError, TypeError, ValueError, UnicodeError):
+        raise ValueError("Path must be an absolute existing directory") from None
+
+
 def validate_path_multi(
     user_path: Union[str, Path], roots: Sequence[Union[str, Path]]
 ) -> Path:
@@ -484,6 +524,17 @@ def validate_path_multi(
     pass the tool sandbox first so legacy relative-path behavior is
     unchanged). The rejection message names every consulted root so a
     denial is actionable.
+
+    Every attempt is made with ``redact_paths=True`` (TASK-19558). This is
+    the choke point for the agent file-tool family (``ReadFileTool`` /
+    ``WriteFileTool`` / ``ListDirectoryTool`` / ``EditFileTool``, via
+    ``Tools/file_operation_tools.py``), so ``user_path`` here is
+    MODEL-supplied and prompt-injection-reachable; without redaction a
+    single traversal probe wrote attacker-chosen text AND the user's real
+    directory layout into the log once PER ROOT. The refusal below is
+    unaffected -- it is built here, from ``user_path``, and still names the
+    path and every consulted root, because that message goes to the model
+    as a recovery route rather than into diagnostics.
 
     Args:
         user_path: The path provided by the user or model.
@@ -503,7 +554,7 @@ def validate_path_multi(
         if index > 0 and not candidate.is_absolute():
             continue  # relative paths anchor to the primary root only
         try:
-            return validate_path(user_path, root)
+            return validate_path(user_path, root, redact_paths=True)
         except ValueError:
             continue
     consulted = ", ".join(str(root.resolve()) for root in root_list)

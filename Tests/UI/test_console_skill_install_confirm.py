@@ -27,8 +27,14 @@ from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
 
 class _FakeApp:
+    def __init__(self) -> None:
+        self.notifications: list[str] = []
+
     def call_from_thread(self, fn, *args, **kwargs):
         return fn(*args, **kwargs)
+
+    def notify(self, message, **_kwargs) -> None:
+        self.notifications.append(str(message))
 
 
 def _controller():
@@ -40,11 +46,18 @@ def _controller():
 async def test_confirm_round_trip_allow():
     controller, _ = _controller()
     received: list[dict | None] = []
+    projected = threading.Event()
     controller.app = _FakeApp()
-    controller.set_pending_skill_install = received.append
+
+    def _project(payload: dict | None) -> None:
+        received.append(payload)
+        if payload is not None:
+            projected.set()
+
+    controller.set_pending_skill_install = _project
 
     async def resolve_soon():
-        await asyncio.sleep(0.05)
+        assert await asyncio.to_thread(projected.wait, 2.0)
         assert received and received[0] is not None
         assert received[0]["url"] == "https://github.com/o/r"
         assert received[0]["request_id"]
@@ -55,8 +68,12 @@ async def test_confirm_round_trip_allow():
     task = asyncio.create_task(
         asyncio.to_thread(controller.request_skill_install_confirm, "https://github.com/o/r")
     )
-    await resolve_soon()
-    allowed = await task
+    try:
+        await resolve_soon()
+        allowed = await asyncio.wait_for(task, timeout=2.0)
+    finally:
+        for request_id in controller.pending_skill_install_ids():
+            controller.resolve_pending_skill_install(False, request_id=request_id)
     assert allowed is True
     assert received[-1] is None  # card cleared afterwards
 
@@ -188,18 +205,20 @@ def test_request_skill_install_confirm_parks_for_a_non_active_session():
     """TASK-910: a round whose `session_id` differs from the store's ACTIVE
     session parks -- no card mount (`set_pending_skill_install` never
     called with a real payload), the run-marker pending flag flips, and
-    `park_pending_approval` fires exactly once. Visiting (switching to) the
-    owning session later mounts the SAME retained payload and lets it
-    resolve normally."""
+    one app-owned sanitized notice is emitted. The retired screen parking
+    hook is never used. Visiting the owning session later mounts the SAME
+    retained payload and lets it resolve normally."""
     controller, store = _controller()
     viewed = store.create_session(title="Viewed").id
     background = store.create_session(title="Background").id
     store.switch_session(viewed)  # keep viewing the first session
-    controller.app = _FakeApp()
+    app = _FakeApp()
+    controller.app = app
     mounted: list[dict | None] = []
     controller.set_pending_skill_install = mounted.append
-    parked: list[str] = []
-    controller.park_pending_approval = parked.append
+    controller.park_pending_approval = lambda _session_id: pytest.fail(
+        "background decisions must not use the legacy screen notice hook"
+    )
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0
 
     result_holder: dict[str, bool] = {}
@@ -211,9 +230,14 @@ def test_request_skill_install_confirm_parks_for_a_non_active_session():
 
     worker = threading.Thread(target=_run_round)
     worker.start()
-    time.sleep(0.1)
+    deadline = time.monotonic() + 2.0
+    while not app.notifications and time.monotonic() < deadline:
+        time.sleep(0.01)
 
-    assert parked == [background]
+    assert app.notifications == [
+        "A Console session needs confirmation for a skill install. "
+        "Return to Console to respond."
+    ]
     assert mounted == []  # never mounted -- the active session's card is untouched
     assert background in controller._pending_approvals
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
@@ -384,7 +408,7 @@ def test_restored_state_drops_the_pending_install_so_no_dead_card_appears():
 @pytest.mark.asyncio
 async def test_skill_install_card_allow_and_deny():
     from textual import on
-    from textual.app import App, ComposeResult
+    from textual.app import ComposeResult
     from textual.widgets import Button
     from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
         SkillInstallConfirmCard,

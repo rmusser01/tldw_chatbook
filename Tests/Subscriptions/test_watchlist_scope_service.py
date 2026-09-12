@@ -1,12 +1,40 @@
-from unittest.mock import Mock
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from tldw_chatbook.Subscriptions import WatchlistScopeService
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions import LocalWatchlistsService, WatchlistScopeService
+from tldw_chatbook.Subscriptions import local_watchlists_service
+from tldw_chatbook.Subscriptions.watchlist_item_page import (
+    WatchlistItemCursor,
+    WatchlistItemPage,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
 
 
+def _durable_claim_state(
+    db: SubscriptionsDB, run_id: int, source_id: int
+) -> tuple[dict, tuple]:
+    run = dict(
+        db.conn.execute(
+            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    )
+    counters = tuple(
+        db.conn.execute(
+            "SELECT error_count, consecutive_failures, last_error, is_paused, "
+            "last_checked, last_successful_check FROM subscriptions WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+    )
+    return run, counters
+
+
 class FakeLocalWatchlists:
+    CREATE_FORM_SOURCE_TYPES = ("rss", "atom", "url")
+
     def __init__(self):
         self.calls = []
 
@@ -17,6 +45,14 @@ class FakeLocalWatchlists:
     async def list_items(self, **kwargs):
         self.calls.append(("list_items", kwargs))
         return []
+
+    async def list_reader_items_page(self, **kwargs):
+        self.calls.append(("list_reader_items_page", kwargs))
+        return self.reader_page
+
+    async def count_reader_item_arrivals(self, **kwargs):
+        self.calls.append(("count_reader_item_arrivals", kwargs))
+        return 4
 
     async def get_source(self, source_id):
         self.calls.append(("get_source", source_id))
@@ -95,6 +131,8 @@ class FakeExecutableLocalWatchlists(FakeLocalWatchlists):
 
 
 class FakeServerWatchlists:
+    CREATE_FORM_SOURCE_TYPES = ("rss", "site", "forum")
+
     def __init__(self):
         self.calls = []
 
@@ -171,6 +209,27 @@ class FakeServerWatchlists:
         return {"deleted": True, "id": f"server:watchlist_alert_rule:{rule_id}"}
 
 
+@pytest.mark.parametrize(
+    ("runtime_backend", "expected"),
+    [
+        (None, FakeLocalWatchlists.CREATE_FORM_SOURCE_TYPES),
+        ("local", FakeLocalWatchlists.CREATE_FORM_SOURCE_TYPES),
+        ("server", FakeServerWatchlists.CREATE_FORM_SOURCE_TYPES),
+    ],
+)
+def test_scope_service_returns_active_create_form_source_types(
+    runtime_backend, expected
+):
+    scope = WatchlistScopeService(
+        local_service=FakeLocalWatchlists(),
+        server_service=FakeServerWatchlists(),
+    )
+
+    assert (
+        scope.create_form_source_types(runtime_backend=runtime_backend) == expected
+    )
+
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_and_server_actions_with_watchlists_action_ids():
     policy = Mock()
@@ -204,6 +263,106 @@ async def test_scope_service_routes_local_and_server_actions_with_watchlists_act
     assert server.calls == [
         ("list_sources", {"limit": 100, "offset": 0, "q": "ai"}),
         ("get_source", "17"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_reader_items_page_with_items_list_policy():
+    cursor = WatchlistItemCursor("2026-08-25 12:00:00", 21)
+    page = WatchlistItemPage(
+        items=(),
+        has_more=False,
+        snapshot_max_item_id=42,
+        snapshot_count=0,
+        next_cursor=None,
+    )
+    policy = Mock()
+    local = FakeLocalWatchlists()
+    local.reader_page = page
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=policy,
+    )
+
+    result = await scope.list_reader_items_page(
+        runtime_backend="local",
+        source_id="7",
+        status=None,
+        limit=25,
+        run_id="8",
+        watchlist_id="9",
+        unassigned_only=True,
+        statuses=["new", "reviewed"],
+        is_flagged=True,
+        search="reader",
+        since="2026-08-25 00:00:00",
+        snapshot_max_item_id=42,
+        after=cursor,
+    )
+
+    assert result is page
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.local"
+    )
+    assert local.calls == [
+        (
+            "list_reader_items_page",
+            {
+                "source_id": "7",
+                "status": None,
+                "limit": 25,
+                "run_id": "8",
+                "watchlist_id": "9",
+                "unassigned_only": True,
+                "statuses": ["new", "reviewed"],
+                "is_flagged": True,
+                "search": "reader",
+                "since": "2026-08-25 00:00:00",
+                "snapshot_max_item_id": 42,
+                "after": cursor,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_reader_item_arrivals_with_items_list_policy():
+    policy = Mock()
+    local = FakeLocalWatchlists()
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=policy,
+    )
+
+    result = await scope.count_reader_item_arrivals(
+        runtime_backend="local",
+        snapshot_max_item_id=42,
+        source_id="7",
+        statuses=["new", "reviewed"],
+    )
+
+    assert result == 4
+    policy.require_allowed.assert_called_once_with(
+        action_id="watchlists.items.list.local"
+    )
+    assert local.calls == [
+        (
+            "count_reader_item_arrivals",
+            {
+                "snapshot_max_item_id": 42,
+                "source_id": "7",
+                "status": None,
+                "run_id": None,
+                "watchlist_id": None,
+                "unassigned_only": False,
+                "statuses": ["new", "reviewed"],
+                "is_flagged": None,
+                "search": None,
+                "since": None,
+            },
+        )
     ]
 
 
@@ -384,6 +543,132 @@ async def test_scope_service_executes_local_runs_when_local_backend_supports_exe
     assert [item["operation_id"] for item in local_report] == [
         "watchlists.groups.local"
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_observes_losing_claim_without_executing_it():
+    local = Mock()
+    local.launch_run = AsyncMock(
+        return_value={
+            "run_id": 7,
+            "status": "running",
+            "_claim_acquired": False,
+        }
+    )
+    local.wait_for_terminal_run = AsyncMock(
+        return_value={"run_id": 7, "status": "completed"}
+    )
+    local.execute_run = AsyncMock()
+    scope = WatchlistScopeService(local_service=local, server_service=None)
+
+    receipt = await scope.launch_run(runtime_backend="local", source_id=42)
+
+    assert receipt == {"run_id": 7, "status": "completed"}
+    local.wait_for_terminal_run.assert_awaited_once_with("7")
+    local.execute_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scope_loser_timeout_preserves_stranded_winner(monkeypatch, tmp_path):
+    path = tmp_path / "scope-timeout.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    observer_db = SubscriptionsDB(path, "observer")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    observer = LocalWatchlistsService(
+        db_factory=lambda: observer_db, run_executor=executor
+    )
+    scope = WatchlistScopeService(local_service=observer, server_service=None)
+    clock = 0.0
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        nonlocal clock
+        sleeps.append(delay)
+        clock = round(clock + delay, 9)
+
+    monkeypatch.setattr(
+        local_watchlists_service, "_RUN_CLAIM_WAIT_TIMEOUT_SECONDS", 0.03
+    )
+    monkeypatch.setattr(
+        local_watchlists_service,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock),
+    )
+    monkeypatch.setattr(
+        local_watchlists_service, "asyncio", SimpleNamespace(sleep=sleep)
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out waiting for watchlist run"):
+        await scope.launch_run(runtime_backend="local", source_id=source_id)
+
+    assert sleeps == pytest.approx([0.01, 0.02])
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    observer_db.close()
+
+
+@pytest.mark.asyncio
+async def test_scope_loser_cancellation_preserves_stranded_winner(tmp_path):
+    path = tmp_path / "scope-cancel.db"
+    owner_db = SubscriptionsDB(path, "owner")
+    observer_db = SubscriptionsDB(path, "observer")
+    source_id = owner_db.add_subscription(
+        name="Stranded", type="rss", source="https://example.com/feed.xml"
+    )
+    owner = LocalWatchlistsService(db_factory=lambda: owner_db)
+    winner = await owner.launch_run(source_id=source_id)
+    before = _durable_claim_state(owner_db, winner["run_id"], source_id)
+    executor_calls = 0
+
+    async def executor(_subscription):
+        nonlocal executor_calls
+        executor_calls += 1
+        return {"items": []}
+
+    observer = LocalWatchlistsService(
+        db_factory=lambda: observer_db, run_executor=executor
+    )
+    entered_wait = asyncio.Event()
+    queries = 0
+    original_get_run = observer.get_run
+
+    async def get_run(run_id):
+        nonlocal queries
+        queries += 1
+        receipt = await original_get_run(run_id)
+        if queries == 2:
+            entered_wait.set()
+        return receipt
+
+    observer.get_run = get_run
+    scope = WatchlistScopeService(local_service=observer, server_service=None)
+    waiting = asyncio.create_task(
+        scope.launch_run(runtime_backend="local", source_id=source_id)
+    )
+    await asyncio.wait_for(entered_wait.wait(), timeout=1)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert queries == 2
+    assert executor_calls == 0
+    assert _durable_claim_state(owner_db, winner["run_id"], source_id) == before
+    owner_db.close()
+    observer_db.close()
 
 
 @pytest.mark.asyncio

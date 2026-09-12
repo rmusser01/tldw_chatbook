@@ -172,3 +172,90 @@ async def test_panel_compose_covers_all_sections():
         assert any("Diagnostics" in text for text in section_texts)
         assert any("ffmpeg" in text for text in section_texts)
         assert any("Style templates" in text for text in section_texts)
+
+
+# -- fresh-profile dirty state (TASK-23191) ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
+    """Opening Video Gen with no persisted ``[video_generation]`` is not dirty.
+
+    Regression pin for TASK-23191. Both of the panel's ``Select``s re-post
+    ``Changed`` from Textual's ``_on_mount``, and this category diffs
+    against the RAW config table, so an unguarded echo of a value that is
+    only the effective default reads as an edit. The shipped config
+    template writes no ``[video_generation]`` table at all, so every fresh
+    profile hits exactly that state and the banner read "Unsaved changes"
+    on a page nobody had touched.
+
+    The load patch pins that premise rather than creating it: a fresh
+    profile genuinely has no such table, but this suite shares one config
+    file with the rest of the run, and a sibling that saves Video Gen
+    defaults would otherwise quietly retire the regression this covers.
+    """
+    from textual.widgets import Select, Static
+
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+
+    real_load = SettingsConfigAdapter.load
+
+    def _load_without_video_generation(self):
+        loaded = dict(real_load(self))
+        loaded.pop("video_generation", None)
+        return loaded
+
+    monkeypatch.setattr(
+        SettingsConfigAdapter, "load", _load_without_video_generation
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.VIDEO_GENERATION.value)
+        await _wait_for_selector(screen, pilot, "#settings-videogen-panel")
+        await pilot.pause()
+
+        assert not screen._video_gen_raw_section(), "premise: no persisted table"
+
+        def _dirty_keys():
+            draft = screen._settings_drafts.get(SettingsCategoryId.VIDEO_GENERATION)
+            return getattr(draft, "dirty_keys", None)
+
+        def _banner():
+            return str(
+                screen.query_one("#settings-category-state-banner", Static).renderable
+            )
+
+        # AC1: nothing staged, and the banner does not ask for a Save.
+        assert not screen._category_has_unsaved_changes(
+            SettingsCategoryId.VIDEO_GENERATION
+        ), f"fresh profile staged: {_dirty_keys()}"
+        assert "Unsaved changes" not in _banner(), _banner()
+
+        # AC2: a real edit -- through the widget, not the staging helper --
+        # still turns it dirty...
+        retention = screen.query_one("#settings-videogen-retention", Select)
+        retention.value = "ttl"
+        await pilot.pause()
+        assert screen._category_has_unsaved_changes(
+            SettingsCategoryId.VIDEO_GENERATION
+        ), "a genuine retention edit must stage"
+        assert "Unsaved changes" in _banner(), _banner()
+
+        # ...and Revert clears it without the recomposed Selects re-dirtying.
+        await screen._handle_video_gen_revert()
+        await pilot.pause()
+        assert not screen._category_has_unsaved_changes(
+            SettingsCategoryId.VIDEO_GENERATION
+        ), f"revert left staged: {_dirty_keys()}"
+        assert "Unsaved changes" not in _banner(), _banner()

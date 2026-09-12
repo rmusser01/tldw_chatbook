@@ -21,6 +21,7 @@ from .audio_processing import LocalAudioProcessor, build_ffmpeg_trim_args
 from ..config import get_cli_setting
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.egress import EgressBlockedError, check_url_or_raise, origin_set
 
 # Optional imports
 try:
@@ -44,6 +45,50 @@ class VideoDownloadError(VideoProcessingError):
     """Raised when video download fails."""
 
     pass
+
+
+def check_media_url_egress(url: str) -> None:
+    """Apply the app's egress policy to a media URL before yt-dlp sees it.
+
+    The media arm of ingest never consulted ``Utils/egress.py`` (TASK-19556
+    (b)), while the article arm of the same entry point did, and
+    ``audio_processing.download_audio_file`` guards its own plain-HTTP branch
+    with ``guarded_fetch_requests(..., trusted_origins=origin_set(url))``.
+    This is that same check, applied at the two yt-dlp seams, so both arms
+    behave identically.
+
+    The URL is its own trusted origin, exactly as in the audio arm: a media
+    URL the user typed into the ingest form is an explicitly configured URL,
+    which ``config.py``'s ``[web_security]`` contract permits to be private
+    (an intranet media server is a legitimate source). What the check still
+    refuses is what no configured URL may be: a cloud metadata endpoint
+    (blocked regardless of trust) and anything that is not http(s) -- yt-dlp
+    itself is happy to hand ``file://`` and dozens of other protocols to its
+    extractors.
+
+    WHAT THIS DOES NOT COVER, stated plainly: yt-dlp performs its own HTTP
+    fetching. This is a pre-check on the entry URL only. It cannot
+    re-validate yt-dlp's own redirect hops, the per-format media URLs an
+    extractor discovers inside a page, or a DNS answer that changes between
+    this call and yt-dlp's own resolution -- the TOCTOU window
+    ``Utils/egress.py`` documents as a residual for every consumer of a
+    resolve-then-connect check. Closing those would need a yt-dlp request
+    hook and is not in this task's scope.
+
+    Args:
+        url: The media URL about to be handed to yt-dlp.
+
+    Raises:
+        VideoDownloadError: If the egress policy refuses the URL.
+    """
+    try:
+        check_url_or_raise(url, trusted_origins=origin_set(url))
+    except EgressBlockedError as exc:
+        log_counter(
+            "video_processing_download_error",
+            labels={"error_type": "egress_blocked"},
+        )
+        raise VideoDownloadError(f"URL blocked by the egress policy: {exc}") from exc
 
 
 class LocalVideoProcessor:
@@ -211,6 +256,11 @@ class LocalVideoProcessor:
                 labels={"error_type": "yt_dlp_not_available"},
             )
             raise VideoDownloadError("yt-dlp is not installed")
+
+        # (TASK-19556) Before ANY yt-dlp work -- the probe below is itself a
+        # fetch. Outside the try/except so a policy refusal keeps its own
+        # reason instead of being rewrapped as "Download failed".
+        check_media_url_egress(url)
 
         # Resolved before the try so an unusable cookies value fails with
         # its own reason instead of being wrapped as a download failure.
@@ -438,6 +488,18 @@ class LocalVideoProcessor:
                 "video_processing_metadata_error",
                 labels={"error_type": "yt_dlp_not_available"},
             )
+            return None
+
+        # (TASK-19556) The metadata seam fetches too -- same guard as the
+        # download seam, reported through this function's None contract.
+        try:
+            check_media_url_egress(url)
+        except VideoDownloadError as exc:
+            log_counter(
+                "video_processing_metadata_error",
+                labels={"error_type": "egress_blocked"},
+            )
+            logger.error(f"Metadata extraction refused: {exc}")
             return None
 
         owned_temp_cookiefile: Optional[str] = None

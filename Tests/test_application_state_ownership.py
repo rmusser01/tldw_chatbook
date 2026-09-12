@@ -779,7 +779,7 @@ def _is_exception_category(node: ast.AST) -> bool:
         and node.value.func.id == "type"
         and len(node.value.args) == 1
         and isinstance(node.value.args[0], ast.Name)
-        and node.value.args[0].id == "exc"
+        and node.value.args[0].id in {"exc", "release_exc"}
     )
 
 
@@ -792,7 +792,11 @@ def _is_logger_call(node: ast.Call) -> bool:
 
 def _unsafe_handoff_log_parts(node: ast.Call) -> list[str]:
     unsafe: list[str] = []
-    safe_chains = {"claim.channel.value", "claim.revision"}
+    safe_chains = {
+        "HandoffChannel.CHAT.value",
+        "claim.channel.value",
+        "claim.revision",
+    }
 
     for argument in node.args:
         chain = _chain(argument)

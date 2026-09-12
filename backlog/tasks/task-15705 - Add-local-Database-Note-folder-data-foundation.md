@@ -13,7 +13,7 @@ references:
   - Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md
   - backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md
   - >-
-    backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md
+    backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md
 priority: high
 ---
 
@@ -47,7 +47,7 @@ ADR required: yes
 ADR paths:
 
 - `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
-- `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+- `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 
 Reason: this slice implements the accepted local folder schema, ownership,
 backup, normalized service, and bounded paging boundaries.
@@ -99,7 +99,7 @@ Detailed executable plan:
   explicit `Z`-to-UTC-offset normalization matching the repository convention.
 - Architecture remains governed by
   `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md` and
-  `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`;
+  `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`;
   no new ADR was required because this slice directly implements those accepted
   boundaries.
 <!-- SECTION:NOTES:END -->
@@ -109,7 +109,7 @@ Detailed executable plan:
 - [x] #1 Every acceptance criterion is checked with automated or recorded evidence.
 - [x] #2 Focused tests, broader DB/Notes regressions, and static analysis pass or have counterfactual baseline evidence.
 - [x] #3 Implementation Notes summarize the approach, files, trade-offs, and evidence.
-- [x] #4 ADR-059 and ADR-060 are linked from implementation notes and remain satisfied.
+- [x] #4 ADR-059 and ADR-073 are linked from implementation notes and remain satisfied.
 - [x] #5 A self-review finds no raw folder SQL outside the repository or Sync-v2 payload drift.
 - [x] #6 The task is set to Done only after all requirements above are complete.
 <!-- DOD:END -->

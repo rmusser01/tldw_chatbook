@@ -3,17 +3,28 @@ from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 
 def _row(root="/ws", kind="turn", tracking_error=None):
-    return {"root": root, "kind": kind, "tracking_error": tracking_error,
-            "files_changed": 1, "adds": 3, "dels": 1}
+    return {
+        "root": root,
+        "kind": kind,
+        "tracking_error": tracking_error,
+        "files_changed": 1,
+        "adds": 3,
+        "dels": 1,
+    }
 
 
 def test_single_root_entries_use_bare_relpaths():
     row = _row()
     files = [ChangedFile(path="a/b.py", status="M", adds=3, dels=1)]
     paired = turn_file_entries([(row, files)])
-    assert paired == [(TurnFileEntry(
-        label="a/b.py", path="a/b.py", root="/ws",
-        status="M", adds=3, dels=1), row)]
+    assert paired == [
+        (
+            TurnFileEntry(
+                label="a/b.py", path="a/b.py", root="/ws", status="M", adds=3, dels=1
+            ),
+            row,
+        )
+    ]
 
 
 def test_multi_root_entries_prefix_the_root_name():
@@ -46,7 +57,10 @@ def test_two_windows_on_same_root_pair_entries_to_their_own_row():
     post_turn_row = _row(root="/ws", kind="subagent_post_turn")
     row_files = [
         (turn_row, [ChangedFile(path="turn_file.txt", status="M", adds=1, dels=1)]),
-        (post_turn_row, [ChangedFile(path="post_turn_file.txt", status="A", adds=2, dels=0)]),
+        (
+            post_turn_row,
+            [ChangedFile(path="post_turn_file.txt", status="A", adds=2, dels=0)],
+        ),
     ]
     paired = turn_file_entries(row_files)
     assert [entry.label for entry, _row in paired] == [

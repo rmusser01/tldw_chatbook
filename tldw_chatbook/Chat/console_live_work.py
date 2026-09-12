@@ -14,6 +14,11 @@ PENDING_LAUNCH_CARD_ID = "console-pending-launch-card"
 LIVE_WORK_CARD_CLASS = "console-live-work-status-card"
 PRIMARY_ACTION_BUTTON_ID = "console-live-work-primary-action"
 SOURCE_READINESS_CARD_ID = "console-live-work-source-readiness"
+#: The one readiness row derived from the ACP process-manager snapshot.
+#: Named because the sync tick has to skip exactly this row (and no
+#: other) when that snapshot read fails -- see
+#: `ChatScreen._sync_console_live_work_readiness_rows`.
+ACP_READINESS_ROW_ID = "console-live-work-source-acp"
 HIDDEN_PAYLOAD_DISPLAY_KEYS = frozenset({"evidence_bundle"})
 
 
@@ -284,9 +289,9 @@ class ConsoleLiveWorkSourceReadinessState:
         """Build the default Console live-work source readiness summary.
 
         Returns:
-            ConsoleLiveWorkSourceReadinessState: Readiness state that marks Watchlists,
-                Schedules, Workflows, RAG, and Artifacts as connected while
-                MCP as unavailable until its payload producer is wired.
+            ConsoleLiveWorkSourceReadinessState: Readiness with nothing probed
+                -- ACP not configured, MCP not wired, RAG unchecked, and the
+                four in-app handoff destinations marked ``Available``.
         """
         return cls.from_acp_runtime_status("not_configured")
 
@@ -294,8 +299,38 @@ class ConsoleLiveWorkSourceReadinessState:
     def from_acp_runtime_status(
         cls,
         status: str,
+        *,
+        mcp_tool_count: int | None = None,
+        rag_available: bool | None = None,
     ) -> "ConsoleLiveWorkSourceReadinessState":
-        """Build readiness rows with ACP reflecting the shared runtime state."""
+        """Build readiness rows in which every status word has a source.
+
+        TASK-24601: five of the seven rows used to be the literal string
+        ``"Connected"`` -- Watchlists, Workflows, Schedules, RAG and
+        Artifacts -- under a heading that reads as measured readiness, with
+        only ACP derived from anything. The rows are not all the same kind of
+        thing, and conflating them is what made the card untrustworthy:
+
+        * **Probed connections** (ACP, MCP) may say ``Connected``. They are
+          the only rows that may, and only from a real input.
+        * **A local capability** (RAG) reports ``Ready`` or ``Unavailable``
+          from ``rag_available``; it depends on optional extras, so
+          ``Connected`` was not merely unmeasured there, it could be false.
+        * **In-app handoff destinations** (Watchlists, Workflows, Schedules,
+          Artifacts) say ``Available``. They are navigation targets that
+          always exist locally; there is nothing to probe, and claiming a
+          connection to them is the part that discredited the rest.
+
+        Args:
+            status: ACP runtime status from the process-manager snapshot.
+            mcp_tool_count: Tools the MCP catalog currently reports, or
+                ``None`` when the caller has not looked.
+            rag_available: Whether RAG's optional extras are installed, or
+                ``None`` when the caller has not looked.
+
+        Returns:
+            The readiness rows for the Console live-work card.
+        """
         connected = "destination-section console-live-work-source-row console-live-work-source-connected"
         unavailable = "destination-section console-live-work-source-row console-live-work-source-unavailable"
         acp_status = str(status or "").strip().lower()
@@ -315,31 +350,75 @@ class ConsoleLiveWorkSourceReadinessState:
         elif acp_status in {"configured", "stopped"}:
             acp_label = "Ready"
             acp_recovery = "Launch ACP runtime."
+
+        # MCP is a probed connection: it may say "Connected", but only from a
+        # count the caller actually looked up.
+        #
+        # TASK-24704 (Qodo #2): `None` deliberately does NOT mean "nobody
+        # looked" here. `_publish_mcp_inspector_counts` documents `(None,
+        # None)` as the contract for the no-service, kill-switch-on,
+        # compose-failed AND **empty-catalog** paths alike, so the caller
+        # genuinely cannot distinguish "not probed" from "probed, found
+        # nothing" -- an earlier version of this row claimed "Not checked"
+        # for both, which is an assertion the data does not support and made
+        # "Not wired" unreachable for the ordinary zero-tool result. "Not
+        # wired" is true in every one of those cases, so both map to it.
+        if mcp_tool_count is None or mcp_tool_count == 0:
+            mcp_label = "Not wired"
+            mcp_recovery = "MCP servers."
+            mcp_classes = unavailable
+        else:
+            tool_word = "tool" if mcp_tool_count == 1 else "tools"
+            mcp_label = "Connected"
+            mcp_recovery = f"{mcp_tool_count} {tool_word} ready."
+            mcp_classes = connected
+
+        # RAG is a local capability gated on optional extras -- "Connected"
+        # was not just unmeasured here, it was false without them installed.
+        if rag_available is None:
+            rag_label = "Not checked"
+            rag_recovery = "Stage search evidence."
+            rag_classes = unavailable
+        elif rag_available:
+            rag_label = "Ready"
+            rag_recovery = "Stage search evidence."
+            rag_classes = connected
+        else:
+            rag_label = "Unavailable"
+            # Kept to one line deliberately. These rows render at a 39-column
+            # content width, and every other row in the card fits: "RAG:
+            # Unavailable - " already spends 19, so the recovery has 20. At
+            # "Install embeddings extras." the row wrapped and took the card's
+            # measured demand from 21 to 22, which moves the live-work swap
+            # geometry the bounded section is pinned against.
+            rag_recovery = "Install embeddings."
+            rag_classes = unavailable
+
         return cls(
             rows=(
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-wc",
                     label="Watchlists",
-                    status="Connected",
+                    status="Available",
                     recovery="Home run details.",
                     classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-workflows",
                     label="Workflows",
-                    status="Connected",
+                    status="Available",
                     recovery="Stage run context.",
                     classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-schedules",
                     label="Schedules",
-                    status="Connected",
+                    status="Available",
                     recovery="Open job context.",
                     classes=connected,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
-                    widget_id="console-live-work-source-acp",
+                    widget_id=ACP_READINESS_ROW_ID,
                     label="ACP",
                     status=acp_label,
                     recovery=acp_recovery,
@@ -348,21 +427,21 @@ class ConsoleLiveWorkSourceReadinessState:
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-mcp",
                     label="MCP",
-                    status="Not wired",
-                    recovery="MCP servers.",
-                    classes=unavailable,
+                    status=mcp_label,
+                    recovery=mcp_recovery,
+                    classes=mcp_classes,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-rag",
                     label="RAG",
-                    status="Connected",
-                    recovery="Stage search evidence.",
-                    classes=connected,
+                    status=rag_label,
+                    recovery=rag_recovery,
+                    classes=rag_classes,
                 ),
                 ConsoleLiveWorkSourceReadinessRow(
                     widget_id="console-live-work-source-artifacts",
                     label="Artifacts",
-                    status="Connected",
+                    status="Available",
                     recovery="Launch Chatbooks.",
                     classes=connected,
                 ),

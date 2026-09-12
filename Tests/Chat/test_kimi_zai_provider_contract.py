@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
     ModelTurn,
     ToolCall,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
 )
@@ -733,6 +734,7 @@ def test_streaming_adapter_carries_terminal_candidate_into_model_turn(tmp_path) 
             assistant_message_id=assistant.id,
             should_cancel=lambda: False,
             loop=lifeline.loop,
+            native_tools=True,
         )
         registry = ToolCatalogRegistry()
         registry.register_provider(BuiltinToolProvider())
@@ -834,7 +836,7 @@ def test_runtime_passes_exact_transitioned_checkpoint_to_next_model_call() -> No
             invoke_tool=lambda _call: ToolResult(ok=True, content="4"),
             spawn=lambda _task: ToolResult(ok=False, error="unused"),
             find_tools=lambda _query: [],
-            load_schemas=lambda _ids: [],
+            load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
             should_cancel=lambda: False,
             clock=lambda: 0.0,
             continuation_context=ContinuationEventContext(

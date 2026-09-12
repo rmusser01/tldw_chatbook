@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""Bound isolated production sink controls; an explicit audio slot is required."""
+import argparse
+import ctypes
+import datetime
+import hashlib
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
+import wave
+
+ROOT = Path(__file__).resolve().parent
+REPO = Path('/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/tts-macos-burndown')
+PYTHON = ROOT.parent / 'higgs/venv/bin/python'
+LIBRARY = ROOT / 'prefix/lib/libportaudio.2.dylib'
+EXPECTED_LIBRARY_SHA = '48d9fcaff582ff65c8a51d67570bf69ce900d51278841d563e19b7ef73746586'
+INPUTS = [ROOT.parent / f'higgs/live-wav-0{i}/audio/console-warmup.wav' for i in (1, 2)]
+WRITE_LOCK = threading.Lock()
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def source_hashes():
+    return {str(path.relative_to(REPO)): sha(path) for path in (
+        REPO / 'tldw_chatbook/Audio/streaming_sink.py',
+        REPO / 'tldw_chatbook/Audio/__init__.py',
+        REPO / 'tldw_chatbook/Utils/optional_deps.py',
+        REPO / 'tldw_chatbook/config.py',
+        REPO / 'tldw_chatbook/Utils/paths.py',
+    )}
+
+
+def save(path, value):
+    with WRITE_LOCK:
+        temporary = path.with_suffix(path.suffix + '.tmp')
+        temporary.write_text(json.dumps(value, indent=2) + '\n')
+        temporary.replace(path)
+
+
+def private_environment(output):
+    """Configure the application's actual profile selectors before any import."""
+    private = output / 'private'
+    for directory in ('config', 'cache', 'data', 'db'):
+        (private / directory).mkdir(parents=True, mode=0o700)
+    private.chmod(0o700)
+    config_path = private / 'config/config.toml'
+    configuration = (
+        '[general]\nusers_name = "portaudio_controls"\n'
+        '[paths]\ndata_dir = ' + json.dumps(str(private / 'data')) + '\n'
+        '[database]\n' + ''.join(
+            f'{name}_db_path = {json.dumps(str(private / "db" / (name + ".db")))}\n'
+            for name in ('chachanotes', 'prompts', 'media')
+        ) + '[first_run]\nsetup_completed = true\n'
+        '[model_catalog]\nenabled = false\n'
+    )
+    config_path.write_text(configuration)
+    config_path.chmod(0o600)
+    env = os.environ.copy()
+    env.update(TLDW_CONFIG_PATH=str(config_path),
+               PYTHON_KEYRING_BACKEND='keyring.backends.null.Keyring',
+               DYLD_LIBRARY_PATH=str(LIBRARY.parent),
+               PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=str(REPO))
+    for key, directory in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data')]:
+        env[key] = str(private / directory)
+    return env
+
+
+def check_private_import(output):
+    """Import the real sink with default user profile access denied; no audio."""
+    protected = (Path.home() / '.config/tldw_cli', Path.home() / '.local/share/tldw_cli')
+    denied = []
+
+    def guard(event, arguments):
+        if event not in {'open', 'os.mkdir', 'os.remove', 'os.rmdir', 'os.chmod',
+                         'os.listdir', 'os.scandir', 'os.rename'}:
+            return
+        candidates = arguments[:2] if event == 'os.rename' else arguments[:1]
+        for candidate in candidates:
+            if not isinstance(candidate, (str, bytes, os.PathLike)):
+                continue
+            path = Path(os.path.abspath(os.fsdecode(candidate)))
+            if any(path.is_relative_to(root) for root in protected):
+                denied.append({'event': event, 'path': str(path)})
+                raise RuntimeError('Controls attempted to access the default user profile')
+
+    sys.addaudithook(guard)
+    sys.path.insert(0, str(REPO))
+    from tldw_chatbook.Audio import streaming_sink as module
+    from tldw_chatbook import config
+    if Path(module.__file__).resolve() != REPO / 'tldw_chatbook/Audio/streaming_sink.py':
+        raise RuntimeError('Imported an unowned application checkout')
+    paths = {'config': config.get_cli_config_path(), 'data': config.get_user_data_dir(),
+             'chachanotes_db': config.get_chachanotes_db_path(),
+             'tts_profiles_db': config.get_tts_profiles_db_path(),
+             'chat_dictionaries': Path(config.load_settings()['chat_dictionaries']['chat_dicts_folder'])}
+    for name in ('prompts', 'media'):
+        paths[name + '_db'] = Path(config.get_cli_setting('database', name + '_db_path'))
+    for name, path in paths.items():
+        if not path.resolve().is_relative_to(output / 'private'):
+            raise RuntimeError(f'{name} escaped the task-owned private profile')
+    forbidden_imports = [name for name in ('sounddevice', 'torch', 'kokoro', 'onnxruntime') if name in sys.modules]
+    if forbidden_imports or denied:
+        raise RuntimeError('Import-only isolation unexpectedly initialized audio/model or touched user data')
+    return {'paths': {name: str(path) for name, path in paths.items()},
+            'config_sha256': sha(paths['config']), 'forbidden_imports': forbidden_imports,
+            'default_profile_audit_guard': 'active through worker exit', 'denied_accesses': denied}
+
+
+def loaded_library(sd):
+    """Resolve the image containing the actual bound PortAudio function."""
+    class DlInfo(ctypes.Structure):
+        _fields_ = [('name', ctypes.c_char_p), ('base', ctypes.c_void_p),
+                    ('symbol', ctypes.c_char_p), ('address', ctypes.c_void_p)]
+    function = sd._ffi.addressof(sd._lib, 'Pa_GetVersion')
+    address = int(sd._ffi.cast('uintptr_t', function))
+    dladdr = ctypes.CDLL(None).dladdr
+    dladdr.argtypes = [ctypes.c_void_p, ctypes.POINTER(DlInfo)]
+    dladdr.restype = ctypes.c_int
+    info = DlInfo()
+    if not dladdr(ctypes.c_void_p(address), ctypes.byref(info)) or not info.name:
+        raise RuntimeError('Cannot identify the image containing Pa_GetVersion')
+    path = Path(os.fsdecode(info.name)).resolve()
+    identity = {'sounddevice_requested_name': sd._libname, 'dladdr_loaded_path': str(path),
+                'sha256': sha(path), 'portaudio_version': sd.get_portaudio_version()}
+    if path != LIBRARY.resolve() or identity['sha256'] != EXPECTED_LIBRARY_SHA:
+        raise RuntimeError('Loaded PortAudio is not the exact pinned candidate: ' + str(identity))
+    return identity
+
+
+def worker(output):
+    # No audio-related import happens before --play-audio and worker dispatch.
+    isolation = check_private_import(output)
+    import numpy as np
+    import sounddevice as sd
+    from unittest.mock import patch
+    sys.path.insert(0, str(REPO))
+    from tldw_chatbook.Audio import streaming_sink as module
+    result = {'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'pid': os.getpid(), 'python': sys.version, 'executable': sys.executable,
+              'source_before': source_hashes(), 'phases': [], 'models_initialized': 0,
+              'profile_isolation': isolation,
+              'source_commit': '1240f06f0227ae3d0b4967f41012221c3d7cb6cf',
+              'library_build_receipt_sha256': sha(ROOT / 'build-receipt.json'),
+              'upstream_status': 'Isolated unmerged PR candidate; no shipped/default-library claim.'}
+    receipt = output / 'evidence.json'
+    save(receipt, result)
+    result['library'] = loaded_library(sd)
+    result['versions'] = {name: importlib.metadata.version(name) for name in ('sounddevice', 'numpy')}
+    result['output_device'] = dict(sd.query_devices(kind='output'))
+    result['sounddevice_source_sha256'] = sha(Path(sd.__file__))
+    save(receipt, result)
+    original_output_stream = sd.OutputStream
+
+    def run_phase(label, audio_path, stop):
+        with wave.open(str(audio_path), 'rb') as wav:
+            if wav.getsampwidth() != 2 or wav.getcomptype() != 'NONE':
+                raise ValueError('Controls require saved PCM16 WAV input')
+            rate, channels = wav.getframerate(), wav.getnchannels()
+            pcm = wav.readframes(wav.getnframes())
+        if stop:
+            pcm *= 3  # Keep substantial queued audio at the explicit Stop barrier.
+        row = {'id': label, 'mode': 'stop' if stop else 'drain',
+               'input_path': str(audio_path), 'input_sha256': sha(audio_path),
+               'pcm_sha256': hashlib.sha256(pcm).hexdigest(),
+               'sample_rate': rate, 'channels': channels, 'source_frames': len(pcm) // (2 * channels),
+               'started_at': time.monotonic(), 'events': [], 'api_calls': [],
+               'callbacks': 0, 'device_frames': 0, 'audible_frames': 0}
+        result['phases'].append(row)
+        capture = bytearray()
+        streams = []
+        capture_lock = threading.Lock()
+        terminal = threading.Event()
+
+        def on_event(event):
+            row['events'].append({'event': type(event).__name__, 'at': time.monotonic()})
+            if type(event).__name__ in ('SinkDrained', 'SinkStopped', 'SinkFailed'):
+                terminal.set()
+
+        def factory(*args, **kwargs):
+            callback = kwargs['callback']
+
+            def observed(data, frames, timing, status):
+                try:
+                    return callback(data, frames, timing, status)
+                finally:
+                    with capture_lock:
+                        capture.extend(memoryview(data).cast('B'))
+                        row['callbacks'] += 1
+                        row['device_frames'] += frames
+                        row['audible_frames'] += int(np.count_nonzero(np.any(data != 0, axis=1)))
+                        if status:
+                            row['last_callback_status'] = str(status)
+            kwargs['callback'] = observed
+            stream = original_output_stream(*args, **kwargs)
+            streams.append(stream)
+            for operation in ('abort', 'close'):
+                original = getattr(stream, operation)
+
+                def tracked(*args, _original=original, _operation=operation, **kwargs):
+                    entry = {'operation': _operation, 'enter_at': time.monotonic()}
+                    row['api_calls'].append(entry)
+                    save(receipt, result)
+                    try:
+                        return _original(*args, **kwargs)
+                    finally:
+                        entry['exit_at'] = time.monotonic()
+                        save(receipt, result)
+                setattr(stream, operation, tracked)
+            return stream
+
+        sink = module.StreamingPcmSink(on_event=on_event)
+        save(receipt, result)
+        with patch.object(sd, 'OutputStream', factory):
+            try:
+                sink.open(rate, channels)
+                if sink.terminal_reason or not sink.feed(pcm):
+                    raise RuntimeError('Production sink failed to open/feed: ' + str(sink.fail_reason))
+                row['fed_at'] = time.monotonic()
+                if stop:
+                    deadline = time.monotonic() + 5
+                    while row['audible_frames'] < rate // 2:
+                        if time.monotonic() > deadline or terminal.is_set():
+                            raise RuntimeError('No half-second audible callback barrier before Stop')
+                        time.sleep(0.005)
+                    row['buffered_seconds_at_stop'] = sink.buffered_seconds
+                    if row['buffered_seconds_at_stop'] < 1:
+                        raise RuntimeError('Stop gate needs a live buffered stream')
+                    row['stop_requested_at'] = time.monotonic()
+                    save(receipt, result)
+                    sink.stop()
+                    row['stop_returned_at'] = time.monotonic()
+                else:
+                    row['close_requested_at'] = time.monotonic()
+                    sink.close()
+                duration = row['source_frames'] / rate
+                if not terminal.wait(timeout=min(15, duration + 5)):
+                    raise RuntimeError('Production sink terminal event deadline expired')
+                row['settle_passed'] = sink.settle(timeout=3)
+                if sink._notify_thread is not None:
+                    sink._notify_thread.join(timeout=3)
+                row['resources'] = {'stream_reference': int(sink._stream is not None),
+                                    'notify_thread': int(bool(sink._notify_thread and sink._notify_thread.is_alive())),
+                                    'notify_queue': sink._notify_q.unfinished_tasks,
+                                    'live_registry': int(module._LIVE_SINK is not None),
+                                    'open_streams': sum(not stream.closed for stream in streams)}
+                row['terminal_reason'] = sink.terminal_reason
+                row['completed_at'] = time.monotonic()
+                row['device_pcm_sha256'] = hashlib.sha256(capture).hexdigest()
+                row['source_found_in_callback_pcm'] = bytes(pcm) in capture
+                expected = 'stopped' if stop else 'drained'
+                if row['terminal_reason'] != expected or not row['settle_passed'] or any(row['resources'].values()):
+                    raise RuntimeError('Sink did not complete and join all stream/notify owners')
+                if not row['audible_frames'] or any('exit_at' not in call for call in row['api_calls']):
+                    raise RuntimeError('Playback or stream teardown was incomplete')
+                if not stop and not row['source_found_in_callback_pcm']:
+                    raise RuntimeError('Natural drain omitted source PCM from actual callbacks')
+                row['status'] = 'passed'
+                save(receipt, result)
+            finally:
+                sink.stop()
+                sink.settle(timeout=3)
+        print(json.dumps({'phase': label, 'status': row.get('status'), 'terminal': row.get('terminal_reason'), 'resources': row.get('resources')}), flush=True)
+
+    try:
+        for cycle in (1, 2):
+            run_phase(f'{cycle}-drain-first', INPUTS[0], False)
+            run_phase(f'{cycle}-stop-second', INPUTS[1], True)
+            run_phase(f'{cycle}-successor-drain-second', INPUTS[1], False)
+        result['source_after'] = source_hashes()
+        result['library_sha256_after'] = sha(LIBRARY)
+        if result['source_before'] != result['source_after'] or result['library_sha256_after'] != EXPECTED_LIBRARY_SHA:
+            raise RuntimeError('Tested source or library changed during controls')
+        result['status'] = 'passed'
+    except BaseException as error:
+        result['status'] = 'failed'
+        result['failure'] = {'type': type(error).__name__, 'message': str(error)}
+        raise
+    finally:
+        result['ended_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        save(receipt, result)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--play-audio', action='store_true', help='Requires the explicitly granted exclusive audio slot')
+    mode.add_argument('--check-isolation', action='store_true', help='Import production sink and verify private paths without loading audio or a model')
+    parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    output = args.output.resolve()
+    if not output.is_relative_to(ROOT / 'runs'):
+        parser.error('output must be under the task-owned portaudio/runs directory')
+    if args.worker:
+        if args.check_isolation:
+            isolation = check_private_import(output)
+            save(output / 'evidence.json', {'status': 'passed', 'profile_isolation': isolation,
+                 'models_initialized': 0, 'audio_initialized': False, 'pid': os.getpid()})
+        else:
+            worker(output)
+        return
+    output.mkdir(parents=True, mode=0o700, exist_ok=False)
+    if sha(LIBRARY) != EXPECTED_LIBRARY_SHA:
+        raise RuntimeError('Pinned candidate library hash mismatch before launch')
+    env = private_environment(output)
+    mode_argument = '--check-isolation' if args.check_isolation else '--play-audio'
+    deadline = 20 if args.check_isolation else 90
+    command = [str(PYTHON), '-B', str(Path(__file__).resolve()), '--worker', mode_argument, '--output', str(output)]
+    result = {'command': command, 'deadline_seconds': deadline, 'dyld_library_path': env['DYLD_LIBRARY_PATH'],
+              'tldw_config_path': env['TLDW_CONFIG_PATH'],
+              'library_sha256': sha(LIBRARY), 'script_sha256': sha(Path(__file__)),
+              'source_before': source_hashes(), 'models_initialized': 0}
+    started = time.monotonic()
+    with (output / 'stdout.log').open('w') as stdout, (output / 'stderr.log').open('w') as stderr:
+        process = subprocess.Popen(command, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+        result['pid'] = process.pid
+        try:
+            result['exit_code'] = process.wait(timeout=deadline)
+        except subprocess.TimeoutExpired:
+            result['timeout'] = True
+            try:
+                sample = subprocess.run(['/usr/bin/sample', str(process.pid), '1', '1', '-file', str(output / 'timeout-sample.txt')], capture_output=True, text=True, timeout=8)
+                result['timeout_sample'] = {'exit_code': sample.returncode, 'stderr': sample.stderr}
+            except Exception as error:
+                result['timeout_sample'] = {'error': type(error).__name__, 'message': str(error)}
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+                result['forced_cleanup'] = 'SIGKILL exact owned child after SIGTERM grace'
+            result['exit_code'] = process.returncode
+    result['elapsed_seconds'] = time.monotonic() - started
+    result['owned_child_joined'] = process.poll() is not None
+    result['source_after'] = source_hashes()
+    evidence = json.loads((output / 'evidence.json').read_text()) if (output / 'evidence.json').exists() else {}
+    result['status'] = 'passed' if result['exit_code'] == 0 and evidence.get('status') == 'passed' and result['source_before'] == result['source_after'] else 'failed_or_blocked'
+    save(output / 'controller.json', result)
+    print(json.dumps(result), flush=True)
+    if result['status'] != 'passed':
+        raise SystemExit(1)
+
+
+if __name__ == '__main__':
+    main()

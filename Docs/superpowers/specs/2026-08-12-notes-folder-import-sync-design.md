@@ -1,10 +1,10 @@
 # Notes Folder Import and Lasting Sync — Design
 
 Date: 2026-08-12
-Status: Approved written specification (ready for slice planning)
+Status: Approved; local lasting-sync cutover implemented 2026-08-21
 ADRs:
 [ADR-059](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md),
-[ADR-060](../../../backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md)
+[ADR-073](../../../backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md)
 
 ## Summary
 
@@ -30,7 +30,7 @@ documents, web pages, audio, video, and other source material are entering the
 Media library. Notes use **Add from files…** inside Notes, so the two destinations
 cannot be mistaken for one another.
 
-## Current State
+## Baseline at approval
 
 - Library Database Notes currently render a flat list.
 - The Notes **Import** button opens a single-file picker and creates one note.
@@ -312,6 +312,10 @@ Every sync root exposes:
 - attention items;
 - retarget directory; and
 - **Disconnect**.
+
+In the cutover release, **Retarget** and **Disconnect** remain visibly disabled
+with an unavailable-in-this-release reason. The safety semantics below define
+their boundary; they are not live mutation controls in this release.
 
 Retargeting first pauses the root and scans the proposed directory. It presents
 a complete dry-run using stored hashes and file identities, never interprets
@@ -688,7 +692,7 @@ not an inferred extension of `notes.note`.
 The local schema migration creates folder storage without assigning invented
 folders. Existing active Database Notes appear under **Unfiled**.
 
-Legacy sync migration examines both configuration and per-note metadata. It
+Legacy sync migration examines only already-present configuration and per-note metadata. It
 creates one paused candidate root per distinct canonical safe root. It preserves
 recognizable bindings without touching files or notes. Missing, overlapping,
 out-of-root, duplicate, or invalid metadata is attached to a migration review
@@ -696,9 +700,12 @@ report rather than silently repaired.
 
 No candidate watches or synchronizes until the user opens it, reviews the
 dry-run, chooses direction and collision outcomes, and explicitly activates it.
-Retired legacy configuration remains readable only for migration/rollback until
-the implementation's documented compatibility window ends; it is not maintained
-as a second active sync engine.
+Retired legacy configuration remains readable only through the dedicated legacy
+migrator; it is not maintained as a second active sync engine. New installs do
+not emit the retired keys. On restart, an absent private marker permits one
+migration attempt and records `notes-sync-cutover-v1` only after success. The
+exact marker skips remigration; an unknown marker fails closed without invoking
+the migrator or changing migration state.
 
 Because the change bumps the ChaChaNotes schema, migration verification uses
 in-memory or isolated scratch databases only. A feature branch must not launch
@@ -888,12 +895,12 @@ ADR required: yes
 ADR paths:
 
 - `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
-- `backlog/decisions/060-notes-sync-round-trip-and-interoperability-constraints.md`
+- `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
 
 Reason: this design changes the local Notes schema, folder and membership
 ownership, sync/conflict/deletion policy, private recovery storage, cross-process
 runtime authority, server service contract, privacy boundary, and long-lived
-Library structure. ADR-060 amends the accepted ADR-059 with the reviewed
+Library structure. ADR-073 amends the accepted ADR-059 with the reviewed
 round-trip representation, binding uniqueness, composite-operation, Sync-v2,
 backup/restore, and per-mutation claim-fencing constraints.
 

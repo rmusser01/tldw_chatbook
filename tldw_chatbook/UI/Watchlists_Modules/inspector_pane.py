@@ -27,6 +27,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea
 
 from ...Subscriptions.html_text import strip_control_characters
+from ...Subscriptions.item_persist import CONTENT_KIND_CHANGE
 from ...Subscriptions.noise_defaults import (
     first_invalid_selector,
     invalid_selector_message,
@@ -110,6 +111,20 @@ class IngestRequested(Message):
 
     def __init__(self, entity: dict[str, Any] | None) -> None:
         self.entity = entity
+        super().__init__()
+
+
+class ViewSnapshotRequested(Message):
+    """Posted when the Inspector requests a stored page for a change item.
+
+    `which` is `"full_page"` for the newest stored snapshot or `"previous"`
+    for the second-newest. The screen resolves the row because the Inspector
+    holds no database handle.
+    """
+
+    def __init__(self, item: dict[str, Any] | None, which: str) -> None:
+        self.item = item
+        self.which = which
         super().__init__()
 
 
@@ -668,6 +683,22 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 yield Button("Ingest", id="inspector-ingest-button", variant="primary")
                 yield Button("Ignore", id="inspector-ignore-button", variant="error")
                 yield self._queue_briefing_button(entity)
+                if (
+                    str(entity.get("content_kind") or "")
+                    == CONTENT_KIND_CHANGE
+                ):
+                    yield Button(
+                        "Full page",
+                        id="inspector-full-page-button",
+                        compact=True,
+                        tooltip="Open the page this change was measured against.",
+                    )
+                    yield Button(
+                        "Previous snapshot",
+                        id="inspector-previous-snapshot-button",
+                        compact=True,
+                        tooltip="Open the page as it was before this change.",
+                    )
             elif deepest.kind == "rule":
                 yield Button("Edit", id="inspector-edit-rule-button", variant="primary")
                 yield Button("Delete", id="inspector-delete-button", variant="error")
@@ -746,12 +777,23 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             return []
         labels = list(self.breadcrumb_labels or [])
 
+        parent_scope = TreeScope(kind="watchlist", watchlist_id=scope.watchlist_id)
+        if scope.kind == "source":
+            parent_scope = {
+                "all": TreeScope(kind="all"),
+                "unassigned": TreeScope(kind="unassigned"),
+                "unread": TreeScope(kind="unread"),
+                "watchlist": TreeScope(
+                    kind="watchlist", watchlist_id=scope.watchlist_id
+                ),
+            }.get(scope.parent_context, parent_scope)
+
         levels = [
             _Level(
-                kind="watchlist",
+                kind=parent_scope.kind,
                 label=labels[0] if labels else f"Watchlist {scope.watchlist_id}",
                 entity=None,
-                target_scope=TreeScope(kind="watchlist", watchlist_id=scope.watchlist_id),
+                target_scope=parent_scope,
             )
         ]
         if scope.kind == "source":
@@ -760,11 +802,7 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                     kind="source",
                     label=labels[1] if len(labels) > 1 else f"Source {scope.source_id}",
                     entity=None,
-                    target_scope=TreeScope(
-                        kind="source",
-                        watchlist_id=scope.watchlist_id,
-                        source_id=scope.source_id,
-                    ),
+                    target_scope=scope,
                 )
             )
         return levels
@@ -889,6 +927,10 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             self.post_message(IgnoreRequested(entity))
         elif button_id == "inspector-queue-briefing-button":
             self._post_toggle_briefing_queue(entity)
+        elif button_id == "inspector-full-page-button":
+            self.post_message(ViewSnapshotRequested(entity, "full_page"))
+        elif button_id == "inspector-previous-snapshot-button":
+            self.post_message(ViewSnapshotRequested(entity, "previous"))
         elif button_id == "inspector-edit-rule-button":
             self.post_message(EditRuleRequested(entity))
         elif button_id == "inspector-save-selectors-button":

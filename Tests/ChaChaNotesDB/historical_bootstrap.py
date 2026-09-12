@@ -40,6 +40,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from unittest.mock import patch
 
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
@@ -50,12 +51,37 @@ SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 MINIMUM_BOOTSTRAP_VERSION = 4
 
 
+def open_current_chachanotes_from_legacy(
+    db_path: str | os.PathLike[str],
+    *,
+    client_id: str,
+    auto_retrieve_on_send: bool = False,
+) -> CharactersRAGDB:
+    """Open a legacy fixture with an EXPLICIT sanitized migration seed.
+
+    A bare ``CharactersRAGDB(path, client_id=...)`` also upgrades a legacy
+    fixture (task-21441 made the seed optional; ``Tests/DB/
+    test_chachanotes_bare_open_self_migration.py`` is the guard). Use this
+    helper only when the fixture's assertions depend on the seeded
+    automatic-retrieval value; otherwise the bare open is the more honest
+    fixture, because it is what a non-TUI consumer actually does.
+    """
+    return CharactersRAGDB(
+        str(db_path),
+        client_id=client_id,
+        console_library_migration_seed=ConsoleLibraryMigrationSeed(
+            auto_retrieve_on_send=auto_retrieve_on_send
+        ),
+    )
+
+
 @contextmanager
 def chachanotes_db_at_version(
     db_path: str | os.PathLike[str],
     version: int,
     *,
     client_id: str = "historical-bootstrap",
+    console_library_migration_seed: ConsoleLibraryMigrationSeed | None = None,
 ) -> Iterator[CharactersRAGDB]:
     """Yield an open ``CharactersRAGDB`` genuinely at schema ``version``.
 
@@ -71,6 +97,10 @@ def chachanotes_db_at_version(
         version: The historical schema version to stop the chain at. Must be
             within ``[MINIMUM_BOOTSTRAP_VERSION, _CURRENT_SCHEMA_VERSION]``.
         client_id: Client id for the bootstrap connection.
+        console_library_migration_seed: Optional sanitized seed for a
+            historical chain that traverses the v47-to-v48 migration. Omit it
+            unless the fixture asserts on the seeded automatic-retrieval
+            value; the step defaults to off (task-21441).
 
     Yields:
         The open ``CharactersRAGDB`` instance, recorded at ``version``.
@@ -84,7 +114,11 @@ def chachanotes_db_at_version(
         f"[{MINIMUM_BOOTSTRAP_VERSION}, {current}]"
     )
     with patch.object(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", version):
-        db = CharactersRAGDB(str(db_path), client_id=client_id)
+        db = CharactersRAGDB(
+            str(db_path),
+            client_id=client_id,
+            console_library_migration_seed=console_library_migration_seed,
+        )
         try:
             yield db
         finally:

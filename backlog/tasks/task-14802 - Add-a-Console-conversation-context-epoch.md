@@ -9,7 +9,7 @@ labels:
 - architecture
 priority: high
 references:
-- backlog/decisions/046-visible-bounded-console-prompt-queue.md
+- backlog/decisions/098-visible-bounded-console-prompt-queue.md
 - backlog/decisions/033-application-session-state-ownership.md
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
@@ -51,14 +51,14 @@ Give Console a store-owned, per-session signal for detecting provider-relevant c
 7. Self-review every ConsoleChatStore mutation that can change provider-visible history, update TASK-14802 acceptance criteria and implementation notes, and document any new generalizable testing lesson only if the implementation exposes one.
 
 ADR required: yes
-ADR path: backlog/decisions/046-visible-bounded-console-prompt-queue.md
-Reason: This is a direct implementation of the accepted store-owned conversation-context epoch in ADR-046, consistent with ADR-033 application-session state ownership; no new architectural decision is introduced.
+ADR path: backlog/decisions/098-visible-bounded-console-prompt-queue.md
+Reason: This is a direct implementation of the accepted store-owned conversation-context epoch in ADR-098, consistent with ADR-033 application-session state ownership; no new architectural decision is introduced.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented a process-local, store-owned per-session conversation-context epoch with lifecycle initialization and cleanup. Semantic guards advance it only for effective active-path text, branch/leaf, summary, variant, failed-retry recovery, and generation-attachment changes; ordinary append/stream/status, off-path changes, metadata, persistence, and same-value operations remain stable. Added 16 focused contract tests plus manual mutation checks proving the active-path and same-value guards fail when inverted. Verification: 699 focused/reached tests passed; Ruff and git diff --check passed. The broader RuntimePolicy run had 343 passes and 12 skips plus six unrelated ambient failures (four MediaScreen mount timeouts and two AppleDouble source-scan decode failures). Full-tree collection is independently blocked by two existing Confluence imports requiring the absent optional playwright dependency. ADR: backlog/decisions/046-visible-bounded-console-prompt-queue.md. No schema, persistence, snapshot, configuration, or logging changes.
+Implemented a process-local, store-owned per-session conversation-context epoch with lifecycle initialization and cleanup. Semantic guards advance it only for effective active-path text, branch/leaf, summary, variant, failed-retry recovery, and generation-attachment changes; ordinary append/stream/status, off-path changes, metadata, persistence, and same-value operations remain stable. Added 16 focused contract tests plus manual mutation checks proving the active-path and same-value guards fail when inverted. Verification: 699 focused/reached tests passed; Ruff and git diff --check passed. The broader RuntimePolicy run had 343 passes and 12 skips plus six unrelated ambient failures (four MediaScreen mount timeouts and two AppleDouble source-scan decode failures). Full-tree collection is independently blocked by two existing Confluence imports requiring the absent optional playwright dependency. ADR: backlog/decisions/098-visible-bounded-console-prompt-queue.md. No schema, persistence, snapshot, configuration, or logging changes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

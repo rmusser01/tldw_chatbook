@@ -409,3 +409,58 @@ def test_default_sandbox_configuration_still_works_end_to_end():
     grep_result = asyncio.run(fot.GrepFiles().execute(pattern="hi there"))
     assert "error" not in grep_result, grep_result
     assert any(m["path"].endswith("hello.txt") for m in grep_result["matches"])
+
+
+# ---------------------------------------------------------------------------
+# TASK-19700: `.git/` metadata and THIS family.
+#
+# Verified by mutation while writing these: this family does NOT have the
+# gap. `validate_path_multi` refuses EVERY hidden component ("Access to
+# hidden files/directories is not allowed"), so `.git/config` was already
+# unreachable here -- disabling the new `is_git_metadata_write` check leaves
+# the refusal test passing. The real gap was in the OTHER family
+# (`local_tool_impls`), which sets `allow_hidden=True` per ADR-032 so a
+# coding agent can read dotfiles; that is where the guard is load-bearing
+# and mutation-proven (see `Tests/Tools/test_local_tool_sensitive_paths.py`).
+#
+# The check is still wired here as defense-in-depth -- if this family ever
+# adopts `allow_hidden` the way ADR-032 drove the other one to, the guard is
+# already in place -- but these tests are honest about which mechanism does
+# the work today, rather than crediting the new one for a refusal it did not
+# produce.
+# ---------------------------------------------------------------------------
+
+
+def test_write_file_tool_refuses_git_config_today_via_the_hidden_rule(
+    monkeypatch, tmp_path
+):
+    """Regression pin, NOT red-first: the hidden-component rule is what
+    refuses this today. Pinned so a future `allow_hidden` adoption here
+    cannot silently open `.git/` writes without a test noticing."""
+    sandbox = tmp_path / "sandbox"
+    (sandbox / ".git").mkdir(parents=True)
+    (sandbox / ".git" / "config").write_text("[core]\n")
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    result = asyncio.run(
+        fot.WriteFileTool().execute(
+            file_path=".git/config", content='[remote "--force"]\n'
+        )
+    )
+    assert "error" in result, f"the write was allowed: {result}"
+    assert (sandbox / ".git" / "config").read_text() == "[core]\n"
+
+
+def test_is_git_metadata_write_predicate_is_exact_on_components():
+    """The shared predicate itself -- the part that IS load-bearing in the
+    other family. Prefix lookalikes must stay writable."""
+    from tldw_chatbook.Utils.sensitive_paths import is_git_metadata_write
+
+    assert is_git_metadata_write(Path("/repo/.git"))
+    assert is_git_metadata_write(Path("/repo/.git/config"))
+    assert is_git_metadata_write(Path("/repo/.git/hooks/pre-commit"))
+    assert is_git_metadata_write(Path("/repo/nested/.git/config"))
+    assert not is_git_metadata_write(Path("/repo/.gitignore"))
+    assert not is_git_metadata_write(Path("/repo/.gitattributes"))
+    assert not is_git_metadata_write(Path("/repo/.github/workflows/ci.yml"))
+    assert not is_git_metadata_write(Path("/repo/src/git/config"))

@@ -19,9 +19,26 @@ def test_config_shim():
     # config-parser-like object must come back.
     assert hasattr(cfg, "has_section")
     assert hasattr(cfg, "get")
-    # No chunking table ships by default, so every engine has_section guard
-    # is False and engine defaults apply (review M-1).
-    assert cfg.has_section("Chunking") is False
+    # (task 11, spec §9.1/AC 40) The shipped config template now carries a
+    # lowercase [chunking] table (default_template — the INGEST resolution
+    # tier), which the shim merges into the engine's view, so the section
+    # exists on a fresh profile. Review M-1's intent still holds through a
+    # present-but-foreign section: the engine reads only its OWN keys with
+    # fallbacks, and none of them ship, so every engine default applies.
+    if cfg.has_section("Chunking"):
+        assert not any(
+            cfg.has_option("Chunking", key)
+            for key in (
+                "regex_timeout_seconds",
+                "cache_copy_on_access",
+                "verbose_logging",
+                "max_streaming_flush_threshold_chars",
+                "regex_simple_only",
+                "regex_disable_multiprocessing",
+            )
+        )
+    else:
+        assert cfg.has_section("Chunking") is False
     # configparser get() semantics: fallback is returned for missing keys,
     # including when the section itself is absent (review M-1).
     assert cfg.get("Chunking", "missing", fallback="d") == "d"
@@ -94,6 +111,42 @@ def test_prompt_loader_unknown_pairing_raises():
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader
     with pytest.raises(KeyError):
         prompt_loader.load_prompt("chunking", "Not A Real Prompt")
+
+
+def test_prompt_loader_shim_maps_proposition_profiles():
+    """The vendored propositions strategy calls load_prompt for three
+    OPTIONAL profile overrides (propositions.py:321/334/347 at the pin).
+    Chatbook does not carry the server's Prompts runtime, so a known
+    pairing resolves to "" and the strategy's in-code defaults are
+    chatbook's effective instructions. Upstream at the pin DOES ship
+    chunking.prompts.yaml entries for all three pairs; for
+    claimify/gemma_aps the YAML wording differs from the in-code
+    defaults — a recorded divergence, not byte-faithful parity. With
+    the _KNOWN value "" the resolver is never consulted, so overrides
+    cannot ride the Internal_Prompts catalog; a future override
+    mechanism changes the map VALUES, not the keys."""
+    from tldw_chatbook.Chunking._shims.Utils import prompt_loader
+    for name in ("proposition_claimify", "proposition_gemma_aps",
+                 "proposition_generic"):
+        assert prompt_loader.load_prompt("chunking", name) == ""
+
+
+def test_prompt_loader_known_covers_vendored_propositions_calls():
+    """Source-scan pin: every literal load_prompt(category, name) pair the
+    vendored file actually passes must be a known pairing, so the
+    raise-loudly contract can never fire from inside the vendored engine
+    (a KeyError there escapes chunk() — the per-window try does not cover
+    _build_llm_prompt)."""
+    import re
+    from pathlib import Path
+    from tldw_chatbook.Chunking._shims.Utils import prompt_loader
+    src = (Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Chunking"
+           / "engine" / "strategies" / "propositions.py").read_text()
+    pairs = set(re.findall(
+        r'load_prompt\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)', src))
+    assert pairs, "scan found no load_prompt call sites — anchor drifted"
+    assert pairs <= set(prompt_loader._KNOWN), \
+        f"unmapped load_prompt pairs in the vendored strategy: {pairs - set(prompt_loader._KNOWN)}"
 
 
 def test_prompt_loader_flat_alias():

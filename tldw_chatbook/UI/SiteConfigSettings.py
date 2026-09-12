@@ -38,7 +38,11 @@ from ..Subscriptions.site_config_manager import get_site_config_manager, SiteCon
 class SiteConfigSettings(Container):
     """Settings widget for managing per-site configurations."""
 
-    CSS = """
+    # TASK-21115: was the last class-level ``CSS`` in the package. Textual
+    # never reads ``CSS`` on a plain widget (only App/Screen), so the block
+    # was dead as written; it now rides the app-CSS tier via the generated
+    # screen sheets, scoped to this class, like the other converted screens.
+    BUNDLED_SCREEN_CSS = """
     SiteConfigSettings {
         height: 100%;
         overflow: hidden;

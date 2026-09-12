@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Codex (Codex.ai/code) when working 
 
 **tldw_chatbook** - TUI application built with Textual for LLM interactions. Features: conversation management, character chat, notes with file sync, media ingestion, RAG capabilities.
 
-**Tech Stack**: Python ≥3.11, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
+**Tech Stack**: Python ≥3.12, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
 **Key Dependencies**: httpx, loguru, rich, pydantic, toml, keyring, aiofiles, jinja2
 
 ## Quick Commands
@@ -166,7 +166,7 @@ Key sections:
 - `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
-- Config: `[console] local_tools_enabled` / `workspace_root` (fallback confinement root for disabled/legacy project-instruction sessions; empty = app cwd). An enabled session's selected project-instruction binding takes precedence as the tool and instruction authority root.
+- Console file authority: every live Chat gets private temporary scratch. Named Workspaces may add explicit folder bindings; local `fs_*`/Git uses scratch unless project instructions explicitly select one binding. `[console] workspace_root` is compatibility-only outside this Console path and never grants a Console Chat access.
 
 ### Console Project Instructions
 - `AGENTS.override.md` / `AGENTS.md` startup and lazy nested guidance is untrusted, ephemeral user context bounded by one selected local-filesystem binding; it never grants tool permission.
@@ -200,6 +200,11 @@ Key sections:
 - Capped merge (50) into model selectors; full catalog searchable in the Alt+M popover
 - Config: `[model_catalog]` in config.toml; per-provider opt-in write-through appends new models to `[providers]`
 - Governance: ADR-020 (amends ADR-002), spec/plan in Docs/superpowers/{specs,plans}/2026-07-17-model-catalog-auto-refresh*
+
+### Workspace Assistant Defaults
+- Explicit workspaces carry reference-backed `assistant_defaults` (persona + permission profile); Default/global stay unset.
+- Persona policy rules narrow only (deny-by-default advertising, ask floors, per-run call caps); profiles inherit unset keys from `default`; all existing gates/floors apply first.
+- Governance: `backlog/decisions/079-workspace-assistant-defaults.md` and `Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md`.
 
 ## Project-Specific Gotchas
 

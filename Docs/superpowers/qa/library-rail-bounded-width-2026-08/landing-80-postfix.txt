@@ -1,0 +1,63 @@
+Detached tmux PTY capture — PASS ordinary landing geometry after 86ad27385c
+Session: tldw22301-80
+Pane/stty: 80x52
+CWD: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/library-rail-bounded-width
+Command: python3.12 (/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m tldw_chatbook.app)
+Scratch config: /tmp/tldw-task22301/config.toml
+Config: library.media_reader.custom_widths_enabled=false; library_width=31
+Visible route: Library landing / no selected rail row
+Visible focus: Search Library input focus treatment
+Observed geometry: compact grid=80; Library=24; canvas=56; compact CSS intentionally removes grid/canvas border
+
+                     ╭────────────╮
+ ⌃1 Home  ⌃2 Console │ ⌃3 Library │ F10 Research  ⌃4 Artifacts  ⌃5 Rol  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────┐Search everything, pick a section, or add something new.
+│ Navi    Collapse     │
+│     Import…          │Notes (0) · Media (0) · Conversations (0)
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │Quick actions
+│ ▊ Search Library…  ▎ │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     Import…         New note         Search
+│                      │
+│ ──────────────────── │
+│  Browse         ▾    │
+│    Media (0)         │
+│    Chats (0)         │
+│    Notes (0)         │
+│    Prompts (0)       │
+│    Skills (0)        │
+│    Collections       │
+│    Search / RAG      │
+│ ──────────────────── │
+│  Create         ▾    │
+│    New note          │
+│    New prompt        │
+│    New skill         │
+│ ──────────────────── │
+│  Study          ▾    │
+│    Study decks (0)   │
+│                      │
+│    Cards due: 0      │
+│                      │
+│    Quizzes (0)       │
+│                      │
+│ ──────────────────── │
+│  Import /       ▾    │
+│  Export              │
+│    Import…           │
+│    Export            │
+│ ──────────────────── │
+│  Details        ▸    │
+│  Back to Get started │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+│                      │
+└──────────────────────┘
+  / focus search | i import content | F1 · F6 · Ctrl+P · Ctrl+Q

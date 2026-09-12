@@ -6,8 +6,10 @@ import asyncio
 import difflib
 import re
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from time import monotonic
-from typing import Any, Callable, Iterable, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping
+from weakref import WeakSet
 
 from loguru import logger
 from PIL import Image as PILImage
@@ -24,17 +26,34 @@ from textual.geometry import Region
 from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
-from textual.widget import Widget
+from textual.timer import Timer
 from textual.visual import VisualType
+from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
+from tldw_chatbook.Chat.assistant_generation_state import (
+    render_exported_assistant_content,
+)
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
+    PROPRIETARY_THINKING_NOTICE,
+    ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleMessageRole,
-    FEEDBACK_ACTIVE_RUN_STATUSES,
+    ConsoleThinkingActivityRef,
+    console_activity_status_word,
+)
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+)
+from tldw_chatbook.Chat.console_context_repository import (
+    MemoryCoverageKind,
+    MemoryOriginKind,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -60,12 +79,39 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Chat.console_turn_grouping import (
+    ConsoleAssistantTurn,
+    ConsoleTranscriptUnit,
+    group_console_transcript_messages,
+    ordered_assistant_activities,
+    project_thinking_activities,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
+from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+    ConsoleActivityActivated,
+    ConsoleActivityDisclosure,
+    ConsoleAssistantTurnWidget,
+    raw_cli_status_copy,
+)
+from tldw_chatbook.Widgets.Console.console_canvas_card import (
+    ConsoleCanvasCard,
+    ConsoleCanvasCardPresentation,
+    canvas_card_signature,
+)
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
     ConsoleGenerationCardSpec,
     generation_card_signature,
+)
+from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+    ConsoleMessageMoreMenu,
+    message_more_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_selection import (
     SelectionManager,
@@ -81,10 +127,11 @@ from tldw_chatbook.Widgets.Console.console_selection import (
 )
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
-    ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
+    ConsoleSelectionNoteRequested,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
+    selection_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
@@ -95,12 +142,22 @@ from tldw_chatbook.Widgets.Console.console_video_card import (
 from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Widgets.Console.console_voice_preview import (
+        ConsoleVoicePreview,
+        VoicePreviewProjection,
+    )
+    from textual.screen import Screen
+
 
 # TASK-17658: rule separators paint via the stylesheet's hatch fill
 # (.console-transcript-rule), which spans any terminal width — the old
 # fixed 200-dash string stopped short on very wide terminals.
 CONSOLE_TRANSCRIPT_RULE = ""
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
+#: task-31386: the click affordance next to a long-running tool call's
+#: activity line (the action it runs is `CONSOLE_TURN_ACTIVITY_ABANDON_ACTION`).
+CONSOLE_TURN_ACTIVITY_ABANDON_COPY = "✕ abandon call"
 #: Console selection phase 3: run statuses during which review feedback
 #: (Request changes / LGTM) can be queued behind the active run via the
 #: prompt-queue seam. Anything else (or a screen without the run-status
@@ -136,16 +193,219 @@ EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
 )
+_SESSION_ID_UNSET = object()
 # TASK-362 AC#2: the guide names the single-key shortcuts (j/k/c/e/r/Esc), which
 # were otherwise undiscoverable anywhere in the app, alongside the icon meanings.
 # task-2154.14 (DS-01): the static line was replaced by `action_row_guide()`,
 # which names the row's glyph-only buttons in words derived from the row's own
 # actions -- see the "action-help" row in `_transcript_rows` and `to_plain_text`.
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleMemoryBannerPresentation:
+    """One content-free banner derived from validated effective memory."""
+
+    kind: Literal["prefix", "range"]
+    render_anchor_message_id: str
+    start_message_id: str | None
+    end_message_id: str
+    copy: str
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"prefix", "range"}:
+            raise ValueError("memory banner kind must be prefix or range")
+        for name in ("render_anchor_message_id", "end_message_id", "copy"):
+            if not isinstance(getattr(self, name), str) or not getattr(self, name):
+                raise ValueError(f"memory banner {name} must be non-empty text")
+        if self.kind == "range":
+            if not isinstance(self.start_message_id, str) or not self.start_message_id:
+                raise ValueError("range memory banner requires a start identity")
+        elif self.start_message_id is not None:
+            raise ValueError("prefix memory banner cannot carry a start identity")
+
+
+def canvas_card_presentations(
+    message: ConsoleChatMessage,
+) -> tuple[ConsoleCanvasCardPresentation, ...]:
+    """Project validated Canvas metadata without ever accepting source bytes."""
+
+    metadata = message.metadata
+    if metadata is None:
+        return ()
+    return tuple(
+        ConsoleCanvasCardPresentation(
+            canvas_id=card.canvas_id,
+            revision_id=card.revision_id,
+            label=f"{card.title} · revision {card.sequence} · {card.status}",
+            digest=card.digest,
+            reopenable=card.reopenable,
+            error_code=card.error_code,
+        )
+        for card in metadata.canvas_cards
+    )
+
+
+def derive_console_memory_banner_presentation(
+    effective: EffectiveMemoryResult,
+    active_messages: Iterable[ConsoleChatMessage],
+) -> ConsoleMemoryBannerPresentation | None:
+    """Derive one banner from the same typed memory result used by dispatch.
+
+    Every persisted identity lookup is exact. Missing or duplicate anchors,
+    malformed effective state, and prefix memories without a real placement
+    row return ``None`` rather than guessing from content or proximity.
+
+    Args:
+        effective: Validated effective-memory result used by provider dispatch.
+        active_messages: Ordered native messages on the visible active branch.
+
+    Returns:
+        A content-free banner presentation, or ``None`` when exact placement
+        cannot be proven.
+
+    Raises:
+        TypeError: If ``effective`` is not an ``EffectiveMemoryResult``.
+    """
+
+    if not isinstance(effective, EffectiveMemoryResult):
+        raise TypeError("effective must be an EffectiveMemoryResult")
+    rows = tuple(active_messages)
+    positions_by_persisted_id: dict[str, list[int]] = {}
+    for index, message in enumerate(rows):
+        persisted_id = message.persisted_message_id
+        if isinstance(persisted_id, str) and persisted_id:
+            positions_by_persisted_id.setdefault(persisted_id, []).append(index)
+
+    def exact_index(persisted_id: str | None) -> int | None:
+        if not isinstance(persisted_id, str) or not persisted_id:
+            return None
+        matches = positions_by_persisted_id.get(persisted_id, ())
+        return matches[0] if len(matches) == 1 else None
+
+    def prefix_presentation(
+        *, render_index: int, end_message_id: str
+    ) -> ConsoleMemoryBannerPresentation:
+        return ConsoleMemoryBannerPresentation(
+            kind="prefix",
+            render_anchor_message_id=rows[render_index].id,
+            start_message_id=None,
+            end_message_id=end_message_id,
+            copy=CONSOLE_SUMMARY_BANNER_COPY,
+        )
+
+    if effective.kind is EffectiveMemoryKind.RAW:
+        return None
+    if effective.kind is EffectiveMemoryKind.LEGACY_PREFIX:
+        legacy = effective.legacy
+        if legacy is None:
+            return None
+        boundary_index = exact_index(legacy.boundary_message_id)
+        if boundary_index is None:
+            return None
+        return prefix_presentation(
+            render_index=boundary_index,
+            end_message_id=legacy.boundary_message_id,
+        )
+
+    memory = effective.memory
+    scope = effective.scope
+    if (
+        memory is None
+        or scope is None
+        or not memory.active
+        or memory.source_kind != "generated"
+        or memory.memory_id != scope.memory_id
+        or memory.conversation_id != scope.conversation_id
+    ):
+        return None
+    boundary_index = exact_index(memory.boundary_message_id)
+    if boundary_index is None:
+        return None
+
+    if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
+        if (
+            scope.coverage_kind is not MemoryCoverageKind.RANGE
+            or scope.origin_kind is not MemoryOriginKind.MANUAL_REWIND
+        ):
+            return None
+        start_index = exact_index(scope.selection_anchor_message_id)
+        if (
+            start_index is None
+            or start_index >= boundary_index
+            or rows[start_index].role is not ConsoleMessageRole.USER
+        ):
+            return None
+        user_ordinals: dict[int, int] = {}
+        ordinal = 0
+        for index, message in enumerate(rows):
+            if message.role is ConsoleMessageRole.USER:
+                ordinal += 1
+                user_ordinals[index] = ordinal
+        start_ordinal = user_ordinals.get(start_index)
+        end_ordinal = next(
+            (
+                user_ordinals[index]
+                for index in range(boundary_index, start_index - 1, -1)
+                if index in user_ordinals
+            ),
+            None,
+        )
+        if start_ordinal is None or end_ordinal is None:
+            return None
+        return ConsoleMemoryBannerPresentation(
+            kind="range",
+            render_anchor_message_id=rows[start_index].id,
+            start_message_id=scope.selection_anchor_message_id,
+            end_message_id=memory.boundary_message_id,
+            copy=(
+                "Context uses a summary of turns "
+                f"#{start_ordinal}-#{end_ordinal} - full transcript remains visible."
+            ),
+        )
+
+    if (
+        effective.kind is not EffectiveMemoryKind.GENERATED_PREFIX
+        or scope.coverage_kind is not MemoryCoverageKind.PREFIX
+    ):
+        return None
+    if scope.origin_kind is MemoryOriginKind.MANUAL_REWIND:
+        anchor_index = exact_index(scope.selection_anchor_message_id)
+        if (
+            anchor_index is None
+            or boundary_index >= anchor_index
+            or rows[anchor_index].role is not ConsoleMessageRole.USER
+        ):
+            return None
+        return prefix_presentation(
+            render_index=anchor_index,
+            end_message_id=memory.boundary_message_id,
+        )
+    if (
+        scope.origin_kind is not MemoryOriginKind.AUTOMATIC
+        or scope.selection_anchor_message_id is not None
+    ):
+        return None
+    next_user_index = next(
+        (
+            index
+            for index in range(boundary_index + 1, len(rows))
+            if rows[index].role is ConsoleMessageRole.USER
+        ),
+        None,
+    )
+    if next_user_index is None:
+        return None
+    return prefix_presentation(
+        render_index=next_user_index,
+        end_message_id=memory.boundary_message_id,
+    )
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "speak": "Speak this message aloud using text-to-speech.",
     "speak-stop": "Stop the current speech playback.",
     "edit": "Edit this message before continuing the thread.",
+    "fork": "Fork chat from this message.",
+    "more": "More message actions.",
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
     "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
     "save-image": "Save image to disk.",
@@ -290,6 +550,11 @@ def _message_body(
         # has no content; show a visible generating state instead of an empty
         # row (local models can take 30-90s to first token).
         return CONSOLE_GENERATING_PLACEHOLDER
+    content = render_exported_assistant_content(
+        role=message.role.value,
+        content=content,
+        state=message.assistant_generation_state,
+    )
     if (
         message.role is not ConsoleMessageRole.USER
         and message.status == "failed"
@@ -430,7 +695,7 @@ def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
 
 
 #: Inline markdown + roleplay flavor handled in-transcript: **bold**, `code`,
-#: *action/inner-monologue*, and "quoted speech" (straight or curly). Matched
+#: *action*, 'inner thought', and "quoted speech" (straight or curly). Matched
 #: as closed pairs only, so an unclosed marker mid-stream stays literal until
 #: it closes. Order matters: ** before * so bold never half-matches as
 #: italics, and a quote swallows any markers inside it (task-1536).
@@ -439,40 +704,49 @@ _INLINE_MD_RE = re.compile(
     r"|`([^`]+)`"
     r"|(\"[^\"\n]+\")"
     r"|(“[^”\n]+”)"
+    r"|((?<!\w)'(?:[^'\n]|(?<=\w)'(?=\w))+?'(?!\w))"
+    r"|((?<!\w)‘(?:[^’\n]|(?<=\w)’(?=\w))+?’(?!\w))"
     r"|\*([^*\n]+)\*"
 )
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 
 #: Roleplay flavor styles (task-1536). Concrete colors, not theme variables:
 #: Content span styles are parsed directly and never resolve CSS ``$`` vars.
-#: All three read on the dark default theme and stay distinct from each
+#: All four read on the dark default theme and stay distinct from each
 #: other and from plain narration.
 _BOLD_STYLE = "bold #f7d774"
 _SPEECH_STYLE = "#8ecdf7"
+_THOUGHT_STYLE = "italic #7de3c3"
 _ACTION_STYLE = "italic #b596d8"
 
 _CONSOLE_RP_SPEECH_COMPONENT = "console-rp-speech"
+_CONSOLE_RP_THOUGHT_COMPONENT = "console-rp-thought"
 _CONSOLE_RP_ACTION_COMPONENT = "console-rp-action"
 _CONSOLE_RP_STRONG_COMPONENT = "console-rp-strong"
 _CONSOLE_RP_COMPONENTS = frozenset(
     {
         _CONSOLE_RP_SPEECH_COMPONENT,
+        _CONSOLE_RP_THOUGHT_COMPONENT,
         _CONSOLE_RP_ACTION_COMPONENT,
         _CONSOLE_RP_STRONG_COMPONENT,
     }
 )
 _ROLEPLAY_SPEECH_RE = re.compile(r'"[^"\n]+"|“[^”\n]+”')
+_ROLEPLAY_THOUGHT_RE = re.compile(
+    r"(?<!\w)'(?:[^'\n]|(?<=\w)'(?=\w))+?'(?!\w)"
+    r"|(?<!\w)‘(?:[^’\n]|(?<=\w)’(?=\w))+?’(?!\w)"
+)
 
 
 def _inline_markdown_spans(line: str) -> list:
     """Split one line into Content segments, styling inline flavor.
 
-    ``**bold**``, ``“quoted”``/``"quoted"`` speech, and
-    ``*action/inner monologue*`` each get a distinct style; `code` keeps its
-    plain italic. Text is always emitted literally (styles are applied via
-    ``(text, style)`` tuples, never markup parsing), so message text can
-    never inject Rich markup. Quotation marks stay visible inside the
-    styled speech span; bold/action marker characters are stripped.
+    ``**bold**``, ``“quoted”``/``"quoted"`` speech, ``'inner thought'``, and
+    ``*action*`` each get a distinct style; `code` keeps its plain italic.
+    Text is always emitted literally (styles are applied via ``(text, style)``
+    tuples, never markup parsing), so message text can never inject Rich
+    markup. Quotation marks stay visible inside speech and thought spans;
+    bold/action marker characters are stripped.
 
     Args:
         line: A single raw text line.
@@ -485,7 +759,7 @@ def _inline_markdown_spans(line: str) -> list:
     for match in _INLINE_MD_RE.finditer(line):
         if match.start() > pos:
             out.append(line[pos : match.start()])
-        bold, code, quote, curly_quote, action = match.groups()
+        bold, code, quote, curly_quote, thought, curly_thought, action = match.groups()
         if bold is not None:
             out.append((bold, _BOLD_STYLE))
         elif code is not None:
@@ -494,6 +768,10 @@ def _inline_markdown_spans(line: str) -> list:
             out.append((quote, _SPEECH_STYLE))
         elif curly_quote is not None:
             out.append((curly_quote, _SPEECH_STYLE))
+        elif thought is not None:
+            out.append((thought, _THOUGHT_STYLE))
+        elif curly_thought is not None:
+            out.append((curly_thought, _THOUGHT_STYLE))
         else:
             out.append((action, _ACTION_STYLE))
         pos = match.end()
@@ -553,13 +831,9 @@ def _roleplay_flavor_content(content: Content) -> Content:
         elif isinstance(span.style, Style) and span.style.meta.get("@click"):
             protected_ranges.append((span.start, span.end))
         elif span.style == ".em":
-            semantic_ranges.append(
-                (span.start, span.end, _CONSOLE_RP_ACTION_COMPONENT)
-            )
+            semantic_ranges.append((span.start, span.end, _CONSOLE_RP_ACTION_COMPONENT))
         elif span.style == ".strong":
-            semantic_ranges.append(
-                (span.start, span.end, _CONSOLE_RP_STRONG_COMPONENT)
-            )
+            semantic_ranges.append((span.start, span.end, _CONSOLE_RP_STRONG_COMPONENT))
 
     def unprotected_ranges(start: int, end: int) -> list[tuple[int, int]]:
         """Carve code and link spans out of one flavor range."""
@@ -578,9 +852,23 @@ def _roleplay_flavor_content(content: Content) -> Content:
         return remaining
 
     flavor_spans: list[Span] = []
-    for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain):
+    speech_ranges = [
+        match.span() for match in _ROLEPLAY_SPEECH_RE.finditer(content.plain)
+    ]
+    for match_start, match_end in speech_ranges:
         flavor_spans.extend(
             Span(start, end, f".{_CONSOLE_RP_SPEECH_COMPONENT}")
+            for start, end in unprotected_ranges(match_start, match_end)
+            if start < end
+        )
+    for match in _ROLEPLAY_THOUGHT_RE.finditer(content.plain):
+        if any(
+            speech_start <= match.start() and match.end() <= speech_end
+            for speech_start, speech_end in speech_ranges
+        ):
+            continue
+        flavor_spans.extend(
+            Span(start, end, f".{_CONSOLE_RP_THOUGHT_COMPONENT}")
             for start, end in unprotected_ranges(match.start(), match.end())
             if start < end
         )
@@ -829,6 +1117,30 @@ def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
     return Content.assemble(*segments)
 
 
+def _activity_is_expandable(
+    message: ConsoleChatMessage,
+    owned_rows: Iterable["_TranscriptRow"] = (),
+) -> bool:
+    """Return whether one TOOL marker owns any disclosure detail."""
+    if message.role is not ConsoleMessageRole.TOOL:
+        return False
+    if (
+        message.content.strip()
+        or message.tool_output_full
+        or message.tool_diff is not None
+    ):
+        return True
+    return any(
+        row.kind not in {"actions", "action-help", "message"}
+        or (
+            row.kind == "message"
+            and row.message is not None
+            and bool(row.message.content.strip())
+        )
+        for row in owned_rows
+    )
+
+
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
@@ -843,8 +1155,10 @@ class _TranscriptRow:
         "image",
         "generation-card",
         "video-card",
+        "canvas-card",
         "actions",
         "action-help",
+        "assistant-turn",
         "empty",
     ]
     signature: tuple
@@ -857,6 +1171,26 @@ class _TranscriptRow:
     image_spec: "ConsoleImageRowSpec | None" = None
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
     video_card_spec: "ConsoleVideoCardSpec | None" = None
+    canvas_card_spec: "ConsoleCanvasCardPresentation | None" = None
+    canvas_session_id: str | None = None
+    assistant_turn: ConsoleAssistantTurn | None = None
+    nested_rows: tuple["_TranscriptRow", ...] = ()
+    activity_rows: tuple[tuple["_TranscriptRow", ...], ...] = ()
+    activity_items: tuple[ConsoleChatMessage | ConsoleThinkingActivityRef, ...] = ()
+    activity_signature: tuple = ()
+    adjunct_signature: tuple = ()
+
+
+@dataclass(frozen=True)
+class _ActivityComponents:
+    """One activity disclosure's render children and reconciliation tokens."""
+
+    presentation: ConsoleActivityPresentation
+    action_widgets: tuple[Widget, ...]
+    detail_widgets: tuple[Widget, ...]
+    detail_available: bool
+    action_signature: tuple
+    detail_signature: tuple
 
 
 def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> bool:
@@ -891,10 +1225,19 @@ def _assistant_markdown_body(
     its header line and feeds the Markdown widget content only.
     """
     if presentation is not None:
-        return presentation.content
-    if message.variants is not None:
-        return message.variants.current.content
-    return message.content
+        content = presentation.content
+    elif message.variants is not None:
+        content = message.variants.current.content
+    else:
+        content = message.content
+    if _row_is_in_flight(message) and not content.strip():
+        # The grouped Markdown header owns healthy live/generating copy.
+        return content
+    return render_exported_assistant_content(
+        role=message.role.value,
+        content=content,
+        state=message.assistant_generation_state,
+    )
 
 
 #: TASK-15456. A line that -- with <=3 leading spaces, per CommonMark's fence
@@ -1014,6 +1357,20 @@ def _assistant_markdown_header(
             )
     elif message.status in {"stopped", "failed"}:
         suffix = f"  {_MESSAGE_STATUS_LINES[message.status]}"
+    if suffix and message.live_activity_action and suffix.endswith(message.live_activity):
+        # task-31386: a click on the affordance runs the screen action that
+        # abandons the primary's current tool call; the turn continues.
+        # A Style carries the action (not markup), so the line's text --
+        # including a bracketed tool name -- still renders literally.
+        return Content.assemble(
+            role_label,
+            (suffix, "dim"),
+            (
+                f"  {CONSOLE_TURN_ACTIVITY_ABANDON_COPY}",
+                Style(dim=True, underline=True)
+                + Style.from_meta({"@click": message.live_activity_action}),
+            ),
+        )
     return Content.assemble(role_label, (suffix, "dim"))
 
 
@@ -1110,27 +1467,12 @@ def _sync_message_classes(
 class ConsoleMessageHeader(Horizontal):
     """Stable one-line speaker header with its sole visible speech control."""
 
-    DEFAULT_CSS = """
-    ConsoleMessageHeader {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-    }
-
+    BUNDLED_CSS = """
+    ConsoleMessageHeader {width:100%;height:1;min-height:1;}
     ConsoleMessageHeader > .console-transcript-speaker-label {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
+        width:1fr;height:1;min-height:1;overflow:hidden;text-overflow:ellipsis;}
     ConsoleMessageHeader > .console-message-speech-presentation {
-        width: 14;
-        min-width: 14;
-        height: 1;
-        min-height: 1;
-    }
+        width:14;min-width:14;height:1;min-height:1;}
     """
 
     def __init__(
@@ -1145,6 +1487,7 @@ class ConsoleMessageHeader(Horizontal):
         self._presentation = presentation
         self._speech_state = speech_state
         self._speech = resolve_console_header_speech(message, speech_state)
+        self._raw_cli_elapsed_timer: Timer | None = None
         classes = ["console-message-header"]
         if markdown:
             classes.append("console-markdown-header")
@@ -1168,7 +1511,45 @@ class ConsoleMessageHeader(Horizontal):
         return Content(self._speaker_label())
 
     def _speaker_label(self) -> str:
-        return _speaker_label(self._message, self._presentation)
+        label = _speaker_label(self._message, self._presentation)
+        raw_cli = self._message.raw_cli_presentation
+        if raw_cli is not None:
+            label += f" · {raw_cli_status_copy(raw_cli)}"
+        return label
+
+    def on_mount(self) -> None:
+        """Own elapsed-time repainting for this mounted raw command row."""
+        self._sync_raw_cli_timer()
+
+    def _tick_raw_cli_elapsed(self) -> None:
+        if self._message.raw_cli_presentation is None:
+            return
+        try:
+            speaker = self.query_one(".console-transcript-speaker-label", Static)
+        except NoMatches:
+            return
+        # Elapsed ticker repaint of a `height: 1; min-height: 1` label --
+        # size is CSS-pinned, so no reflow (21692/21595 family).
+        speaker.update(self._speaker_copy(), layout=False)
+
+    def _sync_raw_cli_timer(self) -> None:
+        timer = self._raw_cli_elapsed_timer
+        raw_cli = self._message.raw_cli_presentation
+        active = (
+            raw_cli is not None
+            and raw_cli.lifecycle_state in {"running", "stopping"}
+            and raw_cli.started_at_monotonic is not None
+        )
+        if active and timer is None:
+            self._raw_cli_elapsed_timer = self.set_interval(
+                0.1,
+                self._tick_raw_cli_elapsed,
+            )
+        elif active:
+            timer.resume()
+        elif timer is not None:
+            timer.stop()
+            self._raw_cli_elapsed_timer = None
 
     def _speech_controls(self, speech: ConsoleHeaderSpeechPresentation) -> Horizontal:
         assert speech.action is not None
@@ -1217,6 +1598,7 @@ class ConsoleMessageHeader(Horizontal):
             return
         speaker.set_classes(" ".join(_speaker_label_classes(presentation)))
         speaker.update(self._speaker_copy())
+        self._sync_raw_cli_timer()
         if prior_has_action != next_has_action:
             self.refresh(recompose=True)
             return
@@ -1288,6 +1670,7 @@ class ConsoleMarkdownMessage(Vertical):
         *,
         selected: bool = False,
         speech_state: ConsoleSpeechPresentationState = "idle",
+        show_header: bool = True,
     ) -> None:
         self.message_id = message.id
         self._presentation = presentation or resolve_console_message_presentation(
@@ -1301,6 +1684,7 @@ class ConsoleMarkdownMessage(Vertical):
         super().__init__(id=f"console-message-{message.id}", classes=classes)
         self._message = message
         self._speech_state = speech_state
+        self._show_header = show_header
         self._body_text = _assistant_markdown_body(message, self._presentation)
         # Text-selection range over the markdown SOURCE at line granularity
         # (task G): offsets are always whole-line bounds. None = no highlight.
@@ -1312,12 +1696,13 @@ class ConsoleMarkdownMessage(Vertical):
         self._fence_defer_deadline: float | None = None
 
     def compose(self) -> ComposeResult:
-        yield ConsoleMessageHeader(
-            self._message,
-            self._presentation,
-            self._speech_state,
-            markdown=True,
-        )
+        if self._show_header:
+            yield ConsoleMessageHeader(
+                self._message,
+                self._presentation,
+                self._speech_state,
+                markdown=True,
+            )
         yield ConsoleRoleplayMarkdown(
             self._body_text,
             classes="console-markdown-body",
@@ -1347,14 +1732,23 @@ class ConsoleMarkdownMessage(Vertical):
         """Return the markdown source this row renders (selection domain)."""
         return self._body_text
 
-    def get_selection_text(self) -> str:
-        """Return the selected whole source lines, capped for quoting."""
+    def get_selection_text(self, *, capped: bool = True) -> str:
+        """Return selected source text.
+
+        Args:
+            capped: Apply the quote limit; False preserves the full clipboard text.
+
+        Returns:
+            The selected Markdown source, quote-capped when capped is True
+            and otherwise complete, or an empty string when nothing is selected.
+        """
         if self._selection_line_range is None:
             return ""
         start, end = self._selection_line_range
         text = self.get_display_text()
         start, end = max(0, start), min(end, len(text))
-        return cap_quote(text[start:end])
+        selected = text[start:end]
+        return cap_quote(selected) if capped else selected
 
     def set_selection_range(self, start: int, end: int) -> None:
         """Highlight the character range ``[start, end)`` of the source.
@@ -1370,10 +1764,14 @@ class ConsoleMarkdownMessage(Vertical):
             self.clear_selection()
             return
         text = self.get_display_text()
-        self._selection_line_range = (
-            max(0, start),
-            min(end, len(text)),
-        )
+        new_range = (max(0, start), min(end, len(text)))
+        if self._selection_line_range == new_range:
+            # TASK-21114: unchanged effective range -- the strip already
+            # shows it; skip the strip re-render (drags re-send the same
+            # range at mouse-move rate). Text changes re-render via
+            # ``_clamp_selection_to_text`` on sync.
+            return
+        self._selection_line_range = new_range
         self._refresh_selection_strip()
 
     def clear_selection(self) -> None:
@@ -1450,12 +1848,16 @@ class ConsoleMarkdownMessage(Vertical):
             markdown=True,
         )
         try:
-            header = self.query_one(ConsoleMessageHeader)
             markdown = self.query_one(Markdown)
             footer = self.query_one(".console-markdown-footer", Static)
         except NoMatches:
             return
-        header.sync_header(message, presentation, speech_state)
+        try:
+            header = self.query_one(ConsoleMessageHeader)
+        except NoMatches:
+            header = None
+        if header is not None:
+            header.sync_header(message, presentation, speech_state)
         footer_content = _assistant_markdown_footer(message)
         footer.update(footer_content or "")
         footer.display = footer_content is not None
@@ -1566,16 +1968,18 @@ class ConsoleMarkdownMessage(Vertical):
                 timeout=6,
             )
 
-    def on_click(self, event: Click) -> None:
+    async def on_click(self, event: Click) -> None:
+        transcript = self.parent
+        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
+            transcript = transcript.parent
+        if isinstance(transcript, ConsoleTranscript):
+            await transcript._dismiss_message_more_for_pointer(event.control)
         if event.control is not None and event.control.has_class(
             "console-message-speech-action"
         ):
             event.stop()
             return
         event.stop()
-        transcript = self.parent
-        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
-            transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
             manager = transcript.selection_manager
             if (
@@ -1613,6 +2017,7 @@ class ConsoleTranscriptMessage(Vertical):
         *,
         selected: bool = False,
         speech_state: ConsoleSpeechPresentationState = "idle",
+        show_header: bool = True,
     ) -> None:
         self.message_id = message.id
         self._message = message
@@ -1621,9 +2026,17 @@ class ConsoleTranscriptMessage(Vertical):
         )
         self._selected = selected
         self._speech_state = speech_state
+        self._show_header = show_header
         # Text-selection range over the BODY text domain (header excluded),
         # console selection phase 1. None = no highlight.
         self._selection_range: tuple[int, int] | None = None
+        # TASK-21114: cached body render (``get_display_text`` derives its
+        # ``.plain`` from it). Rebuilt lazily; invalidated in ``sync_message``
+        # -- the single seam where ``_message``/``_presentation`` are
+        # reassigned after construction -- mirroring how the markdown row's
+        # ``_body_text`` only ever changes there. A stale entry here would
+        # corrupt selection offsets and copied quotes.
+        self._body_render_cache: Content | None = None
         super().__init__(
             id=f"console-message-{message.id}",
             classes=" ".join(
@@ -1646,14 +2059,15 @@ class ConsoleTranscriptMessage(Vertical):
         )
 
     def compose(self) -> ComposeResult:
-        yield ConsoleMessageHeader(
-            self._message,
-            self._presentation,
-            self._speech_state,
-            markdown=False,
-        )
+        if self._show_header:
+            yield ConsoleMessageHeader(
+                self._message,
+                self._presentation,
+                self._speech_state,
+                markdown=False,
+            )
         yield Static(
-            _message_body_render_text(self._message, self._presentation),
+            self._body_render_content(),
             classes="console-transcript-message-body",
             markup=False,
         )
@@ -1665,21 +2079,47 @@ class ConsoleTranscriptMessage(Vertical):
     # Offsets are BODY-only: the speaker header is a separate child widget and
     # never part of the selection domain.
 
+    def _body_render_content(self) -> Content:
+        """Return the (cached) body render Content (TASK-21114).
+
+        Derived purely from ``_message`` + ``_presentation``; both are only
+        reassigned in ``sync_message``, which invalidates this cache first.
+        """
+        if self._body_render_cache is None:
+            self._body_render_cache = _message_body_render_text(
+                self._message, self._presentation
+            )
+        return self._body_render_cache
+
     def get_display_text(self) -> str:
         """Return the plain body text this row renders (selection domain)."""
-        return _message_body_render_text(self._message, self._presentation).plain
+        return self._body_render_content().plain
 
-    def get_selection_text(self) -> str:
-        """Return the currently highlighted text, capped for quoting."""
+    def get_selection_text(self, *, capped: bool = True) -> str:
+        """Return the currently highlighted text.
+
+        Args:
+            capped: Apply the quote limit; False preserves the full clipboard text.
+
+        Returns:
+            The highlighted body text, quote-capped when capped is True and
+            otherwise complete, or an empty string when nothing is selected.
+        """
         if self._selection_range is None:
             return ""
         start, end = sorted(self._selection_range)
         text = self.get_display_text()
         start, end = max(0, start), min(end, len(text))
-        return cap_quote(text[start:end])
+        selected = text[start:end]
+        return cap_quote(selected) if capped else selected
 
     def set_selection_range(self, start: int, end: int) -> None:
         """Highlight ``[start, end)`` in the body and re-render it."""
+        if self._selection_range == (start, end):
+            # TASK-21114: unchanged range -- the highlight already shows it;
+            # skip the full-body re-render (drags re-send the same range at
+            # mouse-move rate). Text changes re-render via ``sync_message``.
+            return
         self._selection_range = (start, end)
         self._refresh_body_highlight()
 
@@ -1717,7 +2157,7 @@ class ConsoleTranscriptMessage(Vertical):
         except NoMatches:
             return  # row not composed yet -- protocol state stays valid
         if self._selection_range is None:
-            body.update(_message_body_render_text(self._message, self._presentation))
+            body.update(self._body_render_content())
             return
         plain = self.get_display_text()
         start, end = sorted(self._selection_range)
@@ -1740,6 +2180,10 @@ class ConsoleTranscriptMessage(Vertical):
         self.message_id = message.id
         self._message = message
         self._presentation = presentation
+        # TASK-21114: the body render derives from the two fields reassigned
+        # above -- invalidate BEFORE anything below (the selection clamp
+        # included) reads ``get_display_text``.
+        self._body_render_cache = None
         self._selected = selected
         self._speech_state = speech_state
         _sync_message_classes(
@@ -1750,27 +2194,33 @@ class ConsoleTranscriptMessage(Vertical):
             markdown=False,
         )
         try:
-            header = self.query_one(ConsoleMessageHeader)
             self.query_one(".console-transcript-message-body", Static)
         except NoMatches:
             return
-        header.sync_header(message, presentation, speech_state)
+        try:
+            header = self.query_one(ConsoleMessageHeader)
+        except NoMatches:
+            header = None
+        if header is not None:
+            header.sync_header(message, presentation, speech_state)
         # Clamp any live text-selection range to the NEW body length before
         # re-rendering: streaming deltas shrink/grow the text under the
         # selection (console selection phase 1).
         self._clamp_selection_to_text()
         self._refresh_body_highlight()
 
-    def on_click(self, event: Click) -> None:
+    async def on_click(self, event: Click) -> None:
+        transcript = self.parent
+        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
+            transcript = transcript.parent
+        if isinstance(transcript, ConsoleTranscript):
+            await transcript._dismiss_message_more_for_pointer(event.control)
         if event.control is not None and event.control.has_class(
             "console-message-speech-action"
         ):
             event.stop()
             return
         event.stop()
-        transcript = self.parent
-        while transcript is not None and not isinstance(transcript, ConsoleTranscript):
-            transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
             manager = transcript.selection_manager
             if (
@@ -1778,13 +2228,12 @@ class ConsoleTranscriptMessage(Vertical):
                 or manager.just_finished
                 or manager.consume_release_click()
             ):
-                # This click completed (or landed during) a text-selection
-                # drag on this row; it must not toggle message selection
-                # (console selection phase 1). A genuine click never reaches
-                # this branch: its empty drag finish consumed the flag on
-                # MouseUp, so what is left here is the drag-release Click
-                # (or a click landing mid-drag). Markdown rows carry the
-                # identical guard in their own ``on_click`` (task G). Live
+                # This click landed during a text-selection drag, followed a
+                # non-empty drag, or is the optional duplicate after an empty
+                # MouseUp already committed the message toggle. It must not
+                # toggle again; a later distinct click cycle commits normally
+                # on its own MouseUp. Markdown rows carry the identical guard
+                # in their own ``on_click`` (task G). Live
                 # spike 2026-08-16: consume BOTH tokens and STOP the event
                 # -- a lingering release_click_pending let the artifact
                 # click reach the transcript's on_click, whose dismissal
@@ -1887,14 +2336,23 @@ class ConsoleToolDiffRow(Vertical):
             self._display_text = _tool_diff_display_text(self._diff)
         return self._display_text
 
-    def get_selection_text(self) -> str:
-        """Return the selected whole diff lines, capped for quoting."""
+    def get_selection_text(self, *, capped: bool = True) -> str:
+        """Return the selected whole diff lines.
+
+        Args:
+            capped: Apply the quote limit; False preserves the full clipboard text.
+
+        Returns:
+            The selected diff lines, quote-capped when capped is True and
+            otherwise complete, or an empty string when nothing is selected.
+        """
         if self._selection_range is None:
             return ""
         start, end = self._selection_range
         text = self.get_display_text()
         start, end = max(0, start), min(end, len(text))
-        return cap_quote(text[start:end])
+        selected = text[start:end]
+        return cap_quote(selected) if capped else selected
 
     def set_selection_range(self, start: int, end: int) -> None:
         """Highlight ``[start, end)`` of the projection, snapped to whole lines.
@@ -1911,6 +2369,11 @@ class ConsoleToolDiffRow(Vertical):
         start, end = _snap_to_line_bounds(text, start, end)
         if end <= start:
             self.clear_selection()
+            return
+        if self._selection_range == (start, end):
+            # TASK-21114: unchanged snapped range -- skip the strip
+            # re-render (drags re-send the same range at mouse-move rate;
+            # line snapping makes repeats especially common here).
             return
         self._selection_range = (start, end)
         self._refresh_selection_strip()
@@ -2055,7 +2518,9 @@ class ConsoleTranscriptEmptyPanel(RecomposeCaptureGuard, Vertical):
         already covering the transcript (``mode == "card"``) -- rendering a
         second, unreachable button under the overlay would be noise.
         """
-        return bool(self.provider_action_label.strip()) and self.card_state.mode != "card"
+        return (
+            bool(self.provider_action_label.strip()) and self.card_state.mode != "card"
+        )
 
     def compose(self) -> ComposeResult:
         # The blocking setup card (title + numbered steps + primary action) now
@@ -2173,6 +2638,25 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript.focus()
 
 
+class ConsoleThinkingEditRequested(Message):
+    """Bubbled when the user asks to edit a thinking block's text.
+
+    TASK-32312: posted by ``ConsoleTranscript.action_invoke_selected_action``
+    for a selected thinking disclosure row (the keyboard mirror of the
+    thinking-row copy seam). Anchored by projected activity id -- the owning
+    screen resolves the displayable block from the transcript's display
+    model and owns the block-scoped edit modal.
+
+    Args:
+        activity_id: Projected thinking activity row identifier (the
+            deterministic uuid5 of the owner message and block ids).
+    """
+
+    def __init__(self, activity_id: str) -> None:
+        super().__init__()
+        self.activity_id = activity_id
+
+
 class ConsoleReviewNotesRequested(Message):
     """Bubbled when the user asks to see a message's review notes.
 
@@ -2212,6 +2696,52 @@ class ConsoleAnnotationMarker(Static):
         self.post_message(ConsoleReviewNotesRequested(self.anchor_message_id))
 
 
+@lru_cache(maxsize=4)
+def _body_wrap_table(text: str, width: int) -> tuple[tuple[tuple[int, str], ...], int]:
+    """Memoized wrap table: each wrapped body line with its source offset.
+
+    TASK-21114: a drag delivers MouseMove at 50-100 Hz and every event needs
+    the wrapped layout of the SAME (text, width) -- re-running
+    ``Content.wrap`` plus the offset-alignment scan over a multi-KB body per
+    event was the dominant per-move cost. The table is pure in its key, so a
+    small LRU covers a drag's lifetime while text growth (streaming) and
+    width changes (resize mid-drag) each miss into a fresh entry and the old
+    one ages out.
+
+    Returns:
+        ``(table, total_lines)`` where ``table[i]`` is ``(source_start,
+        line_text)`` for wrapped line ``i`` and ``total_lines`` counts ALL
+        wrapped lines. ``len(table) < total_lines`` means the alignment scan
+        hit a wrap edge case it does not model at index ``len(table)`` --
+        cells on or below that line fall back to the single-line mapping
+        (exactly where the pre-memoization loop bailed out).
+    """
+    wrapped = [
+        line.plain for line in Content(text, strip_control_codes=False).wrap(width)
+    ]
+    table: list[tuple[int, str]] = []
+    source_offset = 0
+    for line in wrapped:
+        if line:
+            start = text.find(line, source_offset)
+            if start == -1 or text[source_offset:start].strip():
+                # Wrap edge case not modeled (defensive): stop here; the
+                # caller falls back to the single-line mapping for this
+                # line and everything after it.
+                break
+            table.append((start, line))
+            source_offset = start + len(line)
+        else:
+            # Blank wrapped line: anchors at the current position.
+            table.append((source_offset, ""))
+            # Consume the blank line's own break so later lines stay
+            # aligned; any other inter-line whitespace is absorbed by the
+            # next line's find() above.
+            if source_offset < len(text) and text[source_offset] in "\r\n":
+                source_offset += 1
+    return tuple(table), len(wrapped)
+
+
 def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int:
     """Map a body-local screen cell to a character offset in ``text``.
 
@@ -2221,7 +2751,9 @@ def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int
     ``Content.wrap`` mirrors the widget's own fold (leading indentation is
     preserved, the fold space is dropped), so each wrapped line is aligned
     back to its source offset by skipping the whitespace the fold dropped --
-    mapping choice verified against ``Content.wrap`` on Textual 8.2.8.
+    mapping choice verified against ``Content.wrap`` on Textual 8.2.8. The
+    wrap-plus-alignment work is memoized per (text, width) in
+    ``_body_wrap_table`` (TASK-21114).
 
     Cells above the body clamp to offset 0, cells below the last wrapped
     line to the end of the text; on the hovered line the x cell maps through
@@ -2240,35 +2772,17 @@ def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int
     if width <= 0 or not text:
         # Not laid out (or nothing to select): monotone single-line mapping.
         return offset_for_cell(text, cell_x)
-    wrapped = [
-        line.plain
-        for line in Content(text, strip_control_codes=False).wrap(width)
-    ]
+    table, total_lines = _body_wrap_table(text, width)
     if cell_y < 0:
         return 0
-    if cell_y >= len(wrapped):
+    if cell_y >= total_lines:
         return len(text)
-    source_offset = 0
-    for index, line in enumerate(wrapped):
-        if line:
-            start = text.find(line, source_offset)
-            if start == -1 or text[source_offset:start].strip():
-                # Wrap edge case not modeled (defensive): fall back to the
-                # single-line mapping rather than mis-anchor the drag.
-                return offset_for_cell(text, cell_x)
-            if index == cell_y:
-                return start + offset_for_cell(line, cell_x)
-            source_offset = start + len(line)
-        else:
-            if index == cell_y:
-                # Blank wrapped line: anchor at the current position.
-                return source_offset
-            # Consume the blank line's own break so later lines stay
-            # aligned; any other inter-line whitespace is absorbed by the
-            # next line's find() above.
-            if source_offset < len(text) and text[source_offset] in "\r\n":
-                source_offset += 1
-    return len(text)
+    if cell_y >= len(table):
+        # On or below an unmodeled wrap edge: fall back to the single-line
+        # mapping rather than mis-anchor the drag.
+        return offset_for_cell(text, cell_x)
+    start, line = table[cell_y]
+    return start + offset_for_cell(line, cell_x)
 
 
 def _snap_to_line_bounds(text: str, start: int, end: int) -> tuple[int, int]:
@@ -2412,12 +2926,50 @@ def _kb_selection_hint_text(
     return _KB_CHAR_SELECTION_HINT
 
 
+#: Every constructed, not-yet-collected transcript (TASK-21119).
+#:
+#: Same contract as ``_LIVE_SELECTION_MENUS``, and now the same two hooks:
+#: registration in ``__init__`` is synchronous and strictly precedes DOM
+#: attachment, so the registry can never MISS a mounted transcript (the
+#: direction that would silently break the click-outside cleanup); it may
+#: over-report, and attachment is always re-derived from the DOM in
+#: ``console_transcripts_on_screen``. ``_on_unmount`` prunes recomposed
+#: transcripts out of the candidate set, which is an optimization only.
+_LIVE_TRANSCRIPTS: "WeakSet[ConsoleTranscript]" = WeakSet()
+
+
+def console_transcripts_on_screen(
+    screen: "Screen[object]",
+) -> list["ConsoleTranscript"]:
+    """Transcripts currently attached under ``screen``.
+
+    Replaces ``screen.query(ConsoleTranscript)`` (a full-screen DOM walk) on
+    the per-press dismissal path. A Console screen holds one transcript
+    (side chats add at most a handful), so the candidate scan is a couple of
+    parent-chain walks, not a walk of the whole screen.
+
+    Args:
+        screen: The screen whose subtree is being inspected.
+
+    Returns:
+        The attached transcripts, in unspecified order.
+    """
+    transcripts: list[ConsoleTranscript] = []
+    for transcript in _LIVE_TRANSCRIPTS:
+        if transcript.parent is None:
+            continue  # never mounted, or already detached (cheap arm)
+        try:
+            if transcript.screen is screen:
+                transcripts.append(transcript)
+        except NoScreen:
+            continue  # attached to an orphaned subtree mid-teardown
+    return transcripts
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
     can_focus = True
-
-
 
     class TranscriptTextSelected(Message):
         """Posted when a mouse drag finished with a non-empty text selection.
@@ -2444,6 +2996,7 @@ class ConsoleTranscript(VerticalScroll):
         ("s", "enter_text_selection", "Select text"),
         ("c", "invoke_selected_action('copy')", "Copy"),
         ("e", "invoke_selected_action('edit')", "Edit"),
+        ("f", "invoke_selected_action('fork')", "Fork"),
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
         ("o", "invoke_selected_action('tool-output')", "Full output"),
         ("v", "invoke_selected_action('review-changes')", "Review changes"),
@@ -2462,6 +3015,7 @@ class ConsoleTranscript(VerticalScroll):
             "console-transcript-rule",
             "console-transcript-summary-banner",
             "console-transcript-citation-sources",
+            "console-transcript-library-activity",
             "console-transcript-annotations",
             # Textual scrollbars carry the generic system-widget class; ignore them
             # defensively if a scrollbar click ever bubbles up to the transcript.
@@ -2484,13 +3038,17 @@ class ConsoleTranscript(VerticalScroll):
         #: so a stale reference is never cached across session switches.
         #: Always set post-construction via ``set_change_review_provider_
         #: factory`` (the screen's sync loop keeps it current on the
-        #: mounted instance every tick, mirroring ``set_summary_boundary``/
+        #: mounted instance every tick, mirroring
+        #: ``set_memory_banner_presentation``/
         #: ``set_image_specs``) -- no constructor kwarg for this, so every
         #: harness that builds this widget directly starts with the card
         #: switched off until the setter runs.
         self._change_review_provider_factory: Callable[[], Any] | None = None
         self._presentation_context = ConsolePresentationContext()
         self._messages: list[ConsoleChatMessage] = []
+        self._unit_spans_by_index: tuple[
+            tuple[int, int, str, tuple[str, ...]], ...
+        ] = ()
         self.selected_message_id: str | None = None
         #: task-501: a selection to apply on the NEXT message ingest that
         #: contains this id. Set by the screen's sibling-swipe handler, which
@@ -2500,12 +3058,12 @@ class ConsoleTranscript(VerticalScroll):
         #: at ingest time keeps the swiped-to sibling selected so repeated
         #: `<`/`>` presses need no re-click.
         self.pending_selection_id: str | None = None
-        #: SP2 /rewind: native id of the "summarize up to here" boundary message.
-        #: Render-derived only -- a banner row is emitted above this message when
-        #: it is among the rendered messages; ``None`` (or a dangling id) shows
-        #: no banner. Set by the screen sync path from
-        #: ``store.session_context_summary``; never mutates store/tree state.
-        self.summary_boundary_message_id: str | None = None
+        #: TASK-575: one immutable, content-free banner projection. It is
+        #: replaced wholesale by the screen sync path and never mutates the
+        #: message list, active tree, selection, or persistence state.
+        self.memory_banner_presentation: ConsoleMemoryBannerPresentation | None = (
+            None
+        )
         self._follow_intent_time = 0.0
         self._user_scroll_time = 0.0
         #: TASK-16851: when the last ``scroll_end`` (the End key) was issued.
@@ -2530,8 +3088,10 @@ class ConsoleTranscript(VerticalScroll):
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
         self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         self._video_card_specs: dict[str, ConsoleVideoCardSpec] = {}
+        self._fork_eligibility_by_message_id: dict[str, ConsoleForkEligibility] = {}
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
+        self._library_activity_counts: dict[str, int] = {}
         # task-17169: screen-owned review-note previews keyed by native
         # message id -- a message with entries gains an inline marker row.
         self._annotation_previews: dict[str, tuple[str, ...]] = {}
@@ -2542,12 +3102,26 @@ class ConsoleTranscript(VerticalScroll):
         #: deliberately dropped when the transcript is rebuilt for another
         #: session rather than following the user across conversations.
         self._expanded_tool_output_ids: set[str] = set()
+        #: Trusted model-activity identity/owner projection for the current
+        #: session. Full thinking text stays in the Assistant envelope.
+        self._thinking_activity_refs: dict[str, ConsoleThinkingActivityRef] = {}
+        self._show_model_thinking = True
+        self._pending_thinking_auto_collapse: set[str] = set()
+        self._manual_thinking_disclosures: set[str] = set()
+        self._closed_live_thinking_blocks: set[tuple[str, str]] = set()
+        # Optional session-boundary identity supplied by the owning screen.
+        # The sentinel preserves the historical id-intersection behavior for
+        # direct/legacy callers that do not know about sessions.
+        self._session_identity: object = _SESSION_ID_UNSET
         #: This poll tick's live turn-activity line ("⚙ read_file · 4s"),
         #: or "" when no turn is in flight. Pure view state, re-supplied by
         #: the screen on every 0.2s sync tick via `apply_turn_activity`;
         #: never derived here and never stored on the message the store
         #: owns (see `_with_turn_activity`).
         self._turn_activity: str = ""
+        #: task-31386: the click action offered next to the line ("abandon
+        #: call"), or "" -- same lifetime as `_turn_activity`.
+        self._turn_activity_action: str = ""
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -2561,6 +3135,10 @@ class ConsoleTranscript(VerticalScroll):
         # appends USER + ASSISTANT placeholder together, so the tail
         # alone can miss the send (PR #697 review).
         self._seen_message_ids: set[str] = set()
+        # Speculative voice text is a separate, ephemeral projection. It is
+        # never inserted into ``_messages`` or the durable row/grouping path.
+        self._voice_preview_projection: VoicePreviewProjection | None = None
+        self._voice_preview_widget: ConsoleVoicePreview | None = None
         #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
         #: that detaches the reader can refresh the pill without a status source.
         self._last_run_status = "idle"
@@ -2590,7 +3168,10 @@ class ConsoleTranscript(VerticalScroll):
         #: Plain, markdown, or tool diff row (all implement the selection
         #: protocol).
         self._selection_origin_row: (
-            ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None
+            ConsoleTranscriptMessage
+            | ConsoleMarkdownMessage
+            | ConsoleToolDiffRow
+            | None
         ) = None
         #: TASK-15777: view-only hidden TAIL — the second window boundary.
         #: Always a contiguous SUFFIX of ``_messages`` derived from one index
@@ -2620,7 +3201,10 @@ class ConsoleTranscript(VerticalScroll):
         #: (shared with the mouse-drag path) so exit can restore ownership
         #: cleanly -- entry sets both.
         self._kb_selection_row: (
-            ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None
+            ConsoleTranscriptMessage
+            | ConsoleMarkdownMessage
+            | ConsoleToolDiffRow
+            | None
         ) = None
         #: Task 3's motion-cursor endpoints over the armed row's display
         #: text (anchor = fixed end, end = moving end). Kept next to
@@ -2628,6 +3212,39 @@ class ConsoleTranscript(VerticalScroll):
         #: until Task 3 wires the motion keys.
         self._kb_anchor: int | None = None
         self._kb_end: int | None = None
+        # TASK-21119: register BEFORE any mount can happen (Textual delivers
+        # ``Mount`` asynchronously), so the screen's click-outside gate can
+        # never miss a transcript that is already in the DOM.
+        _LIVE_TRANSCRIPTS.add(self)
+
+    def _on_unmount(self) -> None:
+        """Prune the transcript registry (TASK-21119).
+
+        Best-effort only, exactly like the menu's: correctness never depends
+        on it (``console_transcripts_on_screen`` re-checks attachment, and
+        the weak reference expires on its own), it just keeps the candidate
+        set from carrying every recomposed transcript until the next
+        collection. No ``super()`` call is needed -- Textual dispatches
+        ``_on_unmount`` from every class in the MRO, so ``Widget``'s own
+        teardown still runs.
+        """
+        _LIVE_TRANSCRIPTS.discard(self)
+
+    @property
+    def has_pending_selection_ui(self) -> bool:
+        """Whether the screen's click-outside cleanup would change anything.
+
+        The screen-level dismissal (``ChatScreen._dismiss_console_selection_
+        menus_outside_transcript``) does three things per transcript: clear
+        the highlighted row, cancel the selection manager, and drop the
+        origin row. All three are no-ops when the manager is idle and no
+        origin row is held -- including the keyboard-selection mode, which
+        arms the manager without mounting a menu (so a menu-only gate would
+        leave its reverse-video strip painted after a click elsewhere).
+        """
+        return (
+            self._selection_origin_row is not None or not self.selection_manager.is_idle
+        )
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -2651,6 +3268,15 @@ class ConsoleTranscript(VerticalScroll):
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
+        self._voice_preview_widget = None
+        if self._voice_preview_projection is not None:
+            from tldw_chatbook.Widgets.Console.console_voice_preview import ConsoleVoicePreview
+
+            self._voice_preview_widget = ConsoleVoicePreview(
+                self._voice_preview_projection,
+                id="console-voice-preview",
+            )
+            yield self._voice_preview_widget
         # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
         # `sync_jump_indicator` shows it while the reader is scrolled up.
         pill = ConsoleTranscriptJumpPill(
@@ -2674,6 +3300,42 @@ class ConsoleTranscript(VerticalScroll):
         )
         hint.display = False
         yield hint
+
+    def set_voice_preview(self, projection: VoicePreviewProjection) -> None:
+        """Show one ephemeral speculative voice projection."""
+        from tldw_chatbook.Widgets.Console.console_voice_preview import (
+            ConsoleVoicePreview,
+            VoicePreviewProjection,
+        )
+
+        if type(projection) is not VoicePreviewProjection:
+            raise TypeError("projection must be a VoicePreviewProjection")
+        self._voice_preview_projection = projection
+        if not self.is_mounted:
+            return
+        if self._voice_preview_widget is None:
+            self._voice_preview_widget = ConsoleVoicePreview(
+                projection, id="console-voice-preview"
+            )
+            self.mount(self._voice_preview_widget, before="#console-transcript-jump-pill")
+        else:
+            self._voice_preview_widget.set_projection(projection)
+
+    def clear_voice_preview(self) -> None:
+        """Hide and forget provisional voice text without touching messages."""
+
+        self._voice_preview_projection = None
+        if self._voice_preview_widget is not None:
+            self._voice_preview_widget.clear()
+
+    async def recompose(self) -> None:
+        """Detach screen-owned message overflow UI before rebuilding rows."""
+        menus = message_more_menus_on_screen(self.screen) if self.is_mounted else []
+        opener_id = menus[0].opener_button_id if menus else ""
+        await self.dismiss_message_more_menu(restore_focus=False)
+        await super().recompose()
+        if menus:
+            self._restore_message_action_focus(opener_id)
 
     @property
     def allow_vertical_scroll(self) -> bool:
@@ -2833,10 +3495,7 @@ class ConsoleTranscript(VerticalScroll):
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Hydrate the neighboring window when a detached reader hits a boundary."""
         super().watch_scroll_y(old_value, new_value)
-        if (
-            new_value <= old_value
-            and new_value <= SCROLLBACK_HYDRATION_THRESHOLD
-        ):
+        if new_value <= old_value and new_value <= SCROLLBACK_HYDRATION_THRESHOLD:
             self._schedule_scrollback_hydration()
         elif (
             new_value >= old_value
@@ -2891,15 +3550,78 @@ class ConsoleTranscript(VerticalScroll):
         # watermarks remain the authoritative post-layout bound.
         return wrapped_lines + 2
 
-    def _turn_aligned_start(self, messages: list[ConsoleChatMessage], start: int) -> int:
+    def _turn_aligned_start(
+        self, messages: list[ConsoleChatMessage], start: int
+    ) -> int:
         """Move a window boundary back to the nearest user turn."""
         start = max(0, min(start, len(messages)))
+        if start < len(messages):
+            start, _end, _owner_id, _owned_ids = self._unit_span_at(messages, start)
         while start > 0 and (
-            start >= len(messages)
-            or messages[start].role != ConsoleMessageRole.USER
+            start >= len(messages) or messages[start].role != ConsoleMessageRole.USER
         ):
             start -= 1
         return start
+
+    def _unit_span_at(
+        self, messages: list[ConsoleChatMessage], index: int
+    ) -> tuple[int, int, str, tuple[str, ...]]:
+        """Return the causal span and owner for the unit containing ``index``."""
+        index = max(0, min(index, len(messages) - 1))
+        if messages is self._messages:
+            return self._unit_spans_by_index[index]
+        return self._build_unit_spans(messages)[index]
+
+    @staticmethod
+    def _build_unit_spans(
+        messages: list[ConsoleChatMessage],
+        units: Iterable[ConsoleTranscriptUnit] | None = None,
+    ) -> tuple[tuple[int, int, str, tuple[str, ...]], ...]:
+        """Build one causal span lookup entry per message index."""
+        index_by_id = {message.id: offset for offset, message in enumerate(messages)}
+        spans: list[tuple[int, int, str, tuple[str, ...]] | None] = [None] * len(
+            messages
+        )
+        if units is None:
+            units = group_console_transcript_messages(messages)
+        for unit in units:
+            if unit.standalone is not None:
+                standalone = unit.standalone
+                start = index_by_id[standalone.id]
+                spans[start] = (start, start + 1, standalone.id, (standalone.id,))
+                continue
+            turn = unit.assistant_turn
+            assert turn is not None
+            start = index_by_id[turn.assistant.id]
+            end = start + len(turn.owned_message_ids)
+            span = (start, end, turn.assistant.id, turn.owned_message_ids)
+            spans[start:end] = [span] * (end - start)
+        return tuple(
+            span
+            if span is not None
+            else (index, index + 1, messages[index].id, (messages[index].id,))
+            for index, span in enumerate(spans)
+        )
+
+    def _ownership_by_message_id(
+        self, messages: list[ConsoleChatMessage] | None = None
+    ) -> dict[str, tuple[str, tuple[str, ...]]]:
+        """Map every causal message id to its top-level owner and unit ids."""
+        source = self._messages if messages is None else messages
+        ownership: dict[str, tuple[str, tuple[str, ...]]] = {}
+        for unit in group_console_transcript_messages(source):
+            if unit.standalone is not None:
+                message = unit.standalone
+                ownership[message.id] = (message.id, (message.id,))
+                continue
+            turn = unit.assistant_turn
+            assert turn is not None
+            owner = (turn.assistant.id, turn.owned_message_ids)
+            for message_id in turn.owned_message_ids:
+                ownership[message_id] = owner
+            for ref in project_thinking_activities(assistant=turn.assistant):
+                ownership[ref.activity_id] = owner
+        return ownership
 
     def _tail_window_start(
         self,
@@ -2929,12 +3651,14 @@ class ConsoleTranscript(VerticalScroll):
     def _set_hidden_prefix(self, start: int) -> None:
         """Replace the view-only hidden set with one contiguous prefix."""
         start = max(0, min(start, len(self._messages)))
-        self._pruned_message_ids = {
-            message.id for message in self._messages[:start]
-        }
+        if start < len(self._messages):
+            start, _end, _owner_id, _owned_ids = self._unit_span_at(
+                self._messages, start
+            )
+        self._pruned_message_ids = {message.id for message in self._messages[:start]}
 
-    def _set_hidden_tail(self, start: int | None) -> None:
-        """Replace the view-only hidden tail with one contiguous suffix.
+    def _replace_hidden_tail(self, start: int | None) -> None:
+        """Replace the hidden suffix at an already unit-aligned boundary.
 
         Args:
             start: Index of the first hidden-tail message, or ``None`` (or an
@@ -2946,9 +3670,29 @@ class ConsoleTranscript(VerticalScroll):
             return
         start = max(0, start)
         self._hidden_tail_start = start
-        self._hidden_tail_ids = {
-            message.id for message in self._messages[start:]
-        }
+        self._hidden_tail_ids = {message.id for message in self._messages[start:]}
+
+    def _hide_tail_from(self, start: int | None) -> None:
+        """Hide from ``start``, rounding backward to the containing unit."""
+        if start is None or start >= len(self._messages):
+            self._replace_hidden_tail(None)
+            return
+        start = max(0, start)
+        unit_start, _end, _owner_id, _owned_ids = self._unit_span_at(
+            self._messages, start
+        )
+        self._replace_hidden_tail(unit_start)
+
+    def _reveal_hidden_tail_through(self, end: int) -> None:
+        """Reveal through exclusive ``end``, rounding forward to unit end."""
+        end = max(0, min(end, len(self._messages)))
+        if end == 0:
+            self._replace_hidden_tail(0)
+            return
+        _start, unit_end, _owner_id, _owned_ids = self._unit_span_at(
+            self._messages, end - 1
+        )
+        self._replace_hidden_tail(unit_end if unit_end < len(self._messages) else None)
 
     def _hidden_tail_start_index(self) -> int:
         """Return the hidden-tail boundary index (``len`` when no tail is hidden)."""
@@ -3002,7 +3746,7 @@ class ConsoleTranscript(VerticalScroll):
         load produces. The dropped scroll-back stays in the store and
         rehydrates chunk-by-chunk if the reader scrolls up again.
         """
-        self._set_hidden_tail(None)
+        self._hide_tail_from(None)
         # A jump-to-latest between a re-center and its placement supersedes
         # the placement; do not leave upward hydration suppressed (review E).
         self._suppress_boundary_hydration = False
@@ -3157,7 +3901,7 @@ class ConsoleTranscript(VerticalScroll):
                     else None
                 )
                 if trim_start is not None:
-                    self._set_hidden_tail(trim_start)
+                    self._hide_tail_from(trim_start)
                     self.call_later(self.refresh_messages)
                 else:
                     self._schedule_prune_check()
@@ -3220,11 +3964,17 @@ class ConsoleTranscript(VerticalScroll):
         if len(groups) <= 1:
             return None
         protected_ids: set[str] = set()
+        ownership = self._ownership_by_message_id()
         if self.selected_message_id is not None:
-            protected_ids.add(self.selected_message_id)
+            protected_ids.add(
+                ownership.get(
+                    self.selected_message_id,
+                    (self.selected_message_id, (self.selected_message_id,)),
+                )[0]
+            )
         focused_id = self._focused_row_message_id()
         if focused_id is not None:
-            protected_ids.add(focused_id)
+            protected_ids.add(ownership.get(focused_id, (focused_id, (focused_id,)))[0])
         index_by_id = {
             message.id: index for index, message in enumerate(self._messages)
         }
@@ -3279,6 +4029,7 @@ class ConsoleTranscript(VerticalScroll):
             id(widget): key for key, widget in self._row_widgets.items()
         }
         message_ids = {message.id for message in self._messages}
+        ownership = self._ownership_by_message_id()
         groups: list[tuple[str, int]] = []
         group_id: str | None = None
         group_height = 0
@@ -3289,7 +4040,9 @@ class ConsoleTranscript(VerticalScroll):
             if key is not None and ":" in key:
                 candidate = key.split(":", 1)[1]
                 if candidate in message_ids:
-                    row_message_id = candidate
+                    row_message_id = ownership.get(
+                        candidate, (candidate, (candidate,))
+                    )[0]
             if row_message_id is None:
                 break
             if row_message_id != group_id:
@@ -3420,7 +4173,7 @@ class ConsoleTranscript(VerticalScroll):
                 used += self._estimated_message_lines(self._messages[end])
                 end += 1
             self._hydrating_scrollback = True
-            self._set_hidden_tail(end if end < len(self._messages) else None)
+            self._reveal_hidden_tail_through(end)
             try:
                 await self._reconcile_rows(self._transcript_rows())
             finally:
@@ -3485,9 +4238,7 @@ class ConsoleTranscript(VerticalScroll):
             return self._speech_states
         return self._speech_states
 
-    def _console_speech_state(
-        self, message_id: str
-    ) -> ConsoleSpeechPresentationState:
+    def _console_speech_state(self, message_id: str) -> ConsoleSpeechPresentationState:
         state = self._speech_state_store().get(message_id)
         if state in {"idle", "generating", "playing", "stopped", "failed"}:
             return state
@@ -3540,14 +4291,29 @@ class ConsoleTranscript(VerticalScroll):
             states.pop(message_id, None)
             self._message_signature_cache.pop(message_id, None)
 
-    def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
+    def set_messages(
+        self,
+        messages: Iterable[ConsoleChatMessage],
+        *,
+        session_id: object = _SESSION_ID_UNSET,
+    ) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
 
         Args:
             messages: New transcript messages in display order. Signature
                 cache entries for messages no longer present are pruned here
                 (delete correctness for the TASK-259 per-message cache).
+            session_id: Optional owning-session identity. A change between
+                explicit identities clears disclosure expansion even when a
+                new session recycles message ids. Omitting it preserves the
+                legacy id-intersection behavior.
         """
+        previous_thinking_refs = self._thinking_activity_refs
+        previous_activity_ids = {
+            message.id
+            for message in self._messages
+            if message.role is ConsoleMessageRole.TOOL
+        }
         previous_visible_ids = [
             message.id
             for message in self._messages
@@ -3556,12 +4322,75 @@ class ConsoleTranscript(VerticalScroll):
         ]
         previous_hidden_tail_ids = self._hidden_tail_ids
         self._messages = list(messages)
+        units = group_console_transcript_messages(self._messages)
+        self._unit_spans_by_index = self._build_unit_spans(self._messages, units)
         message_ids = {message.id for message in self._messages}
+        session_changed = False
+        self._fork_eligibility_by_message_id = {
+            message_id: eligibility
+            for message_id, eligibility in self._fork_eligibility_by_message_id.items()
+            if message_id in message_ids
+        }
+        if session_id is not _SESSION_ID_UNSET:
+            if (
+                self._session_identity is not _SESSION_ID_UNSET
+                and self._session_identity != session_id
+            ):
+                session_changed = True
+                self._expanded_tool_output_ids.clear()
+                self._pending_thinking_auto_collapse.clear()
+                self._manual_thinking_disclosures.clear()
+                self._closed_live_thinking_blocks.clear()
+            self._session_identity = session_id
+        thinking_refs: dict[str, ConsoleThinkingActivityRef] = {}
+        current_thinking_blocks: set[tuple[str, str]] = set()
+        for unit in units:
+            turn = unit.assistant_turn
+            if turn is None:
+                continue
+            live_block_id = self._live_thinking_block_id(turn)
+            envelope = turn.assistant.thinking
+            if isinstance(envelope, ThinkingEnvelope):
+                current_thinking_blocks.update(
+                    (turn.assistant.id, block.block_id) for block in envelope.blocks
+                )
+            if live_block_id is not None and any(
+                activity.id not in previous_activity_ids for activity in turn.activities
+            ):
+                self._closed_live_thinking_blocks.add(
+                    (turn.assistant.id, live_block_id)
+                )
+                live_block_id = None
+            for ref in project_thinking_activities(
+                assistant=turn.assistant,
+                live_block_id=live_block_id,
+            ):
+                thinking_refs[ref.activity_id] = ref
+                is_live = ref.block_id == live_block_id
+                if (
+                    is_live
+                    and ref.activity_id not in previous_thinking_refs
+                    and not session_changed
+                ):
+                    self._expanded_tool_output_ids.add(ref.activity_id)
+                    self._pending_thinking_auto_collapse.add(ref.activity_id)
+                elif (
+                    not is_live
+                    and ref.activity_id in self._pending_thinking_auto_collapse
+                ):
+                    if ref.activity_id not in self._manual_thinking_disclosures:
+                        self._expanded_tool_output_ids.discard(ref.activity_id)
+                    self._pending_thinking_auto_collapse.discard(ref.activity_id)
+        self._thinking_activity_refs = thinking_refs
+        self._closed_live_thinking_blocks &= current_thinking_blocks
+        thinking_ids = set(thinking_refs)
+        self._pending_thinking_auto_collapse &= thinking_ids
+        self._manual_thinking_disclosures &= thinking_ids
         # Expansion is per message id, so ids that left the transcript (a
         # session switch, a deleted branch) must go with them -- otherwise the
         # set grows for the life of the widget and a recycled id would come
         # back already expanded.
-        self._expanded_tool_output_ids &= message_ids
+        self._expanded_tool_output_ids &= message_ids | thinking_ids
         # TASK-15455: preserve the current contiguous window across streaming
         # updates by anchoring it to the first still-present visible id.  A
         # disjoint session switch has no such id and starts from a bounded tail
@@ -3587,7 +4416,7 @@ class ConsoleTranscript(VerticalScroll):
             for message_id in previous_hidden_tail_ids
             if message_id in index_by_id
         ]
-        self._set_hidden_tail(
+        self._hide_tail_from(
             min(surviving_tail_indices) if surviving_tail_indices else None
         )
         if self._hidden_tail_ids and self._raw_anchor_engaged():
@@ -3599,7 +4428,7 @@ class ConsoleTranscript(VerticalScroll):
             # must mount: drop the suffix and re-window onto a fresh tail
             # (``preserved_start = None`` routes the boundary computation
             # below through the same fresh-tail path a session load uses).
-            self._set_hidden_tail(None)
+            self._hide_tail_from(None)
             preserved_start = None
         if not self._windowing_enabled():
             # TASK-15455 (reconciliation): `[chat_defaults]
@@ -3623,7 +4452,7 @@ class ConsoleTranscript(VerticalScroll):
             # against the 15458 per-tick churn: no tail-creating path runs
             # with windowing off, so this clear is one-shot, and the
             # watermark-pruned PREFIX stays sticky exactly as before.
-            self._set_hidden_tail(None)
+            self._hide_tail_from(None)
             window_start = 0 if preserved_start is None else preserved_start
         elif preserved_start is None:
             window_start = self._tail_window_start(
@@ -3661,7 +4490,7 @@ class ConsoleTranscript(VerticalScroll):
             # it sets would be overwritten by ``_set_hidden_prefix`` below —
             # hence the explicit ``window_start`` recompute here.
             if self._hidden_tail_ids and self._windowing_enabled():
-                self._set_hidden_tail(None)
+                self._hide_tail_from(None)
                 window_start = self._tail_window_start(
                     self._messages,
                     line_budget=self._initial_window_line_budget(),
@@ -3683,18 +4512,12 @@ class ConsoleTranscript(VerticalScroll):
                 # where the old window boundary id disappeared.  Keep the new
                 # selected row in the window rather than mounting a disjoint
                 # orphan or clearing a valid selection.
-                window_start = self._turn_aligned_start(
-                    self._messages, pending_index
-                )
+                window_start = self._turn_aligned_start(self._messages, pending_index)
             elif pending_index >= self._hidden_tail_start_index():
                 # TASK-15777: same contract on the other boundary — a
                 # handed-off selection inside the hidden tail extends the
                 # mounted slice down through it.
-                self._set_hidden_tail(
-                    pending_index + 1
-                    if pending_index + 1 < len(self._messages)
-                    else None
-                )
+                self._reveal_hidden_tail_through(pending_index + 1)
             self.pending_selection_id = None
         if (
             self._hidden_tail_start is not None
@@ -3702,9 +4525,9 @@ class ConsoleTranscript(VerticalScroll):
         ):
             # Degenerate reorder: the two boundaries crossed. Mounting through
             # the tail is always safe; a crossed window never is.
-            self._set_hidden_tail(None)
+            self._hide_tail_from(None)
         self._set_hidden_prefix(window_start)
-        if self.selected_message_id not in message_ids:
+        if self.selected_message_id not in message_ids | thinking_ids:
             self.selected_message_id = None
         for stale_id in [
             cached_id
@@ -3713,6 +4536,54 @@ class ConsoleTranscript(VerticalScroll):
         ]:
             del self._message_signature_cache[stale_id]
             self._signature_compute_counts.pop(stale_id, None)
+
+    def _live_thinking_block_id(self, turn: ConsoleAssistantTurn) -> str | None:
+        """Return the current unbounded block, using visible turn boundaries."""
+        assistant = turn.assistant
+        envelope = assistant.thinking
+        if (
+            assistant.status not in _IN_FLIGHT_MESSAGE_STATUSES
+            or not isinstance(envelope, ThinkingEnvelope)
+            or not envelope.blocks
+        ):
+            return None
+        answer = (
+            assistant.variants.current.content
+            if assistant.variants is not None
+            else assistant.content
+        )
+        if answer:
+            return None
+        current = envelope.blocks[-1]
+        if (assistant.id, current.block_id) in self._closed_live_thinking_blocks:
+            return None
+        if any(
+            activity.activity_round_ordinal == current.round_ordinal
+            for activity in turn.activities
+        ):
+            return None
+        return current.block_id
+
+    def set_model_thinking_visible(self, visible: bool) -> bool:
+        """Apply the presentation-only thinking gate without replacing turns."""
+
+        visible = bool(visible)
+        if visible == self._show_model_thinking:
+            return False
+        self._show_model_thinking = visible
+        thinking_ids = set(self._thinking_activity_refs)
+        if visible:
+            self._expanded_tool_output_ids.update(
+                self._pending_thinking_auto_collapse & thinking_ids
+            )
+        else:
+            self._expanded_tool_output_ids.difference_update(thinking_ids)
+            self._manual_thinking_disclosures.difference_update(thinking_ids)
+            if self.selected_message_id in thinking_ids:
+                self.selected_message_id = None
+        if self.is_mounted:
+            self.call_later(self.refresh_messages)
+        return True
 
     def set_image_specs(self, specs: Mapping[str, ConsoleImageRowSpec]) -> None:
         """Replace the prebuilt inline-image row payloads keyed by message ID.
@@ -3740,9 +4611,7 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._generation_card_specs = dict(specs)
 
-    def set_video_card_specs(
-        self, specs: Mapping[str, ConsoleVideoCardSpec]
-    ) -> None:
+    def set_video_card_specs(self, specs: Mapping[str, ConsoleVideoCardSpec]) -> None:
         """Replace the prebuilt video-generation card row payloads keyed by message ID.
 
         Args:
@@ -3755,15 +4624,28 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._video_card_specs = dict(specs)
 
-    def set_summary_boundary(self, message_id: str | None) -> None:
-        """Set the `/rewind` summary boundary message id for the banner.
+    def set_fork_eligibilities(
+        self, eligibilities: Mapping[str, ConsoleForkEligibility]
+    ) -> None:
+        """Replace frozen store-owned Fork eligibility by native message ID."""
+        self._fork_eligibility_by_message_id = {
+            message_id: eligibility
+            for message_id, eligibility in eligibilities.items()
+            if isinstance(message_id, str)
+            and isinstance(eligibility, ConsoleForkEligibility)
+        }
 
-        The banner is render-derived: ``_transcript_rows`` emits it above the
-        matching message when it is present. Refresh is driven by the screen's
-        sync path (which folds this id into its refresh key), matching
-        ``set_image_specs``; standalone callers/tests refresh explicitly.
-        """
-        self.summary_boundary_message_id = message_id
+    def set_memory_banner_presentation(
+        self, presentation: ConsoleMemoryBannerPresentation | None
+    ) -> None:
+        """Replace the single render-derived effective-memory banner."""
+        if presentation is not None and not isinstance(
+            presentation, ConsoleMemoryBannerPresentation
+        ):
+            raise TypeError(
+                "presentation must be ConsoleMemoryBannerPresentation or None"
+            )
+        self.memory_banner_presentation = presentation
 
     def set_original_attempt_previews(self, previews: Mapping[str, str]) -> None:
         """Replace screen-owned visible original-attempt preview copies."""
@@ -3772,6 +4654,18 @@ class ConsoleTranscript(VerticalScroll):
     def set_citation_counts(self, counts: Mapping[str, int]) -> None:
         """Replace screen-owned citation counts keyed by native message ID."""
         self._citation_counts = {
+            message_id: count
+            for message_id, count in counts.items()
+            if isinstance(message_id, str)
+            and message_id
+            and type(count) is int
+            and count > 0
+        }
+
+    def set_library_activity_counts(self, counts: Mapping[str, int]) -> None:
+        """Replace screen-owned Library activity counts by assistant message ID."""
+
+        self._library_activity_counts = {
             message_id: count
             for message_id, count in counts.items()
             if isinstance(message_id, str)
@@ -3801,7 +4695,8 @@ class ConsoleTranscript(VerticalScroll):
     ) -> None:
         """Update the change-summary turn-file-card's provider factory.
 
-        Screen-owned (mirrors ``set_summary_boundary``/``set_image_specs``):
+        Screen-owned (mirrors ``set_memory_banner_presentation``/
+        ``set_image_specs``):
         the screen's sync loop keeps this current on the mounted instance
         every tick, so a session switch or a bridge becoming available never
         needs a fresh transcript instance to take effect.
@@ -3843,15 +4738,22 @@ class ConsoleTranscript(VerticalScroll):
 
     async def refresh_messages(self) -> None:
         """Reconcile mounted message rows from the current transcript state."""
+        menus = message_more_menus_on_screen(self.screen) if self.is_mounted else []
+        opener_id = menus[0].opener_button_id if menus else ""
+        await self.dismiss_message_more_menu(restore_focus=False)
         async with self._refresh_lock:
             await self._reconcile_rows(self._transcript_rows())
+        if menus:
+            self._restore_message_action_focus(opener_id)
         # TASK-15777: a re-centered far jump replaced the whole window, so the
         # previous scroll offset points at arbitrary content — put the jump
         # target at the top of the viewport once its row has a layout.
         target_id = self._reveal_scroll_target
         if target_id is not None:
             self._reveal_scroll_target = None
-            target_widget = self._row_widgets.get(f"message:{target_id}")
+            target_widget = self._row_widgets.get(
+                f"assistant-turn:{target_id}"
+            ) or self._row_widgets.get(f"message:{target_id}")
             if target_widget is not None:
                 self.call_after_refresh(
                     self._scroll_reveal_target_into_view, target_widget
@@ -3862,6 +4764,61 @@ class ConsoleTranscript(VerticalScroll):
                 # never run.
                 self._suppress_boundary_hydration = False
         self._schedule_prune_check()
+
+    def mounted_message_content_ids(self) -> frozenset[str]:
+        """Return message IDs whose exact transcript content is attached.
+
+        Assistant media rows live inside ``ConsoleAssistantTurnWidget`` rather
+        than in this widget's top-level ``_row_widgets`` map. This method is
+        the transcript-owned successful-render evidence seam: ordinary
+        messages require their body, while generated image/video messages
+        require their exact nested card and its composed content.
+        """
+
+        def _mounted_card(
+            turn: ConsoleAssistantTurnWidget,
+            card_type: type[ConsoleGenerationCard] | type[ConsoleVideoCard],
+            message_id: str,
+        ) -> bool:
+            for child in turn.adjunct_stack.children:
+                if not isinstance(child, card_type):
+                    continue
+                if child.parent is not turn.adjunct_stack or not child.is_attached:
+                    continue
+                if getattr(getattr(child, "spec", None), "message_id", None) != message_id:
+                    continue
+                if child.children and all(
+                    nested.parent is child and nested.is_attached
+                    for nested in child.children
+                ):
+                    return True
+            return False
+
+        mounted: set[str] = set()
+        for message in self._messages:
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                owner = self._row_widgets.get(f"assistant-turn:{message.id}")
+                if not isinstance(owner, ConsoleAssistantTurnWidget):
+                    continue
+                if owner.parent is not self or not owner.is_attached:
+                    continue
+                answer = owner.answer_widget
+                if answer.parent is not owner or not answer.is_attached:
+                    continue
+                if message.video_metadata is not None:
+                    if _mounted_card(owner, ConsoleVideoCard, message.id):
+                        mounted.add(message.id)
+                elif message.generation_metadata:
+                    if _mounted_card(owner, ConsoleGenerationCard, message.id):
+                        mounted.add(message.id)
+                else:
+                    mounted.add(message.id)
+                continue
+
+            row = self._row_widgets.get(f"message:{message.id}")
+            if row is not None and row.parent is self and row.is_attached:
+                mounted.add(message.id)
+        return frozenset(mounted)
 
     def _scroll_reveal_target_into_view(self, widget: Widget) -> None:
         """Scroll a just-revealed jump target to the top of the viewport."""
@@ -4034,11 +4991,19 @@ class ConsoleTranscript(VerticalScroll):
             id(widget): key for key, widget in self._row_widgets.items()
         }
         message_ids = {message.id for message in self._messages}
+        ownership = self._ownership_by_message_id()
         protected_ids = {
-            message.id for message in self._messages if message.status == "streaming"
+            ownership.get(message.id, (message.id, (message.id,)))[0]
+            for message in self._messages
+            if message.status == "streaming"
         }
         if self.selected_message_id is not None:
-            protected_ids.add(self.selected_message_id)
+            protected_ids.add(
+                ownership.get(
+                    self.selected_message_id,
+                    (self.selected_message_id, (self.selected_message_id,)),
+                )[0]
+            )
 
         prune_ids: list[str] = []
         prune_height = 0
@@ -4056,7 +5021,7 @@ class ConsoleTranscript(VerticalScroll):
                 return False
             prune_height = group_height
             bottom_margin = group_margin
-            prune_ids.append(group_id)
+            prune_ids.extend(ownership.get(group_id, (group_id, (group_id,)))[1])
             return True
 
         for child in self.children:
@@ -4065,7 +5030,9 @@ class ConsoleTranscript(VerticalScroll):
             if key is not None and ":" in key:
                 candidate = key.split(":", 1)[1]
                 if candidate in message_ids:
-                    row_message_id = candidate
+                    row_message_id = ownership.get(
+                        candidate, (candidate, (candidate,))
+                    )[0]
             if row_message_id is None:
                 # The trailing end-rule, the empty panel, or the docked jump
                 # pill: nothing prunable lives past a non-message row.
@@ -4131,6 +5098,88 @@ class ConsoleTranscript(VerticalScroll):
         """
         return self._message_by_id(message_id)
 
+    def thinking_detail_text(self, activity_id: str) -> str | None:
+        """Resolve one trusted model activity body from its owning envelope."""
+        ref = self._thinking_activity_refs.get(activity_id)
+        if ref is None:
+            return None
+        assistant = next(
+            (
+                message
+                for message in self._messages
+                if message.id == ref.assistant_message_id
+            ),
+            None,
+        )
+        envelope = assistant.thinking if assistant is not None else None
+        if not isinstance(envelope, ThinkingEnvelope):
+            return None
+        block = next(
+            (block for block in envelope.blocks if block.block_id == ref.block_id),
+            None,
+        )
+        if isinstance(block, DisplayableThinkingBlock):
+            return block.text
+        if isinstance(block, ProprietaryThinkingBlock):
+            return PROPRIETARY_THINKING_NOTICE
+        return None
+
+    def thinking_owner_message_id(self, activity_id: str) -> str | None:
+        """Return the current Assistant owner for one projected thinking row."""
+        ref = self._thinking_activity_refs.get(activity_id)
+        return ref.assistant_message_id if ref is not None else None
+
+    def thinking_editable_block(self, activity_id: str) -> tuple[str, str, str] | None:
+        """Resolve one displayable block for the block-scoped edit seam.
+
+        Args:
+            activity_id: Projected thinking activity row identifier.
+
+        Returns:
+            A ``(assistant_message_id, block_id, text)`` tuple for a
+            displayable block on a terminal (non-streaming) assistant owner,
+            or ``None`` for unknown rows, content-free proprietary evidence,
+            and live rows whose partial text must never prefill an editor.
+        """
+        ref = self._thinking_activity_refs.get(activity_id)
+        if ref is None:
+            return None
+        assistant = next(
+            (
+                message
+                for message in self._messages
+                if message.id == ref.assistant_message_id
+            ),
+            None,
+        )
+        if assistant is None or assistant.status in {"pending", "streaming"}:
+            return None
+        envelope = assistant.thinking
+        if not isinstance(envelope, ThinkingEnvelope):
+            return None
+        block = next(
+            (block for block in envelope.blocks if block.block_id == ref.block_id),
+            None,
+        )
+        if not isinstance(block, DisplayableThinkingBlock):
+            return None
+        return ref.assistant_message_id, ref.block_id, block.text
+
+    def _thinking_display_message(self, activity_id: str) -> ConsoleChatMessage | None:
+        """Build a bounded display-only row for selection/copy/Inspector seams."""
+        ref = self._thinking_activity_refs.get(activity_id)
+        detail = self.thinking_detail_text(activity_id)
+        if ref is None or detail is None:
+            return None
+        return ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content=detail,
+            id=activity_id,
+            activity_presentation=ConsoleActivityPresentation(
+                "thinking", ref.label, ref.status
+            ),
+        )
+
     def reveal_message(self, message_id: str) -> bool:
         """Extend the mounted window back through ``message_id`` when hidden.
 
@@ -4159,30 +5208,33 @@ class ConsoleTranscript(VerticalScroll):
         extension, so small-session behavior is unchanged. Only meaningful
         under ``_two_sided_active``.
         """
-        for index, message in enumerate(self._messages):
+        for requested_index, message in enumerate(self._messages):
             if message.id != message_id:
                 continue
+            index, unit_end, owner_id, _owned_ids = self._unit_span_at(
+                self._messages, requested_index
+            )
             first_visible = self._first_visible_message_index()
             tail_start = self._hidden_tail_start_index()
-            if first_visible <= index < tail_start:
+            if first_visible <= index and unit_end <= tail_start:
                 return False
             if index < first_visible:
                 revealed_start = self._turn_aligned_start(self._messages, index)
                 revealed_end = first_visible
             else:
                 revealed_start = tail_start
-                revealed_end = index + 1
-            if self._two_sided_active() and self._estimated_window_lines(
-                revealed_start, revealed_end
-            ) > self._prune_watermarks()[0]:
-                self._recenter_window_on(index, message_id)
+                revealed_end = unit_end
+            if (
+                self._two_sided_active()
+                and self._estimated_window_lines(revealed_start, revealed_end)
+                > self._prune_watermarks()[0]
+            ):
+                self._recenter_window_on(index, owner_id)
                 return True
             if index < first_visible:
                 self._set_hidden_prefix(revealed_start)
             else:
-                self._set_hidden_tail(
-                    revealed_end if revealed_end < len(self._messages) else None
-                )
+                self._reveal_hidden_tail_through(revealed_end)
             return True
         return False
 
@@ -4202,17 +5254,35 @@ class ConsoleTranscript(VerticalScroll):
         scrolled to the top of the viewport once mounted, because the old
         scroll offset is meaningless in the new window.
         """
-        start = self._turn_aligned_start(self._messages, index)
+        requested_index = next(
+            (
+                candidate_index
+                for candidate_index, message in enumerate(self._messages)
+                if message.id == message_id
+            ),
+            index,
+        )
+        unit_start, unit_end, owner_id, _owned_ids = self._unit_span_at(
+            self._messages, requested_index
+        )
+        start = self._turn_aligned_start(self._messages, unit_start)
         budget = self._initial_window_line_budget()
         used = 0
-        end = index
+        end = unit_start
         while end < len(self._messages) and used < budget:
             used += self._estimated_message_lines(self._messages[end])
             end += 1
+        if end < unit_end:
+            end = unit_end
+        elif end > 0 and end < len(self._messages):
+            _included_start, included_end, _included_owner, _included_ids = (
+                self._unit_span_at(self._messages, end - 1)
+            )
+            end = included_end
         self._set_hidden_prefix(start)
-        self._set_hidden_tail(end if end < len(self._messages) else None)
+        self._reveal_hidden_tail_through(end)
         self.release_anchor()
-        self._reveal_scroll_target = message_id
+        self._reveal_scroll_target = owner_id
         # Review E: the reconcile that realizes this window transits an
         # emptied arrangement, and the placement parks the target near y=0 —
         # both read as top-boundary hits and hydrated one spurious chunk
@@ -4221,14 +5291,21 @@ class ConsoleTranscript(VerticalScroll):
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
-        if not any(message.id == message_id for message in self._messages):
+        if self._message_by_id(message_id) is None:
             return
         if self.selected_message_id != message_id:
             self._clear_failed_speech_states()
+        try:
+            resolver = getattr(self.screen, "_console_fork_eligibility", None)
+        except NoScreen:
+            resolver = None
+        if callable(resolver):
+            self._fork_eligibility_by_message_id[message_id] = resolver(message_id)
         # Keep the public pre-windowing contract: callers may select any
         # message in the complete transcript model.  Reveal the contiguous
         # prefix through that turn before mounting its action row.
-        self.reveal_message(message_id)
+        if message_id not in self._thinking_activity_refs:
+            self.reveal_message(message_id)
         self.selected_message_id = message_id
         if self.is_mounted:
             self.call_later(self.refresh_messages)
@@ -4280,28 +5357,54 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self.refresh_messages)
 
     def to_plain_text(self, width: int = 80) -> str:
-        """Return a terminal-readable transcript rendering for tests and exports."""
+        """Return an answer-oriented transcript without model thinking."""
         rule = "─" * max(1, width)
         lines: list[str] = []
-        for message in self._messages:
-            presentation = self._message_presentation(message)
-            lines.append(rule)
-            if message.id == self.summary_boundary_message_id:
-                lines.append(CONSOLE_SUMMARY_BANNER_COPY)
-            lines.extend(
-                [
-                    _speaker_label(message, presentation),
-                    _message_body(message, presentation),
-                ]
-            )
+
+        def _append_status_and_actions(message: ConsoleChatMessage, body: str) -> None:
             status_line = _message_status_line(message)
-            if status_line and not _is_generating_placeholder_body(
-                message, _message_body(message, presentation)
-            ):
+            if status_line and not _is_generating_placeholder_body(message, body):
                 lines.append(status_line)
             if message.id == self.selected_message_id:
                 lines.append(self._plain_action_row(message))
-                lines.append(ConsoleMessageActionService().plain_action_guide(message))
+                lines.append(self._canvas_action_service().plain_action_guide(message))
+
+        for unit in group_console_transcript_messages(self._messages):
+            message = unit.standalone
+            turn = unit.assistant_turn
+            if message is None:
+                assert turn is not None
+                message = turn.assistant
+            presentation = self._message_presentation(message)
+            lines.append(rule)
+            lines.append(_speaker_label(message, presentation))
+            if turn is not None:
+                for activity in turn.activities:
+                    activity_presentation = activity.activity_presentation
+                    if activity_presentation is None:
+                        activity_header = "Activity · done"
+                    elif activity.raw_cli_presentation is not None:
+                        activity_header = (
+                            f"{activity_presentation.label} · "
+                            f"{raw_cli_status_copy(activity.raw_cli_presentation)}"
+                        )
+                    else:
+                        activity_header = (
+                            f"{activity_presentation.label} · "
+                            f"{console_activity_status_word(activity_presentation.status)}"
+                        )
+                    lines.append(activity_header)
+                    activity_body = _message_body(activity)
+                    if activity_body:
+                        lines.append(activity_body)
+                    _append_status_and_actions(activity, activity_body)
+            body = _message_body(message, presentation)
+            lines.append(body)
+            lines.extend(
+                f"Canvas · {card.label}"
+                for card in canvas_card_presentations(message)
+            )
+            _append_status_and_actions(message, body)
         if self._messages:
             lines.append(rule)
         return "\n".join(lines)
@@ -4576,6 +5679,24 @@ class ConsoleTranscript(VerticalScroll):
         message_id = self.selected_message_id
         if not message_id:
             return
+        if action_id == "copy":
+            thinking_detail = self.thinking_detail_text(message_id)
+            if thinking_detail is not None:
+                copy_to_clipboard = getattr(self.app, "copy_to_clipboard", None)
+                if callable(copy_to_clipboard):
+                    copy_to_clipboard(thinking_detail)
+                return
+        if action_id == "edit" and (
+            self.thinking_owner_message_id(message_id) is not None
+        ):
+            # TASK-32312: thinking disclosures carry no action buttons
+            # (``action_widgets=()``); like copy, edit is a keyboard seam
+            # here and the owning screen opens the block-scoped modal.
+            self.post_message(ConsoleThinkingEditRequested(message_id))
+            return
+        if action_id == "tool-output" and self._activity_can_expand(message_id):
+            self.toggle_tool_output(message_id)
+            return
         if self._press_selected_action_button(message_id, action_id):
             return
         self.call_after_refresh(self._invoke_selected_action_retry, action_id)
@@ -4619,6 +5740,10 @@ class ConsoleTranscript(VerticalScroll):
                 return False
             if getattr(button, "console_action_id", None) != action_id:
                 return False
+        if button.disabled:
+            reason = str(button.tooltip or "This action is unavailable.")
+            self.notify(reason, severity="warning")
+            return True
         button.press()
         return True
 
@@ -4638,8 +5763,7 @@ class ConsoleTranscript(VerticalScroll):
         if widget is None:
             return None
         if any(
-            widget.has_class(class_name)
-            for class_name in self.PROTECTED_CLICK_CLASSES
+            widget.has_class(class_name) for class_name in self.PROTECTED_CLICK_CLASSES
         ):
             return None
         node: Widget | None = widget
@@ -4647,7 +5771,8 @@ class ConsoleTranscript(VerticalScroll):
             if node is self:
                 return None
             if isinstance(
-                node, (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow)
+                node,
+                (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
             ):
                 return node
             node = node.parent
@@ -4739,15 +5864,41 @@ class ConsoleTranscript(VerticalScroll):
         if event.control is not None:
             return event.control
         try:
-            widget, _offset = self.screen.get_widget_at(
-                event.screen_x, event.screen_y
-            )
+            widget, _offset = self.screen.get_widget_at(event.screen_x, event.screen_y)
         except Exception:
             return None
         return widget
 
-    def on_mouse_down(self, event: MouseDown) -> None:
-        """Arm a text-selection drag on a left press over a selectable row."""
+    def _fold_row_action_menus_for_pointer(self) -> None:
+        """Fold rail row-action menus on a transcript press (ADR-068).
+
+        The screen-level outside-click dismissal returns early for
+        transcript targets -- this widget owns its in-area interaction --
+        and this widget's own cleanup only knew its selection UI, so a
+        press on the transcript (most of the screen) left a conversation or
+        workspace action menu floating. Fold both registries here with no
+        opener focus-restore: the press already expresses the user's focus
+        intent. Imports stay function-local per ADR-097 (this module is on
+        the boot path; the menu modules must not be).
+        """
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            conversation_action_menus_on_screen,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            workspace_action_menus_on_screen,
+        )
+
+        for menu in conversation_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+        for menu in workspace_action_menus_on_screen(screen):
+            menu.dismiss_menu(restore_focus=False)
+
+    async def on_mouse_down(self, event: MouseDown) -> None:
+        """Dismiss More, then arm a drag on a left press over selectable text."""
         if self._kb_selection_row is not None:
             # Console selection phase 5: a mouse press takes over cleanly --
             # exit keyboard mode first, then let the normal drag-arming
@@ -4755,6 +5906,14 @@ class ConsoleTranscript(VerticalScroll):
             # fresh mouse drag).
             self._exit_keyboard_selection()
         press_control = self._selection_press_widget(event)
+        # MouseDown is the earliest transcript-owned pointer seam. Some
+        # descendants intentionally stop the later Click (for example the
+        # review-note marker), so Click-only dismissal can leave More
+        # mounted. Await detachment here before the descendant interaction
+        # proceeds; the active opener is exempt so its Button.Pressed can
+        # keep owning the menu's open/reopen lifecycle.
+        await self._dismiss_message_more_for_pointer(press_control)
+        self._fold_row_action_menus_for_pointer()
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
         # open a press on another row's body never reaches this
@@ -4770,12 +5929,16 @@ class ConsoleTranscript(VerticalScroll):
             press_node, ConsoleSelectionMenu
         ):
             press_node = press_node.parent
+        row = self._selection_row_for(press_control) if event.button == 1 else None
         if press_node is None:
+            if row is not None:
+                self._selection_origin_row = row
             self._remove_selection_menu()
+            if row is not None:
+                self._clear_other_selection_highlights(row)
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
         # as in plain mouse-move reports).
-        row = self._selection_row_for(press_control) if event.button == 1 else None
         if row is None:
             # A fresh press that cannot arm a drag (non-left button, or a
             # protected/non-row control) ends the drag-release suppression
@@ -4793,6 +5956,28 @@ class ConsoleTranscript(VerticalScroll):
         # MouseDown (ported from the reference implementation's fix).
         self.capture_mouse(True)
 
+    def _clear_other_selection_highlights(self, active_row: Widget) -> None:
+        """Clear any stale text-selection highlight on every OTHER row.
+
+        TASK-21114: called once per drag (at arm time) instead of per
+        MouseMove. ``clear_selection`` is a guarded no-op on rows without a
+        stored range, so the sweep costs one attribute check per mounted
+        selectable row.
+        """
+        for other in self._row_widgets.values():
+            if (
+                isinstance(
+                    other,
+                    (
+                        ConsoleTranscriptMessage,
+                        ConsoleMarkdownMessage,
+                        ConsoleToolDiffRow,
+                    ),
+                )
+                and other.id != active_row.id
+            ):
+                other.clear_selection()
+
     def on_mouse_move(self, event: MouseMove) -> None:
         """Extend the active drag over the origin row's body text."""
         if not self.selection_manager.state.active:
@@ -4808,19 +5993,14 @@ class ConsoleTranscript(VerticalScroll):
         ):
             return  # origin row went away: hold the last position
         offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
-        self.selection_manager.extend_drag(row.id, offset)
+        if not self.selection_manager.extend_drag(row.id, offset):
+            # TASK-21114: the pointer moved within the same character cell --
+            # nothing to re-render. (Stale highlights on OTHER rows were
+            # already swept once when the drag armed, in ``on_mouse_down``.)
+            return
         updated = self.selection_manager.state.selection
         if updated is None:
             return
-        for other in self._row_widgets.values():
-            if (
-                isinstance(
-                    other,
-                    (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
-                )
-                and other.id != row.id
-            ):
-                other.clear_selection()
         row.set_selection_range(updated.start, updated.end)
 
     def on_mouse_up(self, event: MouseUp) -> None:
@@ -4830,13 +6010,12 @@ class ConsoleTranscript(VerticalScroll):
         if not self.selection_manager.state.active:
             return
         event.stop()
+        origin_row = self._selection_origin_row
         selection = self.selection_manager.finish_drag()
         self._selection_origin_row = None
         if selection is None:
-            # Empty finish (a plain click, not a drag): the manager's
-            # just_finished flag exists to suppress drag-release clicks, so
-            # consume it here and let the following Click select the message.
-            self.selection_manager.consume_just_finished()
+            if origin_row is not None:
+                self.toggle_message_selection(origin_row.message_id)
             return
         self.post_message(
             self.TranscriptTextSelected(
@@ -4885,8 +6064,7 @@ class ConsoleTranscript(VerticalScroll):
         stopped by the row's ``on_click`` (drag-release suppression), so it
         never reaches this transcript's own ``on_click`` removal.
         """
-        for menu in self._attached_selection_menus():
-            await menu.remove()
+        await self.screen.query(ConsoleSelectionMenu).remove()
         # Mounting on the screen triggers a layout refresh that re-engages
         # Textual's bottom anchor and yanks the view to the tail -- away
         # from the selection the user just made. Release the tail-follow
@@ -4946,6 +6124,20 @@ class ConsoleTranscript(VerticalScroll):
         """
         return max(low, min(value, max(low, high - margin)))
 
+    @on(ConsoleSelectionMenu.CopySelection)
+    def _selection_copy(self, event: ConsoleSelectionMenu.CopySelection) -> None:
+        """Copy the full highlighted span and dismiss the selection UI."""
+        event.stop()
+        row = self._active_selection_row()
+        if row is not None:
+            text = row.get_selection_text(capped=False)
+            if text:
+                self.app.copy_to_clipboard(text)
+                self.notify("Selection sent to clipboard.")
+        self._remove_selection_menu()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
+
     @on(ConsoleSelectionMenu.AddToChat)
     def _selection_add_to_chat(self, event: ConsoleSelectionMenu.AddToChat) -> None:
         """Quote the active row selection up to the owning screen and clean up."""
@@ -4953,7 +6145,9 @@ class ConsoleTranscript(VerticalScroll):
         row = self._active_selection_row()
         if row is not None:
             self.post_message(
-                ConsoleSelectionQuoteRequested(quote=cap_quote(row.get_selection_text()))
+                ConsoleSelectionQuoteRequested(
+                    quote=cap_quote(row.get_selection_text())
+                )
             )
             row.clear_selection()
         self.selection_manager.cancel()
@@ -4961,9 +6155,7 @@ class ConsoleTranscript(VerticalScroll):
         self._remove_selection_menu()
 
     @on(ConsoleSelectionMenu.Dismissed)
-    def _selection_menu_dismissed(
-        self, event: ConsoleSelectionMenu.Dismissed
-    ) -> None:
+    def _selection_menu_dismissed(self, event: ConsoleSelectionMenu.Dismissed) -> None:
         """Escape dismissal clears the whole selection UI (strip included)."""
         event.stop()
         self._remove_selection_menu()
@@ -4971,9 +6163,7 @@ class ConsoleTranscript(VerticalScroll):
         self._selection_origin_row = None
 
     @on(ConsoleSelectionMenu.MoreDetails)
-    def _selection_more_details(
-        self, event: ConsoleSelectionMenu.MoreDetails
-    ) -> None:
+    def _selection_more_details(self, event: ConsoleSelectionMenu.MoreDetails) -> None:
         """Open a More Details side chat about the active selection."""
         event.stop()
         self._request_side_chat(ConsoleSideChatRequested.MODE_MORE_DETAILS)
@@ -5026,7 +6216,9 @@ class ConsoleTranscript(VerticalScroll):
     def _selection_comment(self, event: ConsoleSelectionMenu.Comment) -> None:
         """Send comment feedback for the active selection."""
         event.stop()
-        self._request_selection_feedback(ConsoleSelectionFeedbackRequested.ACTION_COMMENT)
+        self._request_selection_feedback(
+            ConsoleSelectionFeedbackRequested.ACTION_COMMENT
+        )
 
     @on(ConsoleSelectionMenu.CreateNote)
     def _selection_create_note(self, event: ConsoleSelectionMenu.CreateNote) -> None:
@@ -5040,9 +6232,7 @@ class ConsoleTranscript(VerticalScroll):
         row = self._active_selection_row()
         if row is not None:
             self.post_message(
-                ConsoleSelectionNoteRequested(
-                    quote=cap_quote(row.get_selection_text())
-                )
+                ConsoleSelectionNoteRequested(quote=cap_quote(row.get_selection_text()))
             )
             row.clear_selection()
         self.selection_manager.cancel()
@@ -5136,7 +6326,8 @@ class ConsoleTranscript(VerticalScroll):
         except NoMatches:
             return None
         if isinstance(
-            widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow)
+            widget,
+            (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
         ):
             return widget
         return None
@@ -5146,13 +6337,20 @@ class ConsoleTranscript(VerticalScroll):
 
         Textual marks a widget ``_pruning`` synchronously inside
         ``remove()`` but detaches it only when the prune message is
-        processed, so a menu can appear in ``query`` twice across two
-        removal calls; already-pruning menus are skipped to keep
-        ``remove()`` single-shot per menu.
+        processed, so a menu can survive two removal calls; already-pruning
+        menus are skipped to keep ``remove()`` single-shot per menu.
+
+        TASK-21119: sourced from the menu registry rather than
+        ``self.screen.query(ConsoleSelectionMenu)`` -- same screen scope,
+        same result, without a full-screen DOM walk. This runs on every
+        in-transcript press (``on_mouse_down``), not just on dismissal.
+        ``self.screen`` still resolves first, so a detached transcript
+        raises ``NoScreen`` exactly as before.
         """
+        screen = self.screen
         return [
             menu
-            for menu in self.screen.query(ConsoleSelectionMenu)
+            for menu in selection_menus_on_screen(screen)
             if not getattr(menu, "_pruning", False)
         ]
 
@@ -5180,7 +6378,7 @@ class ConsoleTranscript(VerticalScroll):
         for menu in self._attached_selection_menus():
             menu.remove()
 
-    def on_click(self, event: Click) -> None:
+    async def on_click(self, event: Click) -> None:
         """Clear selection when the user clicks negative space in the transcript.
 
         Any click that reaches this handler is outside the floating selection
@@ -5209,12 +6407,13 @@ class ConsoleTranscript(VerticalScroll):
             event.stop()
             self.selection_manager.consume_just_finished()
             return
+        control = event.control
+        await self._dismiss_message_more_for_pointer(control)
         self._remove_selection_menu()
         if self.selection_manager.just_finished:
             event.stop()
             self.selection_manager.consume_just_finished()
             return
-        control = event.control
         if control is not None and any(
             control.has_class(class_name) for class_name in self.PROTECTED_CLICK_CLASSES
         ):
@@ -5249,6 +6448,15 @@ class ConsoleTranscript(VerticalScroll):
         if control is self:
             self.action_clear_selection()
             event.stop()
+
+    async def _dismiss_message_more_for_pointer(self, control: Widget | None) -> None:
+        """Dismiss More for transcript pointer activity except its own opener."""
+        if (
+            getattr(control, "console_action_id", None) != "more"
+            and self.is_mounted
+            and message_more_menus_on_screen(self.screen)
+        ):
+            await self.dismiss_message_more_menu()
 
     def on_key(self, event: Key) -> None:
         if self._kb_selection_row is not None:
@@ -5337,6 +6545,7 @@ class ConsoleTranscript(VerticalScroll):
             self.action_confirm_selection()
             event.stop()
         elif event.key == "escape":
+            self.release_mouse()
             self.action_clear_selection()
             self._remove_selection_menu()
             self.selection_manager.cancel()
@@ -5362,8 +6571,13 @@ class ConsoleTranscript(VerticalScroll):
         self.select_message(visible[index].id)
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
-        return next(
+        message = next(
             (message for message in self._messages if message.id == message_id), None
+        )
+        return (
+            message
+            if message is not None
+            else self._thinking_display_message(message_id)
         )
 
     def _visible_messages(self) -> list[ConsoleChatMessage]:
@@ -5372,14 +6586,31 @@ class ConsoleTranscript(VerticalScroll):
         Keyboard selection walks this list so j/k never lands on a pruned
         (row-less) message; the store-facing ``_messages`` keeps full history.
         """
-        if not self._pruned_message_ids and not self._hidden_tail_ids:
-            return self._messages
-        return [
+        causal_messages = [
             message
             for message in self._messages
             if message.id not in self._pruned_message_ids
             and message.id not in self._hidden_tail_ids
         ]
+        visible: list[ConsoleChatMessage] = []
+        for unit in group_console_transcript_messages(causal_messages):
+            if unit.standalone is not None:
+                visible.append(unit.standalone)
+                continue
+            turn = unit.assistant_turn
+            assert turn is not None
+            for activity in ordered_assistant_activities(
+                turn,
+                live_block_id=self._live_thinking_block_id(turn),
+            ):
+                if isinstance(activity, ConsoleChatMessage):
+                    visible.append(activity)
+                else:
+                    display = self._thinking_display_message(activity.activity_id)
+                    if display is not None:
+                        visible.append(display)
+            visible.append(turn.assistant)
+        return visible
 
     def _notify_selection_changed(self) -> None:
         """Let the owning screen refresh inspector/control surfaces after selection changes."""
@@ -5389,8 +6620,21 @@ class ConsoleTranscript(VerticalScroll):
         if callable(sync_console_control_bar):
             sync_console_control_bar()
 
-    def _transcript_rows(self) -> list[_TranscriptRow]:
+    def _flat_transcript_rows(self) -> list[_TranscriptRow]:
+        """Plan the legacy per-message rows reused by standalone and nested UI."""
         rows: list[_TranscriptRow] = []
+        banner = self.memory_banner_presentation
+        banner_anchor = None
+        if banner is not None:
+            matches = [
+                message.id
+                for message in self._messages
+                if message.id == banner.render_anchor_message_id
+                and message.id not in self._pruned_message_ids
+                and message.id not in self._hidden_tail_ids
+            ]
+            if len(matches) == 1:
+                banner_anchor = matches[0]
         # Hoisted: which row (if any) carries this tick's activity line is a
         # property of the message list, not of any one row.
         activity_target_id = (
@@ -5417,13 +6661,13 @@ class ConsoleTranscript(VerticalScroll):
                     renderable=CONSOLE_TRANSCRIPT_RULE,
                 )
             )
-            if message.id == self.summary_boundary_message_id:
+            if message.id == banner_anchor and banner is not None:
                 rows.append(
                     _TranscriptRow(
                         key=f"summary-banner:{message.id}",
                         kind="banner",
-                        signature=("banner", message.id),
-                        renderable=CONSOLE_SUMMARY_BANNER_COPY,
+                        signature=("banner", banner),
+                        renderable=banner.copy,
                     )
                 )
             rows.append(
@@ -5437,6 +6681,23 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            for index, card in enumerate(canvas_card_presentations(message)):
+                card_session_id = self._canvas_card_session_id()
+                rows.append(
+                    _TranscriptRow(
+                        key=f"canvas-card:{message.id}:{index}",
+                        kind="canvas-card",
+                        signature=(
+                            message.id,
+                            card_session_id,
+                            *canvas_card_signature(card),
+                        ),
+                        message=message,
+                        canvas_card_spec=card,
+                        canvas_session_id=card_session_id,
+                        renderable=f"Canvas · {card.label}",
+                    )
+                )
             if (
                 message.id in self._expanded_tool_output_ids
                 and message.tool_diff is not None
@@ -5462,7 +6723,27 @@ class ConsoleTranscript(VerticalScroll):
                         kind="citations",
                         signature=("citations", message.id, citation_count),
                         message=message,
-                        renderable=f"Sources ({citation_count})",
+                        renderable=f"Cited sources ({citation_count})",
+                    )
+                )
+            library_activity_count = self._library_activity_counts.get(message.id, 0)
+            if (
+                message.role is ConsoleMessageRole.ASSISTANT
+                and library_activity_count > 0
+            ):
+                rows.append(
+                    _TranscriptRow(
+                        key=f"library-activity:{message.id}",
+                        kind="library-activity",
+                        signature=(
+                            "library-activity",
+                            message.id,
+                            library_activity_count,
+                        ),
+                        message=message,
+                        renderable=(
+                            f"Library activity ({library_activity_count} actions)"
+                        ),
                     )
                 )
             annotation_notes = self._annotation_previews.get(message.id)
@@ -5508,7 +6789,10 @@ class ConsoleTranscript(VerticalScroll):
                     _TranscriptRow(
                         key=f"video-card:{message.id}",
                         kind="video-card",
-                        signature=video_card_signature(video_spec),
+                        signature=(
+                            video_card_signature(video_spec),
+                            self._media_action_signature(message),
+                        ),
                         message=message,
                         video_card_spec=video_spec,
                     )
@@ -5520,7 +6804,10 @@ class ConsoleTranscript(VerticalScroll):
                     _TranscriptRow(
                         key=f"generation-card:{message.id}",
                         kind="generation-card",
-                        signature=generation_card_signature(card_spec),
+                        signature=(
+                            generation_card_signature(card_spec),
+                            self._media_action_signature(message),
+                        ),
                         message=message,
                         generation_card_spec=card_spec,
                     )
@@ -5587,10 +6874,163 @@ class ConsoleTranscript(VerticalScroll):
             )
         return rows
 
+    def _transcript_rows(self) -> list[_TranscriptRow]:
+        """Plan top-level rows, grouping owned TOOL markers into Assistant turns."""
+        flat_rows = self._flat_transcript_rows()
+        visible_messages = [
+            message
+            for message in self._messages
+            if message.id not in self._pruned_message_ids
+            and message.id not in self._hidden_tail_ids
+        ]
+        if not visible_messages:
+            return flat_rows
+
+        starts = {
+            row.key.removeprefix("rule:"): index
+            for index, row in enumerate(flat_rows)
+            if row.kind == "rule" and row.key != "rule:end"
+        }
+        groups: dict[str, tuple[_TranscriptRow, ...]] = {}
+        for index, message in enumerate(visible_messages):
+            start = starts[message.id]
+            if index + 1 < len(visible_messages):
+                end = starts[visible_messages[index + 1].id]
+            else:
+                end = next(
+                    (
+                        row_index
+                        for row_index in range(start + 1, len(flat_rows))
+                        if flat_rows[row_index].key == "rule:end"
+                    ),
+                    len(flat_rows),
+                )
+            groups[message.id] = tuple(flat_rows[start:end])
+
+        rows: list[_TranscriptRow] = []
+        for unit in group_console_transcript_messages(visible_messages):
+            if unit.standalone is not None:
+                rows.extend(groups[unit.standalone.id])
+                continue
+
+            turn = unit.assistant_turn
+            assert turn is not None
+            assistant_rows = groups[turn.assistant.id]
+            message_index = next(
+                index
+                for index, row in enumerate(assistant_rows)
+                if row.kind == "message"
+            )
+            rows.extend(assistant_rows[:message_index])
+            nested_rows = assistant_rows[message_index:]
+            selected_id = self.selected_message_id
+            owned_selected_id = (
+                selected_id if selected_id in turn.owned_message_ids else None
+            )
+            activity_items = ordered_assistant_activities(
+                turn,
+                live_block_id=self._live_thinking_block_id(turn),
+            )
+            if not self._show_model_thinking:
+                activity_items = tuple(
+                    item
+                    for item in activity_items
+                    if not isinstance(item, ConsoleThinkingActivityRef)
+                )
+            activity_ids = tuple(
+                item.id if isinstance(item, ConsoleChatMessage) else item.activity_id
+                for item in activity_items
+            )
+            if selected_id in activity_ids:
+                owned_selected_id = selected_id
+            activity_rows = tuple(
+                (
+                    tuple(
+                        row
+                        for row in groups[item.id]
+                        if row.kind not in {"rule", "banner"}
+                    )
+                    if isinstance(item, ConsoleChatMessage)
+                    else ()
+                )
+                for item in activity_items
+            )
+            activity_signature = tuple(
+                (
+                    item.id
+                    if isinstance(item, ConsoleChatMessage)
+                    else item.activity_id,
+                    (
+                        item.activity_presentation
+                        if isinstance(item, ConsoleChatMessage)
+                        else (
+                            item.label,
+                            item.status,
+                            self.thinking_detail_text(item.activity_id),
+                        )
+                    ),
+                    (
+                        item.raw_cli_presentation
+                        if isinstance(item, ConsoleChatMessage)
+                        else None
+                    ),
+                    (
+                        item.id
+                        if isinstance(item, ConsoleChatMessage)
+                        else item.activity_id
+                    )
+                    in self._expanded_tool_output_ids,
+                    selected_id
+                    == (
+                        item.id
+                        if isinstance(item, ConsoleChatMessage)
+                        else item.activity_id
+                    ),
+                    tuple(row.signature for row in owned_rows),
+                )
+                for item, owned_rows in zip(activity_items, activity_rows)
+            )
+            adjunct_signature = tuple(row.signature for row in nested_rows[1:])
+            rows.append(
+                _TranscriptRow(
+                    key=f"assistant-turn:{turn.assistant.id}",
+                    kind="assistant-turn",
+                    signature=(
+                        "assistant-turn",
+                        nested_rows[0].signature,
+                        activity_signature,
+                        activity_ids,
+                        owned_selected_id,
+                        tuple(
+                            sorted(self._expanded_tool_output_ids & set(activity_ids))
+                        ),
+                        adjunct_signature,
+                    ),
+                    message=turn.assistant,
+                    selected=selected_id == turn.assistant.id,
+                    assistant_turn=turn,
+                    nested_rows=tuple(nested_rows),
+                    activity_rows=activity_rows,
+                    activity_items=activity_items,
+                    activity_signature=activity_signature,
+                    adjunct_signature=adjunct_signature,
+                )
+            )
+        end_rule = next((row for row in flat_rows if row.key == "rule:end"), None)
+        if end_rule is not None:
+            rows.append(end_rule)
+        return rows
+
     def _message_widgets(self) -> list[Widget]:
         return [
             self._build_row_widget(row, track=False) for row in self._transcript_rows()
         ]
+
+    def _canvas_card_session_id(self) -> str | None:
+        """Return only an explicit render-session identity for card actions."""
+
+        identity = self._session_identity
+        return identity if type(identity) is str and identity else None
 
     def _cancel_selection_if_row_removed(self, widget: Widget) -> None:
         """Drop drag-selection state when its row widget is removed/rebuilt.
@@ -5602,13 +7042,16 @@ class ConsoleTranscript(VerticalScroll):
         pointer captured.
         """
         selection = self.selection_manager.state.selection
-        if (
-            isinstance(
-                widget,
-                (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
-            )
-            and selection is not None
-            and selection.row_key == widget.id
+        selection_row: Widget | None = None
+        if selection is not None:
+            if widget.id == selection.row_key:
+                selection_row = widget
+            else:
+                matches = list(widget.query(f"#{selection.row_key}"))
+                selection_row = matches[0] if matches else None
+        if isinstance(
+            selection_row,
+            (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
         ):
             if self.selection_manager.state.active:
                 self.release_mouse()
@@ -5637,6 +7080,12 @@ class ConsoleTranscript(VerticalScroll):
         for row in rows:
             widget = self._row_widgets.get(row.key)
             if widget is None or self._row_signatures.get(row.key) == row.signature:
+                continue
+            if row.kind == "assistant-turn" and isinstance(
+                widget, ConsoleAssistantTurnWidget
+            ):
+                await self._sync_assistant_turn_widget(widget, row)
+                self._row_signatures[row.key] = row.signature
                 continue
             updated_widget = self._update_row_widget(widget, row)
             if updated_widget is widget:
@@ -5724,6 +7173,57 @@ class ConsoleTranscript(VerticalScroll):
             previous_widget = widget
         self._paint_debug_dump("after-reconcile")
 
+    async def _sync_assistant_turn_widget(
+        self,
+        widget: ConsoleAssistantTurnWidget,
+        row: _TranscriptRow,
+    ) -> None:
+        """Sync one composite row without remounting its answer or shell."""
+        assert row.assistant_turn is not None and row.nested_rows
+        assistant = row.nested_rows[0].message
+        assert assistant is not None
+        presentation = self._message_presentation(assistant)
+        header = widget.header_widget
+        if isinstance(header, ConsoleMessageHeader):
+            header.sync_header(
+                assistant,
+                presentation,
+                self._console_speech_state(assistant.id),
+            )
+        answer = widget.answer_widget
+        if isinstance(answer, ConsoleMarkdownMessage):
+            answer.sync_message(
+                assistant,
+                presentation,
+                selected=row.selected,
+                speech_state=self._console_speech_state(assistant.id),
+            )
+        elif isinstance(answer, ConsoleTranscriptMessage):
+            answer.sync_message(
+                assistant,
+                presentation,
+                selected=row.selected,
+                speech_state=self._console_speech_state(assistant.id),
+            )
+
+        if (
+            getattr(widget, "_console_activity_signature", None)
+            != row.activity_signature
+        ):
+            await self._sync_activity_widgets(widget, row)
+            widget._console_activity_signature = row.activity_signature
+        if getattr(widget, "_console_adjunct_signature", None) != row.adjunct_signature:
+            adjuncts = tuple(
+                self._build_row_widget(nested_row, track=False)
+                for nested_row in row.nested_rows[1:]
+            )
+            if widget.adjunct_stack.children:
+                self._cancel_selection_if_row_removed(widget.adjunct_stack)
+                await widget.adjunct_stack.remove_children()
+            if adjuncts:
+                await widget.adjunct_stack.mount(*adjuncts)
+            widget._console_adjunct_signature = row.adjunct_signature
+
     def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:
         if track:
             self._row_build_counts[row.key] = self._row_build_counts.get(row.key, 0) + 1
@@ -5760,37 +7260,21 @@ class ConsoleTranscript(VerticalScroll):
                 id=f"console-original-attempt-{row.message.id}",
                 classes="console-transcript-original-attempt",
             )
+        if row.kind == "assistant-turn":
+            return self._build_assistant_turn_widget(row)
         if row.kind == "message" and row.message is not None:
-            review_run_id = getattr(row.message, "change_review_run_id", None)
-            if (
-                review_run_id
-                and self._change_review_provider_factory is not None
-                and bool(get_cli_setting("console", "turn_file_cards", True))
-            ):
-                return ConsoleTurnFileCard(
-                    str(row.message.content),
-                    str(review_run_id),
-                    self._change_review_provider_factory,
-                    message_id=row.message.id,
-                    selected=row.selected,
-                    id=f"console-turn-file-card-{row.message.id}",
-                )
-            presentation = self._message_presentation(row.message)
-            if (
-                row.message.role is ConsoleMessageRole.ASSISTANT
-                and self._assistant_markdown_enabled()
-            ):
-                return ConsoleMarkdownMessage(
-                    row.message,
-                    presentation,
-                    selected=row.selected,
-                    speech_state=self._console_speech_state(row.message.id),
-                )
-            return ConsoleTranscriptMessage(
-                row.message,
-                presentation,
-                selected=row.selected,
-                speech_state=self._console_speech_state(row.message.id),
+            return self._build_message_widget(row.message, selected=row.selected)
+        if (
+            row.kind == "canvas-card"
+            and row.message is not None
+            and row.canvas_card_spec is not None
+        ):
+            card_index = int(row.key.rsplit(":", 1)[1])
+            return ConsoleCanvasCard(
+                row.canvas_card_spec,
+                session_id=row.canvas_session_id,
+                message_id=row.message.id,
+                card_index=card_index,
             )
         if (
             row.kind == "diff"
@@ -5813,15 +7297,314 @@ class ConsoleTranscript(VerticalScroll):
             )
             button.native_message_id = row.message.id
             return button
+        if row.kind == "library-activity" and row.message is not None:
+            button = Button(
+                row.renderable,
+                id=f"console-library-activity-{row.message.id}",
+                classes="console-transcript-library-activity",
+            )
+            button.native_message_id = row.message.id
+            return button
         if row.kind == "image" and row.image_spec is not None:
             return self._image_row_widget(row.image_spec)
         if row.kind == "generation-card" and row.generation_card_spec is not None:
-            return ConsoleGenerationCard(row.generation_card_spec)
+            assert row.message is not None
+            return ConsoleGenerationCard(
+                row.generation_card_spec,
+                actions=self._action_groups(row.message).media,
+            )
         if row.kind == "video-card" and row.video_card_spec is not None:
-            return ConsoleVideoCard(row.video_card_spec)
+            assert row.message is not None
+            return ConsoleVideoCard(
+                row.video_card_spec,
+                actions=self._action_groups(row.message).media,
+            )
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
+
+    def _build_message_widget(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        selected: bool,
+        show_header: bool = True,
+    ) -> Widget:
+        """Build one message body through the shared standalone/nested seam."""
+        review_run_id = getattr(message, "change_review_run_id", None)
+        if (
+            review_run_id
+            and self._change_review_provider_factory is not None
+            and bool(get_cli_setting("console", "turn_file_cards", True))
+        ):
+            return ConsoleTurnFileCard(
+                str(message.content),
+                str(review_run_id),
+                self._change_review_provider_factory,
+                message_id=message.id,
+                selected=selected,
+                id=f"console-turn-file-card-{message.id}",
+            )
+        presentation = self._message_presentation(message)
+        if (
+            message.role is ConsoleMessageRole.ASSISTANT
+            and self._assistant_markdown_enabled()
+        ):
+            return ConsoleMarkdownMessage(
+                message,
+                presentation,
+                selected=selected,
+                speech_state=self._console_speech_state(message.id),
+                show_header=show_header,
+            )
+        return ConsoleTranscriptMessage(
+            message,
+            presentation,
+            selected=selected,
+            speech_state=self._console_speech_state(message.id),
+            show_header=show_header,
+        )
+
+    def _activity_components(
+        self,
+        activity: ConsoleChatMessage | ConsoleThinkingActivityRef,
+        owned_rows: tuple[_TranscriptRow, ...],
+    ) -> _ActivityComponents:
+        """Build one disclosure's children through the shared transcript builders."""
+        if isinstance(activity, ConsoleThinkingActivityRef):
+            activity_id = activity.activity_id
+            expanded = activity_id in self._expanded_tool_output_ids
+            detail = self.thinking_detail_text(activity_id)
+            detail_widgets = (
+                (
+                    Static(
+                        Content(detail),
+                        id=f"console-thinking-detail-{activity_id}",
+                        classes="console-thinking-detail",
+                        markup=False,
+                    ),
+                )
+                if expanded and detail is not None
+                else ()
+            )
+            return _ActivityComponents(
+                presentation=ConsoleActivityPresentation(
+                    "thinking", activity.label, activity.status
+                ),
+                action_widgets=(),
+                detail_widgets=detail_widgets,
+                detail_available=detail is not None,
+                action_signature=(),
+                detail_signature=(
+                    (("thinking-detail", activity_id, detail),) if expanded else ()
+                ),
+            )
+        presentation = activity.activity_presentation or ConsoleActivityPresentation(
+            "activity", "Activity", "done"
+        )
+        action_widgets: list[Widget] = []
+        detail_widgets: list[Widget] = []
+        action_signature: list[tuple] = []
+        detail_signature: list[tuple] = []
+        for owned_row in owned_rows:
+            if owned_row.kind in {"actions", "action-help"}:
+                action_widgets.append(self._build_row_widget(owned_row, track=False))
+                action_signature.append(owned_row.signature)
+                continue
+            if owned_row.kind == "message":
+                if owned_row.message is not None and owned_row.message.content.strip():
+                    detail_widgets.append(
+                        self._build_message_widget(
+                            owned_row.message,
+                            selected=False,
+                            show_header=False,
+                        )
+                    )
+                    detail_signature.append(owned_row.signature)
+                continue
+            detail_widgets.append(self._build_row_widget(owned_row, track=False))
+            detail_signature.append(owned_row.signature)
+        if not detail_widgets and _activity_is_expandable(activity, owned_rows):
+            # Preserve lazy collapsed rendering while telling the disclosure
+            # that hidden full output or a diff exists. The expanded refresh
+            # replaces this sentinel with the real shared message/diff rows.
+            detail_widgets.append(
+                Static("", classes="console-activity-detail-placeholder")
+            )
+            detail_signature.append(("activity-detail-placeholder", activity.id))
+        return _ActivityComponents(
+            presentation=presentation,
+            action_widgets=tuple(action_widgets),
+            detail_widgets=tuple(detail_widgets),
+            detail_available=bool(detail_widgets),
+            action_signature=tuple(action_signature),
+            detail_signature=tuple(detail_signature),
+        )
+
+    def _build_activity_disclosure(
+        self,
+        activity: ConsoleChatMessage | ConsoleThinkingActivityRef,
+        owned_rows: tuple[_TranscriptRow, ...],
+    ) -> ConsoleActivityDisclosure:
+        """Build and stamp one disclosure for later same-id reconciliation."""
+        components = self._activity_components(activity, owned_rows)
+        activity_id = (
+            activity.id
+            if isinstance(activity, ConsoleChatMessage)
+            else activity.activity_id
+        )
+        disclosure = ConsoleActivityDisclosure(
+            activity_id,
+            components.presentation.label,
+            components.presentation.status,
+            expanded=activity_id in self._expanded_tool_output_ids,
+            selected=activity_id == self.selected_message_id,
+            action_widgets=components.action_widgets,
+            detail_widgets=components.detail_widgets,
+            detail_available=components.detail_available,
+            raw_cli_presentation=(
+                activity.raw_cli_presentation
+                if isinstance(activity, ConsoleChatMessage)
+                else None
+            ),
+        )
+        disclosure._console_action_signature = components.action_signature
+        disclosure._console_detail_signature = components.detail_signature
+        return disclosure
+
+    def _build_activity_widgets(self, row: _TranscriptRow) -> tuple[Widget, ...]:
+        """Build owned disclosures from the same rows used by standalone messages."""
+        turn = row.assistant_turn
+        assert turn is not None
+        return tuple(
+            self._build_activity_disclosure(activity, owned_rows)
+            for activity, owned_rows in zip(row.activity_items, row.activity_rows)
+        )
+
+    async def _sync_activity_widgets(
+        self,
+        widget: ConsoleAssistantTurnWidget,
+        row: _TranscriptRow,
+    ) -> None:
+        """Reconcile same-id disclosures without detaching their focused headers."""
+        turn = row.assistant_turn
+        assert turn is not None
+        disclosures = list(widget.activity_stack.children)
+        current_ids = tuple(
+            disclosure.activity_message_id
+            for disclosure in disclosures
+            if isinstance(disclosure, ConsoleActivityDisclosure)
+        )
+        next_ids = tuple(
+            activity.id
+            if isinstance(activity, ConsoleChatMessage)
+            else activity.activity_id
+            for activity in row.activity_items
+        )
+        if len(disclosures) != len(current_ids) or current_ids != next_ids:
+            by_id = {
+                disclosure.activity_message_id: disclosure
+                for disclosure in disclosures
+                if isinstance(disclosure, ConsoleActivityDisclosure)
+            }
+            stale = [
+                disclosure
+                for activity_id, disclosure in by_id.items()
+                if activity_id not in next_ids
+            ]
+            if stale:
+                for disclosure in stale:
+                    self._cancel_selection_if_row_removed(disclosure)
+                await widget.activity_stack.remove_children(stale)
+            disclosures = []
+            for index, (activity, owned_rows) in enumerate(
+                zip(row.activity_items, row.activity_rows)
+            ):
+                activity_id = (
+                    activity.id
+                    if isinstance(activity, ConsoleChatMessage)
+                    else activity.activity_id
+                )
+                disclosure = by_id.get(activity_id)
+                if disclosure is None:
+                    disclosure = self._build_activity_disclosure(activity, owned_rows)
+                    await widget.activity_stack.mount(disclosure)
+                disclosures.append(disclosure)
+                if widget.activity_stack.children[index] is not disclosure:
+                    widget.activity_stack.move_child(disclosure, before=index)
+
+        for disclosure, activity, owned_rows in zip(
+            disclosures, row.activity_items, row.activity_rows
+        ):
+            assert isinstance(disclosure, ConsoleActivityDisclosure)
+            activity_id = (
+                activity.id
+                if isinstance(activity, ConsoleChatMessage)
+                else activity.activity_id
+            )
+            components = self._activity_components(activity, owned_rows)
+            if (
+                getattr(disclosure, "_console_action_signature", None)
+                != components.action_signature
+            ):
+                if disclosure.action_stack.children:
+                    await disclosure.action_stack.remove_children()
+                if components.action_widgets:
+                    await disclosure.action_stack.mount(*components.action_widgets)
+                disclosure._console_action_signature = components.action_signature
+            if (
+                getattr(disclosure, "_console_detail_signature", None)
+                != components.detail_signature
+            ):
+                self._cancel_selection_if_row_removed(disclosure.detail_stack)
+                await disclosure.replace_detail_widgets(components.detail_widgets)
+                disclosure._console_detail_signature = components.detail_signature
+            disclosure._has_actions = bool(components.action_widgets)
+            disclosure.detail_available = components.detail_available
+            disclosure.sync_activity(
+                components.presentation.label,
+                components.presentation.status,
+                expanded=activity_id in self._expanded_tool_output_ids,
+                selected=activity_id == self.selected_message_id,
+                raw_cli_presentation=(
+                    activity.raw_cli_presentation
+                    if isinstance(activity, ConsoleChatMessage)
+                    else None
+                ),
+            )
+
+    def _build_assistant_turn_widget(self, row: _TranscriptRow) -> Widget:
+        """Build one Assistant-owned surface from a composite transcript row."""
+        turn = row.assistant_turn
+        assert turn is not None and row.nested_rows
+        assistant = row.nested_rows[0].message
+        assert assistant is not None
+        presentation = self._message_presentation(assistant)
+        header = ConsoleMessageHeader(
+            assistant,
+            presentation,
+            self._console_speech_state(assistant.id),
+            markdown=self._assistant_markdown_enabled(),
+        )
+        answer = self._build_message_widget(
+            assistant,
+            selected=row.selected,
+            show_header=False,
+        )
+        adjuncts = tuple(
+            self._build_row_widget(nested_row, track=False)
+            for nested_row in row.nested_rows[1:]
+        )
+        widget = ConsoleAssistantTurnWidget(
+            assistant.id,
+            header,
+            self._build_activity_widgets(row),
+            answer,
+            adjuncts,
+        )
+        widget._console_activity_signature = row.activity_signature
+        widget._console_adjunct_signature = row.adjunct_signature
+        return widget
 
     def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
         """Build the mounted widget for one inline-image row."""
@@ -5996,6 +7779,7 @@ class ConsoleTranscript(VerticalScroll):
             # token without it would hit this cache and the elapsed figure
             # would freeze at the first value it ever rendered.
             message.live_activity,
+            message.raw_cli_presentation,
             presentation.revision_token,
             self._console_speech_state(message.id),
         )
@@ -6041,7 +7825,7 @@ class ConsoleTranscript(VerticalScroll):
                 return message.id if not content.strip() else None
         return None
 
-    def apply_turn_activity(self, activity: str) -> str:
+    def apply_turn_activity(self, activity: str, *, action: str = "") -> str:
         """Store this poll tick's live activity line; return what will show.
 
         Returns the EFFECTIVE value -- ``""`` whenever no row is eligible --
@@ -6055,6 +7839,9 @@ class ConsoleTranscript(VerticalScroll):
         Args:
             activity: The derived line (``console_turn_activity_text``), or
                 ``""`` when nothing is live.
+            action: task-31386: the Textual action the row's "abandon
+                call" affordance runs, or ``""`` for no affordance. Kept
+                only while ``activity`` is live.
 
         Returns:
             The line that will actually render, or ``""``.
@@ -6065,6 +7852,8 @@ class ConsoleTranscript(VerticalScroll):
         # exactly where a retained line would sit forever, frozen at its
         # last elapsed -- the frozen look this feature exists to remove.
         self._turn_activity = effective
+        # task-31386: the affordance only ever rides a live line.
+        self._turn_activity_action = action if effective else ""
         return effective
 
     def _with_turn_activity(
@@ -6100,7 +7889,11 @@ class ConsoleTranscript(VerticalScroll):
         """
         if target_id is None or message.id != target_id:
             return message
-        return replace(message, live_activity=self._turn_activity)
+        return replace(
+            message,
+            live_activity=self._turn_activity,
+            live_activity_action=self._turn_activity_action,
+        )
 
     def _with_expanded_tool_output(
         self, message: ConsoleChatMessage
@@ -6123,25 +7916,46 @@ class ConsoleTranscript(VerticalScroll):
         if not full or message.id not in self._expanded_tool_output_ids:
             return message
         head, separator, _preview = message.content.partition(" \u2192 ")
-        expanded = f"{head}{separator}{full}" if separator else f"{message.content}\n{full}"
+        expanded = (
+            f"{head}{separator}{full}" if separator else f"{message.content}\n{full}"
+        )
         return replace(message, content=expanded)
 
-    @on(Button.Pressed, ".console-transcript-action-button")
-    def _intercept_tool_output_press(self, event: Button.Pressed) -> None:
-        """Handle the Full-output button here; let every other action bubble.
+    @on(Button.Pressed)
+    async def _intercept_transcript_action_press(self, event: Button.Pressed) -> None:
+        """Handle transcript-owned actions and close More before other presses.
 
         Expansion is view state owned by this widget -- it never reaches the
         store and nothing outside the transcript needs to know about it -- so
         routing it through the screen's action dispatch would add a hop that
-        carries no information. Every other action id is left untouched and
-        still bubbles to `ChatScreen`.
+        carries no information. More opens its captured-target popup; every
+        other action first detaches that popup, then still bubbles to
+        `ChatScreen`.
         """
         button_id = event.button.id or ""
-        prefix = "console-message-action-tool-output-"
-        if not button_id.startswith(prefix):
+        more_prefix = "console-message-action-more-"
+        if button_id.startswith(more_prefix):
+            event.stop()
+            await self._open_message_more_menu(
+                button_id.removeprefix(more_prefix), event.button
+            )
             return
+        await self.dismiss_message_more_menu(restore_focus=False)
+        tool_prefix = "console-message-action-tool-output-"
+        if button_id.startswith(tool_prefix):
+            event.stop()
+            self.toggle_tool_output(button_id.removeprefix(tool_prefix))
+
+    @on(ConsoleActivityActivated)
+    def _on_activity_activated(self, event: ConsoleActivityActivated) -> None:
+        """Keep disclosure controls on the original message selection seam."""
         event.stop()
-        self.toggle_tool_output(button_id.removeprefix(prefix))
+        if event.message_id in self._thinking_activity_refs:
+            self._manual_thinking_disclosures.add(event.message_id)
+            self._pending_thinking_auto_collapse.discard(event.message_id)
+        self.select_message(event.message_id)
+        if event.toggle_requested:
+            self.toggle_tool_output(event.message_id)
 
     def toggle_tool_output(self, message_id: str) -> None:
         """Expand or collapse one TOOL marker's full result.
@@ -6151,11 +7965,45 @@ class ConsoleTranscript(VerticalScroll):
                 harmless -- the row simply renders collapsed, and
                 ``set_messages`` prunes ids that leave the transcript.
         """
+        if not self._activity_can_expand(message_id):
+            return
+        if message_id in self._thinking_activity_refs:
+            self._manual_thinking_disclosures.add(message_id)
+            self._pending_thinking_auto_collapse.discard(message_id)
         if message_id in self._expanded_tool_output_ids:
             self._expanded_tool_output_ids.discard(message_id)
         else:
             self._expanded_tool_output_ids.add(message_id)
         self.call_later(self.refresh_messages)
+
+    def _owned_activity_rows(self, message_id: str) -> tuple[_TranscriptRow, ...]:
+        """Return planned nested rows for an owned activity marker."""
+        for row in self._transcript_rows():
+            turn = row.assistant_turn
+            if row.kind != "assistant-turn" or turn is None:
+                continue
+            for activity, owned_rows in zip(row.activity_items, row.activity_rows):
+                activity_id = (
+                    activity.id
+                    if isinstance(activity, ConsoleChatMessage)
+                    else activity.activity_id
+                )
+                if activity_id == message_id:
+                    return owned_rows
+        return ()
+
+    def _activity_can_expand(self, message_id: str) -> bool:
+        """Resolve the one disclosure-detail fact used by click, keys, and `o`."""
+        message = next(
+            (candidate for candidate in self._messages if candidate.id == message_id),
+            None,
+        )
+        if message_id in self._thinking_activity_refs:
+            return self.thinking_detail_text(message_id) is not None
+        return message is not None and _activity_is_expandable(
+            message,
+            self._owned_activity_rows(message_id),
+        )
 
     def _message_row_signature(
         self, message: ConsoleChatMessage, *, selected: bool
@@ -6187,6 +8035,9 @@ class ConsoleTranscript(VerticalScroll):
             # every display test still green. Named explicitly here so the
             # two renderers cannot silently depend on each other again.
             message.live_activity,
+            # Raw command lifecycle also lives only in the header. Include
+            # it explicitly so same-id updates reconcile that header.
+            message.raw_cli_presentation,
             presentation.revision_token,
             self._console_speech_state(message.id),
         )
@@ -6269,9 +8120,8 @@ class ConsoleTranscript(VerticalScroll):
             )
         return kwargs
 
-    def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
-        actions = []
-        for action in ConsoleMessageActionService().selected_row_actions(
+    def _action_groups(self, message: ConsoleChatMessage):
+        return self._canvas_action_service().action_groups(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),
             original_attempt_available=bool(
@@ -6279,8 +8129,15 @@ class ConsoleTranscript(VerticalScroll):
                 and message.citation_presentation.original_attempt_available
             ),
             ephemeral=self._console_ephemeral_active(),
+            fork_eligibility=self._fork_eligibility_by_message_id.get(
+                message.id, ConsoleForkEligibility(True)
+            ),
             **self._generation_action_kwargs(message),
-        ):
+        )
+
+    def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
+        actions = []
+        for action in self._action_groups(message).primary:
             if action.action_id == "feedback":
                 actions.append(("feedback-up", "👍", True, ""))
                 actions.append(("feedback-down", "👎", True, ""))
@@ -6295,49 +8152,34 @@ class ConsoleTranscript(VerticalScroll):
             )
         return ("actions", message.id, tuple(actions))
 
+    def _media_action_signature(self, message: ConsoleChatMessage) -> tuple:
+        """Return stable render state for actions injected into a media card."""
+        return tuple(
+            (
+                action.action_id,
+                action.label,
+                action.enabled,
+                action.disabled_reason or "",
+            )
+            for action in self._action_groups(message).media
+        )
+
     def _action_guide(self, message: ConsoleChatMessage) -> str:
         """Return the legend naming row actions and the header speech action.
 
         Speech remains in the guide because its button moved to the persistent
         message header; only the selected-row button is removed.
         """
-        return action_row_guide(
-            ConsoleMessageActionService().available_actions(
-                message,
-                speaking_message_id=self._console_tts_speaking_message_id(),
-                original_attempt_available=bool(
-                    message.citation_presentation
-                    and message.citation_presentation.original_attempt_available
-                ),
-                ephemeral=self._console_ephemeral_active(),
-                **self._generation_action_kwargs(message),
-            )
-        )
+        actions = list(self._action_groups(message).primary)
+        guide = action_row_guide(actions)
+        fork = next((action for action in actions if action.action_id == "fork"), None)
+        if fork is not None and not fork.enabled and fork.disabled_reason:
+            return f"{guide} · Fork unavailable — {fork.disabled_reason}"
+        return guide
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
-        for action in ConsoleMessageActionService().selected_row_actions(
-            message,
-            speaking_message_id=self._console_tts_speaking_message_id(),
-            original_attempt_available=bool(
-                message.citation_presentation
-                and message.citation_presentation.original_attempt_available
-            ),
-            ephemeral=self._console_ephemeral_active(),
-            **self._generation_action_kwargs(message),
-        ):
-            if action.action_id == "feedback":
-                buttons.append(
-                    self._action_button(
-                        message, ConsoleMessageAction("feedback-up", "👍")
-                    )
-                )
-                buttons.append(
-                    self._action_button(
-                        message, ConsoleMessageAction("feedback-down", "👎")
-                    )
-                )
-                continue
+        for action in self._action_groups(message).primary:
             buttons.append(self._action_button(message, action))
         return Horizontal(
             *buttons,
@@ -6345,9 +8187,27 @@ class ConsoleTranscript(VerticalScroll):
             classes="console-transcript-action-row",
         )
 
-    @staticmethod
-    def _plain_action_row(message: ConsoleChatMessage) -> str:
-        return ConsoleMessageActionService().plain_action_row(message)
+    def _canvas_action_service(self) -> ConsoleMessageActionService:
+        """Build actions against the app runtime's restart-latched Canvas gate."""
+
+        def enabled() -> bool:
+            try:
+                app = self.app
+            except Exception:  # noqa: BLE001 - unmounted projections fail closed
+                return False
+            runtime = getattr(app, "console_runtime", None)
+            reader = getattr(runtime, "canvas_enabled", None)
+            if not callable(reader):
+                return False
+            try:
+                return reader() is True
+            except Exception:  # noqa: BLE001 - transcript actions fail closed
+                return False
+
+        return ConsoleMessageActionService(canvas_enabled_reader=enabled)
+
+    def _plain_action_row(self, message: ConsoleChatMessage) -> str:
+        return self._canvas_action_service().plain_action_row(message)
 
     @staticmethod
     def _action_button(
@@ -6363,7 +8223,83 @@ class ConsoleTranscript(VerticalScroll):
             button.tooltip = action.disabled_reason
         else:
             button.tooltip = _ACTION_TOOLTIPS.get(action.action_id)
+        button.console_action_id = action.action_id
+        button.console_message_id = message.id
         return button
+
+    async def _open_message_more_menu(self, message_id: str, opener: Button) -> None:
+        """Mount the overflow menu bound to the opener's captured target."""
+        message = self._message_by_id(message_id)
+        if message is None or self.selected_message_id != message_id:
+            return
+        await self.dismiss_message_more_menu(restore_focus=False)
+        actions = self._action_groups(message).overflow
+        if not actions:
+            return
+        region = opener.region
+        menu_width = ConsoleMessageMoreMenu.MENU_WIDTH
+        menu_height = len(actions) + 2
+        self.screen.mount(
+            ConsoleMessageMoreMenu(
+                message_id=message_id,
+                actions=actions,
+                owner=self,
+                opener_button_id=opener.id or "",
+                screen_x=max(
+                    self.region.x, min(region.x, self.region.right - menu_width)
+                ),
+                screen_y=max(
+                    self.region.y, min(region.bottom, self.region.bottom - menu_height)
+                ),
+            )
+        )
+
+    async def dismiss_message_more_menu(self, *, restore_focus: bool = True) -> None:
+        """Detach overflow UI without dispatching an action."""
+        menus = message_more_menus_on_screen(self.screen) if self.is_mounted else []
+        opener_id = menus[0].opener_button_id if menus else ""
+        for menu in menus:
+            await menu.remove()
+        if restore_focus:
+            self._restore_message_action_focus(opener_id)
+
+    def _restore_message_action_focus(self, opener_button_id: str) -> None:
+        if opener_button_id:
+            for opener in self.query(f"#{opener_button_id}"):
+                if opener.is_mounted:
+                    opener.focus(scroll_visible=False)
+                    return
+        if self.selected_message_id:
+            for row in self.query(f"#console-message-{self.selected_message_id}"):
+                if row.is_mounted:
+                    row.scroll_visible(animate=False)
+                    self.focus(scroll_visible=False)
+                    return
+        for composer in self.screen.query("#console-native-composer"):
+            composer.focus(scroll_visible=False)
+            return
+
+    def dispatch_captured_message_action(
+        self, message_id: str, action_id: str, *, opener_button_id: str
+    ) -> None:
+        """Post one controller-compatible action after the menu detached."""
+        self._restore_message_action_focus(opener_button_id)
+        button = Button("", id=f"console-message-action-{action_id}-{message_id}")
+        button.console_action_id = action_id
+        button.console_message_id = message_id
+        self.post_message(Button.Pressed(button))
+
+    async def choose_captured_message_more_action(
+        self, message_id: str, action_id: str, *, opener_button_id: str
+    ) -> None:
+        """Detach More in a separate message turn, then dispatch its capture."""
+        await self.dismiss_message_more_menu(restore_focus=False)
+        self.call_later(
+            self.dispatch_captured_message_action,
+            message_id,
+            action_id,
+            opener_button_id=opener_button_id,
+        )
 
     def _focus_action_button(self, message_id: str, action_id: str) -> None:
         try:

@@ -39,7 +39,12 @@ from textual.widgets.selection_list import Selection
 from tldw_chatbook.Library.library_shell_state import (
     library_choice_label,
     library_choice_tooltip,
+    library_disabled_action_label,
     library_toggle_label,
+)
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    library_pager_layout,
 )
 from tldw_chatbook.Widgets.Library.library_choice_strip import (
     compose_library_choice_strip,
@@ -58,13 +63,18 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
+LIBRARY_SKILLS_FILTER_ID = "library-skills-filter"
+LIBRARY_SKILLS_PAGE_PREVIOUS_ID = "library-skills-page-previous"
+LIBRARY_SKILLS_PAGE_NEXT_ID = "library-skills-page-next"
+LIBRARY_SKILLS_RETRY_ID = "library-skills-retry"
 # task-418: the old copy ("create them in Library ▸ Skills") pointed at
 # the exact list the user was already looking at; name the real paths.
 _EMPTY_SKILLS_COPY = (
-    "No skills yet — use Create ▸ New skill in the rail, or Import… above."
+    "No skills yet — use Create ▸ New skill in the rail, or Import skill… above."
 )
 _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 
@@ -226,8 +236,7 @@ _TRUST_MANIFEST_ERROR_SHORT_COPY = (
 # pattern): every skill drops back to needs-review, but nothing on disk is
 # deleted.
 _TRUST_RESET_CONFIRM_COPY = (
-    "Reset skill trust? Every skill will need re-approval. Your skills are "
-    "not deleted."
+    "Reset skill trust? Every skill will need re-approval. Your skills are not deleted."
 )
 
 
@@ -536,9 +545,7 @@ def skill_context_toggle_label(context: str) -> str:
         f"{value} ({hints[value]})" if value == context else value
         for value in ("inline", "fork")
     )
-    return library_toggle_label(
-        "Runs in", options, 0 if context == "inline" else 1
-    )
+    return library_toggle_label("Runs in", options, 0 if context == "inline" else 1)
 
 
 def next_skill_context(context: str) -> str:
@@ -565,6 +572,119 @@ def skill_supporting_files_text(
         else:
             lines.append(f"{file.name} — {file.size} bytes (binary)")
     return "\n".join(lines)
+
+
+class LibrarySkillsTrustHeader(Vertical):
+    """Recompose the asynchronous trust header without replacing list rows."""
+
+    def __init__(
+        self,
+        *,
+        has_skills: bool,
+        blocked_count: int,
+        trust_posture: str,
+        confirming_reset: bool,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the retained Skills trust header.
+
+        Args:
+            has_skills: Whether any Skills are available.
+            blocked_count: Number of Skills currently blocked by trust policy.
+            trust_posture: Aggregate trust-store posture.
+            confirming_reset: Whether to show the destructive reset confirmation.
+            **kwargs: Additional arguments forwarded to ``Vertical``.
+        """
+        super().__init__(**kwargs)
+        self.has_skills = has_skills
+        self.blocked_count = blocked_count
+        self.trust_posture = trust_posture
+        self.confirming_reset = confirming_reset
+        self.styles.height = "auto"
+
+    def compose(self) -> ComposeResult:
+        """Render only the posture-dependent header controls.
+
+        Returns:
+            The trust summary, action, and optional reset controls.
+        """
+        if not self.has_skills:
+            return
+        header = skill_trust_header_line(self.trust_posture, self.blocked_count)
+        if header is None:
+            return
+        copy, action_id = header
+        yield Static(copy, id="library-skills-trust-header", markup=False)
+        if action_id:
+            button = Button(
+                _TRUST_HEADER_ACTION_LABELS[action_id],
+                id="library-skills-trust-action",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            button.trust_action = action_id
+            yield button
+        if self.trust_posture in _TRUST_POSTURES_WITH_RESET:
+            yield Button(
+                _RESET_TRUST_BUTTON_LABEL,
+                id="library-skills-trust-reset",
+                classes="library-canvas-action library-media-action-danger",
+                compact=True,
+            )
+            if self.confirming_reset:
+                yield Static(
+                    _TRUST_RESET_CONFIRM_COPY,
+                    id="library-skills-trust-reset-confirm-copy",
+                    markup=False,
+                )
+                toolbar = Horizontal(classes="ds-toolbar")
+                toolbar.styles.height = "auto"
+                with toolbar:
+                    yield Button(
+                        "Reset",
+                        id="library-skills-trust-reset-confirm",
+                        classes=("library-canvas-action library-media-action-danger"),
+                        compact=True,
+                    )
+                    yield Button(
+                        "Cancel",
+                        id="library-skills-trust-reset-cancel",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+
+    def sync_state(
+        self,
+        *,
+        has_skills: bool,
+        blocked_count: int,
+        trust_posture: str,
+        confirming_reset: bool,
+    ) -> None:
+        """Apply a posture result while leaving sibling Skill rows mounted.
+
+        Args:
+            has_skills: Whether any Skills are available.
+            blocked_count: Number of Skills currently blocked by trust policy.
+            trust_posture: Aggregate trust-store posture.
+            confirming_reset: Whether to show the destructive reset confirmation.
+        """
+        values = (has_skills, blocked_count, trust_posture, confirming_reset)
+        if values == (
+            self.has_skills,
+            self.blocked_count,
+            self.trust_posture,
+            self.confirming_reset,
+        ):
+            return
+        (
+            self.has_skills,
+            self.blocked_count,
+            self.trust_posture,
+            self.confirming_reset,
+        ) = values
+        self.refresh(recompose=True)
+
 
 class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library skills canvas: the list view, or the skill editor.
@@ -620,6 +740,9 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_status: Muted outcome line shown below the Import row
             (e.g. ``'Imported "executing-plans" · re-review it in the trust panel'``), or
             ``""`` when idle/not yet run.
+        import_in_flight: Whether an accepted import is still running. The
+            import controls are disabled while true; Library navigation is
+            owned by the surrounding screen and remains available.
         trust_posture: List-view only (Task 4). The Skills trust service's
             current posture (``SkillTrustService.trust_posture()``'s
             return value -- Task 3), used to render the adaptive trust
@@ -657,6 +780,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_path: str = "",
         import_status: str = "",
         import_review_name: str = "",
+        import_in_flight: bool = False,
+        import_package_kind: str = "",
+        import_recovery_actions: tuple[str, ...] = (),
+        import_retryable: bool = False,
         sort_choices_visible: bool = False,
         editor_mode: str = "basic",
         tool_catalog: tuple[str, ...] = (),
@@ -665,6 +792,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         more_actions_open: bool = False,
         trust_details_open: bool = False,
         script_access_granted: bool = False,
+        show_editor_trust: bool = True,
+        show_editor_files: bool = True,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -689,6 +820,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.import_path = import_path
         self.import_status = import_status
         self.import_review_name = import_review_name
+        self.import_in_flight = import_in_flight
+        self.import_package_kind = import_package_kind
+        self.import_recovery_actions = tuple(import_recovery_actions)
+        self.import_retryable = import_retryable
         self.editor_mode = coerce_skill_editor_mode(editor_mode)
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
         self.tool_filter = tool_filter
@@ -696,18 +831,34 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.more_actions_open = more_actions_open
         self.trust_details_open = trust_details_open
         self.script_access_granted = script_access_granted
+        self.show_editor_trust = show_editor_trust
+        self.show_editor_files = show_editor_files
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
         self.rebuilding_tool_picker = False
+        self.add_class(
+            "library-skills-list-mode"
+            if mode == "list"
+            else "library-skills-editor-mode"
+        )
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
         if self.mode == "loading":
             yield Static(
-                "Loading skill…",
+                self.detail_notice or "Loading skill…",
                 id="library-skill-loading",
                 classes="destination-purpose",
                 markup=False,
             )
+            if self.detail_retryable:
+                yield Button(
+                    "Retry",
+                    id="library-skill-detail-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
             return
         if self.mode == "editor":
             yield from self._compose_editor()
@@ -737,6 +888,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         import_path: str,
         import_status: str,
         import_review_name: str,
+        import_in_flight: bool,
+        import_package_kind: str = "",
+        import_recovery_actions: tuple[str, ...] = (),
+        import_retryable: bool = False,
         sort_choices_visible: bool,
         editor_mode: str = "basic",
         tool_catalog: tuple[str, ...] = (),
@@ -745,6 +900,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         more_actions_open: bool = False,
         trust_details_open: bool = False,
         script_access_granted: bool = False,
+        detail_notice: str = "",
+        detail_retryable: bool = False,
     ) -> None:
         """Apply a complete skills snapshot within the mounted canvas.
 
@@ -769,12 +926,27 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             import_path: Current skill import path.
             import_status: Current skill import outcome copy.
             import_review_name: Skill awaiting post-import trust review.
+            import_in_flight: Whether an accepted import is still running.
             sort_choices_visible: Whether the sort chooser is expanded.
         """
+        header_only = bool(
+            self.mode == mode == "list"
+            and self.state == state
+            and self.sort_mode == sort_mode
+            and self.filter_value == filter_value
+            and self.import_open == import_open
+            and self.import_path == import_path
+            and self.import_status == import_status
+            and self.import_review_name == import_review_name
+            and self.sort_choices_visible == sort_choices_visible
+            and self._post_recompose_callback is None
+        )
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.mode = mode
+        self.set_class(mode == "list", "library-skills-list-mode")
+        self.set_class(mode != "list", "library-skills-editor-mode")
         self.trust_posture = trust_posture
         self.confirming_reset = confirming_reset
         self.editor_state = editor_state
@@ -791,6 +963,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.import_path = import_path
         self.import_status = import_status
         self.import_review_name = import_review_name
+        self.import_in_flight = import_in_flight
+        self.import_package_kind = import_package_kind
+        self.import_recovery_actions = tuple(import_recovery_actions)
+        self.import_retryable = import_retryable
         self.sort_choices_visible = sort_choices_visible
         self.editor_mode = coerce_skill_editor_mode(editor_mode)
         self.tool_catalog = tuple(dict.fromkeys(tool_catalog))
@@ -799,6 +975,37 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         self.more_actions_open = more_actions_open
         self.trust_details_open = trust_details_open
         self.script_access_granted = script_access_granted
+        self.detail_notice = detail_notice
+        self.detail_retryable = detail_retryable
+        if header_only:
+            rows = state.rows if state is not None else ()
+            title_count = (
+                state.pager.title_count
+                if state is not None and state.pager is not None
+                else len(rows)
+            )
+            try:
+                self.query_one(
+                    "#library-skills-trust-region", LibrarySkillsTrustHeader
+                ).sync_state(
+                    has_skills=bool(state and state.source_summary_fresh)
+                    and (
+                        bool(rows)
+                        or bool(title_count)
+                        or bool(state and state.blocked_total)
+                    ),
+                    blocked_count=(
+                        state.blocked_total
+                        if state is not None and state.pager is not None
+                        else sum(1 for row in rows if row.blocked)
+                    ),
+                    trust_posture=trust_posture,
+                    confirming_reset=confirming_reset,
+                )
+                return
+            except (NoMatches, QueryError):
+                pass
+        self.preserve_same_id_focus_after_recompose()
         self.refresh(recompose=True)
         self._schedule_scroll_to_actions()
 
@@ -852,8 +1059,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             else "#library-skill-advanced-fields"
         )
         live_focus_is_hidden = bool(
-            live_focus is not None
-            and hidden_region in live_focus.ancestors_with_self
+            live_focus is not None and hidden_region in live_focus.ancestors_with_self
         )
         if (
             live_focus is not None
@@ -994,54 +1200,33 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         state = self.state
         if state is None:
             return
+        title_count = (
+            state.pager.title_count if state.pager is not None else state.count
+        )
         yield Static(
-            f"Skills ({state.count})",
+            "Skills" if title_count is None else f"Skills ({title_count})",
             id="library-skills-header",
             classes="destination-section",
             markup=False,
         )
-        # Task 4: adaptive trust header -- posture-driven copy plus an
-        # optional single inline action, computed from THIS state's own
-        # blocked-row count (not a screen-supplied total) so it always
-        # matches what's actually rendered below. Spec's "don't nag" rule:
-        # with zero skills installed there is nothing to review/trust yet,
-        # so the header (and its escape-hatch reset button) stays hidden
-        # entirely rather than greeting an empty list with a trust prompt.
-        if state.rows:
-            blocked_count = sum(
-                1 for row in state.rows if getattr(row, "blocked", False)
-            )
-            header = skill_trust_header_line(self.trust_posture, blocked_count)
-            if header is not None:
-                copy, action_id = header
-                yield Static(copy, id="library-skills-trust-header", markup=False)
-                if action_id:
-                    button = Button(
-                        _TRUST_HEADER_ACTION_LABELS[action_id],
-                        id="library-skills-trust-action",
-                        classes="library-canvas-action",
-                        compact=True,
-                    )
-                    button.trust_action = action_id  # read by the screen handler
-                    yield button
-                # Task 5: a SEPARATE, always-destructive escape hatch for the
-                # two postures where the header's own action button doesn't
-                # cover "start over from nothing" -- "resetup" already
-                # reset-then-bootstraps behind a NEW passphrase, and "unlock"
-                # assumes you still remember the OLD one. Neither is a way
-                # out if the manifest itself is the problem.
-                if self.trust_posture in _TRUST_POSTURES_WITH_RESET:
-                    yield Button(
-                        _RESET_TRUST_BUTTON_LABEL,
-                        id="library-skills-trust-reset",
-                        classes="library-canvas-action library-media-action-danger",
-                        compact=True,
-                    )
-                    if self.confirming_reset:
-                        yield from self._compose_trust_reset_confirm_row()
+        # The posture read may settle after rows become interactive. Keep it
+        # in its own retained region so that update cannot invalidate a row's
+        # already-posted Button.Pressed event.
+        yield LibrarySkillsTrustHeader(
+            has_skills=state.source_summary_fresh
+            and (bool(state.rows) or bool(title_count) or state.blocked_total > 0),
+            blocked_count=(
+                state.blocked_total
+                if state.pager is not None
+                else sum(1 for row in state.rows if row.blocked)
+            ),
+            trust_posture=self.trust_posture,
+            confirming_reset=self.confirming_reset,
+            id="library-skills-trust-region",
+        )
         yield Input(
             placeholder="Filter skills… (Enter)",
-            id="library-skills-filter",
+            id=LIBRARY_SKILLS_FILTER_ID,
             value=self.filter_value,
         )
         # One horizontal ds-toolbar row for sort/Import -- mirrors
@@ -1054,9 +1239,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         toolbar.display = not self.sort_choices_visible
         with toolbar:
             yield Button(
-                library_choice_label(
-                    "sort", _SORT_LABELS.get(self.sort_mode, "Name")
-                ),
+                library_choice_label("sort", _SORT_LABELS.get(self.sort_mode, "Name")),
                 id="library-skills-sort",
                 classes="library-canvas-action",
                 compact=True,
@@ -1065,7 +1248,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 ),
             )
             yield Button(
-                "Import…",
+                "Import skill…",
                 id="library-skills-import",
                 classes="library-canvas-action",
                 compact=True,
@@ -1088,39 +1271,111 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-empty",
                 markup=False,
             )
-            return
-        with Vertical(id="library-skills-list"):
-            for row in state.rows:
-                # Skill names are unique + name-shaped (lowercase
-                # alphanumerics and hyphens only, per
-                # ``local_skills_service._AGENT_SKILL_NAME_PATTERN``,
-                # enforced at save time), so they're safe verbatim as a DOM
-                # id suffix -- same posture as the prompt row's integer
-                # ``prompt_id``, just a string here instead.
-                name = escape_markup(row.name)
-                classes = "library-skill-row"
-                if row.blocked:
-                    classes = f"{classes} library-skill-row-blocked"
-                button = Button(
-                    f"{row.trust_glyph} {name}",
-                    id=f"library-skill-row-{row.name}",
-                    classes=classes,
-                    compact=True,
-                )
-                button.skill_name = row.name
-                yield button
-                if row.secondary:
-                    # The flags/description line is user-controlled (the
-                    # skill's free-text description) and rendered as its
-                    # own Static, NOT packed into the Button label above --
-                    # escaped the same way the prompts canvas escapes its
-                    # secondary line, so a description containing "[x]"
-                    # renders verbatim instead of being eaten as an
-                    # (unmatched) Rich markup tag.
-                    yield Static(
-                        escape_markup(row.secondary),
-                        classes="library-skill-row-secondary",
+        else:
+            with Vertical(id="library-skills-list"):
+                for row in state.rows:
+                    # Skill names are unique + name-shaped (lowercase
+                    # alphanumerics and hyphens only, per
+                    # ``local_skills_service._AGENT_SKILL_NAME_PATTERN``,
+                    # enforced at save time), so they're safe verbatim as a DOM
+                    # id suffix -- same posture as the prompt row's integer
+                    # ``prompt_id``, just a string here instead.
+                    name = escape_markup(row.name)
+                    classes = "library-skill-row"
+                    if row.blocked:
+                        classes = f"{classes} library-skill-row-blocked"
+                    if row.selected:
+                        classes = f"{classes} is-selected"
+                    # task-31945: the fifth list canvas gets the shared
+                    # row press behaviour too -- the flash swallows a fast
+                    # second click here exactly as it did on the other four.
+                    # task-32223: the trust state in words, on the row's own
+                    # label. The glyph alone painted an approved and an
+                    # unapproved skill alike for anyone not decoding "✓"/"⚠",
+                    # and the canvas legend carries no trust glyph to decode
+                    # it against. Wording comes from the list-state builder
+                    # (``SkillListRow.trust_label``), never restated here.
+                    trust = f" · {row.trust_label}" if row.trust_label else ""
+                    button = library_row_button(
+                        f"{'› ' if row.selected else ''}{row.trust_glyph} {name}{trust}",
+                        id=f"library-skill-row-{row.name}",
+                        classes=classes,
+                        compact=True,
+                        disabled=state.actions_disabled,
                     )
+                    button.skill_name = row.name
+                    yield button
+                    if row.secondary:
+                        # The flags/description line is user-controlled (the
+                        # skill's free-text description) and rendered as its
+                        # own Static, NOT packed into the Button label above --
+                        # escaped the same way the prompts canvas escapes its
+                        # secondary line, so a description containing "[x]"
+                        # renders verbatim instead of being eaten as an
+                        # (unmatched) Rich markup tag.
+                        yield Static(
+                            escape_markup(row.secondary),
+                            classes="library-skill-row-secondary",
+                        )
+        if state.pager is not None:
+            yield from self._compose_pager(state.pager)
+
+    def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
+        """Render the controller-derived Skills pager through the shared rule.
+
+        task-32354 (critique #10): this canvas composed the pager itself and
+        so never got the single-page suppression task-28016/31237 gave every
+        other Library list -- four lines of "Page 1 of 1 / Already on the
+        first page. / ○ Previous ○ Next" for two skills, 4 of 18 usable rows
+        at 60x24 (A caps 60/61). The rule is ``library_pager_layout``'s; this
+        method only renders what it returns.
+        """
+        layout = library_pager_layout(pager)
+        with Vertical(id="library-skills-pager", classes="library-source-pager"):
+            yield Static(
+                " · ".join(layout.status_parts),
+                id="library-skills-range",
+                classes="library-source-pager-status",
+                markup=False,
+            )
+            status_copy = " · ".join(
+                copy
+                for copy in (pager.status_copy, *layout.boundary_reasons)
+                if copy
+            )
+            if status_copy:
+                yield Static(
+                    status_copy,
+                    id="library-skills-pager-status",
+                    classes="library-source-pager-status",
+                    markup=False,
+                )
+            if layout.controls_hidden:
+                return
+            with Horizontal(classes="library-source-pager-controls"):
+                yield Button(
+                    library_disabled_action_label("Previous", pager.previous_disabled),
+                    id=LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=pager.previous_disabled,
+                    tooltip=pager.previous_reason or None,
+                )
+                if pager.retry_visible:
+                    yield Button(
+                        "Retry",
+                        id=LIBRARY_SKILLS_RETRY_ID,
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                yield Button(
+                    library_disabled_action_label("Next", pager.next_disabled),
+                    id=LIBRARY_SKILLS_PAGE_NEXT_ID,
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=pager.next_disabled,
+                    tooltip=pager.next_reason or None,
+                )
 
     def _compose_trust_reset_confirm_row(self) -> ComposeResult:
         """Inline confirm row for the destructive Reset action (Task 5).
@@ -1170,13 +1425,14 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         ``superpowers`` skillset) is a directory named after the skill
         containing a literally-named ``SKILL.md`` file, so pointing the
         path Input at either the ``SKILL.md`` file itself or its parent
-        directory both resolve to the same skill name (see
-        ``_run_library_skills_import``).
+        directory both resolve to the same skill name in the app-owned
+        Library skill-import coordinator.
         """
         yield Input(
             placeholder="SKILL.md file or skill folder path… or GitHub/zip URL",
             id="library-skills-import-path",
             value=self.import_path,
+            disabled=self.import_in_flight,
         )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
@@ -1190,30 +1446,59 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-import-browse",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Browse folder…",
                 id="library-skills-import-browse-folder",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Import",
                 id="library-skills-import-run",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
             yield Button(
                 "Cancel",
                 id="library-skills-import-cancel",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
         yield Static(
             self.import_status,
             id="library-skills-import-status",
             markup=False,
         )
+        # task-32055: the way out of an import that will not land. Mounted
+        # (display-toggled) whenever one is running so the screen's in-place
+        # patch of the status line can reveal it without a recompose.
+        structural_cancel = Button(
+            "Cancel",
+            id="library-structural-wait-cancel",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        structural_cancel.display = self.import_in_flight
+        yield structural_cancel
+        if self.import_recovery_actions:
+            yield Static(
+                "\n".join(f"• {action}" for action in self.import_recovery_actions),
+                id="library-skills-import-recovery",
+                markup=False,
+            )
+        if self.import_retryable:
+            yield Button(
+                "Retry",
+                id="library-skills-import-retry",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=self.import_in_flight,
+            )
         if self.import_review_name:
             # task-422: the success copy says "re-review it in the trust
             # panel" -- this is the direct path there.
@@ -1222,6 +1507,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skills-import-review",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=self.import_in_flight,
             )
 
     def _compose_editor(self) -> ComposeResult:
@@ -1386,16 +1672,17 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                     classes="library-prompt-field-hint",
                     markup=False,
                 )
-            yield Static(
-                "Supporting files",
-                classes="library-prompt-field-label",
-                markup=False,
-            )
-            yield Static(
-                skill_supporting_files_text(editor_state.supporting_files),
-                id="library-skill-supporting",
-                markup=False,
-            )
+            if self.show_editor_files:
+                yield Static(
+                    "Supporting files",
+                    classes="library-prompt-field-label",
+                    markup=False,
+                )
+                yield Static(
+                    skill_supporting_files_text(editor_state.supporting_files),
+                    id="library-skill-supporting",
+                    markup=False,
+                )
             yield Static(self.warnings, id="library-skill-warnings", markup=False)
         conflict_copy = Static(
             "This skill changed elsewhere — Reload discards your edit and refetches it.",
@@ -1405,9 +1692,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         )
         conflict_copy.display = self.conflict
         yield conflict_copy
-        save_status = Static(
-            self.status, id="library-skill-save-status", markup=False
-        )
+        save_status = Static(self.status, id="library-skill-save-status", markup=False)
         save_status.display = not self.conflict
         yield save_status
         # task-416: no trust panel in create mode -- a never-saved skill
@@ -1415,7 +1700,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         # ("Trust: trusted") with dead buttons. The post-create snapshot
         # refresh recomposes with is_create=False, which renders the real
         # panel for the just-saved skill.
-        if not self.is_create:
+        if not self.is_create and self.show_editor_trust:
             yield from self._compose_trust_panel(editor_state)
         # task-415: inline two-step delete, mirroring the notes/media
         # confirming-delete pattern. The confirm copy is a full-width
@@ -1434,9 +1719,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         )
         delete_copy.display = confirming_delete and not self.mutation_in_flight
         yield delete_copy
-        toolbar = Horizontal(
-            id="library-skill-lifecycle-actions", classes="ds-toolbar"
-        )
+        toolbar = Horizontal(id="library-skill-lifecycle-actions", classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
             busy = self.mutation_in_flight
@@ -1629,7 +1912,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-skill-script-grant-revoke",
                 classes="library-canvas-action",
                 compact=True,
-                disabled=True,
+                disabled=not self.script_access_granted,
             )
             if editor_state.trust_status == "quarantined_manifest_error":
                 # Task 5: the manifest itself can't be verified, so nothing

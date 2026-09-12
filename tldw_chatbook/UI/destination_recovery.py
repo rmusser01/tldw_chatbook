@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Literal
+
+from textual.containers import Horizontal
+from textual.widget import Widget
+from textual.widgets import Button, Static
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,19 @@ class DestinationRecoveryState:
         authority_owner: Owner of the capability or blocker.
         stable_selector: Stable widget selector used to expose and test this state.
         disabled_tooltip: Tooltip copy for the disabled control.
+        severity: Callout tint: ``warning`` (`$warning`, the `.ds-recovery-callout`
+            default every blocked state has always rendered with) or ``error``
+            (`$error`, a hard failure).
+        retry_id: Id of the Retry button that recovers this state, for callouts
+            that carry their own Retry. Empty when recovery is not a retry.
+        attempt: How many consecutive times this same failure has repeated
+            (task-31632 final review I-1). A caller that dedups a fresh state
+            against the previous one by equality (this dataclass's own
+            ``==``) would otherwise render nothing when a Retry reproduces a
+            byte-identical failure -- bumping this on repeat breaks that
+            equality so the repaint, and the reason for it, are both visible.
+            Defaults to 1 (a first attempt); ``message`` stays silent about it
+            until it actually repeats.
     """
 
     status_label: str
@@ -29,6 +46,9 @@ class DestinationRecoveryState:
     authority_owner: str
     stable_selector: str
     disabled_tooltip: str
+    severity: Literal["error", "warning"] = "warning"
+    retry_id: str = ""
+    attempt: int = 1
 
     @staticmethod
     def _sentence(value: str) -> str:
@@ -36,6 +56,24 @@ class DestinationRecoveryState:
         if not text or text.endswith((".", "!", "?")):
             return text
         return f"{text}."
+
+    @property
+    def message(self) -> str:
+        """Render the one-line callout copy: what failed, then why.
+
+        Silent about ``attempt`` on a first failure; once a caller bumps it
+        past 1 (the same failure repeating), the label names the attempt so
+        a retry against an unchanged failure still reads as a fresh press.
+
+        Returns:
+            The one-line ``"<unavailable_what> · <why>"`` callout copy, with
+            a trailing ``· attempt N`` clause once ``attempt`` exceeds 1.
+        """
+
+        base = f"{self.unavailable_what} · {self.why}"
+        if self.attempt > 1:
+            return f"{base} · attempt {self.attempt}"
+        return base
 
     @property
     def visible_copy(self) -> str:
@@ -157,6 +195,150 @@ def policy_denied_recovery_state(
         stable_selector=stable_selector,
         disabled_tooltip=disabled_tooltip,
     )
+
+
+def load_failure_recovery_state(
+    *,
+    what: str,
+    reason: str,
+    retry_id: str,
+    stable_selector: str,
+    kind: Literal["error", "timeout"] = "error",
+) -> DestinationRecoveryState:
+    """Build one recovery callout for a load that failed, with its reason.
+
+    Args:
+        what: What could not be loaded, as a clause ("Couldn't load page 1").
+        reason: Why it failed, in the reader's terms ("database is locked").
+        retry_id: Id of the Retry button rendered inside the callout.
+        stable_selector: Stable widget selector for the rendered callout.
+        kind: ``timeout`` for a deadline a later attempt may beat (tinted
+            `$warning`), ``error`` for a hard failure (tinted `$error`).
+
+    Returns:
+        Recovery state whose `message` reads "<what> · <reason>".
+    """
+
+    state_what = _clause(what, "Couldn't load this view")
+    state_reason = _clause(reason, "reason unavailable")
+    return DestinationRecoveryState(
+        status_label="Timed out" if kind == "timeout" else "Load failed",
+        unavailable_what=state_what,
+        why=state_reason,
+        next_action="Retry",
+        recovery_action="Retry",
+        # Hardcoded on purpose (task-31632 review): every caller so far is a
+        # local read, and the callout does not paint the owner -- only
+        # ``visible_copy`` does, which no load-failure surface uses. Make it
+        # a parameter when a remote/server load first needs one.
+        authority_owner="local data source",
+        stable_selector=stable_selector,
+        disabled_tooltip=DestinationRecoveryState._sentence(
+            f"{state_what} · {state_reason}"
+        ),
+        severity="warning" if kind == "timeout" else "error",
+        retry_id=retry_id,
+    )
+
+
+def load_failure_callout(
+    failure: DestinationRecoveryState,
+    *,
+    id: str,
+    copy_id: str,
+    retry_id: str,
+    retry_classes: str = "console-action-subdued",
+    gate: Callable[[Button, str], Button] | None = None,
+) -> Horizontal:
+    """Build the one load-failure callout: the reason, then its own Retry.
+
+    PR M carry I1: the landing hub, the Library browse row and the Media
+    canvas each grew their own copy of this widget, and they had already
+    drifted apart (only two of the three refreshed the severity tint in
+    place). One builder, one shape, three ids.
+
+    Args:
+        failure: The load failure to paint.
+        id: Id for the callout row itself -- the node a surface mounts and
+            re-queries.
+        copy_id: Id for the reason Static inside it.
+        retry_id: Id for the Retry when ``failure`` carries none of its own.
+        retry_classes: Button classes for the surface's own action styling.
+        gate: Optional per-surface gate applied to the Retry (the Media
+            canvas disables even recovery controls while a write is
+            unsettled).
+
+    Returns:
+        The assembled ``Horizontal``: ``.ds-recovery-callout``, plus
+        ``.is-blocked`` (the repo-wide error tint) for a hard failure.
+    """
+    # The reason WRAPS, the Retry keeps its content width -- left to the
+    # defaults the 1fr Static swallows the row and pushes the button outside
+    # the callout (measured on the Media callout at 235x52 and 100x30).
+    copy = Static(failure.message, id=copy_id, markup=False)
+    copy.styles.width = "1fr"
+    copy.styles.min_width = 0
+    retry = Button(
+        "Retry",
+        id=failure.retry_id or retry_id,
+        classes=retry_classes,
+        compact=True,
+        tooltip=failure.disabled_tooltip,
+    )
+    retry.styles.width = "auto"
+    retry.styles.min_width = 0
+    if gate is not None:
+        gate(retry, "Retry")
+    callout = Horizontal(
+        copy,
+        retry,
+        id=id,
+        classes=(
+            "ds-recovery-callout is-blocked"
+            if failure.severity == "error"
+            else "ds-recovery-callout"
+        ),
+    )
+    # Bare harnesses never load the bundle, and Horizontal defaults to 1fr
+    # height -- the callout must wrap to its copy either way.
+    callout.styles.height = "auto"
+    return callout
+
+
+def sync_load_failure_callout(
+    node: Widget | None, failure: DestinationRecoveryState | None
+) -> bool:
+    """Repaint a MOUNTED load-failure callout in place.
+
+    PR M carry M2/M3: the copy alone is not enough -- a Retry can turn a
+    timeout (warning) into a hard failure (error), so the tint moves with
+    it; and a failure a Retry cannot clear paints a bare Static instead of
+    this callout, so a shape change must be reported rather than no-op'd.
+
+    Args:
+        node: The mounted node a surface believes is its callout.
+        failure: The failure to repaint it with.
+
+    Returns:
+        ``True`` when the node was repainted; ``False`` when the caller must
+        remount (no node, no failure, or a node this builder did not build).
+    """
+    if node is None or failure is None:
+        return False
+    if not node.has_class("ds-recovery-callout"):
+        return False
+    copy = next(iter(node.query(Static)), None)
+    if copy is None:
+        return False
+    copy.update(failure.message)
+    node.set_class(failure.severity == "error", "is-blocked")
+    # A shape-preserving reason change (e.g. a timeout repainted into a hard
+    # failure) otherwise leaves the Retry's tooltip naming the OLD reason
+    # while the sentence beside it already names the new one.
+    retry = next(iter(node.query(Button)), None)
+    if retry is not None and failure.disabled_tooltip:
+        retry.tooltip = failure.disabled_tooltip
+    return True
 
 
 def _dependency_names(missing_dependencies: Iterable[str] | str) -> str:

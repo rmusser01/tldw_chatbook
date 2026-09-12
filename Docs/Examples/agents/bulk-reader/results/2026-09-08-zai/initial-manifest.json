@@ -1,0 +1,35 @@
+{
+  "started_at_utc": "2026-09-08T06:42:47.117599+00:00",
+  "source": "https://docs.z.ai/guides/overview/pricing",
+  "rates": {
+    "models": {
+      "zai:glm-5.3": {
+        "input_per_mtok": 1.4,
+        "output_per_mtok": 4.4,
+        "cache_read_per_mtok": 0.26,
+        "as_of": "2026-09-08"
+      },
+      "zai:glm-5.3-flash": {
+        "input_per_mtok": 0.075,
+        "output_per_mtok": 0.25,
+        "cache_read_per_mtok": 0.015,
+        "as_of": "2026-09-08"
+      }
+    }
+  },
+  "flash_promotion_ends_utc": "2026-09-09T16:00:00Z",
+  "models": {
+    "main": "glm-5.3",
+    "worker": "glm-5.3-flash"
+  },
+  "credential_persistence": "process environment only",
+  "corpus_sha256": "994ea96487bba0866ae1b6432fe130177b4cdf0cb4d44e9e4f342b771f3178dd",
+  "evaluator_sha256": "bd4e7c3dba192618caae4a97c48ee7c1046de8480f22463cd3865cb4f43dd19c",
+  "profile": "isolated relevant provider settings and pricing override",
+  "execution": "existing evaluator CLI with an observation-only arm progress wrapper",
+  "exit_code": 0,
+  "completed_at_utc": "2026-09-08T06:49:09.085945+00:00",
+  "original_config_unchanged": true,
+  "report_written": true,
+  "credential_absent_from_artifacts": true
+}

@@ -94,7 +94,7 @@ def build_gateway_runner(
                 or "the configured provider is not ready to send"
             )
         chunks: list[str] = []
-        async for chunk in gateway.stream_chat(resolution, messages):
+        async for chunk in gateway.stream_chat(resolution, messages, route=None):
             if isinstance(chunk, str):
                 chunks.append(chunk)
                 if on_chunk is not None:

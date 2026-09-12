@@ -11,7 +11,7 @@ labels:
 - ux
 priority: high
 references:
-- backlog/decisions/046-visible-bounded-console-prompt-queue.md
+- backlog/decisions/098-visible-bounded-console-prompt-queue.md
 - backlog/decisions/033-application-session-state-ownership.md
 documentation:
 - Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md
@@ -49,7 +49,7 @@ Protect process-memory queued prompts at every user-initiated loss boundary befo
 6. Run focused and reached verification, static checks, architecture ratchets, self-review, and complete Backlog notes and DoD.
 
 ADR required: no
-ADR path: backlog/decisions/046-visible-bounded-console-prompt-queue.md and backlog/decisions/033-application-session-state-ownership.md
+ADR path: backlog/decisions/098-visible-bounded-console-prompt-queue.md and backlog/decisions/033-application-session-state-ownership.md
 Reason: The accepted ADRs already define transient queue ownership, count-aware loss guards, and thin application coordination without a new root state owner.
 <!-- SECTION:PLAN:END -->
 
@@ -80,7 +80,7 @@ lines (-43) and does not raise the ratchet. The full button-routing file also re
 one unrelated existing section-collapse expectation failure; all four reached close
 tests pass independently.
 
-ADR required: no. ADR-046 and ADR-033 already define the transient queue ownership,
+ADR required: no. ADR-098 and ADR-033 already define the transient queue ownership,
 loss-boundary confirmation, and application coordination used here.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
@@ -103,5 +103,5 @@ confirmation preserves the mounted Console and all unsent work.
 - [x] Self-review completed; no prompt bodies added to projections, logs, or persistence.
 - [x] No feature regression found; known baseline ratchet and unrelated browser-toggle failures documented.
 - [x] No generalizable new lesson was produced beyond the existing testing and live-verification guidance.
-- [x] ADR check completed against ADR-046 and ADR-033; no new ADR required.
+- [x] ADR check completed against ADR-098 and ADR-033; no new ADR required.
 <!-- DOD:END -->

@@ -173,33 +173,27 @@ class ConsoleScopeChip(ConsoleChip):
         self.post_message(self.OpenRequested())
 
 
-class ConsoleRagChip(ConsoleChip):
-    """Library-search readiness chip that opens the Library search settings modal.
-
-    Same activation contract as the sibling action chips: Enter/Space while
-    focused, or a click. "Library search: off" is not a latent toggle the
-    chip could flip in place -- it reads "on" once retrieved Library
-    evidence is staged for the next send -- so activation opens the modal
-    where the user sets the retrieval query and runs it.
-    """
+class ConsoleLibraryChip(ConsoleChip):
+    """Two-axis Library policy chip that opens conversation access controls."""
 
     BINDINGS = [
-        Binding(
-            "enter", "open_rag_settings", "Open Library search settings", show=False
-        ),
-        Binding(
-            "space", "open_rag_settings", "Open Library search settings", show=False
-        ),
+        Binding("enter", "open_library_access", "Open Library access", show=False),
+        Binding("space", "open_library_access", "Open Library access", show=False),
     ]
 
     class OpenRequested(Message):
         """Posted when the RAG chip is activated from keyboard or mouse."""
 
-    def action_open_rag_settings(self) -> None:
+    def action_open_library_access(self) -> None:
         self.post_message(self.OpenRequested())
 
     def _on_click(self, event: events.Click) -> None:
         self.post_message(self.OpenRequested())
+
+
+# Compatibility import for extensions that referenced the old class name.
+# The rendered widget/id and its action now expose Library policy semantics.
+ConsoleRagChip = ConsoleLibraryChip
 
 
 class ConsoleSourcesChip(ConsoleChip):
@@ -467,6 +461,14 @@ class ConsoleStatusChips(Horizontal):
                 # their learned relative order behind it. Hidden unless a run is
                 # active (see ``sync_run_chip``).
                 yield self._run_chip()
+                # The two-axis Library policy is the primary permission
+                # readout. Keep it ahead of provider/model metadata so both
+                # axes remain painted before horizontal overflow begins.
+                yield self._chip(
+                    self.state.rag_label,
+                    id="console-library-chip",
+                    chip_class=ConsoleLibraryChip,
+                )
                 yield self._chip(
                     self.state.provider_label,
                     id="console-provider-chip",
@@ -486,11 +488,6 @@ class ConsoleStatusChips(Horizontal):
                     self.state.assistant_label,
                     id="console-assistant-chip",
                     chip_class=ConsoleAssistantChip,
-                )
-                yield self._chip(
-                    self.state.rag_label,
-                    id="console-rag-chip",
-                    chip_class=ConsoleRagChip,
                 )
                 yield self._chip(
                     self.state.sources_label,
@@ -548,12 +545,12 @@ class ConsoleStatusChips(Horizontal):
     def set_collapsed(self, collapsed: bool) -> None:
         """Toggle the mounted status presentations without touching chip state."""
         self._collapsed = bool(collapsed)
-        self.query_one("#console-status-expanded", Horizontal).display = (
-            not self._collapsed
-        )
-        self.query_one("#console-status-collapsed", Horizontal).display = (
-            self._collapsed
-        )
+        self.query_one(
+            "#console-status-expanded", Horizontal
+        ).display = not self._collapsed
+        self.query_one(
+            "#console-status-collapsed", Horizontal
+        ).display = self._collapsed
 
     def _run_chip(self) -> ConsoleRunChip:
         label, tooltip, hidden = self._run_chip_render(*self._run_chip_state)
@@ -803,7 +800,7 @@ class ConsoleStatusChips(Horizontal):
         Returns:
             ``label``: chip text (the full ``state.label``; the strip
             hasn't been laid out yet at compose time, so the width-aware
-            compact form only applies from ``sync_cost_state``).
+            compact form applies on the first resize or ``sync_cost_state``).
             ``tooltip``: hover/focus text. ``hidden``: ``True`` when
             ``state`` is ``None``. ``alert``/``cold``: ``state.alert``/
             ``state.cold``.
@@ -835,19 +832,33 @@ class ConsoleStatusChips(Horizontal):
         if state is None:
             chip.display = False
             return
-        # Narrow strips fall back to the delta-free compact label; pre-
-        # layout (``size.width`` still zero) falls back to the full label.
-        label = (
-            state.compact_label
-            if self.size.width and self.size.width < 120
-            else state.label
-        )
-        chip.update(label)
+        self._apply_cost_chip_label(chip)
         chip.tooltip = Content(state.tooltip)
         chip.display = True
         chip.set_class(state.alert, "console-chip-alert")
         chip.set_class(state.cold, "console-chip-cold")
         chip.set_class(not state.alert and not state.cold, "console-chip-dim")
+
+    def _apply_cost_chip_label(self, chip: ConsoleCostChip) -> None:
+        """Apply the current cost state's full or compact width-aware label."""
+        state = self._cost_state
+        if state is None:
+            return
+        label = state.compact_label if self.screen.size.width < 120 else state.label
+        chip.update(label)
+        chip.refresh(layout=True)
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Reapply width-aware cost copy without requiring a state change.
+
+        Args:
+            _event: Textual resize notification; width is read from the app.
+        """
+        try:
+            chip = self.query_one("#console-cost-chip", ConsoleCostChip)
+        except NoMatches:
+            return
+        self._apply_cost_chip_label(chip)
 
     def sync_state(self, state: ConsoleControlState) -> None:
         """Refresh pill labels and counter emphasis from a new snapshot."""
@@ -859,7 +870,7 @@ class ConsoleStatusChips(Horizontal):
             "#console-model-chip": state.model_label,
             "#console-system-prompt-chip": state.system_prompt_label,
             "#console-assistant-chip": state.assistant_label,
-            "#console-rag-chip": state.rag_label,
+            "#console-library-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,
             "#console-tools-chip": state.tools_label,
             "#console-approvals-chip": state.approvals_label,

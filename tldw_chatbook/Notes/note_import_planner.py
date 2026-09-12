@@ -56,7 +56,6 @@ _NEW_REASON = "Ready to import as a new note."
 _UNCHANGED_REASON = "This source matches an unchanged existing note."
 _CHANGED_REASON = "This source differs from an existing note."
 _UNCERTAIN_REASON = "This source may match an existing note; review before updating."
-_UNSUPPORTED_REASON = "This file type is not supported."
 _FAILED_REASON = "This source could not be imported safely."
 
 
@@ -382,12 +381,11 @@ def _issue_item(
         payloads=(),
         memberships=(),
         classification=issue.classification,
-        reason=_bounded_reason(
-            _UNSUPPORTED_REASON
-            if issue.classification is ImportClassification.UNSUPPORTED
-            else _FAILED_REASON,
-            bounds,
-        ),
+        # task-32130 / task-32129: the parser (or, for an Obsidian skip, the
+        # discovery walk) already wrote one honest reason for this exact reason
+        # code; replacing every one of them with a single "could not be
+        # imported safely" was the reported dishonesty.
+        reason=_bounded_reason(issue.user_message or _FAILED_REASON, bounds),
         default_action=ImportAction.SKIP,
         selected_action=ImportAction.SKIP,
         allowed_actions=(ImportAction.SKIP,),

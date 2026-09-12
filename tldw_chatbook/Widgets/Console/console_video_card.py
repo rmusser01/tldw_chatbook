@@ -7,9 +7,8 @@ NEVER from bytes in the database. When the file is gone (restart/expiry/LRU
 eviction) the SAME card renders the named tombstone with a regenerate
 affordance; no exception, no empty row.
 
-Actions (▶ play, Save a copy, ♻ regenerate) ride the selected-message
-action row exactly like the image card's browse/keep -- this widget only
-renders status + details.
+Video-specific Play and Save a copy actions live on this card; general
+message actions remain in the selected message row.
 """
 
 from __future__ import annotations
@@ -19,9 +18,10 @@ from typing import Literal
 
 from rich.table import Table
 from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Static
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Widgets.Console.console_video_preview import ConsoleVideoPreview
 
@@ -157,12 +157,33 @@ class ConsoleVideoCard(Vertical):
     ``ConsoleGenerationCard``'s always-rebuild contract.
     """
 
-    def __init__(self, spec: ConsoleVideoCardSpec) -> None:
+    def __init__(
+        self,
+        spec: ConsoleVideoCardSpec,
+        *,
+        actions: tuple[ConsoleMessageAction, ...] | None = None,
+    ) -> None:
         super().__init__(
             id=f"console-video-card-{spec.message_id}",
             classes="console-video-card",
         )
         self.spec = spec
+        available = spec.status == "ready"
+        reason = (
+            ""
+            if available
+            else "The ephemeral video file is gone — regenerate to recreate it."
+        )
+        self.actions = (
+            actions
+            if actions is not None
+            else (
+                ConsoleMessageAction("video-play", "Play", available, reason),
+                ConsoleMessageAction(
+                    "video-save-copy", "Save a copy", available, reason
+                ),
+            )
+        )
         self.border_title = CARD_TITLE
         self.styles.border = ("round", CARD_BORDER_COLOR)
 
@@ -201,3 +222,17 @@ class ConsoleVideoCard(Vertical):
             id=f"console-video-card-details-{self.spec.message_id}",
             classes="console-video-card-details",
         )
+        buttons = []
+        for action in self.actions:
+            button = Button(
+                action.label,
+                id=f"console-message-action-{action.action_id}-{self.spec.message_id}",
+                classes="console-media-card-action",
+                disabled=not action.enabled,
+            )
+            button.console_action_id = action.action_id
+            button.console_message_id = self.spec.message_id
+            if action.disabled_reason:
+                button.tooltip = action.disabled_reason
+            buttons.append(button)
+        yield Horizontal(*buttons, classes="console-media-card-actions")

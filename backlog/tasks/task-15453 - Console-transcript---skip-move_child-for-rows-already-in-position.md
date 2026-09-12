@@ -1,6 +1,6 @@
 ---
 id: TASK-15453
-title: Console transcript: skip move_child for rows already in position
+title: 'Console transcript: skip move_child for rows already in position'
 status: Done
 assignee:
   - '@claude'

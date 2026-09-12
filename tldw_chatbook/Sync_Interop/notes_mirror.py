@@ -39,6 +39,13 @@ class NotesMirror:
         # lifetime of this instance, so this is the only site that needs it
         # (task-15465).
         self._conn.execute("PRAGMA synchronous = NORMAL")
+        # task-22224: a HELD connection needs true autocommit (see
+        # Library_Ingest_Jobs_DB.py's module docstring, the store template).
+        # Safe here because every write in this class is a SINGLE statement
+        # (the ``with self._conn:`` blocks add commit-on-exit, which becomes
+        # a harmless no-op); under the legacy default a future bare DML would
+        # be silently rolled back when the held connection closes.
+        self._conn.isolation_level = None
         with self._conn:
             self._conn.execute(
                 """

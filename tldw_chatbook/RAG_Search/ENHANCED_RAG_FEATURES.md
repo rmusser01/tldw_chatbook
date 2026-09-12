@@ -10,7 +10,6 @@ The enhanced RAG implementation adds several sophisticated features to improve r
 2. **Hierarchical Document Structure Preservation**
 3. **Parent Document Retrieval**
 4. **Advanced Text Processing**
-5. **Table Serialization**
 
 ## 1. Enhanced Chunking with Character-Level Position Tracking
 
@@ -31,8 +30,7 @@ chunks = service.chunk_text_with_structure(
     chunk_overlap=100,
     method="hierarchical",  # or "structural"
     preserve_structure=True,
-    clean_artifacts=True,
-    serialize_tables=True
+    clean_artifacts=True
 )
 ```
 
@@ -122,39 +120,6 @@ cleaned_text, corrections = parser.clean_text(pdf_text)
 - Maintains list and table relationships
 - Handles footnotes and references correctly
 
-## 5. Table Serialization
-
-### Features
-- Multiple serialization methods (entities, sentences, hybrid)
-- Preserves table structure and relationships
-- Creates searchable representations of tabular data
-
-### Serialization Methods
-
-#### Entity Blocks
-Each table row becomes a structured entity:
-```
-Row 1; Product: Laptop; Q1 Sales: 1000; Q2 Sales: 1200; Growth: 20%
-```
-
-#### Natural Language Sentences
-Tables converted to descriptive sentences:
-```
-This table contains 3 rows and 4 columns with headers: Product, Q1 Sales, Q2 Sales, Growth.
-In row 1, Product is Laptop, Q1 Sales is 1000, Q2 Sales is 1200, Growth is 20%.
-```
-
-### Implementation
-```python
-from tldw_chatbook.RAG_Search.table_serializer import serialize_table
-
-result = serialize_table(
-    table_text,
-    format=TableFormat.MARKDOWN,
-    method="hybrid"  # Uses both entities and sentences
-)
-```
-
 ## Usage Examples
 
 ### Basic Usage
@@ -203,7 +168,6 @@ results = await service.index_batch_with_parents(
 - `parent_size_multiplier` - How much larger parent chunks are
 - `preserve_structure` - Whether to maintain document structure
 - `clean_artifacts` - Whether to clean PDF artifacts
-- `serialize_tables` - Whether to serialize tables
 
 ### Search Options
 - `expand_to_parent` - Automatically expand to parent context
@@ -258,7 +222,6 @@ pytest Tests/RAG/
 This covers:
 - Enhanced chunking with structure preservation
 - Parent document retrieval
-- Table serialization
 - PDF artifact cleaning
 - Context expansion during search
 
@@ -269,3 +232,9 @@ standalone context assembly (`context_assembler.py`), and LLM query expansion
 (`query_expansion.py`) were removed as dead code (task-252); they were never
 wired into the live RAG pipeline. Context expansion here refers to the parent
 document retrieval in `simplified/enhanced_rag_service.py`, which is live.
+
+Table serialization (`table_serializer.py` and the `serialize_tables`
+chunking kwarg) was removed with the retired home-grown structure parser
+(chunking-engine-parity): the module had zero production importers, and
+tables are chunked as structural blocks by the vendored engine's
+`structure_aware` strategy.

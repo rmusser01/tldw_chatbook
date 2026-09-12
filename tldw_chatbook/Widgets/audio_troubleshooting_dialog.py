@@ -21,6 +21,10 @@ from textual.screen import ModalScreen
 from textual.reactive import reactive
 from textual import work
 from loguru import logger
+from tldw_chatbook.Widgets.pausable_progress import (
+    PausableLoadingIndicator,
+    PausableProgressBar,
+)
 import asyncio
 
 from ..Audio.dictation_service_lazy import (
@@ -161,7 +165,7 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
                 # Status Overview
                 with Container(id="status-container", classes="status-section"):
                     yield Label("Checking audio system...", id="status-text")
-                    yield LoadingIndicator(id="status-loading")
+                    yield PausableLoadingIndicator(id="status-loading")
 
                 # Device Selection
                 with Collapsible(title="🎤 Audio Devices", collapsed=False):
@@ -176,7 +180,7 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
                 # Level Meter
                 with Collapsible(title="📊 Input Level", collapsed=False):
                     yield Label("Microphone Level:")
-                    yield ProgressBar(
+                    yield PausableProgressBar(
                         total=100,
                         show_eta=False,
                         id="level-meter",
@@ -221,7 +225,7 @@ class AudioTroubleshootingDialog(ModalScreen[bool]):
         """Initialize when dialog is shown."""
         self.run_worker(self._initialize_audio())
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="audio-troubleshooting-initialize")
     async def _initialize_audio(self):
         """Initialize audio system and enumerate devices."""
         log = self.query_one("#diagnostic-log", RichLog)

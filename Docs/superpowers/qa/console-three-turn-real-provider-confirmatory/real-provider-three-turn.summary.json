@@ -1,0 +1,173 @@
+{
+  "arms": {
+    "control": {
+      "metrics": {
+        "assistant_durable_to_release_ns": {
+          "median": 142145.5,
+          "p95": 233708.0
+        },
+        "conversation_wall_ns": {
+          "median": 27776125875.0,
+          "p95": 28540631500.0
+        },
+        "event_loop_lag_p95_ns": {
+          "median": 14928016.5,
+          "p95": 24090095.0
+        },
+        "provider_total_ns": {
+          "median": 6050005750.0,
+          "p95": 7170722626.0
+        },
+        "terminal_to_third_provider_ns": {
+          "median": 2067582937.5,
+          "p95": 2430733625.0
+        },
+        "third_send_to_worker_ns": {
+          "median": 587698875.0,
+          "p95": 779444500.0
+        }
+      },
+      "verdict": "reference"
+    },
+    "disabled": {
+      "gates": {
+        "event_loop_lag_p95_ns": {
+          "bounds": {
+            "one_sided_lower_95": 0.38308627070221485,
+            "one_sided_upper_95": 0.8318428972215249,
+            "two_sided_95": [
+              0.38308627070221485,
+              0.8318428972215249
+            ]
+          },
+          "verdict": "pass"
+        },
+        "third_send_to_worker_ns": {
+          "bounds": {
+            "one_sided_lower_95": 0.25429440454066965,
+            "one_sided_upper_95": 0.42544159331064285,
+            "two_sided_95": [
+              0.2512380612089764,
+              0.45862443267434455
+            ]
+          },
+          "verdict": "pass"
+        }
+      },
+      "metrics": {
+        "assistant_durable_to_release_ns": {
+          "median": 49333.5,
+          "p95": 68583.0
+        },
+        "conversation_wall_ns": {
+          "median": 26495388104.5,
+          "p95": 26813766750.0
+        },
+        "event_loop_lag_p95_ns": {
+          "median": 9524132.0,
+          "p95": 14103306.0
+        },
+        "provider_total_ns": {
+          "median": 6041427895.0,
+          "p95": 7169874376.0
+        },
+        "terminal_to_third_provider_ns": {
+          "median": 1490269354.0,
+          "p95": 1836769875.0
+        },
+        "third_send_to_worker_ns": {
+          "median": 171420562.0,
+          "p95": 288082625.0
+        }
+      },
+      "verdict": "pass"
+    },
+    "enabled": {
+      "gates": {
+        "event_loop_lag_p95_ns": {
+          "bounds": {
+            "one_sided_lower_95": 0.6037286898085747,
+            "one_sided_upper_95": 1.3178654051262964,
+            "two_sided_95": [
+              0.592515625354724,
+              1.3178654051262964
+            ]
+          },
+          "verdict": "inconclusive"
+        },
+        "third_send_to_worker_ns": {
+          "bounds": {
+            "one_sided_lower_95": 0.37953845453554413,
+            "one_sided_upper_95": 0.5170945638760034,
+            "two_sided_95": [
+              0.36643735422737117,
+              0.5226399110888031
+            ]
+          },
+          "verdict": "pass"
+        }
+      },
+      "metrics": {
+        "assistant_durable_to_release_ns": {
+          "median": 280125.0,
+          "p95": 385833.0
+        },
+        "conversation_wall_ns": {
+          "median": 27117186021.0,
+          "p95": 27425442459.0
+        },
+        "event_loop_lag_p95_ns": {
+          "median": 16137911.5,
+          "p95": 22775511.0
+        },
+        "provider_total_ns": {
+          "median": 5995513291.5,
+          "p95": 6619463542.0
+        },
+        "terminal_to_third_provider_ns": {
+          "median": 1720452562.5,
+          "p95": 2086252667.0
+        },
+        "third_send_to_worker_ns": {
+          "median": 189527853.5,
+          "p95": 327937542.0
+        }
+      },
+      "verdict": "inconclusive"
+    }
+  },
+  "burn_in_contract_status": "passed",
+  "critical_path_improvement_claims": {
+    "assistant_durable_to_release_ns": {
+      "disabled": {
+        "one_sided_lower_95": 0.23100303951367782,
+        "one_sided_upper_95": 0.36524655230050035,
+        "two_sided_95": [
+          0.23100303951367782,
+          0.36826167904299256
+        ]
+      }
+    },
+    "terminal_to_third_provider_ns": {
+      "disabled": {
+        "one_sided_lower_95": 0.6848104015619403,
+        "one_sided_upper_95": 0.7904557508530229,
+        "two_sided_95": [
+          0.6848104015619403,
+          0.7943968509180624
+        ]
+      },
+      "enabled": {
+        "one_sided_lower_95": 0.7790990671549277,
+        "one_sided_upper_95": 0.9710436178489583,
+        "two_sided_95": [
+          0.7661692457401611,
+          0.9758851033607417
+        ]
+      }
+    }
+  },
+  "excluded_burn_in_sample_count": 15,
+  "overall_verdict": "inconclusive",
+  "validation_errors": []
+}

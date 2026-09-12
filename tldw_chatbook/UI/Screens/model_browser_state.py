@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
@@ -16,6 +17,44 @@ if TYPE_CHECKING:
         InstalledArtifact,
         ProvenanceClass,
     )
+
+
+_GGUF_QUANTIZATION_TOKENS = (
+    "IQ3_XXS",
+    "IQ2_XXS",
+    "Q4_K_M",
+    "Q4_K_S",
+    "Q5_K_M",
+    "Q5_K_S",
+    "Q3_K_M",
+    "Q3_K_L",
+    "Q3_K_S",
+    "IQ4_XS",
+    "IQ4_NL",
+    "IQ3_XS",
+    "IQ3_M",
+    "IQ3_S",
+    "IQ2_XS",
+    "IQ2_M",
+    "IQ2_S",
+    "IQ1_M",
+    "IQ1_S",
+    "Q2_K_S",
+    "Q2_K",
+    "Q4_0",
+    "Q4_1",
+    "Q5_0",
+    "Q5_1",
+    "Q6_K",
+    "Q8_0",
+    "BF16",
+    "F16",
+    "F32",
+)
+_GGUF_QUANTIZATION_RE = re.compile(
+    rf"(?:^|[._-])({'|'.join(_GGUF_QUANTIZATION_TOKENS)})(?=[._-]|$)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +118,183 @@ class InventoryRow:
     installed_store_bytes: int | None
     staging_store_bytes: int | None
     free_bytes: int | None
+
+
+@dataclass(frozen=True)
+class VariantGuidance:
+    """Provider-neutral display facts for one selectable model variant."""
+
+    filename: str
+    total_bytes: int
+    file_count: int
+    source_index: int
+    quantization: str | None
+    summary: str
+    filenames: tuple[str, ...] = ()
+
+
+def variant_guidance(
+    filename: str,
+    *,
+    total_bytes: int,
+    file_count: int,
+    source_index: int,
+    filenames: Iterable[str] = (),
+) -> VariantGuidance:
+    """Build conservative filename-derived guidance for one variant.
+
+    Args:
+        filename: Exact provider-supplied candidate filename or display path.
+        total_bytes: Exact total bytes across the selectable file set.
+        file_count: Number of files in the selectable set.
+        source_index: Stable position in the provider's source ordering.
+        filenames: Additional exact filenames in the same selectable file set.
+
+    Returns:
+        Render-ready facts without a compatibility or machine-fit claim.
+    """
+    exact_filenames = (filename, *tuple(filenames))
+    detected = {_filename_quantization(item) for item in exact_filenames}
+    quantization = (
+        detected.pop() if len(detected) == 1 and None not in detected else None
+    )
+    summary = _variant_quantization_summary(quantization)
+    return VariantGuidance(
+        filename=filename,
+        total_bytes=total_bytes,
+        file_count=file_count,
+        source_index=source_index,
+        quantization=quantization,
+        summary=summary,
+        filenames=exact_filenames,
+    )
+
+
+def filter_variant_guidance(
+    rows: Iterable[VariantGuidance], query: str
+) -> tuple[VariantGuidance, ...]:
+    """Filter variant guidance by filename or recognized quantization.
+
+    Args:
+        rows: Render-ready variants to filter without provider I/O.
+        query: Case-insensitive filename or quantization substring.
+
+    Returns:
+        Matching variants in their original deterministic order.
+    """
+    normalized_query = query.strip().casefold()
+    rows = tuple(rows)
+    if not normalized_query:
+        return rows
+
+    return tuple(
+        row
+        for row in rows
+        if any(
+            normalized_query in filename.casefold()
+            for filename in (row.filenames or (row.filename,))
+        )
+        or (
+            row.quantization is not None
+            and normalized_query in row.quantization.casefold()
+        )
+    )
+
+
+def sort_variant_guidance(
+    rows: Iterable[VariantGuidance], order: str
+) -> tuple[VariantGuidance, ...]:
+    """Sort variant guidance using one explicit user-facing order.
+
+    Args:
+        rows: Render-ready variants to sort.
+        order: One of ``source``, ``size-asc``, ``size-desc``, or
+            ``quantization``.
+
+    Returns:
+        A deterministically ordered tuple of variants.
+
+    Raises:
+        ValueError: If ``order`` is not supported.
+    """
+    rows = tuple(rows)
+    if order == "source":
+        return tuple(sorted(rows, key=lambda row: row.source_index))
+    if order == "size-asc":
+        return tuple(sorted(rows, key=lambda row: (row.total_bytes, row.source_index)))
+    if order == "size-desc":
+        return tuple(sorted(rows, key=lambda row: (-row.total_bytes, row.source_index)))
+    if order == "quantization":
+        return tuple(sorted(rows, key=_variant_quantization_sort_key))
+    raise ValueError(f"Unsupported variant sort order: {order}")
+
+
+def _filename_quantization(filename: str) -> str | None:
+    """Return one exact token recognized in a provider path's basename."""
+    basename = filename.rsplit("/", 1)[-1]
+    match = _GGUF_QUANTIZATION_RE.search(basename)
+    return match.group(1).upper() if match is not None else None
+
+
+def _variant_quantization_sort_key(row: VariantGuidance) -> tuple[int, str, int]:
+    """Place low-bit quantizations first and unknown filenames last."""
+    quantization = row.quantization
+    if quantization is None:
+        return (99, "", row.source_index)
+    bit_match = re.match(r"I?Q(\d)", quantization)
+    if bit_match is not None:
+        return (int(bit_match.group(1)), quantization, row.source_index)
+    high_precision_rank = {"F16": 16, "BF16": 16, "F32": 32}
+    return (
+        high_precision_rank.get(quantization, 98),
+        quantization,
+        row.source_index,
+    )
+
+
+def _variant_quantization_summary(quantization: str | None) -> str:
+    """Describe only the general compression class named by a filename token."""
+    if quantization is None:
+        return "No recognized quantization token in the filename."
+    if quantization in {"F16", "BF16", "F32"}:
+        return (
+            "High-precision weights · typically larger than quantized variants "
+            "of the same model."
+        )
+    bit_match = re.match(r"I?Q(\d)", quantization)
+    bits = int(bit_match.group(1)) if bit_match is not None else 0
+    importance_matrix = "importance-matrix " if quantization.startswith("IQ") else ""
+    if bits <= 2:
+        return (
+            f"{bits}-bit {importance_matrix}quantization · for the same model, "
+            "typically very compact, with a substantial fidelity trade-off."
+        )
+    if bits == 3:
+        return (
+            f"3-bit {importance_matrix}quantization · for the same model, "
+            "typically compact, with a larger fidelity trade-off than 4-bit "
+            "and higher variants."
+        )
+    if bits == 4:
+        return (
+            f"4-bit {importance_matrix}quantization · for the same model, "
+            "typically smaller than higher-bit variants, with a greater "
+            "fidelity trade-off."
+        )
+    if bits == 5:
+        return (
+            "5-bit quantization · for the same model, typically a middle ground "
+            "between 4-bit size and higher-bit fidelity."
+        )
+    if bits == 6:
+        return (
+            "6-bit quantization · for the same model, typically larger than "
+            "Q4/Q5 variants, with a smaller fidelity trade-off."
+        )
+    return (
+        "8-bit quantization · for the same model, typically large, with a "
+        "smaller fidelity trade-off than lower-bit variants."
+    )
 
 
 def provenance_label(provenance: tuple[ProvenanceClass, ...]) -> str:

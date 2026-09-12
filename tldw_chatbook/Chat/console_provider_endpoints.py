@@ -7,6 +7,7 @@ from ipaddress import ip_address
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.provider_endpoint_contract import (
+    URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
     resolve_provider_endpoint,
 )
@@ -22,24 +23,6 @@ DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
 INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
-)
-URL_BASED_PROVIDER_KEYS = frozenset(
-    {
-        "aphrodite",
-        "custom",
-        "custom_2",
-        "koboldcpp",
-        "llama_cpp",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_ollama",
-        "local_vllm",
-        "ollama",
-        "oobabooga",
-        "qwencloud",
-        "tabbyapi",
-        "vllm",
-    }
 )
 _ENDPOINT_SETTING_KEYS = (
     "api_base_url",

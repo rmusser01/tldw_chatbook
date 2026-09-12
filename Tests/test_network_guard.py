@@ -458,3 +458,127 @@ def test_denial_is_restored_after_a_loopback_only_test() -> None:
     with pytest.raises(network_guard.BlockedNetworkAccess):
         socket.create_connection(("127.0.0.1", 8080), timeout=1)
     _drain_expecting()
+
+
+# --- provenance: which thread made the attempt (TASK-21592) -----------------
+#
+# The blocked-attempt record is process-global and the autouse `_no_network_io`
+# fixture drains it at EVERY teardown. `huggingface_hub` retries a blocked
+# request five times with backoff on a worker thread, so on dev `f49956038`
+# running `Tests/App` with `Tests/Library` produced ten teardown errors on
+# `Tests/Library` nodes that had themselves passed, with the ids varying run to
+# run (10, then 3, 7, 3 on a reduced repro). Nothing in the message said the
+# attempt came from somewhere else. These pin the provenance that says so.
+
+
+def test_a_blocked_attempt_records_the_thread_that_made_it() -> None:
+    with pytest.raises(network_guard.BlockedNetworkAccess):
+        socket.create_connection(("192.0.2.1", 80), timeout=1)
+
+    threads = network_guard.drain_blocked_attempt_threads()
+    _drain_expecting()
+    assert threads == (threading.main_thread().name,)
+
+
+def test_an_attempt_from_a_worker_thread_names_that_worker() -> None:
+    def _trip_the_guard() -> None:
+        try:
+            socket.create_connection(("192.0.2.1", 80), timeout=1)
+        except network_guard.BlockedNetworkAccess:
+            pass
+
+    worker = threading.Thread(target=_trip_the_guard, name="outlives-its-test")
+    worker.start()
+    worker.join(timeout=10)
+    assert not worker.is_alive()
+
+    threads = network_guard.drain_blocked_attempt_threads()
+    attempts = _drain_expecting()
+    assert threads == ("outlives-its-test",)
+
+    message = network_guard.describe_blocked_attempts(attempts, threads)
+    assert "outlives-its-test" in message
+    assert "EARLIER test" in message
+
+
+def test_a_main_thread_attempt_is_not_blamed_on_an_earlier_test() -> None:
+    """The provenance note must not fire for the ordinary same-test case."""
+    message = network_guard.describe_blocked_attempts(
+        (("socket.create_connection", "192.0.2.1:80"),),
+        (threading.main_thread().name,),
+    )
+    assert "192.0.2.1:80" in message
+    assert "EARLIER test" not in message
+
+
+def test_draining_the_attempts_also_clears_their_thread_names() -> None:
+    """The two records must never drift out of alignment across tests."""
+    with pytest.raises(network_guard.BlockedNetworkAccess):
+        socket.create_connection(("192.0.2.1", 80), timeout=1)
+
+    _drain_expecting()
+    assert network_guard.drain_blocked_attempt_threads() == ()
+
+
+def test_concurrent_denials_keep_each_attempt_with_its_own_thread_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two threads recording at once must not swap each other's provenance.
+
+    ``_deny`` appends to two parallel lists. Each ``append`` is atomic under
+    the GIL, but the PAIR is not, so an interleave can leave the thread names
+    positionally swapped -- and the whole reason the second list exists
+    (TASK-21592) is to say which thread made the attempt, so a swap points the
+    next debugger at an innocent thread.
+
+    The interleave is forced, not raced: the hook below runs inside the first
+    ``_deny``, between its two appends, and starts a second denier there. If
+    nothing serializes the pair, that second denier completes inside the
+    window and the records interleave every time; if it is serialized, it
+    cannot start until the window closes, so the wait times out and the
+    ordering holds.
+    """
+    network_guard.drain_blocked_attempt_threads()
+    network_guard.drain_blocked_attempts()
+
+    main_name = threading.current_thread().name
+    worker_finished = threading.Event()
+    real_current_thread = threading.current_thread
+    hooked = threading.Event()
+    workers: list[threading.Thread] = []
+
+    def _second_denier() -> None:
+        network_guard._deny("socket.create_connection", ("192.0.2.9", 443))
+        worker_finished.set()
+
+    def _hooked_current_thread() -> threading.Thread:
+        current = real_current_thread()
+        if current.name == main_name and not hooked.is_set():
+            hooked.set()
+            worker = threading.Thread(
+                target=_second_denier,
+                name="guard-provenance-race",
+            )
+            workers.append(worker)
+            worker.start()
+            # Returns early only if the second denial got all the way through
+            # while this one was mid-pair.
+            worker_finished.wait(0.5)
+        return current
+
+    monkeypatch.setattr(threading, "current_thread", _hooked_current_thread)
+    network_guard._deny("socket.create_connection", ("192.0.2.8", 80))
+    monkeypatch.undo()
+
+    for worker in workers:
+        worker.join(timeout=5.0)
+        assert not worker.is_alive()
+
+    threads = network_guard.drain_blocked_attempt_threads()
+    attempts = network_guard.drain_blocked_attempts()
+
+    assert hooked.is_set(), "the interleave hook never ran"
+    assert len(attempts) == len(threads) == 2
+    provenance = dict(zip((address for _call, address in attempts), threads))
+    assert provenance["192.0.2.8:80"] == main_name
+    assert provenance["192.0.2.9:443"] == "guard-provenance-race"

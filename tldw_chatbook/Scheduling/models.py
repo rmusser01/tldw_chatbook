@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class TaskStatus(str, Enum):
@@ -60,6 +60,119 @@ class AutomationFamily(str, Enum):
     AGENT_TASK = "agent_task"
 
 
+class RunStatus(str, Enum):
+    """Automation run status — server literals plus local ``timed_out``.
+
+    The server's normalized API folds timeouts into ``failed`` and keeps
+    the truth in ``run_summary.legacy_status``; locally ``timed_out`` is
+    first-class (TASK-18939 vocabulary, spec §4.1).
+    """
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+
+
+class RunOutcome(str, Enum):
+    """Automation run outcome, orthogonal to status."""
+
+    FINDING = "finding"
+    NO_MATCH = "no_match"
+    PARTIAL = "partial"
+    DEGRADED = "degraded"
+    NONE = "none"
+
+
+class ReviewState(str, Enum):
+    """Result review state."""
+
+    UNREAD = "unread"
+    READ = "read"
+    DISMISSED = "dismissed"
+
+
+class AutomationRun(BaseModel):
+    """One local automation execution (server ``RunRow`` shape, spec §4.1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    server_id: str | None = None
+    owner_id: str = "local"
+    definition_id: str
+    definition_version: int = 1
+    trigger_reason: str
+    status: RunStatus = RunStatus.QUEUED
+    outcome: RunOutcome = RunOutcome.NONE
+    schedule_slot: str | None = None
+    scope_snapshot: dict[str, Any] = Field(default_factory=dict)
+    finding_policy_snapshot: dict[str, Any] = Field(default_factory=dict)
+    rag_request_snapshot: dict[str, Any] = Field(default_factory=dict)
+    run_summary: dict[str, Any] = Field(default_factory=dict)
+    evidence_summary: dict[str, Any] = Field(default_factory=dict)
+    failure_reason: dict[str, Any] | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+
+    @field_validator(
+        "scope_snapshot",
+        "finding_policy_snapshot",
+        "rag_request_snapshot",
+        "run_summary",
+        "evidence_summary",
+        mode="before",
+    )
+    @classmethod
+    def _none_dict_to_default(cls, value: Any) -> Any:
+        """A DB row created without these kwargs stores NULL; coerce it."""
+        return {} if value is None else value
+
+
+class AutomationResult(BaseModel):
+    """One automation result (server ``ResultRow`` shape, spec §4.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    server_id: str | None = None
+    owner_id: str = "local"
+    definition_id: str
+    run_id: str
+    kind: str
+    title: str
+    summary: str
+    answer: Any | None = None
+    answer_mode: str = "none"
+    confidence: dict[str, Any] = Field(default_factory=dict)
+    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    dedupe_key: str
+    visibility_destination: dict[str, Any] = Field(default_factory=dict)
+    review_state: ReviewState = ReviewState.UNREAD
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+    review_note: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime | None = None
+
+    @field_validator("confidence", "visibility_destination", mode="before")
+    @classmethod
+    def _none_dict_to_default(cls, value: Any) -> Any:
+        """A DB row created without these kwargs stores NULL; coerce it."""
+        return {} if value is None else value
+
+    @field_validator("source_refs", mode="before")
+    @classmethod
+    def _none_list_to_default(cls, value: Any) -> Any:
+        """A DB row created without ``source_refs`` stores NULL; coerce it."""
+        return [] if value is None else value
+
+
 class ScheduledTask(BaseModel):
     """Lightweight read-only task projection used for lists and watchlist jobs."""
 
@@ -101,6 +214,10 @@ class ReminderTask(BaseModel):
     #: Per-task handler execution timeout in seconds (task-18939). None
     #: means use the global ``[scheduling] handler_timeout_seconds``.
     timeout_seconds: float | None = None
+    #: Transfer state machine marker (schedules-handoff spec §6). NULL =
+    #: not in transfer. Values arrive in a later PR; the column lands with
+    #: schema v4 so readers must tolerate it from day one.
+    transfer_state: str | None = None
     link_type: str | None = None
     link_id: str | None = None
     link_url: str | None = None
@@ -147,6 +264,20 @@ class AutomationDefinition(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime | None = None
     archived_at: datetime | None = None
+    disabled_lock_kind: str | None = None
+    disabled_reason: str | None = None
+    resolution_state: str = "open"
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    resolved_result_id: str | None = None
+    finding_policy: dict[str, Any] = Field(
+        default_factory=lambda: {"preset": "balanced_findings"}
+    )
+    retention_policy: dict[str, Any] = Field(
+        default_factory=lambda: {"mode": "default"}
+    )
+    next_run_at: datetime | None = None
+    transfer_state: str | None = None
 
 
 class PreviewStatus(str, Enum):
@@ -172,8 +303,9 @@ class AutomationPreview(BaseModel):
     status: PreviewStatus = PreviewStatus.VALID
     payload_hash: str | None = None
     normalized_config: dict[str, Any] | None = None
-    validation_errors: list[str] | None = None
-    warnings: list[str] | None = None
+    risk_class: str | None = None
+    validation_errors: list[dict[str, Any]] | None = None
+    warnings: list[dict[str, Any]] | None = None
     visibility_policy: dict[str, Any] | None = None
     schedule_preview: dict[str, Any] | None = None
     redaction_policy: dict[str, Any] | None = None

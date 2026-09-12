@@ -10,7 +10,10 @@ from loguru import logger
 
 # Local imports
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
+from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.base_backends import APITTSBackend
+from tldw_chatbook.TTS.legacy_catalogs import ALLTALK_VOICES
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:7851"
 _HTTP_LOGGER_NAMES = ("httpx", "httpcore")
@@ -19,6 +22,7 @@ _HTTP_LOGGER_NAMES = ("httpx", "httpcore")
 class _AllTalkHTTPPrivacyFilter(logging.Filter):
     def filter(self, _record: logging.LogRecord) -> bool:
         return False
+
 
 #######################################################################################################################
 #
@@ -35,7 +39,7 @@ class AllTalkTTSBackend(APITTSBackend):
 
     Features:
     - OpenAI-compatible API at /v1/audio/speech
-    - Multiple voice files support (e.g., female_01.wav, male_01.wav)
+    - OpenAI voice aliases mapped to configured voices by the server
     - Language selection
     - Various output formats (wav, mp3, opus, etc.)
     - No API key required (local server)
@@ -50,10 +54,13 @@ class AllTalkTTSBackend(APITTSBackend):
             or _DEFAULT_BASE_URL
         ).rstrip("/")
 
-        self.default_voice = self.config.get(
-            "ALLTALK_TTS_VOICE",
-            self.config.get("ALLTALK_TTS_VOICE_DEFAULT", "female_01.wav"),
-        )
+        inherited_voice = self.config.get("ALLTALK_TTS_VOICE_DEFAULT", "alloy")
+        # This historical shipped default was a native-API filename. Only its
+        # inherited default meaning maps to the OpenAI endpoint's default alias;
+        # explicit request/model voice IDs remain opaque.
+        if inherited_voice == "female_01.wav":
+            inherited_voice = "alloy"
+        self.default_voice = self.config.get("ALLTALK_TTS_VOICE", inherited_voice)
 
         self.default_language = self.config.get(
             "ALLTALK_TTS_LANGUAGE",
@@ -80,9 +87,7 @@ class AllTalkTTSBackend(APITTSBackend):
         self._http_log_suppression_users += 1
         if self._http_log_suppression_users == 1:
             for logger_name in _HTTP_LOGGER_NAMES:
-                logging.getLogger(logger_name).addFilter(
-                    self._http_privacy_filter
-                )
+                logging.getLogger(logger_name).addFilter(self._http_privacy_filter)
         try:
             yield
         finally:
@@ -102,21 +107,21 @@ class AllTalkTTSBackend(APITTSBackend):
             # Try to fetch available voices
             voices_url = f"{self.base_url}/api/voices"
             with self._suppress_http_logs():
-                async with self.client.get(voices_url, timeout=5.0) as response:
-                    if response.status_code == 200:
-                        try:
-                            voices_data = response.json()
-                            if isinstance(voices_data, list):
-                                logger.info("AllTalk voices loaded (provider=alltalk)")
-                            else:
-                                logger.info("AllTalk server responded with voices data")
-                        except Exception:
-                            logger.debug("AllTalk voices response was invalid")
-                    else:
-                        logger.warning(
-                            "AllTalk voices request rejected "
-                            f"(status={response.status_code})"
-                        )
+                response = await self.client.get(voices_url, timeout=5.0)
+                if response.status_code == 200:
+                    try:
+                        voices_data = response.json()
+                        if isinstance(voices_data, list):
+                            logger.info("AllTalk voices loaded (provider=alltalk)")
+                        else:
+                            logger.info("AllTalk server responded with voices data")
+                    except Exception:
+                        logger.debug("AllTalk voices response was invalid")
+                else:
+                    logger.warning(
+                        "AllTalk voices request rejected "
+                        f"(status={response.status_code})"
+                    )
         except httpx.ConnectError:
             logger.warning("AllTalk connection unavailable (provider=alltalk)")
         except Exception:
@@ -149,11 +154,9 @@ class AllTalkTTSBackend(APITTSBackend):
         if len(request.input) > 10000:
             raise ValueError("Text input exceeds maximum length of 10000 characters.")
 
-        # Map voice to AllTalk format
-        voice = request.voice
-        if not voice.endswith(".wav"):
-            # If voice doesn't have .wav extension, try to map it
-            voice = self._map_voice_to_alltalk(voice)
+        # The OpenAI endpoint maps aliases to native voices itself. Explicit
+        # custom identifiers remain opaque and must be accepted by that endpoint.
+        voice = self.default_voice if request.voice == "default" else request.voice
 
         # Map response format
         response_format = request.response_format
@@ -192,10 +195,33 @@ class AllTalkTTSBackend(APITTSBackend):
                     response.raise_for_status()
 
                     chunk_size = 8192
+                    buffered = bytearray()
+                    received_bytes = 0
                     async for chunk in response.aiter_bytes(chunk_size=chunk_size):
-                        yield chunk
+                        received_bytes += len(chunk)
+                        if request.response_format == "pcm":
+                            check_buffered_audio_size(len(buffered) + len(chunk))
+                            buffered.extend(chunk)
+                        else:
+                            yield chunk
+
+                    if not received_bytes:
+                        raise ValueError("TTS service returned no audio.")
+
+                    if request.response_format == "pcm":
+                        from tldw_chatbook.TTS.audio_service import get_audio_service
+
+                        yield await get_audio_service().convert_audio(
+                            bytes(buffered),
+                            "pcm",
+                            source_format="wav",
+                            sample_rate=24000,
+                        )
 
             logger.info("AllTalk generation completed (provider=alltalk)")
+
+        except TTSOperationError:
+            raise
 
         except httpx.ConnectError:
             logger.error("AllTalk connection failed (provider=alltalk)")
@@ -228,76 +254,13 @@ class AllTalkTTSBackend(APITTSBackend):
             logger.error("AllTalk generation failed (provider=alltalk)")
             raise ValueError("AllTalk TTS generation failed.") from None
 
-    def _map_voice_to_alltalk(self, voice: str) -> str:
-        """
-        Map common voice names to AllTalk voice file names.
-
-        Args:
-            voice: Input voice name
-
-        Returns:
-            AllTalk voice file name
-        """
-        # Common voice mappings
-        voice_map = {
-            # OpenAI-style voices to AllTalk voices
-            "alloy": "female_01.wav",
-            "echo": "male_01.wav",
-            "fable": "female_02.wav",
-            "onyx": "male_02.wav",
-            "nova": "female_03.wav",
-            "shimmer": "female_04.wav",
-            # Gender-based mappings
-            "female": "female_01.wav",
-            "male": "male_01.wav",
-            "woman": "female_01.wav",
-            "man": "male_01.wav",
-            # Numbered mappings
-            "voice1": "female_01.wav",
-            "voice2": "male_01.wav",
-            "voice3": "female_02.wav",
-            "voice4": "male_02.wav",
-            # Default
-            "default": self.default_voice,
-        }
-
-        mapped_voice = voice_map.get(voice.lower(), voice)
-
-        # Ensure .wav extension if not present
-        if not mapped_voice.endswith(".wav"):
-            mapped_voice = f"{mapped_voice}.wav"
-
-        return mapped_voice
-
     async def list_voices(self) -> list[str]:
-        """
-        Get list of available voices from AllTalk server.
+        """Return OpenAI aliases; /api/voices exposes a different native API.
 
         Returns:
-            List of available voice names
+            The six supported endpoint aliases, independent of native speakers.
         """
-        try:
-            voices_url = f"{self.base_url}/api/voices"
-            with self._suppress_http_logs():
-                async with self.client.get(voices_url, timeout=5.0) as response:
-                    if response.status_code == 200:
-                        voices = response.json()
-                        if isinstance(voices, list):
-                            return voices
-                        else:
-                            logger.warning(
-                                f"Unexpected voices response format: {type(voices)}"
-                            )
-                            return [self.default_voice]
-                    else:
-                        logger.warning(
-                            "AllTalk voices request rejected "
-                            f"(status={response.status_code})"
-                        )
-                        return [self.default_voice]
-        except Exception:
-            logger.error("AllTalk voice discovery failed (provider=alltalk)")
-            return [self.default_voice]
+        return list(ALLTALK_VOICES)
 
     def get_capabilities(self) -> Dict[str, Any]:
         """Get backend capabilities"""
@@ -310,7 +273,7 @@ class AllTalkTTSBackend(APITTSBackend):
                 "aac",
                 "flac",
             ],  # AllTalk supported formats
-            "voices": [],  # Will be populated dynamically
+            "voices": list(ALLTALK_VOICES),
             "models": ["alltalk"],  # AllTalk doesn't use models
             "languages": [
                 "en",

@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ModelTurn,
     ToolCall,
+    ToolLoadSelection,
     ToolResult,
     ToolSchema,
 )
@@ -62,7 +63,7 @@ def make_deps(turns, *, invoke=None, review=None, cancel=None, clock=None):
         invoke_tool=invoke or (lambda c: ToolResult(ok=True, content="42")),
         spawn=lambda task: ToolResult(ok=True, content="sub done"),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=cancel or (lambda: False),
         clock=clock or (lambda: 0.0),
         review_tool_calls=review,
@@ -94,7 +95,7 @@ def test_loop_deps_review_tool_calls_defaults_to_none():
         invoke_tool=lambda c: ToolResult(ok=True),
         spawn=lambda t: ToolResult(ok=True),
         find_tools=lambda q: [],
-        load_schemas=lambda ids: [],
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
         should_cancel=lambda: False,
         clock=lambda: 0.0,
     )
@@ -135,6 +136,40 @@ def test_hook_receives_full_batch_before_any_invoke():
     assert len(seen_batches) == 1
     assert [c.name for c in seen_batches[0]] == ["calculator", "echo"]
     assert invoked == ["calculator", "echo"]
+
+
+def test_idless_call_gets_unique_review_identity_away_from_tool_name():
+    calls = [
+        ToolCall(name="calculator", args={"v": 1}, call_id="calculator"),
+        ToolCall(name="calculator", args={"v": 2}, call_id=""),
+    ]
+    invoked = []
+
+    def review(batch):
+        assert [call.call_id for call in batch] == [
+            "calculator",
+            "turn-1-call-1",
+        ]
+        return {
+            "calculator": "Blocked: first call denied",
+            "turn-1-call-1": "proceed",
+        }
+
+    turns = [_native_turn(calls), ModelTurn(text="done")]
+    out = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "go"}],
+        [CALC],
+        make_deps(
+            turns,
+            invoke=lambda call: invoked.append(call.args["v"])
+            or ToolResult(ok=True, content="ok"),
+            review=review,
+        ),
+    )
+
+    assert out.status == RUN_DONE
+    assert invoked == [2]
 
 
 def test_hook_not_called_when_turn_has_no_tool_calls():
@@ -439,6 +474,7 @@ def _registry():
 
 def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
     seen_batches = []
+    gated_batches = []
 
     # PR2a Task 5: an `AgentService`-wired hook takes `(batch, run_id)` --
     # the service binds ITS run id in, which is how the review hook knows
@@ -463,7 +499,13 @@ def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
         ]
     )
     service = AgentService(
-        db=db, registry=_registry(), chat_call=chat, review_tool_calls=review
+        db=db,
+        registry=_registry(),
+        chat_call=chat,
+        review_tool_calls=review,
+        before_tool_dispatch=lambda batch, _pure: gated_batches.append(
+            [call.name for call in batch]
+        ),
     )
     _run_id, outcome = service.run_turn(
         conversation_id="c",
@@ -475,6 +517,7 @@ def test_agent_service_threads_review_tool_calls_into_loop_deps(db):
 
     assert outcome.status == RUN_DONE
     assert seen_batches == [["calculator", "get_current_datetime"]]
+    assert gated_batches == [["get_current_datetime"]]
     result_steps = {
         s.tool_name: s.result for s in outcome.steps if s.kind == "tool_result"
     }

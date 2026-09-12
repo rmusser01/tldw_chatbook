@@ -47,8 +47,10 @@ from tldw_chatbook.TTS.character_request_resolver import TTSVoiceRefusalDomain
 from tldw_chatbook.TTS.legacy_bridge import UnknownLegacyModelError
 from tldw_chatbook.TTS.adapter_types import (
     TTSConfigurationRevisionError,
+    TTSNativeCapabilitySnapshot,
     TTSOperationError,
     TTSProgress,
+    TTSProviderCatalog,
     TTSProviderReconfiguringError,
     TTSProviderUnavailableError,
     TTSRequest,
@@ -61,6 +63,7 @@ from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
     TTSDefaultProfileSelection,
+    TTSEffectiveResolutionError,
     TTSEffectiveSettingsResolver,
     TTSSelectionOverrides,
 )
@@ -191,9 +194,7 @@ class TTSMessageSpeechRequestEvent(Message):
             raise ValueError("outcome_callback must be callable or None")
         if (
             expected_destination_fingerprint is not None
-            and not is_console_speech_destination(
-                expected_destination_fingerprint
-            )
+            and not is_console_speech_destination(expected_destination_fingerprint)
         ):
             raise ValueError(
                 "expected_destination_fingerprint must be canonical or None"
@@ -732,16 +733,27 @@ class TTSEventHandler:
                 event.report_outcome(False)
                 raise
             except Exception as error:  # noqa: BLE001 - terminal trust boundary
-                logger.warning(
-                    "Trusted Console speech request failed "
-                    "(exception_category={})",
-                    type(error).__name__,
-                )
+                if isinstance(error, TTSEffectiveResolutionError):
+                    logger.warning(
+                        "Trusted Console speech request failed "
+                        "(resolution_code={}, resolution_axis={}, "
+                        "resolution_source={})",
+                        error.code,
+                        error.axis,
+                        error.source.value if error.source is not None else "provider",
+                    )
+                    message = self._tts_error_copy(error)
+                else:
+                    logger.warning(
+                        "Trusted Console speech request failed (exception_category={})",
+                        type(error).__name__,
+                    )
+                    message = "Speech could not be generated."
                 try:
                     await self._post_tts_message(
                         TTSCompleteEvent(
                             message_id=event.message_id,
-                            error="Speech could not be generated.",
+                            error=message,
                         )
                     )
                 except Exception as post_error:  # noqa: BLE001
@@ -863,6 +875,70 @@ class TTSEventHandler:
             retry_failed_auto=event.retry_failed_auto,
             playback_lifecycle=event.playback_lifecycle,
         )
+
+    async def speak_guarded_utterance(
+        self,
+        text: str,
+        *,
+        assistant_kind: str | None,
+        character_ref: CharacterRef | None,
+        expected_destination_fingerprint: str,
+        validator: Callable[[], bool],
+    ) -> bool:
+        """Speak app-owned, named Buddy text through existing TTS authority.
+
+        The caller validates the exact source/binding and supplies previously
+        confirmed destination authority. Completion means playback terminated,
+        not merely that synthesis produced an artifact. Cancellation stops only
+        this request's generation/stream/file owner; it never sends a bare Stop.
+        """
+        if not is_console_speech_destination(expected_destination_fingerprint):
+            raise ValueError("A confirmed speech destination is required.")
+        finished: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        played = False
+
+        def report(state: str) -> None:
+            nonlocal played
+            if state == "playing":
+                played = True
+            elif state in {"stopped", "failed"} and not finished.done():
+                finished.set_result(played and state == "stopped")
+
+        owner = TTSPlaybackLifecycle(
+            message_id=f"buddy-{uuid4().hex}", request_id=1,
+            validator=validator, callback=report,
+        )
+        try:
+            if not owner.is_current():
+                return False
+            resolution = await self._resolve_speech_request_identity(
+                text=text, assistant_kind=assistant_kind, character_ref=character_ref,
+            )
+            if not owner.is_current():
+                return False
+            prepared = await self._prepare_tts_text(
+                text, owner.message_id, playback_lifecycle=owner,
+            )
+            if prepared is None or not owner.is_current():
+                return False
+
+            def generation_finished(ok: bool) -> None:
+                if ok is not True:
+                    owner.report_terminal("failed")
+
+            await self._admit_tts_generation(
+                text=prepared, message_id=owner.message_id, voice=None,
+                resolution=resolution, outcome_callback=generation_finished,
+                expected_destination_fingerprint=expected_destination_fingerprint,
+                playback_lifecycle=owner,
+            )
+            if not owner.is_current() and not finished.done():
+                return False
+            return await finished
+        finally:
+            await self.handle_tts_playback(TTSPlaybackEvent(
+                action="stop", message_id=owner.message_id, playback_lifecycle=owner,
+            ))
 
     async def speak_utterance(
         self,
@@ -1264,11 +1340,30 @@ class TTSEventHandler:
                     reference=resolution.reference,
                 )
 
+        async def read_catalog(provider_id: str) -> TTSProviderCatalog:
+            if provider_id == "audio_cpp":
+                # Speak is deliberate: prepare a stopped child and apply any
+                # eligible saved configuration before validating its catalog.
+                return await service.get_catalog(provider_id, refresh=True)
+            return await service.get_catalog(provider_id)
+
+        async def read_native_capability(
+            provider_id: str,
+            model_id: str,
+            voice_id: str | None,
+        ) -> TTSNativeCapabilitySnapshot:
+            await read_catalog(provider_id)
+            return await service.get_native_capability_snapshot(
+                provider_id,
+                (model_id,) if voice_id is not None else (),
+            )
+
         effective = await TTSEffectiveSettingsResolver().resolve_non_studio(
             global_preferences=service.preferences_snapshot(),
             global_preferences_revision=service.preferences_generation(),
             provider_revision_reader=service.configuration_revision,
-            catalog_reader=service.get_catalog,
+            catalog_reader=read_catalog,
+            native_capability_reader=read_native_capability,
             character_profile=character_profile,
             default_profile=default_profile,
         )
@@ -1285,8 +1380,7 @@ class TTSEventHandler:
         endpoint = normalize_openai_compatible_endpoint(raw_endpoint)
         return ConsoleTTSDestination(
             fingerprint=(
-                "sha256:"
-                f"{openai_destination_fingerprint(provider_id, endpoint)}"
+                f"sha256:{openai_destination_fingerprint(provider_id, endpoint)}"
             ),
             provider_label=provider_label,
             sanitized_destination=endpoint.origin,
@@ -1334,11 +1428,7 @@ class TTSEventHandler:
         if provider_id not in {"openai", "alltalk"}:
             return "http://localhost"
         app_config = applied.get("app_config") if isinstance(applied, Mapping) else None
-        app_tts = (
-            app_config.get("app_tts")
-            if isinstance(app_config, Mapping)
-            else None
-        )
+        app_tts = app_config.get("app_tts") if isinstance(app_config, Mapping) else None
         if isinstance(app_tts, Mapping):
             settings = (
                 ("OPENAI_BASE_URL",)
@@ -1532,9 +1622,7 @@ class TTSEventHandler:
                 voice,
                 resolution,
                 outcome_callback=outcome_callback,
-                expected_destination_fingerprint=(
-                    expected_destination_fingerprint
-                ),
+                expected_destination_fingerprint=(expected_destination_fingerprint),
             )
         task = asyncio.create_task(generation)
         if owner is not None:
@@ -1542,10 +1630,7 @@ class TTSEventHandler:
             self._console_generation_owner = owner
 
             def clear_owner(done: asyncio.Task) -> None:
-                if (
-                    self._console_generation_owner is owner
-                    and owner.task is done
-                ):
+                if self._console_generation_owner is owner and owner.task is done:
                     self._console_generation_owner = None
 
             task.add_done_callback(clear_owner)
@@ -1578,6 +1663,9 @@ class TTSEventHandler:
         owner.cancel_as_success = superseded
         if not task.cancel():
             return False
+        # The replacing admission may be cancelled while joining cleanup, so
+        # acknowledge this exact owner when its task finishes regardless.
+        task.add_done_callback(lambda _done: owner.lifecycle.report_terminal("stopped"))
         await asyncio.gather(task, return_exceptions=True)
         if self._console_generation_owner is owner:
             self._console_generation_owner = None
@@ -1603,9 +1691,7 @@ class TTSEventHandler:
                 voice,
                 resolution,
                 outcome_callback=outcome_callback,
-                expected_destination_fingerprint=(
-                    expected_destination_fingerprint
-                ),
+                expected_destination_fingerprint=(expected_destination_fingerprint),
                 playback_lifecycle=playback_lifecycle,
                 cancellation_is_success=cancellation_is_success,
             )
@@ -1670,6 +1756,7 @@ class TTSEventHandler:
                 outcome_callback(ok is True)
             except Exception:
                 logger.warning("Console speech outcome callback failed")
+
         provider_id: str | None = None
         # Task-4 review N3: the resolved provider speed, when available --
         # folded into the legacy completion poll's timeout estimate
@@ -1683,12 +1770,12 @@ class TTSEventHandler:
             admitted_provider_id: str,
             admitted_endpoint: str,
         ) -> bool:
+            if playback_lifecycle is not None and not playback_lifecycle.is_current():
+                return False
             if expected_destination_fingerprint is None:
                 return True
             try:
-                endpoint = normalize_openai_compatible_endpoint(
-                    admitted_endpoint
-                )
+                endpoint = normalize_openai_compatible_endpoint(admitted_endpoint)
                 admitted_fingerprint = (
                     "sha256:"
                     f"{openai_destination_fingerprint(admitted_provider_id, endpoint)}"
@@ -1699,7 +1786,7 @@ class TTSEventHandler:
 
         admission_authorizer = (
             authorize_destination
-            if expected_destination_fingerprint is not None
+            if expected_destination_fingerprint is not None or playback_lifecycle is not None
             else None
         )
 
@@ -1713,8 +1800,7 @@ class TTSEventHandler:
                 destination = await self._destination_for_resolution(resolution)
                 if (
                     destination is None
-                    or destination.fingerprint
-                    != expected_destination_fingerprint
+                    or destination.fingerprint != expected_destination_fingerprint
                 ):
                     raise _TTSAutomaticDestinationChangedError
 
@@ -1924,7 +2010,10 @@ class TTSEventHandler:
                     eligible_pcm_plan = sink_plan("pcm", response.sample_rate, None)
 
                 if eligible_pcm_plan is not None:
-                    if playback_lifecycle is not None and not playback_lifecycle.is_current():
+                    if (
+                        playback_lifecycle is not None
+                        and not playback_lifecycle.is_current()
+                    ):
                         outcome_code = "superseded"
                         return
                     streamed_outcome_code = await self._stream_response_via_sink(
@@ -2032,6 +2121,27 @@ class TTSEventHandler:
                         await flush_artifact_batch()
                 await flush_artifact_batch()
 
+                if audio_format == "pcm":
+                    from tldw_chatbook.TTS.pcm_playback import create_pcm16_wav_copy
+
+                    # This cache is a temporary playback fallback. The adapter
+                    # response and Speech Lab's export artifact remain raw PCM.
+                    # Never hand an untyped raw file to a container-only player.
+                    playback_path = await self._run_blocking_tts_io(
+                        lambda: create_pcm16_wav_copy(
+                            created_artifact_path,
+                            response.sample_rate,
+                            response.metadata.get("channels", 1),
+                        ),
+                        on_cancelled_result=cleanup_late_creation,
+                        on_late_cancelled_result=cleanup_late_creation,
+                    )
+                    artifact_path = playback_path
+                    await self._discard_tts_artifact(
+                        normalized_message_id,
+                        created_artifact_path,
+                    )
+
                 # --- streaming PCM sink seam (task-4), WAV half ------------
                 # The response has now been written to `created_artifact_path`
                 # in full, byte-identically to how it always was (see the
@@ -2060,7 +2170,10 @@ class TTSEventHandler:
                     wav_collect = None
                     wav_plan = sink_plan("wav", None, wav_body)
                     if wav_plan is not None:
-                        if playback_lifecycle is not None and not playback_lifecycle.is_current():
+                        if (
+                            playback_lifecycle is not None
+                            and not playback_lifecycle.is_current()
+                        ):
                             outcome_code = "superseded"
                             await self._discard_tts_artifact(
                                 normalized_message_id,
@@ -2182,8 +2295,7 @@ class TTSEventHandler:
         except asyncio.CancelledError as cancellation:
             outcome_code = (
                 "superseded"
-                if cancellation_is_success is not None
-                and cancellation_is_success()
+                if cancellation_is_success is not None and cancellation_is_success()
                 else "cancelled"
             )
             if artifact_path is not None:
@@ -2199,23 +2311,36 @@ class TTSEventHandler:
                             continue
             raise cancellation
         except Exception as error:
-            destination_changed = isinstance(
-                error,
-                (
-                    _TTSAutomaticDestinationChangedError,
-                    TTSConfigurationRevisionError,
-                ),
-            ) and expected_destination_fingerprint is not None
+            destination_changed = (
+                isinstance(
+                    error,
+                    (
+                        _TTSAutomaticDestinationChangedError,
+                        TTSConfigurationRevisionError,
+                    ),
+                )
+                and expected_destination_fingerprint is not None
+            )
             outcome_code = (
                 "destination_changed"
                 if destination_changed
                 else self._tts_outcome_code(error)
             )
             await self._discard_tts_artifact(normalized_message_id, artifact_path)
-            logger.error(
-                "TTS generation failed (outcome_code={})",
-                outcome_code,
-            )
+            if isinstance(error, TTSEffectiveResolutionError):
+                logger.error(
+                    "TTS generation failed (outcome_code={}, resolution_code={}, "
+                    "resolution_axis={}, resolution_source={})",
+                    outcome_code,
+                    error.code,
+                    error.axis,
+                    error.source.value if error.source is not None else "provider",
+                )
+            else:
+                logger.error(
+                    "TTS generation failed (outcome_code={})",
+                    outcome_code,
+                )
             if not quiet:
                 await self._post_tts_message(
                     TTSCompleteEvent(
@@ -3033,12 +3158,8 @@ class TTSEventHandler:
         """Release a cache entry only when it still owns the deleted artifact."""
         async with self._audio_files_lock:
             cached_owner = self._audio_file_owners.get(message_id)
-            if (
-                self._audio_files.get(message_id) == artifact_path
-                and (
-                    artifact_owner is _ANY_ARTIFACT_OWNER
-                    or cached_owner is artifact_owner
-                )
+            if self._audio_files.get(message_id) == artifact_path and (
+                artifact_owner is _ANY_ARTIFACT_OWNER or cached_owner is artifact_owner
             ):
                 del self._audio_files[message_id]
                 self._audio_file_owners.pop(message_id, None)
@@ -3168,6 +3289,8 @@ class TTSEventHandler:
     @staticmethod
     def _tts_error_copy(error: Exception) -> str:
         """Map failures to fixed actionable UI copy without upstream details."""
+        if isinstance(error, TTSEffectiveResolutionError):
+            return error.recovery_message()
         if isinstance(error, TTSProviderReconfiguringError):
             return "TTS settings are being applied; retry shortly"
         if isinstance(error, TTSProviderUnavailableError):
@@ -3177,6 +3300,51 @@ class TTSEventHandler:
         if isinstance(error, TTSRegistryClosedError):
             return "The TTS service is unavailable"
         if isinstance(error, TTSOperationError):
+            if (
+                error.code == "dependency_missing"
+                and error.recovery_action == "install_kokoro_language_extras"
+            ):
+                return (
+                    "Kokoro language dependencies are missing; install 'misaki[ja]' "
+                    "for Japanese or 'misaki[zh]' for Chinese in the TTS environment"
+                )
+            if (
+                error.code == "dependency_missing"
+                and error.recovery_action == "install_kokoro_pytorch"
+            ):
+                return (
+                    "Kokoro PyTorch needs 'tldw_chatbook[local_tts]' on Python "
+                    "3.11 or 3.12; select ONNX on Python 3.13+"
+                )
+            if (
+                error.code == "configuration_invalid"
+                and error.recovery_action == "install_kokoro_language"
+            ):
+                return (
+                    "Kokoro language setup failed; for English, run "
+                    "'python -m spacy download en_core_web_sm' in the TTS environment"
+                )
+            if (
+                error.code == "request_invalid"
+                and error.recovery_action == "split_kokoro_text"
+            ):
+                return (
+                    "Kokoro non-English speech is limited to 510 phonemes per "
+                    "segment; split long text with newlines"
+                )
+            if (
+                error.code == "request_invalid"
+                and error.recovery_action == "shorten_text"
+            ):
+                return "Generated audio is too long to buffer; shorten the text"
+            if (
+                error.code == "request_invalid"
+                and error.recovery_action == "shorten_text_or_use_pcm"
+            ):
+                return (
+                    "Kokoro encoded speech is limited to five minutes; "
+                    "shorten the text or choose PCM for longer speech"
+                )
             if error.code in {"configuration_invalid", "not_configured"}:
                 return "TTS is not configured; open STTS Settings"
             if error.code == "contract_incompatible":
@@ -3186,6 +3354,8 @@ class TTSEventHandler:
             if error.code == "generation_timeout":
                 return "TTS generation timed out; retry"
             if error.code == "audio_response_invalid":
+                if error.recovery_action == "use_wav":
+                    return "Audio encoding failed; choose WAV and generate again"
                 return (
                     "The TTS service returned invalid audio; "
                     "check provider compatibility"
@@ -3351,8 +3521,8 @@ class TTSEventHandler:
 
                             if last_played is not None:
                                 try:
-                                    file_stop_accepted = (
-                                        stop_audio_playback_if_current(last_played[1])
+                                    file_stop_accepted = stop_audio_playback_if_current(
+                                        last_played[1]
                                     )
                                 except Exception as exc:
                                     file_stop_retryable_failure = True
@@ -3379,7 +3549,10 @@ class TTSEventHandler:
                                     self._active_file_playback_owner = None
                                 if self._active_file_playback_stop == handoff:
                                     self._active_file_playback_stop = None
-                                if self._active_file_playback_started is playback_started:
+                                if (
+                                    self._active_file_playback_started
+                                    is playback_started
+                                ):
                                     self._active_file_playback_started = None
 
             if file_stop_accepted and file_owner is not None:
@@ -3456,10 +3629,7 @@ class TTSEventHandler:
                                 and event.message_id not in self._audio_file_owners
                             ):
                                 self._audio_file_owners[event.message_id] = lifecycle
-                            if (
-                                prior_owner is not None
-                                and prior_owner is not lifecycle
-                            ):
+                            if prior_owner is not None and prior_owner is not lifecycle:
                                 if (
                                     prior_handoff is not None
                                     and prior_handoff[0] == prior_owner.message_id
@@ -3623,10 +3793,7 @@ class TTSEventHandler:
                 or file_stop_accepted
                 or stream_stop_accepted
                 or generation_stop_accepted
-                or (
-                    exact_cached_artifact
-                    and self._active_file_playback_owner is None
-                )
+                or (exact_cached_artifact and self._active_file_playback_owner is None)
             )
             if accepted:
                 logger.info(f"Stopped playback for message {event.message_id}")
@@ -3641,10 +3808,7 @@ class TTSEventHandler:
                     event.message_id,
                     artifact_owner=file_owner,
                 )
-            elif (
-                exact_cached_artifact
-                and self._active_file_playback_owner is None
-            ):
+            elif exact_cached_artifact and self._active_file_playback_owner is None:
                 await self._cleanup_audio_file(
                     event.message_id,
                     artifact_owner=event.playback_lifecycle,
@@ -3662,9 +3826,7 @@ class TTSEventHandler:
             event.report_outcome(accepted)
         elif event.action == "stop":
             event.report_outcome(
-                stream_stop_accepted
-                or file_stop_accepted
-                or generation_stop_accepted
+                stream_stop_accepted or file_stop_accepted or generation_stop_accepted
             )
 
     async def _cleanup_audio_file(
@@ -3952,7 +4114,8 @@ def _play_legacy_clip_and_await_completion(
         poll_interval_seconds: Sleep between checks.
 
     Returns:
-        `False` if `play()` itself never started the clip, if a stop was
+        `False` if `play()` itself never started the clip, if playback
+        reached `ERROR`, if a stop was
         requested (checked immediately after `play()` returns, and on
         every subsequent poll iteration), or if the clip stopped being
         current for any OTHER reason before reaching `FINISHED` --
@@ -3995,9 +4158,25 @@ def _play_legacy_clip_and_await_completion(
             return False
         if player.get_current_file() != audio_file:
             return False
-        if player.get_state() == PlaybackState.FINISHED:
+        state = player.get_state()
+        if state == PlaybackState.FINISHED:
             return True
+        if state in (PlaybackState.ERROR, PlaybackState.IDLE):
+            return False
         time.sleep(poll_interval_seconds)
+    # Recheck terminal state and exact clip ownership after the final sleep.
+    # A failure or stop at the deadline must not become timeout success.
+    if stop_requested is not None and stop_requested.is_set():
+        if player.get_current_file() in (None, audio_file):
+            player.stop()
+        return False
+    if player.get_current_file() != audio_file:
+        return False
+    state = player.get_state()
+    if state == PlaybackState.FINISHED:
+        return True
+    if state != PlaybackState.PLAYING:
+        return False
     # Task-4 review N3: the estimate under-ran -- make that DISTINGUISHABLE
     # in the logs rather than silently indistinguishable from a natural
     # finish (both return `True`). `logger` (loguru) is documented

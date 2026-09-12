@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from .console_command_grammar import (
     COMMAND_PREFIX,
@@ -16,6 +17,9 @@ from .console_command_grammar import (
     ConsoleCommandRegistry,
 )
 from .console_skill_resolver import SkillCommandCandidate
+
+#: Which popup completion context a draft is in (TASK-24416).
+CompletionContext = Literal["command", "skills_arg"]
 
 # `\Z` (not `$`) so a trailing newline — e.g. a Shift+Enter multiline draft —
 # breaks the match and leaves the completion context; the skills-arg separator
@@ -31,12 +35,25 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "prompt": "Insert a saved prompt into the composer",
     "system": "Apply a saved system prompt to this session",
     "skills": "List or run a skill",
+    "fewer-permission-prompts": "Reduce approval prompts for trusted tool actions",
     "prefill": "Prepare the start of the assistant's reply",
     "generate-image": "Generate an image (optionally via a chosen backend)",
     "generate-video": "Generate a video (optionally via a chosen backend)",
     "stream-video": "Stream a video from a URL into the transcript",
+    "steer": "Send guidance into the RUNNING turn (plain messages queue)",
+    "redirect": "Cut off the current response and re-run the turn with your correction",
+    "emergency-stop": "Hold ALL new agent runs + scheduled dispatches (clear to resume)",
     "rewind": "Rewind the session to an earlier user prompt",
     "research": "Run deep research in the background; the report is delivered into this conversation",
+    "help": "List the console commands, or /help <command> for one command's detail",
+    "doctor": "Run local health checks (config, deps, DB, providers, paths)",
+    "model": "Change provider/model/temperature (Alt+M)",
+    "sessions": "Switch to another conversation (Ctrl+K)",
+    "workspace": "Switch the active Console workspace (Alt+W)",
+    "new": "Open a new Console chat tab (Ctrl+T)",
+    "temp": "Open a temporary chat that is never saved locally",
+    "settings": "Open the full session settings modal",
+    "context": "Show current and next-send context (Ctrl+Shift+P)",
 }
 
 #: Shown for a registered command with no ``_COMMAND_DESCRIPTIONS`` entry --
@@ -67,6 +84,35 @@ class CommandSuggestion:
     insert_text: str
     label: str
     description: str = ""
+
+
+def completion_context_for_draft(
+    draft_text: str,
+) -> tuple[CompletionContext, str] | None:
+    """Return ``(context, prefix)`` for the draft's popup completion context.
+
+    TASK-24416: the screen keys popup etiquette (sticky Escape dismissal,
+    the bare-slash Enter guard) on WHICH completion context the draft is in
+    and what filter token it carries -- not on draft text equality, which
+    moves on every keystroke.
+
+    Args:
+        draft_text: Plain composer draft text.
+
+    Returns:
+        ``None`` outside any completion context; else ``("command", p)``
+        for a bare command token ``/p`` or ``("skills_arg", p)`` inside
+        ``/skills p``. ``p`` is the popup's filter prefix -- empty for a
+        bare ``/`` (the full command list) or a bare ``/skills `` (all
+        skills).
+    """
+    skills_arg_match = _SKILLS_ARG_MODE_PATTERN.match(draft_text)
+    if skills_arg_match is not None:
+        return ("skills_arg", skills_arg_match.group(1))
+    command_match = _COMMAND_MODE_PATTERN.match(draft_text)
+    if command_match is not None:
+        return ("command", command_match.group(1))
+    return None
 
 
 def suggestions_for_draft(

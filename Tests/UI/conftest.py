@@ -119,6 +119,77 @@ def _disable_model_catalog_refresh(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_tiktoken_bpe_download(monkeypatch):
+    """Keep UI token counting off tiktoken's BPE download seam (TASK-21590).
+
+    Incident: repairing the Console send harness let 16 mounted send tests
+    reach `ConsoleProviderGateway.prepare_chat_request` for the first time —
+    `prepare_provider_request` → `_account_categories` → `_count_wire` →
+    `count_console_messages_tokens` → `token_counter.estimate_tokens` →
+    `count_tokens_tiktoken` → `get_tiktoken_encoding`. On a cold cache
+    `tiktoken.get_encoding` fetches its BPE blobs from
+    ``openaipublic.blob.core.windows.net`` over HTTPS, so the egress guard
+    recorded six blocked connects per test and failed each one at teardown.
+    The tests themselves passed; only the guard saw it. The old, broken
+    harness never got past the durable-acceptance gate, so it never reached
+    this seam at all — which is why the failure is invisible on dev.
+
+    ``get_tiktoken_encoding`` is the single chokepoint: every tiktoken use in
+    the Console send path funnels through it (`console_cost_tracker` and
+    `console_session_settings` only reach tiktoken via
+    ``count_tokens_messages``), and it resolves as a module global at call
+    time, so patching it here covers callers that imported
+    ``count_tokens_tiktoken``/``estimate_tokens`` by name.
+
+    ``TIKTOKEN_AVAILABLE`` is what selects the tier, and it is forced off
+    here rather than only stubbing the encoding, because those are NOT the
+    same accounting. With the flag left True, `estimate_tokens` still enters
+    `count_tokens_tiktoken`, whose no-encoding fallback is a bare
+    ``int(len(text) * 0.25)``: no CJK weighting, no headroom, and no
+    non-empty floor. Measured against `gpt-4`/`openai` on this venv:
+
+    ==========================  ====  =============  ==============
+    text                        real  encoding=None  tiktoken off
+    ==========================  ====  =============  ==============
+    ``"hi"``                       1              0               1
+    a repeated ASCII sentence     31             33              40
+    repeated CJK                  50             17              84
+    ==========================  ====  =============  ==============
+
+    The middle column is a tier no install runs, it undercounts CJK by ~3x
+    against the real tokenizer, and it re-introduces the zero-for-short-text
+    truncation that `_chars_estimate`'s ``max(1, ...)`` exists to prevent.
+    The right-hand column IS what a default install does, since tiktoken is
+    not a base dependency (task-2526). The encoding stub stays as a second
+    line of defence for anything that calls it directly.
+
+    `_ESTIMATE_CACHE` is cleared on both sides of the test: it is
+    process-global and keyed by ``(model, provider, len, hash(text))`` with
+    no tokenizer identity in the key, so without this a value computed under
+    the real tokenizer elsewhere in the session is served here (and one
+    computed here leaks the other way). pytest-randomly shuffles the run
+    order, so "Tests/Chat happens to run first" is not a defence.
+
+    No test's LOGICAL coverage changes, only its network access, and the
+    result stops depending on whether this machine happens to have a warm
+    ``$TMPDIR/data-gym-cache`` (which the HOME sandbox does not redirect) or
+    on what estimated the same string earlier in the session. A test that
+    needs the real encoding monkeypatches it back within its own scope,
+    exactly as with `_disable_model_catalog_refresh` above.
+    """
+    from tldw_chatbook.Utils import token_counter
+
+    monkeypatch.setattr(token_counter, "TIKTOKEN_AVAILABLE", False)
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.token_counter.get_tiktoken_encoding",
+        lambda _model: None,
+    )
+    token_counter.clear_estimate_cache()
+    yield
+    token_counter.clear_estimate_cache()
+
+
 @pytest_asyncio.fixture
 async def mock_app_config():
     """Provide a standard mock app configuration for tests."""
@@ -392,6 +463,144 @@ def mock_app_with_notes(mock_notes_service):
     app.query = Mock(return_value=[])
 
     return app
+
+
+@pytest.fixture
+def captured_lines():
+    """Collect every loguru message emitted during the test.
+
+    `caplog` does not see loguru's own sink (loguru does not propagate to
+    stdlib `logging`) -- mirrors `Tests/Audio/test_meeting_diarization_session.py`'s
+    fixture of the same name. Adds a sink and removes only that sink id: a
+    bare `logger.remove()` would tear down the sink `tldw_chatbook/__init__.py`
+    installs and leak that teardown into unrelated tests.
+    """
+    from loguru import logger as loguru_logger
+
+    lines: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="TRACE",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        yield lines
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+@pytest.fixture
+def tmp_media_db(tmp_path):
+    """A real, on-disk, per-test `MediaDatabase` (repo convention: real
+    SQLite, never a mock, for DB tests -- Task 8, meeting speaker rename)."""
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    db = MediaDatabase(str(tmp_path / "media_test.sqlite"), "test_client")
+    yield db
+    db.close_connection()
+
+
+@pytest.fixture
+def meeting_folder_media_item(tmp_path, tmp_media_db):
+    """Build a meeting folder (`meeting.json` + `transcript.jsonl`) and the
+    Library `Media` row that points at its `mixed.wav`, exactly as a real
+    finished meeting recording leaves them (Task 8's Interfaces section).
+
+    Returns a factory: ``factory(names: dict, segments: list[tuple], content:
+    str | None, user_display_name: str, markdown: bool) -> (media_id,
+    folder)``, where each segment tuple is ``(speaker_id, text)`` (label
+    defaults to ``"others"``) or ``(speaker_id, text, label)`` to pick a
+    specific coarse label (e.g. ``"you"``).
+
+    `meeting.json` is the REAL `MeetingResult.to_json()` payload a finished
+    meeting writes (not a hand-built two-key stub), so anything reading it
+    back sees the fields a real recording has.
+
+    `Media.content` defaults to the meeting's OWN plain render of those
+    segments -- what a meeting-produced Library item holds, and what
+    `rename_meeting_speaker` requires before it will rewrite anything (fix
+    C2). Pass `markdown=True` for the OTHER app-produced shape: the
+    `transcript.md` `LocalMeetingSink.on_stopped` writes (and the Library
+    then ingests verbatim) whenever `post_transcribe` is off. Pass
+    `content=` to stand in for an item whose transcript came from somewhere
+    else (the ingest's offline pass, say).
+
+    `user_display_name` (task 31746) is stamped into `meeting.json` exactly
+    as a real meeting would, so it feeds the default render the same way
+    `rename_meeting_speaker` reads it back.
+    """
+    import json as _json
+
+    def _factory(
+        *, names: dict, segments: list[tuple], content: str | None = None,
+        user_display_name: str = "You", markdown: bool = False,
+    ):
+        from tldw_chatbook.Audio.meeting_session import MeetingMeta, MeetingResult
+
+        folder = tmp_path / f"meeting-{len(segments)}-{id(segments)}"
+        folder.mkdir()
+        (folder / "mixed.wav").write_bytes(b"")
+        result = MeetingResult(
+            meta=MeetingMeta(
+                folder=folder, mode="call", started_at="2026-01-02T09:30:00",
+                mic_device="Built-in Microphone", system_source="system",
+                provider="faster-whisper", model="tiny",
+                user_display_name=user_display_name, speaker_names=dict(names),
+            ),
+            ended_at="2026-01-02T09:31:00", duration_s=61.0,
+            segment_count=len(segments), transcription_complete=True,
+            failed_segments=0, stop_reason="user",
+        )
+        payload = result.to_json()
+        payload["schema"] = 1
+        (folder / "meeting.json").write_text(_json.dumps(payload))
+        lines = []
+        for seq, segment in enumerate(segments):
+            speaker_id, text, *rest = segment
+            label = rest[0] if rest else "others"
+            lines.append(
+                _json.dumps(
+                    {
+                        "seq": seq,
+                        "t_audio_start": float(seq),
+                        "t_audio_end": float(seq) + 1.0,
+                        "t_wall_start": 0.0,
+                        "t_wall_end": 0.0,
+                        "label": label,
+                        "text": text,
+                        "speaker_id": speaker_id,
+                    }
+                )
+            )
+        (folder / "transcript.jsonl").write_text("\n".join(lines) + ("\n" if lines else ""))
+        if content is None:
+            from tldw_chatbook.Audio.meeting_session import render_markdown
+            from tldw_chatbook.Widgets.Library.library_media_canvas import (
+                _read_meeting_transcript_segments,
+                _render_meeting_transcript,
+            )
+
+            parsed = _read_meeting_transcript_segments(folder)
+            # The real renderers, never a hand-rolled copy: these ARE the two
+            # shapes the app leaves in the Library, and the guard under test
+            # compares against them byte for byte.
+            content = (
+                render_markdown(result, parsed)
+                if markdown
+                else _render_meeting_transcript(parsed, dict(names), user_display_name)
+            )
+        media_id, _uuid, _msg = tmp_media_db.add_media_with_keywords(
+            url=str(folder / "mixed.wav"),
+            title="Test Meeting",
+            media_type="audio",
+            content=content,
+            overwrite=False,
+        )
+        assert media_id is not None, _msg
+        return media_id, folder
+
+    return _factory
 
 
 @pytest.fixture

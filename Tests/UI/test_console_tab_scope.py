@@ -97,7 +97,12 @@ async def test_console_tab_from_composer_stays_in_region_and_wraps():
 
     async with app.run_test(size=(160, 48)) as pilot:
         console = await _ready_console(app, pilot)
-        composer_region = ("console-control-bar", "console-native-composer")
+        composer_region = (
+            "console-workbench-header",
+            "console-control-bar",
+            "console-native-composer",
+        )
+        assert CONSOLE_TAB_REGIONS[0] == composer_region
         expected_cycle = _focus_chain_ids_within(console, composer_region)
         assert len(expected_cycle) >= 6, (
             "composer region should hold the composer cluster + control bar "
@@ -117,6 +122,9 @@ async def test_console_tab_from_composer_stays_in_region_and_wraps():
                 f"Tab left the composer region: {focused_id}"
             )
             visited.append(focused_id)
+
+        assert "console-auto-speak" in visited
+        assert "console-hands-free-switch" in visited
 
         # The cycle wraps: after a full loop the sequence repeats itself.
         cycle_len = len(expected_cycle)
@@ -150,6 +158,30 @@ async def test_console_shift_tab_reverses_tab_within_region():
         await pilot.press("shift+tab")
         await pilot.pause(0.05)
         assert getattr(app.focused, "id", None) == "console-native-composer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "switch_id",
+    ["console-auto-speak", "console-hands-free-switch"],
+)
+async def test_console_f6_from_header_switch_advances_from_composer_pane(
+    switch_id: str,
+) -> None:
+    """Header switches participate in the composer pane's F6 tour."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "chat"
+    _mark_console_onboarding_complete(app)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _ready_console(app, pilot)
+        console.query_one(f"#{switch_id}").focus()
+        await _wait_for_focused_id(app, pilot, switch_id)
+
+        await pilot.press("f6")
+        # TASK-32321: F6 targets the rail's first CONTENT control.
+        await _wait_for_focused_id(app, pilot, "console-terminal-open")
 
 
 @pytest.mark.asyncio
@@ -250,9 +282,10 @@ async def test_console_focus_tour_reaches_transcript_chips_inspector_under_ten_s
         else:
             pytest.fail(f"expected a status chip within the stop budget: {stops}")
 
-        # F6 again: Inspector pane (rail open -> its collapse button).
+        # F6 again: Inspector pane (TASK-32321: first content control,
+        # the pinned authority summary, not the collapse button).
         await tour("f6")
-        assert stops[-1][1] == "console-inspector-rail-collapse", f"tour: {stops}"
+        assert stops[-1][1] == "console-send-authority-summary", f"tour: {stops}"
 
         assert len(stops) <= 10, f"tour took too long: {stops}"
         assert not any(focused_id.startswith("nav-") for _, focused_id in stops)

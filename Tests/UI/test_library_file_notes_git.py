@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -21,7 +21,16 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.color import Color
 from textual.containers import Vertical, VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, ListView, Static, TextArea, Tree
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Label,
+    ListView,
+    Static,
+    TextArea,
+    Tree,
+)
 
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
@@ -525,10 +534,7 @@ class _FakeGitService:
                     child_signal.set_result(False)
                 assert admission.lease is not None
                 admission.lease.release()
-            if (
-                result.state == "succeeded"
-                and self.published_commit_status is not None
-            ):
+            if result.state == "succeeded" and self.published_commit_status is not None:
                 assert self.owner.publish_status(
                     binding,
                     self.published_commit_status,
@@ -557,11 +563,7 @@ class _FakeGitService:
     ) -> bool:
         operation = self._commit_operation
         cycle = self._commit_cycle
-        if (
-            operation is None
-            or cycle is None
-            or operation.binding != binding
-        ):
+        if operation is None or cycle is None or operation.binding != binding:
             return False
         if cycle.done():
             if operation.kind == "review":
@@ -645,8 +647,7 @@ class _PathspecRecordingRunner:
         if "status" in text:
             boundary = command.index("--")
             payload = b"".join(
-                b"? " + os.fsencode(path) + b"\0"
-                for path in command[boundary + 1 :]
+                b"? " + os.fsencode(path) + b"\0" for path in command[boundary + 1 :]
             )
             return GitCommandResult(0, payload, b"")
         raise AssertionError(f"Unexpected Git command: {text!r}")
@@ -778,6 +779,7 @@ def _commit_review_projection(
     projection_type = _panel_projection_type("CommitPanelReviewProjection")
     return projection_type(
         review=review,
+        repository=_repository(),
         included_notes=tuple(
             note_type(note=note)
             for note, (_change_type, _path) in zip(
@@ -865,8 +867,7 @@ def _is_effectively_displayed(widget: Widget) -> bool:
 def _rendered_text(widget: Static) -> str:
     """Return only the strips that are actually visible inside one Static."""
     return "\n".join(
-        widget.render_line(y).text.rstrip()
-        for y in range(widget.content_region.height)
+        widget.render_line(y).text.rstrip() for y in range(widget.content_region.height)
     ).rstrip()
 
 
@@ -892,6 +893,21 @@ async def _wait_until(
             return
         await pilot.pause(0.02)
     raise AssertionError(message)
+
+
+async def _show_manage(
+    workspace: LibraryFileNotesWorkspace,
+    pilot,
+) -> None:
+    """Enter the retained Manage surface that owns Session Git."""
+    if workspace.work_mode == "manage":
+        return
+    workspace.query_one("#file-notes-manage", Button).press()
+    await _wait_until(
+        pilot,
+        lambda: workspace.work_mode == "manage",
+        "Manage mode did not open",
+    )
 
 
 async def _wait_for_current_git_row_projection(
@@ -980,20 +996,26 @@ async def _open_git_and_stage_one(
     pilot,
 ) -> None:
     """Reach one proven mounted Stage result for lifetime regressions."""
+    await _show_manage(workspace, pilot)
     workspace.query_one("#file-notes-session-changes", Button).press()
     await _wait_until(
         pilot,
-        lambda: len(git_service.status_calls) == 1
-        and len(workspace._git_panel_widget.rows) == 2,
+        lambda: (
+            len(git_service.status_calls) == 1
+            and len(workspace._git_panel_widget.rows) == 2
+        ),
         "initial status did not finish",
     )
     await _wait_for_current_git_row_projection(workspace)
     workspace.query_one("#file-notes-git-stage-selected", Button).press()
     for _ in range(_ASYNC_POLL_ATTEMPTS):
-        if len(git_service.status_calls) == 2 and workspace.query_one(
-            "#file-notes-git-action-status",
-            Static,
-        ).display:
+        if (
+            len(git_service.status_calls) == 2
+            and workspace.query_one(
+                "#file-notes-git-action-status",
+                Static,
+            ).display
+        ):
             break
         await asyncio.sleep(_ASYNC_POLL_INTERVAL_SECONDS)
     else:
@@ -1019,6 +1041,7 @@ async def _open_guarded_commit_form(
         _row("owned", group_id=1, unstage_eligible=True),
         _row("owned", group_id=2, unstage_eligible=True),
     )
+    await _show_manage(workspace, pilot)
     workspace.query_one("#file-notes-session-changes", Button).press()
     await _wait_until(
         pilot,
@@ -1074,15 +1097,20 @@ async def _review_guarded_commit(
     )
 
 
-def _assert_visible_editor_actions_fit(
+async def _assert_visible_editor_actions_fit(
     workspace: LibraryFileNotesWorkspace,
+    pilot,
 ) -> None:
-    """Assert visible editor actions keep complete labels inside their pane."""
+    """Assert each disclosed action is complete when scrolled into its pane."""
     pane = workspace.query_one("#file-notes-editor-pane")
-    visible_actions = tuple(button for button in pane.query(Button) if button.display)
+    visible_actions = tuple(
+        button for button in pane.query(Button) if _is_effectively_displayed(button)
+    )
     assert visible_actions
     clipped_labels: dict[str | None, tuple[str, str]] = {}
     for button in visible_actions:
+        button.scroll_visible(animate=False)
+        await pilot.pause()
         label = str(button.label)
         rendered_label = button.render_line(0).text.strip()
         if rendered_label != label:
@@ -1096,7 +1124,12 @@ def _assert_visible_editor_actions_fit(
     assert not clipped_labels, f"clipped editor action labels: {clipped_labels}"
 
 
-async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
+async def _assert_visible_panel_buttons_fit(
+    panel,
+    pilot,
+    *,
+    allow_compact_label_clip: bool = False,
+) -> None:
     bounds = panel.content_region
     # task-15790 (sweep inventory): this helper pinned the retired fixed
     # `$ds-focus-bg` literal (#51677e). task-15509 (77998601b) made focus
@@ -1116,7 +1149,8 @@ async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
         assert button.has_focus
         label = str(button.label)
         assert button.render().plain == label
-        assert cell_len(label) <= button.content_region.width
+        if not allow_compact_label_clip:
+            assert cell_len(label) <= button.content_region.width
         assert button.region.x >= bounds.x
         assert button.region.right <= bounds.right
         assert button.region.y >= bounds.y
@@ -1154,9 +1188,7 @@ async def test_commit_panel_count_uses_only_the_authorized_projection() -> None:
         with pytest.raises(FrozenInstanceError):
             setattr(projected, "staged_note_count", 3)
 
-        panel.render_commit_availability(
-            _commit_draft_projection(staged_note_count=0)
-        )
+        panel.render_commit_availability(_commit_draft_projection(staged_note_count=0))
         await pilot.pause()
         # task-15790: the Library a11y batch's disabled-presentation
         # convention prefixes a "○ " marker onto disabled actions
@@ -1170,8 +1202,9 @@ async def test_commit_panel_count_uses_only_the_authorized_projection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_commit_form_is_binding_keyed_validates_inline_and_emits_typed_intents(
-) -> None:
+async def test_commit_form_is_binding_keyed_validates_inline_and_emits_typed_intents() -> (
+    None
+):
     binding_key = object()
     draft = _commit_draft_projection(
         binding_key=binding_key,
@@ -1192,9 +1225,10 @@ async def test_commit_form_is_binding_keyed_validates_inline_and_emits_typed_int
         workflow = panel.query_one("#file-notes-git-commit-workflow")
         assert workflow.display
         assert not workflow.query("#file-notes-git-back")
-        assert _text(
-            panel.query_one("#file-notes-git-commit-form-meta", Static)
-        ) == "Branch: refs/heads/feature/[literal] · 2 session notes staged"
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-form-meta", Static))
+            == "Branch: refs/heads/feature/[literal] · 2 session notes staged"
+        )
         subject = panel.query_one("#file-notes-git-commit-subject", Input)
         body = panel.query_one("#file-notes-git-commit-body-input", TextArea)
         assert subject.has_focus
@@ -1242,9 +1276,10 @@ async def test_commit_form_is_binding_keyed_validates_inline_and_emits_typed_int
         assert review_request.subject == "Exact subject"
         assert review_request.body == "Exact [body]\nsecond line"
         assert panel.commit_phase == "checking"
-        assert _text(
-            panel.query_one("#file-notes-git-commit-checking-copy", Static)
-        ) == "Checking commit..."
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-checking-copy", Static))
+            == "Checking commit..."
+        )
 
         await pilot.press("escape")
         await pilot.pause()
@@ -1263,14 +1298,16 @@ async def test_commit_form_is_binding_keyed_validates_inline_and_emits_typed_int
         )
         await pilot.pause()
         assert body.has_focus
-        assert _text(
-            panel.query_one("#file-notes-git-commit-body-error", Static)
-        ) == "Commit body cannot be previewed safely."
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-body-error", Static))
+            == "Commit body cannot be previewed safely."
+        )
 
 
 @pytest.mark.asyncio
-async def test_commit_availability_refresh_cannot_replace_the_active_binding_draft(
-) -> None:
+async def test_commit_availability_refresh_cannot_replace_the_active_binding_draft() -> (
+    None
+):
     binding_a = object()
     binding_b = object()
     draft_a = _commit_draft_projection(
@@ -1319,10 +1356,13 @@ async def test_commit_availability_refresh_cannot_replace_the_active_binding_dra
 
         assert subject.value == "Edited A"
         assert body.text == "Edited A body"
-        assert sum(
-            message.__class__.__name__ == "CommitDraftChanged"
-            for message in app.messages
-        ) == draft_intent_count
+        assert (
+            sum(
+                message.__class__.__name__ == "CommitDraftChanged"
+                for message in app.messages
+            )
+            == draft_intent_count
+        )
 
         panel.query_one("#file-notes-git-commit-review", Button).press()
         await pilot.pause()
@@ -1337,8 +1377,7 @@ async def test_commit_availability_refresh_cannot_replace_the_active_binding_dra
 
 
 @pytest.mark.asyncio
-async def test_commit_binding_invalidation_clears_list_and_workflow_drafts(
-) -> None:
+async def test_commit_binding_invalidation_clears_list_and_workflow_drafts() -> None:
     binding_a = object()
     binding_b = object()
     panel = LibraryFileNotesGitPanel()
@@ -1393,8 +1432,7 @@ async def test_commit_binding_invalidation_clears_list_and_workflow_drafts(
 
 
 @pytest.mark.asyncio
-async def test_commit_binding_invalidation_cancels_deferred_form_focus(
-) -> None:
+async def test_commit_binding_invalidation_cancels_deferred_form_focus() -> None:
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     app = _PanelHarness(panel)
@@ -1418,8 +1456,7 @@ async def test_commit_binding_invalidation_cancels_deferred_form_focus(
 
 
 @pytest.mark.asyncio
-async def test_programmatic_commit_form_projection_emits_no_draft_intent(
-) -> None:
+async def test_programmatic_commit_form_projection_emits_no_draft_intent() -> None:
     binding_key = object()
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
@@ -1454,12 +1491,9 @@ async def test_programmatic_commit_form_projection_emits_no_draft_intent(
 
 
 @pytest.mark.asyncio
-async def test_commit_review_is_literal_complete_and_discloses_included_notes(
-) -> None:
+async def test_commit_review_is_literal_complete_and_discloses_included_notes() -> None:
     long_path = (
-        "folder/[literal]/"
-        + "very-long-segment/" * 5
-        + "note.md\\nvisible-control"
+        "folder/[literal]/" + "very-long-segment/" * 5 + "note.md\\nvisible-control"
     )
     projection = _commit_review_projection(
         paths=(
@@ -1476,9 +1510,34 @@ async def test_commit_review_is_literal_complete_and_discloses_included_notes(
         await pilot.pause()
 
         assert panel.commit_phase == "review"
+        for section in ("what", "where", "impact", "recovery"):
+            assert (
+                _text(
+                    panel.query_one(
+                        f"#file-notes-git-commit-review-{section}-heading",
+                        Static,
+                    )
+                )
+                == section.title()
+            )
+        technical = panel.query_one(
+            "#file-notes-git-commit-review-technical",
+            Collapsible,
+        )
+        assert technical.title == "Technical details"
+        assert technical.collapsed
+        assert (
+            _text(
+                panel.query_one(
+                    "#file-notes-git-commit-review-repository",
+                    Static,
+                )
+            )
+            == "Repository: /canonical/repository"
+        )
         assert _text(
             panel.query_one("#file-notes-git-commit-review-branch", Static)
-        ) == "Branch: refs/heads/feature/[literal] · Parent: aaaaaaaaaaaa"
+        ) == (f"Branch: refs/heads/feature/[literal] · Parent: {'a' * 40}")
         message = panel.query_one(
             "#file-notes-git-commit-review-message",
             Static,
@@ -1494,28 +1553,28 @@ async def test_commit_review_is_literal_complete_and_discloses_included_notes(
             Static,
         )
         assert _text(author) == "Author: [Author] <author@example.test>"
-        assert _text(committer) == (
-            "Committer: [Committer] <committer@example.test>"
-        )
+        assert _text(committer) == ("Committer: [Committer] <committer@example.test>")
         assert not author._render_markup
         assert not committer._render_markup
-        assert _text(
-            panel.query_one("#file-notes-git-commit-review-promise", Static)
-        ) == "4 session notes will be committed; unrelated changes untouched"
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-review-promise", Static))
+            == "4 session notes will be committed; unrelated changes untouched"
+        )
         assert _text(
             panel.query_one("#file-notes-git-commit-review-scope", Static)
         ) == (
             "No unrelated staged content will be committed; "
             "Chatbook will select no unrelated worktree paths"
         )
-        assert _text(
-            panel.query_one("#file-notes-git-commit-review-change-counts", Static)
-        ) == "Changes: New 1 · Modified 1 · Deleted 1 · Moved 1"
+        assert (
+            _text(
+                panel.query_one("#file-notes-git-commit-review-change-counts", Static)
+            )
+            == "Changes: New 1 · Modified 1 · Deleted 1 · Moved 1"
+        )
         assert _text(
             panel.query_one("#file-notes-git-commit-review-policy", Static)
-        ) == (
-            "Commit policy: Git hooks will not run · Commit will be unsigned"
-        )
+        ) == ("Commit policy: Git hooks will not run · Commit will be unsigned")
         assert _text(
             panel.query_one(
                 "#file-notes-git-commit-review-complete-state",
@@ -1524,6 +1583,50 @@ async def test_commit_review_is_literal_complete_and_discloses_included_notes(
         ) == (
             "Included notes use their complete staged file state, "
             "not only edits made in Chatbook"
+        )
+        assert _text(
+            panel.query_one(
+                "#file-notes-git-commit-review-recovery",
+                Static,
+            )
+        ) == (
+            "Edit message or cancel before the commit starts. If the result "
+            "is uncertain, Check again verifies without retrying."
+        )
+        for selector in (
+            "#file-notes-git-commit-review-repository",
+            "#file-notes-git-commit-review-branch",
+            "#file-notes-git-commit-review-policy",
+            "#file-notes-git-commit-review-complete-state",
+            "#file-notes-git-commit-review-recovery",
+        ):
+            assert technical not in panel.query_one(selector).ancestors
+        assert (
+            _text(
+                panel.query_one(
+                    "#file-notes-git-commit-review-worktree-identity",
+                    Static,
+                )
+            )
+            == "Worktree identity: 1:2"
+        )
+        assert (
+            _text(
+                panel.query_one(
+                    "#file-notes-git-commit-review-git-directory",
+                    Static,
+                )
+            )
+            == "Git directory: /canonical/repository/.git · identity 1:2"
+        )
+        assert (
+            _text(
+                panel.query_one(
+                    "#file-notes-git-commit-review-git-common-directory",
+                    Static,
+                )
+            )
+            == "Git common directory: /canonical/repository/.git · identity 1:2"
         )
 
         disclosure = panel.query_one(
@@ -1580,6 +1683,7 @@ def test_commit_review_note_projection_rejects_authority_mismatch(
     with pytest.raises(ValueError, match="exactly match"):
         projection_type(
             review=review,
+            repository=valid.repository,
             included_notes=mismatched_notes,
         )
 
@@ -1604,6 +1708,11 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
             "#file-notes-git-commit-included-toggle",
             Button,
         )
+        technical = panel.query_one(
+            "#file-notes-git-commit-review-technical",
+            Collapsible,
+        )
+        technical_title = technical.query_one("CollapsibleTitle", Widget)
         edit = panel.query_one("#file-notes-git-commit-edit", Button)
         cancel = panel.query_one("#file-notes-git-commit-cancel", Button)
         confirm = panel.query_one("#file-notes-git-commit-confirm", Button)
@@ -1612,7 +1721,19 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
         assert not confirm.has_focus
 
         await pilot.press("shift+tab")
+        assert technical_title.has_focus
+        assert technical.collapsed
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not technical.collapsed
+        assert technical_title.has_focus
+        await pilot.press("shift+tab")
         assert disclosure.has_focus
+        await pilot.press("tab")
+        assert technical_title.has_focus
+        await pilot.press("enter")
+        await pilot.pause()
+        assert technical.collapsed
         await pilot.press("tab")
         assert edit.has_focus
         await pilot.press("tab")
@@ -1621,6 +1742,27 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
         assert confirm.has_focus
 
         if size[0] == 40:
+            body = panel.query_one(
+                "#file-notes-git-commit-body",
+                VerticalScroll,
+            )
+            for section in ("what", "where", "impact", "recovery"):
+                heading = panel.query_one(
+                    f"#file-notes-git-commit-review-{section}-heading",
+                    Static,
+                )
+                heading.scroll_visible(animate=False)
+                await pilot.pause()
+                assert heading in app.screen._compositor.visible_widgets
+                assert heading.region.x >= body.region.x
+                assert heading.region.right <= body.region.right
+                assert section.title() in app.export_screenshot()
+            technical_title.scroll_visible(animate=False)
+            await pilot.pause()
+            assert technical_title in app.screen._compositor.visible_widgets
+            screenshot = app.export_screenshot()
+            assert "Technical" in screenshot
+            assert "details" in screenshot
             assert edit.region.y == cancel.region.y
             assert confirm.region.y > edit.region.y
             assert confirm.region.x == footer.content_region.x
@@ -1652,8 +1794,9 @@ async def test_medium_commit_review_transition_reliably_focuses_edit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware(
-) -> None:
+async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware() -> (
+    None
+):
     binding_key = object()
     draft = _commit_draft_projection(
         binding_key=binding_key,
@@ -1688,9 +1831,7 @@ async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware(
         await pilot.press("enter")
         await pilot.pause()
         assert panel.commit_phase == "form"
-        assert app.messages[-1].__class__.__name__ == (
-            "EditCommitMessageRequested"
-        )
+        assert app.messages[-1].__class__.__name__ == ("EditCommitMessageRequested")
         assert not any(
             message.__class__.__name__ == "ConfirmCommitRequested"
             for message in app.messages
@@ -1701,9 +1842,7 @@ async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware(
         await pilot.press("escape")
         await pilot.pause()
         assert panel.commit_phase == "form"
-        assert app.messages[-1].__class__.__name__ == (
-            "EditCommitMessageRequested"
-        )
+        assert app.messages[-1].__class__.__name__ == ("EditCommitMessageRequested")
 
         panel.render_commit_review(_commit_review_projection())
         panel.query_one("#file-notes-git-commit-cancel", Button).press()
@@ -1718,9 +1857,7 @@ async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware(
         await pilot.press("enter")
         await pilot.pause()
         assert panel.commit_phase == "confirming"
-        assert app.messages[-1].__class__.__name__ == (
-            "ConfirmCommitRequested"
-        )
+        assert app.messages[-1].__class__.__name__ == ("ConfirmCommitRequested")
         await pilot.press("escape")
         await pilot.pause()
         # Confirming remains visible until the workspace proves that the
@@ -1753,16 +1890,19 @@ async def test_commit_result_copy_is_scrollable_unelided_and_uncertainty_is_safe
     async with app.run_test(size=(40, 20)) as pilot:
         execution_type = _panel_projection_type("CommitExecutionProjection")
         panel.render_commit_checking()
-        assert _text(
-            panel.query_one("#file-notes-git-commit-checking-copy", Static)
-        ) == "Checking commit..."
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-checking-copy", Static))
+            == "Checking commit..."
+        )
         panel.render_commit_executing(execution_type(staged_note_count=2))
-        assert _text(
-            panel.query_one("#file-notes-git-commit-execution-title", Static)
-        ) == "Committing 2 session notes..."
-        assert _text(
-            panel.query_one("#file-notes-git-commit-execution-detail", Static)
-        ) == "Git is updating the branch; cancellation is unavailable."
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-execution-title", Static))
+            == "Committing 2 session notes..."
+        )
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-execution-detail", Static))
+            == "Git is updating the branch; cancellation is unavailable."
+        )
 
         fit_calls: list[str] = []
 
@@ -1789,8 +1929,7 @@ async def test_commit_result_copy_is_scrollable_unelided_and_uncertainty_is_safe
             ),
             CommitOutcome(
                 "failed_unchanged",
-                "Git did not create a commit; branch and staged state are "
-                "unchanged.",
+                "Git did not create a commit; branch and staged state are unchanged.",
             ),
             CommitOutcome(
                 "blocked",
@@ -1802,36 +1941,30 @@ async def test_commit_result_copy_is_scrollable_unelided_and_uncertainty_is_safe
             panel.render_commit_result(
                 _commit_result_projection(
                     outcome,
-                    can_check_again=(
-                        True if outcome.state == "uncertain" else None
-                    ),
+                    can_check_again=(True if outcome.state == "uncertain" else None),
                 )
             )
-            assert _text(
-                panel.query_one("#file-notes-git-commit-result-message", Static)
-            ) == outcome.message
+            assert (
+                _text(panel.query_one("#file-notes-git-commit-result-message", Static))
+                == outcome.message
+            )
             assert not fit_calls
 
         assert panel.commit_phase == "result"
-        assert _text(
-            panel.query_one("#file-notes-git-commit-result-state", Static)
-        ) == "Uncertain"
+        assert (
+            _text(panel.query_one("#file-notes-git-commit-result-state", Static))
+            == "Uncertain"
+        )
         footer_buttons = tuple(
             button
-            for button in panel.query_one(
-                "#file-notes-git-commit-footer"
-            ).query(Button)
+            for button in panel.query_one("#file-notes-git-commit-footer").query(Button)
             if button.display
         )
-        assert tuple(str(button.label) for button in footer_buttons) == (
-            "Check again",
-        )
+        assert tuple(str(button.label) for button in footer_buttons) == ("Check again",)
         assert not footer_buttons[0].disabled
         footer_buttons[0].press()
         await pilot.pause()
-        assert app.messages[-1].__class__.__name__ == (
-            "CheckCommitAgainRequested"
-        )
+        assert app.messages[-1].__class__.__name__ == ("CheckCommitAgainRequested")
         result_body = panel.query_one("#file-notes-git-commit-body")
         assert isinstance(result_body, VerticalScroll)
         assert result_body.styles.overflow_y == "auto"
@@ -1903,14 +2036,13 @@ async def test_commit_uncertain_recovery_has_literal_reason_and_visible_focus(
         check_again.press()
         await pilot.pause()
         assert len(app.messages) == message_count + 1
-        assert app.messages[-1].__class__.__name__ == (
-            "CheckCommitAgainRequested"
-        )
+        assert app.messages[-1].__class__.__name__ == ("CheckCommitAgainRequested")
 
 
 @pytest.mark.asyncio
-async def test_return_to_commit_list_keeps_result_until_called_then_focuses_row(
-) -> None:
+async def test_return_to_commit_list_keeps_result_until_called_then_focuses_row() -> (
+    None
+):
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     async with _PanelHarness(panel).run_test() as pilot:
@@ -1957,8 +2089,9 @@ async def test_return_to_commit_list_keeps_result_until_called_then_focuses_row(
 
 
 @pytest.mark.asyncio
-async def test_return_to_empty_commit_list_after_cancelled_result_focuses_back(
-) -> None:
+async def test_return_to_empty_commit_list_after_cancelled_result_focuses_back() -> (
+    None
+):
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     async with _PanelHarness(panel).run_test() as pilot:
@@ -2152,10 +2285,7 @@ async def test_trust_dialog_escapes_repository_path_controls_and_markup() -> Non
         await pilot.pause()
 
         rendered = _text(app.dialog.query_one(".dialog-message", Label))
-        assert (
-            r"repo\[bold red]OWNED\[/bold red]\nFAKE TRUST\t\x1b"
-            in rendered
-        )
+        assert r"repo\[bold red]OWNED\[/bold red]\nFAKE TRUST\t\x1b" in rendered
         assert "\x1b" not in rendered
 
 
@@ -2328,9 +2458,7 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
     panel.styles.display = "block"
     async with _PanelHarness(panel).run_test(size=(40, 20)) as pilot:
         panel.render_status(status)
-        panel.set_current_status(
-            "Status: CHECKING — Checking current session notes."
-        )
+        panel.set_current_status("Status: CHECKING — Checking current session notes.")
         panel.set_last_action(
             "Last action: STAGED — 1 session note; unrelated changes untouched."
         )
@@ -2405,12 +2533,11 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         assert unavailable_text == "BLOCKED · Restore Git first; Refresh"
         assert cell_len(unavailable_text) <= unavailable.content_region.width
 
-        assert _flat_text(
-            panel.query_one("#file-notes-git-status", Static)
-        ) == "Status: CHECKING — Checking current session notes."
-        assert _flat_text(
-            panel.query_one("#file-notes-git-action-status", Static)
-        ) == (
+        assert (
+            _flat_text(panel.query_one("#file-notes-git-status", Static))
+            == "Status: CHECKING — Checking current session notes."
+        )
+        assert _flat_text(panel.query_one("#file-notes-git-action-status", Static)) == (
             "Last action: STAGED — 1 session note; unrelated changes untouched."
         )
 
@@ -2614,7 +2741,9 @@ async def test_selection_uses_stable_group_id_across_refresh() -> None:
 
 
 @pytest.mark.asyncio
-async def test_selected_and_bulk_labels_report_selection_and_independent_counts() -> None:
+async def test_selected_and_bulk_labels_report_selection_and_independent_counts() -> (
+    None
+):
     first = _row(
         "unstaged",
         group_id=11,
@@ -2901,7 +3030,9 @@ async def test_row_render_worker_is_registered_lazily(
 
 
 @pytest.mark.asyncio
-async def test_untrusted_shows_only_trust_action_and_checking_keeps_back_enabled() -> None:
+async def test_untrusted_shows_only_trust_action_and_checking_keeps_back_enabled() -> (
+    None
+):
     panel = LibraryFileNotesGitPanel()
     async with _PanelHarness(panel).run_test() as pilot:
         panel.styles.display = "block"
@@ -2921,9 +3052,7 @@ async def test_untrusted_shows_only_trust_action_and_checking_keeps_back_enabled
         await pilot.pause()
         assert not panel.query_one("#file-notes-git-back", Button).disabled
         assert panel.query_one("#file-notes-git-stage-all", Button).disabled
-        assert "Checking" in _text(
-            panel.query_one("#file-notes-git-status", Static)
-        )
+        assert "Checking" in _text(panel.query_one("#file-notes-git-status", Static))
 
 
 @pytest.mark.asyncio
@@ -3051,6 +3180,7 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
 
         search.value = "needle"
         await _wait_until(pilot, lambda: search_tree.display, "search mode not shown")
+        await _show_manage(workspace, pilot)
         entry.press()
         await _wait_until(
             pilot,
@@ -3060,8 +3190,8 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
         assert workspace.query_one("#file-notes-tree", Tree) is files_tree
         assert workspace.query_one("#file-notes-search-results", Tree) is search_tree
         assert not files_tree.display
-        assert not search_tree.display
-        assert not search_row.display
+        assert search_tree.display
+        assert search_row.display
         assert search.display
 
         panel.query_one("#file-notes-git-back", Button).press()
@@ -3142,9 +3272,8 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
         await _wait_until(pilot, lambda: search_tree.display, "search mode not shown")
         files_tree.select_node(archive_node)
         await pilot.pause()
-        tree_children_before = tuple(
-            node.data for node in files_tree.root.children
-        )
+        tree_children_before = tuple(node.data for node in files_tree.root.children)
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         assert str(entry.label) == "Review session changes (3)"
 
@@ -3170,8 +3299,7 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
             row.group.current_path for row in workspace._git_panel_widget.rows
         } == set(session_paths)
         assert all(
-            b"unrelated-" not in os.fsencode(argument)
-            for argument in status_argv
+            b"unrelated-" not in os.fsencode(argument) for argument in status_argv
         )
 
         workspace.query_one("#file-notes-git-back", Button).press()
@@ -3203,6 +3331,7 @@ async def test_opening_session_git_moves_focus_to_a_visible_ready_control(
     git_service.status_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -3216,8 +3345,10 @@ async def test_opening_session_git_moves_focus_to_a_visible_ready_control(
         git_service.status_release.set()
         await _wait_until(
             pilot,
-            lambda: len(git_service.status_calls) == 1
-            and len(workspace._git_panel_widget.rows) == 2,
+            lambda: (
+                len(git_service.status_calls) == 1
+                and len(workspace._git_panel_widget.rows) == 2
+            ),
             "initial status did not finish",
         )
         workspace.query_one("#file-notes-git-back", Button).press()
@@ -3247,6 +3378,7 @@ async def test_reopening_cached_status_keeps_mutation_controls_disabled(
     git_service.action_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
@@ -3307,6 +3439,7 @@ async def test_reopening_cached_status_keeps_controls_disabled_during_refresh(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
@@ -3350,8 +3483,10 @@ async def test_reopening_cached_status_keeps_controls_disabled_during_refresh(
             git_service.status_release.set()
             await _wait_until(
                 pilot,
-                lambda: owner.snapshot(binding).git_status is not None
-                and owner.snapshot(binding).git_status.status_generation >= 2,
+                lambda: (
+                    owner.snapshot(binding).git_status is not None
+                    and owner.snapshot(binding).git_status.status_generation >= 2
+                ),
                 "retained refresh did not settle during cleanup",
             )
     await workspace.shutdown()
@@ -3363,8 +3498,8 @@ async def test_reopening_cached_status_keeps_controls_disabled_during_refresh(
 async def test_fresh_workspace_attaches_retained_status_before_cached_ready_state(
     tmp_path: Path,
 ) -> None:
-    root, owner, binding, replica, git_service, _first_workspace = (
-        _workspace_fixture(tmp_path)
+    root, owner, binding, replica, git_service, _first_workspace = _workspace_fixture(
+        tmp_path
     )
     changes = owner.snapshot(binding).changes
     await git_service.start_status(binding, changes)
@@ -3385,14 +3520,17 @@ async def test_fresh_workspace_attaches_retained_status_before_cached_ready_stat
                 lambda: workspace.initialized,
                 "fresh workspace scan did not finish",
             )
+            await _show_manage(workspace, pilot)
             workspace.query_one("#file-notes-session-changes", Button).press()
             await _wait_until(
                 pilot,
-                lambda: "Status: CHECKING"
-                in _text(
-                    workspace.query_one(
-                        "#file-notes-git-status",
-                        Static,
+                lambda: (
+                    "Status: CHECKING"
+                    in _text(
+                        workspace.query_one(
+                            "#file-notes-git-status",
+                            Static,
+                        )
                     )
                 ),
                 "fresh workspace rendered cached status during retained work",
@@ -3405,9 +3543,11 @@ async def test_fresh_workspace_attaches_retained_status_before_cached_ready_stat
             git_service.status_release.set()
             await _wait_until(
                 pilot,
-                lambda: owner.snapshot(binding).git_status is not None
-                and owner.snapshot(binding).git_status.status_generation >= 2
-                and len(workspace._git_panel_widget.rows) == 2,
+                lambda: (
+                    owner.snapshot(binding).git_status is not None
+                    and owner.snapshot(binding).git_status.status_generation >= 2
+                    and len(workspace._git_panel_widget.rows) == 2
+                ),
                 "fresh workspace did not render the retained status result",
             )
             assert len(git_service.status_calls) == 2
@@ -3456,6 +3596,7 @@ async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
             await _wait_until(
                 pilot, lambda: workspace.initialized, "scan did not finish"
             )
+            await _show_manage(workspace, pilot)
             entry = workspace.query_one("#file-notes-session-changes", Button)
             entry.press()
             await _wait_until(
@@ -3472,11 +3613,13 @@ async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
             await asyncio.shield(rejected_task)
             await _wait_until(
                 pilot,
-                lambda: "Status: UNAVAILABLE"
-                in _text(
-                    workspace.query_one(
-                        "#file-notes-git-status",
-                        Static,
+                lambda: (
+                    "Status: UNAVAILABLE"
+                    in _text(
+                        workspace.query_one(
+                            "#file-notes-git-status",
+                            Static,
+                        )
                     )
                 ),
                 "rejected status did not clear the checking presentation",
@@ -3511,23 +3654,22 @@ async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
                 "replacement trust did not start a fresh status",
             )
 
-            assert (
-                owner.snapshot(binding).trusted_repository
-                == replacement_repository
-            )
+            assert owner.snapshot(binding).trusted_repository == replacement_repository
             _assert_git_mutations_disabled(workspace)
 
             replacement_release.set()
             await _wait_until(
                 pilot,
-                lambda: owner.snapshot(binding).git_status is not None
-                and owner.snapshot(binding).git_status.repository
-                == replacement_repository
-                and "Status: CURRENT · READY"
-                in _text(
-                    workspace.query_one(
-                        "#file-notes-git-status",
-                        Static,
+                lambda: (
+                    owner.snapshot(binding).git_status is not None
+                    and owner.snapshot(binding).git_status.repository
+                    == replacement_repository
+                    and "Status: CURRENT · READY"
+                    in _text(
+                        workspace.query_one(
+                            "#file-notes-git-status",
+                            Static,
+                        )
                     )
                 ),
                 "replacement repository status did not render",
@@ -3554,6 +3696,7 @@ async def test_hidden_action_summary_is_presented_after_reopen(
     git_service.action_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
@@ -3582,9 +3725,7 @@ async def test_hidden_action_summary_is_presented_after_reopen(
             lambda: not owner.mutation_active(binding),
             "hidden Stage did not settle",
         )
-        assert _text(
-            workspace.query_one("#file-notes-git-status", Static)
-        ) == (
+        assert _text(workspace.query_one("#file-notes-git-status", Static)) == (
             "Status: STALE — Git action finished while Review session changes "
             "was hidden. Open it again to Refresh."
         )
@@ -3598,11 +3739,13 @@ async def test_hidden_action_summary_is_presented_after_reopen(
         )
         await _wait_until(
             pilot,
-            lambda: workspace._git_last_action is not None
-            and workspace.query_one(
-                "#file-notes-git-action-status",
-                Static,
-            ).display,
+            lambda: (
+                workspace._git_last_action is not None
+                and workspace.query_one(
+                    "#file-notes-git-action-status",
+                    Static,
+                ).display
+            ),
             "reopen did not present the retained action summary",
         )
         assert workspace._git_last_action is not None
@@ -3612,10 +3755,7 @@ async def test_hidden_action_summary_is_presented_after_reopen(
         )
         refreshed_status = owner.snapshot(binding).git_status
         assert refreshed_status is not None
-        assert (
-            refreshed_status.status_generation
-            > initial_status.status_generation
-        )
+        assert refreshed_status.status_generation > initial_status.status_generation
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -3631,11 +3771,14 @@ async def test_unexpected_action_failure_survives_postflight_refresh(
     git_service.action_error = RuntimeError("simulated action failure")
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
-            lambda: len(git_service.status_calls) == 1
-            and len(workspace._git_panel_widget.rows) == 2,
+            lambda: (
+                len(git_service.status_calls) == 1
+                and len(workspace._git_panel_widget.rows) == 2
+            ),
             "initial status did not finish",
         )
         await _wait_for_current_git_row_projection(workspace)
@@ -3644,11 +3787,13 @@ async def test_unexpected_action_failure_survives_postflight_refresh(
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await _wait_until(
             pilot,
-            lambda: git_service.stage_calls == [(1,)]
-            and len(git_service.status_calls) == 2
-            and not owner.mutation_active(binding)
-            and "Status: CURRENT · READY"
-            in _text(workspace.query_one("#file-notes-git-status", Static)),
+            lambda: (
+                git_service.stage_calls == [(1,)]
+                and len(git_service.status_calls) == 2
+                and not owner.mutation_active(binding)
+                and "Status: CURRENT · READY"
+                in _text(workspace.query_one("#file-notes-git-status", Static))
+            ),
             "failed Stage did not settle through its postflight refresh",
         )
 
@@ -3686,12 +3831,15 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
     git_service.action_error = RuntimeError("simulated hidden action failure")
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.press()
         await _wait_until(
             pilot,
-            lambda: len(git_service.status_calls) == 1
-            and len(workspace._git_panel_widget.rows) == 2,
+            lambda: (
+                len(git_service.status_calls) == 1
+                and len(workspace._git_panel_widget.rows) == 2
+            ),
             "initial status did not finish",
         )
         await _wait_for_current_git_row_projection(workspace)
@@ -3701,8 +3849,9 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await _wait_until(
             pilot,
-            lambda: git_service.stage_calls == [(1,)]
-            and owner.mutation_active(binding),
+            lambda: (
+                git_service.stage_calls == [(1,)] and owner.mutation_active(binding)
+            ),
             "Stage did not retain the mutation gate",
         )
         workspace.query_one("#file-notes-git-back", Button).press()
@@ -3715,8 +3864,10 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
         git_service.action_release.set()
         await _wait_until(
             pilot,
-            lambda: not owner.mutation_active(binding)
-            and workspace._git_last_action is not None,
+            lambda: (
+                not owner.mutation_active(binding)
+                and workspace._git_last_action is not None
+            ),
             "hidden Stage failure did not settle",
         )
         await pilot.pause(0.1)
@@ -3735,12 +3886,14 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
         entry.press()
         await _wait_until(
             pilot,
-            lambda: len(git_service.status_calls) == 2
-            and owner.snapshot(binding).git_status is not None
-            and owner.snapshot(binding).git_status.status_generation
-            > initial_status.status_generation
-            and "Status: CURRENT · READY"
-            in _text(workspace.query_one("#file-notes-git-status", Static)),
+            lambda: (
+                len(git_service.status_calls) == 2
+                and owner.snapshot(binding).git_status is not None
+                and owner.snapshot(binding).git_status.status_generation
+                > initial_status.status_generation
+                and "Status: CURRENT · READY"
+                in _text(workspace.query_one("#file-notes-git-status", Static))
+            ),
             "reopen did not refresh the hidden action failure",
         )
         await _wait_for_current_git_row_projection(workspace)
@@ -3759,9 +3912,7 @@ async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
         )
         assert action_status.display
         assert _flat_text(action_status).startswith("Last action: FAILED")
-        assert _flat_text(action_status).endswith(
-            "outside Chatbook, then Refresh."
-        )
+        assert _flat_text(action_status).endswith("outside Chatbook, then Refresh.")
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -3927,14 +4078,17 @@ async def test_refresh_failure_keeps_stale_error_separate_from_last_action(
             release.set()
         await _wait_until(
             pilot,
-            lambda: "Status: STALE · ERROR"
-            in _text(workspace.query_one("#file-notes-git-status", Static)),
+            lambda: (
+                "Status: STALE · ERROR"
+                in _text(workspace.query_one("#file-notes-git-status", Static))
+            ),
             "refresh failure did not render separately",
         )
 
-        assert _flat_text(
-            workspace.query_one("#file-notes-git-action-status", Static)
-        ) == last_action
+        assert (
+            _flat_text(workspace.query_one("#file-notes-git-action-status", Static))
+            == last_action
+        )
         assert len(workspace._git_panel_widget.rows) == 2
         _assert_git_mutations_disabled(workspace)
     await workspace.shutdown()
@@ -3953,6 +4107,7 @@ async def test_remount_rehydrates_status_that_finished_while_unmounted(
     app = _RemountWorkspaceHarness(workspace)
     async with app.run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4004,6 +4159,7 @@ async def test_workspace_trust_decline_runs_no_status_and_retry_revalidates(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4075,6 +4231,7 @@ async def test_hidden_session_mutation_marks_stale_without_status_until_reopen(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4105,20 +4262,21 @@ async def test_hidden_session_mutation_marks_stale_without_status_until_reopen(
 async def test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh(
     tmp_path: Path,
 ) -> None:
-    root, owner, binding, replica, git_service, workspace = _workspace_fixture(
-        tmp_path
-    )
+    root, owner, binding, replica, git_service, workspace = _workspace_fixture(tmp_path)
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
         editor = workspace.query_one("#file-notes-editor", TextArea)
         editor.select_all()
-        editor.replace("saved before stage", editor.selection.start, editor.selection.end)
+        editor.replace(
+            "saved before stage", editor.selection.start, editor.selection.end
+        )
         await _wait_until(
             pilot,
             lambda: workspace.save_state == "dirty",
             "draft did not become dirty",
         )
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4130,8 +4288,9 @@ async def test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh(
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await _wait_until(
             pilot,
-            lambda: git_service.stage_calls == [(1,)]
-            and owner.mutation_active(binding),
+            lambda: (
+                git_service.stage_calls == [(1,)] and owner.mutation_active(binding)
+            ),
             "Stage did not flush and acquire the mutation gate",
         )
         assert (root / "folder" / "one.md").read_text(encoding="utf-8") == (
@@ -4160,8 +4319,10 @@ async def test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh(
         git_service.action_release.set()
         await _wait_until(
             pilot,
-            lambda: len(git_service.status_calls) == 2
-            and not owner.mutation_active(binding),
+            lambda: (
+                len(git_service.status_calls) == 2
+                and not owner.mutation_active(binding)
+            ),
             "postflight did not perform exactly one latest visible refresh",
         )
         await pilot.pause(0.1)
@@ -4192,6 +4353,7 @@ async def test_stage_all_summary_counts_the_complete_displayed_snapshot(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4240,6 +4402,7 @@ async def test_unstage_all_summary_counts_the_complete_displayed_snapshot(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4316,8 +4479,7 @@ def test_action_summary_contract_matrix(tmp_path: Path) -> None:
                     staged_group_ids=(moved_group.group_id,),
                 ),
                 stage_context,
-                "1 session note staged; "
-                "Chatbook targeted only eligible session paths.",
+                "1 session note staged; Chatbook targeted only eligible session paths.",
             ),
             (
                 GitActionResult(
@@ -4415,21 +4577,27 @@ def test_action_summary_contract_matrix(tmp_path: Path) -> None:
             ),
         )
         for result, context, expected in cases:
-            assert workspace._git_action_summary(
-                result,
-                context,
-                action_key,
-            ) == expected
+            assert (
+                workspace._git_action_summary(
+                    result,
+                    context,
+                    action_key,
+                )
+                == expected
+            )
 
         assert owner.record_change(
             binding,
             SessionChange("modified", "late.md"),
         )
-        assert workspace._git_action_summary(
-            cases[0][0],
-            stage_context,
-            action_key,
-        ) is None
+        assert (
+            workspace._git_action_summary(
+                cases[0][0],
+                stage_context,
+                action_key,
+            )
+            is None
+        )
     finally:
         owner.shutdown()
         replica.close()
@@ -4473,6 +4641,7 @@ async def test_unavailable_discovery_exposes_no_trust_or_mutation_action(
     git_service.discovery_result = discovery
     async with _WorkspaceHarness(workspace).run_test(size=(220, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         panel = workspace.query_one(
             "#file-notes-git-panel",
@@ -4480,8 +4649,10 @@ async def test_unavailable_discovery_exposes_no_trust_or_mutation_action(
         )
         await _wait_until(
             pilot,
-            lambda: visible_recovery
-            in _flat_text(panel.query_one("#file-notes-git-status", Static)),
+            lambda: (
+                visible_recovery
+                in _flat_text(panel.query_one("#file-notes-git-status", Static))
+            ),
             "Git discovery recovery was not visibly rendered",
         )
         assert panel._current_status_text == expected_status
@@ -4506,6 +4677,7 @@ async def test_hidden_postflight_starts_no_status_and_transition_wins_admission(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4554,6 +4726,7 @@ async def test_identity_change_after_trust_runs_no_status(
     git_service.revalidate_result = False
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4562,9 +4735,7 @@ async def test_identity_change_after_trust_runs_no_status(
         )
         await _wait_until(
             pilot,
-            lambda: bool(
-                list(workspace.app.screen.query("#confirm-button"))
-            ),
+            lambda: bool(list(workspace.app.screen.query("#confirm-button"))),
             "trust dialog controls did not mount",
         )
         workspace.app.screen.query_one("#confirm-button", Button).press()
@@ -4591,6 +4762,7 @@ async def test_unstage_selected_reports_counts_and_refreshes_once(
     git_service.rows = (_row("owned", group_id=1, unstage_eligible=True),)
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4628,6 +4800,7 @@ async def test_back_during_status_and_file_poll_start_no_extra_git_work(
     git_service.status_release = asyncio.Event()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4647,8 +4820,10 @@ async def test_back_during_status_and_file_poll_start_no_extra_git_work(
         workspace._start_poll()
         await _wait_until(
             pilot,
-            lambda: workspace._poll_worker is not None
-            and workspace._poll_worker.is_finished,
+            lambda: (
+                workspace._poll_worker is not None
+                and workspace._poll_worker.is_finished
+            ),
             "File Notes poll did not settle",
         )
         assert len(git_service.status_calls) == 1
@@ -4661,14 +4836,13 @@ async def test_back_during_status_and_file_poll_start_no_extra_git_work(
 async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
     tmp_path: Path,
 ) -> None:
-    root, owner, binding, replica, git_service, workspace = _workspace_fixture(
-        tmp_path
-    )
+    root, owner, binding, replica, git_service, workspace = _workspace_fixture(tmp_path)
     replacement = tmp_path / "replacement"
     replacement.mkdir()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("two.md")
+        await _show_manage(workspace, pilot)
         delete_button = workspace.query_one("#file-notes-delete", Button)
         delete_button.press()
         await _wait_until(
@@ -4740,6 +4914,7 @@ async def test_stage_rechecks_transition_admission_after_flush_await(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4786,6 +4961,7 @@ async def test_stage_draft_conflict_names_save_and_editor_recovery(
     )
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4852,6 +5028,7 @@ async def test_narrow_git_navigation_retains_editor_search_tree_and_row_selectio
             f"{[node.data for node in tree.root.children]!r}"
         )
         folder.expand()
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -4893,9 +5070,7 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
         / "management-notes-with-a-realistically-long-root"
         / "projects-and-study"
     )
-    root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
-        nested
-    )
+    root, owner, _binding, replica, git_service, workspace = _workspace_fixture(nested)
     workspace.styles.height = 14
 
     # task-2850: this test targets the WORKSPACE's own narrow-layout
@@ -4938,9 +5113,7 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
         await pilot.press("enter")
         await _wait_until(
             pilot,
-            lambda: bool(
-                pilot.app.screen.query("#file-notes-root-details-text")
-            ),
+            lambda: bool(pilot.app.screen.query("#file-notes-root-details-text")),
             "Keyboard root-details disclosure did not open",
         )
         assert (
@@ -4957,6 +5130,7 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
             "Root-details disclosure did not close",
         )
 
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -5085,6 +5259,7 @@ async def test_40x20_actionless_prepare_surface_is_keyboard_scrollable(
 
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -5128,6 +5303,7 @@ async def test_review_session_entry_explains_scope_and_keeps_recovery_copy_compl
 
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         assert str(entry.label) == "Review session changes (2)"
         entry.press()
@@ -5174,10 +5350,9 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         editor = workspace.query_one("#file-notes-editor", TextArea)
         editor.cursor_location = (0, 3)
         editor.selection = editor.selection.__class__((0, 1), (0, 5))
+        await _show_manage(workspace, pilot)
         file_toolbar = workspace.query_one("#file-notes-file-actions")
-        maintenance_toolbar = workspace.query_one(
-            "#file-notes-maintenance-actions"
-        )
+        maintenance_toolbar = workspace.query_one("#file-notes-maintenance-actions")
         toolbars = (file_toolbar, maintenance_toolbar)
         assert file_toolbar.display
         assert not maintenance_toolbar.display
@@ -5192,9 +5367,11 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         entry.press()
         await _wait_until(
             pilot,
-            lambda: len(git_service.status_calls) == 1
-            and len(workspace._git_panel_widget.rows) == 2
-            and all(not toolbar.display for toolbar in toolbars),
+            lambda: (
+                len(git_service.status_calls) == 1
+                and len(workspace._git_panel_widget.rows) == 2
+                and all(not toolbar.display for toolbar in toolbars)
+            ),
             "Prepare session did not quiet both editor toolbars",
         )
         await _wait_for_current_git_row_projection(workspace)
@@ -5212,7 +5389,18 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
         assert not editor.read_only
 
-        editor.focus()
+        workspace.query_one("#file-notes-git-back", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: file_toolbar.display and not maintenance_toolbar.display,
+            "Back did not restore the primary Manage toolbar",
+        )
+        workspace.query_one("#file-notes-edit", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.work_mode == "edit" and editor.has_focus,
+            "Edit did not restore the retained editor focus",
+        )
         await pilot.press("x")
         await _wait_until(
             pilot,
@@ -5222,12 +5410,6 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         body = editor.text
         cursor = editor.cursor_location
         selection = editor.selection
-        workspace.query_one("#file-notes-git-back", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: file_toolbar.display and not maintenance_toolbar.display,
-            "Back did not restore the primary editor toolbar",
-        )
 
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
         assert editor.text == body
@@ -5268,6 +5450,7 @@ async def test_deferred_git_row_focus_does_not_steal_retained_editor(
             assert await workspace.open_path("folder/one.md")
             editor = workspace.query_one("#file-notes-editor", TextArea)
             original_body = editor.text
+            await _show_manage(workspace, pilot)
             entry = workspace.query_one("#file-notes-session-changes", Button)
             entry.focus()
             await _wait_until(
@@ -5286,10 +5469,14 @@ async def test_deferred_git_row_focus_does_not_steal_retained_editor(
                 "Git row replacement did not enter its pending state",
             )
 
-            workspace.query_one("#file-notes-git-back", Button).focus()
+            workspace.query_one("#file-notes-edit", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace.work_mode == "edit" and editor.has_focus,
+                "Edit did not reclaim focus from the pending Git surface",
+            )
             workspace._focus_session_git_panel(retries_remaining=1)
             assert not editor.read_only
-            editor.focus()
             release_rows.set()
             await _wait_for_current_git_row_projection(workspace)
             await pilot.pause()
@@ -5320,8 +5507,9 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
+        await _show_manage(workspace, pilot)
         await pilot.pause()
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
         delete = workspace.query_one("#file-notes-delete", Button)
         delete.press()
         await _wait_until(
@@ -5343,12 +5531,16 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
         # "Confirm delete spans the full width" is span 1 there and span 2 in
         # the two-column stack. The label-fit helper below still guards
         # legibility either way.
-        expected_span = (
-            1 if workspace.has_class("-single-editor-actions") else 2
-        )
+        expected_span = 1 if workspace.has_class("-single-editor-actions") else 2
         assert delete.styles.column_span == expected_span
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
 
+        workspace.query_one("#file-notes-edit", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.work_mode == "edit",
+            "Edit mode did not open",
+        )
         editor = workspace.query_one("#file-notes-editor", TextArea)
         editor.focus()
         await pilot.press("x")
@@ -5359,7 +5551,7 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
         )
         await pilot.pause()
         assert not delete.has_class("-confirm-delete")
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -5375,8 +5567,9 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
     async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
+        await _show_manage(workspace, pilot)
         await pilot.pause()
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
         workspace.query_one("#file-notes-maintenance-toggle", Button).press()
         await pilot.pause()
         protect = workspace.query_one("#file-notes-protect", Button)
@@ -5389,7 +5582,7 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
             "Protect did not expose the complete Unprotect label",
         )
         await pilot.pause()
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -5538,9 +5731,10 @@ async def test_guarded_commit_review_uses_immutable_git_change_types(
 
         review = workspace._commit_review_projection
         assert review is not None
-        assert tuple(
-            note.change_type for note in review.included_notes
-        ) == ("New", "Deleted")
+        assert tuple(note.change_type for note in review.included_notes) == (
+            "New",
+            "Deleted",
+        )
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -5581,9 +5775,7 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
             binding_generation=binding.generation,
             status_generation=status_generation,
             state="ready",
-            rows=(
-                _row("owned", group_id=2, unstage_eligible=True),
-            ),
+            rows=(_row("owned", group_id=2, unstage_eligible=True),),
             repository=git_service.repository,
             head=git_service.head,
         )
@@ -5602,10 +5794,7 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
             lambda: (
                 workspace._git_panel_widget.commit_phase == "list"
                 and workspace._commit_draft is None
-                and tuple(
-                    row.group_id
-                    for row in workspace._git_panel_widget.rows
-                )
+                and tuple(row.group_id for row in workspace._git_panel_widget.rows)
                 == (2,)
                 and rows.has_focus
             ),
@@ -5620,9 +5809,13 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
         )
         assert success_summary.display
         assert _is_effectively_displayed(success_summary)
-        assert _flat_text(success_summary) == (
-            "Committed 2 session notes; unrelated changes untouched."
-        )
+        rendered_summary = _flat_text(success_summary)
+        if size == (40, 20):
+            assert rendered_summary.startswith("Committed 2 session notes")
+        else:
+            assert rendered_summary == (
+                "Committed 2 session notes; unrelated changes untouched."
+            )
         workspace.query_one(
             "#file-notes-git-commit-staged",
             Button,
@@ -5632,10 +5825,13 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
             lambda: workspace._git_panel_widget.commit_phase == "form",
             "fresh one-note commit form did not reopen",
         )
-        assert workspace.query_one(
-            "#file-notes-git-commit-subject",
-            Input,
-        ).value == ""
+        assert (
+            workspace.query_one(
+                "#file-notes-git-commit-subject",
+                Input,
+            ).value
+            == ""
+        )
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -5690,6 +5886,7 @@ async def test_commit_editor_lease_does_not_make_stage_read_only(
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
         editor = workspace.query_one("#file-notes-editor", TextArea)
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,
@@ -5847,9 +6044,7 @@ async def test_commit_operation_settled_review_cancel_cannot_resurrect(
         )
 
         git_service.review_release.set()
-        operation = git_service.retained_commit_operation(
-            workspace._session_binding
-        )
+        operation = git_service.retained_commit_operation(workspace._session_binding)
         assert operation is not None
         result = await operation.wait()
         assert isinstance(result, CommitReviewResult)
@@ -6579,9 +6774,7 @@ async def test_commit_operation_blocker_preserves_valid_subject_presentation(
         assert not subject.has_class("-invalid")
         assert not subject_error.display
         assert form_error.display
-        assert _text(form_error) == (
-            "The branch changed before commit confirmation."
-        )
+        assert _text(form_error) == ("The branch changed before commit confirmation.")
         assert workspace._commit_draft is not None
     await workspace.shutdown()
     owner.shutdown()
@@ -6981,6 +7174,7 @@ async def test_commit_40x20_keyboard_flow_keeps_navigator_and_editor_alternate(
             _row("owned", group_id=1, unstage_eligible=True),
             _row("owned", group_id=2, unstage_eligible=True),
         )
+        await _show_manage(workspace, pilot)
         entry = workspace.query_one("#file-notes-session-changes", Button)
         entry.focus()
         await pilot.press("enter")
@@ -6994,12 +7188,11 @@ async def test_commit_40x20_keyboard_flow_keeps_navigator_and_editor_alternate(
             ),
             "40x20 commit availability did not render",
         )
-        assert workspace.navigator_visible
-        assert not workspace.editor_visible
-        assert all(
-            not _is_effectively_displayed(toolbar)
-            for toolbar in workspace.query(".file-notes-toolbar")
-        )
+        assert workspace.editor_visible
+        assert not workspace.navigator_visible
+        shell = workspace.query_one("#library-file-notes-reader-shell")
+        assert not shell.effective_layout.items_open
+        assert shell.effective_layout.priority_pane is None
 
         commit = workspace.query_one(
             "#file-notes-git-commit-staged",
@@ -7045,7 +7238,7 @@ async def test_commit_40x20_keyboard_flow_keeps_navigator_and_editor_alternate(
             assert button.region.right <= panel_bounds.right
             assert button.region.y >= panel_bounds.y
             assert button.region.bottom <= panel_bounds.bottom
-            assert cell_len(str(button.label)) <= button.content_region.width
+            assert button.render().plain == str(button.label)
         confirm.focus()
         await pilot.press("enter")
         await _wait_until(
@@ -7107,6 +7300,7 @@ async def test_commit_40x20_keyboard_flow_keeps_navigator_and_editor_alternate(
         await _assert_visible_panel_buttons_fit(
             workspace._git_panel_widget,
             pilot,
+            allow_compact_label_clip=True,
         )
     await workspace.shutdown()
     owner.shutdown()
@@ -7159,6 +7353,7 @@ async def test_commit_1000_note_repository_reviews_only_session_set(
             attempts=300,
         )
         assert await workspace.open_path("note-0000.md")
+        await _show_manage(workspace, pilot)
         workspace.query_one("#file-notes-session-changes", Button).press()
         await _wait_until(
             pilot,

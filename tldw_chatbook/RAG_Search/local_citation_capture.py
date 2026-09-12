@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 import unicodedata
 
+from ..Chat.citation_evidence_models import EvidenceReference
 from ..Chat.citation_source_locators import CanonicalSourceKind
 from ..Chat.citation_trace_builder import (
     LocalPromptEvidenceCapture,
@@ -46,6 +47,8 @@ _OFFSET_ALIASES = {
 }
 _TITLE_UTF8_BYTES_MAX = 4 * 1024
 _SEPARATOR = "\n---\n"
+# Slack for the marker, source label, punctuation, newline, and separator.
+_CONSOLE_FRAMING_ALLOWANCE_PER_CANDIDATE = 32
 _SOURCE_LABELS = {
     CanonicalSourceKind.MEDIA_DB: "MEDIA",
     CanonicalSourceKind.NOTES: "NOTES",
@@ -371,6 +374,54 @@ def normalize_local_result(
     )
 
 
+def normalize_console_evidence_references(
+    references: Sequence[EvidenceReference],
+) -> tuple[NormalizedLocalResult, ...]:
+    """Normalize Console-staged local references for prompt capture.
+
+    Args:
+        references: Available references from the staged evidence bundle.
+
+    Returns:
+        Canonical local results in successful-normalization order.
+    """
+
+    normalized: list[NormalizedLocalResult] = []
+    for reference in references:
+        if reference.source_owner.strip().lower() != "local":
+            continue
+        metadata: dict[str, Any] = {
+            "source_type": reference.source_type,
+            "source_id": reference.source_id,
+        }
+        chunk_id = reference.metadata.get("chunk_id")
+        if isinstance(chunk_id, str) and chunk_id:
+            metadata["chunk_id"] = chunk_id
+        try:
+            normalized.append(
+                normalize_local_result(
+                    {
+                        "source": reference.source_type,
+                        "id": (
+                            chunk_id
+                            if isinstance(chunk_id, str) and chunk_id
+                            else reference.source_id
+                        ),
+                        "title": reference.title,
+                        "content": reference.snippet,
+                        "score": (
+                            reference.score if reference.score is not None else 0.0
+                        ),
+                        "metadata": metadata,
+                    },
+                    candidate_rank=len(normalized) + 1,
+                )
+            )
+        except LocalResultNormalizationError:
+            continue
+    return tuple(normalized)
+
+
 def _content_prefix_within_budgets(
     content: str, *, character_budget: int, utf8_byte_budget: int
 ) -> str:
@@ -467,6 +518,29 @@ def format_local_evidence_context(
     )
 
 
+def format_console_evidence_context(
+    normalized_results: Sequence[NormalizedLocalResult],
+) -> LocalEvidenceContext:
+    """Format all Console-staged candidates with the canonical prompt cap.
+
+    Args:
+        normalized_results: Canonical Console candidates in retrieval order.
+
+    Returns:
+        Exact formatted context, entry captures, and omitted candidate ranks.
+    """
+
+    return format_local_evidence_context(
+        normalized_results,
+        max_length=sum(
+            len(candidate.title)
+            + len(candidate.content)
+            + _CONSOLE_FRAMING_ALLOWANCE_PER_CANDIDATE
+            for candidate in normalized_results
+        ),
+    )
+
+
 __all__ = [
     "FINAL_SCORE_KIND_KEY",
     "FINAL_SCORE_KIND_RERANKER",
@@ -476,6 +550,8 @@ __all__ = [
     "NormalizedLocalResult",
     "SEMANTIC_SCORE_KIND_KEY",
     "SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY",
+    "format_console_evidence_context",
     "format_local_evidence_context",
+    "normalize_console_evidence_references",
     "normalize_local_result",
 ]

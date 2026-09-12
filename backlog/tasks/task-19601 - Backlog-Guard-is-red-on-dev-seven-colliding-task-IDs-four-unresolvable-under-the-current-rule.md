@@ -3,7 +3,7 @@ id: TASK-19601
 title: >-
   Backlog Guard is red on dev: seven colliding task IDs, four unresolvable
   under the current rule
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-21 18:20'
 labels:
@@ -49,9 +49,9 @@ partial fix buys nothing.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 The Backlog Guard passes on `dev`.
-- [ ] #2 Whatever is decided for the four Done-vs-Done pairs is written down as the rule to apply next time (this is the 8th-15th collision; the pattern is not stopping on its own).
-- [ ] #3 No id cited by already-merged code, ADRs, or commit messages silently changes meaning without a provenance note (the pattern used for TASK-19300).
+- [x] #1 The Backlog Guard passes on `dev`.
+- [x] #2 Whatever is decided for the four Done-vs-Done pairs is written down as the rule to apply next time (this is the 8th-15th collision; the pattern is not stopping on its own).
+- [x] #3 No id cited by already-merged code, ADRs, or commit messages silently changes meaning without a provenance note (the pattern used for TASK-19300).
 <!-- AC:END -->
 
 ## Notes
@@ -85,3 +85,27 @@ same base mint the same id. A mint-time reservation (or minting from a
 monotonically increasing counter file that conflicts loudly on merge) would
 end the recurrence.
 <!-- SECTION:NOTES:END -->
+
+## Implementation Notes (2026-08-21)
+
+**Owner rule decided** (recorded here per AC#2): *the older arrival keeps
+the id; the younger task renumbers — regardless of Done status — with a
+Renumbering provenance section naming the old id.* This supersedes the
+"Done tasks never move" reading that made the four Done-vs-Done pairs
+unresolvable; the provenance note (TASK-19300 pattern, AC#3) is what keeps
+old citations honest instead of immobility.
+
+**Executed:** the seven younger arrivals renumbered to TASK-19634..19640
+(each with a Renumbering provenance section): 16320→19634 (startup
+AGENTS.md), 16322→19635 (nested AGENTS.md), 16323→19636 (AGENTS.md
+rollout), 16324→19637 (pin local tool workspace), 18912→19638 (Context/
+Inspect baseline), 18913→19639 (100-column geometry), 18915→19640
+(Inspector overflow hint). Younger-side references updated: the
+agents-md-support and context-inspect-phase0 plans, the 18913 containment
+plan+spec (renamed to task-19639), and three code comments
+(chat_screen.py ×2, console_rail_state.py — now "TASK-19639 (formerly
+TASK-18913)"). Keeper-side citations (trajectory, research engine,
+library pagination programmes) untouched; historical collision reports
+(18802 report, 19052 plan) deliberately left as records. Guard workflow
+guidance message updated to state the new rule. Guard passes locally on
+this branch: 0 filename dupes, 0 frontmatter dupes.

@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import math
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ from .skill_trust_crypto import (
 _MANIFEST_FILENAME = "skill_trust_manifest.json"
 _SNAPSHOTS_DIRNAME = "snapshots"
 _TRUST_DIRNAME = "trust"
+_OWNER_ONLY_DIRECTORY_MODE = 0o700
 
 #: Name of the local generation-marker fallback file, used when no secure
 #: keyring backend is available (see ``build_skill_trust_marker_store_with_fallback``).
@@ -227,7 +229,11 @@ class KeyringSkillTrustGenerationMarkerStore:
 
     @property
     def _account(self) -> str:
-        return f"{_MARKER_USERNAME}:{self.account_scope}" if self.account_scope else _MARKER_USERNAME
+        return (
+            f"{_MARKER_USERNAME}:{self.account_scope}"
+            if self.account_scope
+            else _MARKER_USERNAME
+        )
 
     def load_marker(self) -> dict[str, Any] | None:
         """Load the marker from secure keyring storage."""
@@ -320,7 +326,11 @@ class KeyringSkillTrustKeyCache:
 
     @property
     def _account(self) -> str:
-        return f"{_KEY_CACHE_USERNAME}:{self.account_scope}" if self.account_scope else _KEY_CACHE_USERNAME
+        return (
+            f"{_KEY_CACHE_USERNAME}:{self.account_scope}"
+            if self.account_scope
+            else _KEY_CACHE_USERNAME
+        )
 
     def save_keys(self, keys: SkillTrustKeys, *, salt: bytes) -> None:
         """Store derived key material in a secure keyring, never the passphrase."""
@@ -344,9 +354,7 @@ class KeyringSkillTrustKeyCache:
         """Load cached derived trust keys from the secure keyring."""
 
         expected_salt_digest = _salt_digest(expected_salt)
-        payload = self.keyring_backend.get_password(
-            self.service_name, self._account
-        )
+        payload = self.keyring_backend.get_password(self.service_name, self._account)
         if not payload:
             return None
         data = json.loads(payload)
@@ -514,6 +522,7 @@ class SkillTrustStore:
         snapshot_payload = _json_safe_payload(payload)
         if not isinstance(snapshot_payload, dict):
             raise ValueError("skill trust snapshot payload must be an object")
+        _ensure_trust_directory(self.store_dir)
         snapshots_dir = _ensure_trust_directory(self.snapshots_dir)
         encrypted = encrypt_json_blob(
             snapshot_payload,
@@ -604,12 +613,19 @@ def _atomic_write_json(
     # (TASK-17963). `hidden=True` keeps this store's existing dot-prefixed
     # temp-file convention; the containment check below still re-runs
     # against the (now writer-unique) temp path exactly as it did against
-    # the old fixed one. A genuine write/replace failure still raises --
-    # only the temp-name collision class is gone.
+    # the old fixed one. `owner_only=True` precreates that temp at 0600 before
+    # serialization can write sensitive trust material (TASK-19520). A genuine
+    # write/replace failure still raises -- only the temp-name collision class
+    # is gone.
     temp_path = unique_temp_path(path, hidden=True)
     temp_path = _validated_trust_file_path(temp_path, base_dir=base_dir)
     text = json.dumps(payload, indent=indent, sort_keys=True) + "\n"
-    replace_atomically(temp_path, path, lambda t: t.write_text(text, encoding="utf-8"))
+    replace_atomically(
+        temp_path,
+        path,
+        lambda t: t.write_text(text, encoding="utf-8"),
+        owner_only=True,
+    )
 
 
 def _atomic_write_bytes(
@@ -619,14 +635,27 @@ def _atomic_write_bytes(
     path = _validated_trust_file_path(path, base_dir=base_dir)
     temp_path = unique_temp_path(path, hidden=True)
     temp_path = _validated_trust_file_path(temp_path, base_dir=base_dir)
-    replace_atomically(temp_path, path, lambda t: t.write_bytes(payload))
+    replace_atomically(
+        temp_path,
+        path,
+        lambda t: t.write_bytes(payload),
+        owner_only=True,
+    )
 
 
 def _ensure_trust_directory(path: Path) -> Path:
     directory = validate_path_simple(path)
     if directory.is_symlink():
         raise ValueError("unsafe skill trust path")
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(
+        mode=_OWNER_ONLY_DIRECTORY_MODE,
+        parents=True,
+        exist_ok=True,
+    )
+    if directory.is_symlink():
+        raise ValueError("unsafe skill trust path")
+    if os.name == "posix":
+        directory.chmod(_OWNER_ONLY_DIRECTORY_MODE)
     return directory
 
 

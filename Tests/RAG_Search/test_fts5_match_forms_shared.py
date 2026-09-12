@@ -42,6 +42,7 @@ from tldw_chatbook.Library.library_fts_query import (
 )
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
+    SeamState,
 )
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     LocalPromptService,
@@ -257,7 +258,7 @@ def test_plain_search_and_rag_answer_answer_the_same_inflection_miss(tmp_path):
             library._search_prompts(_INFLECTION_QUERY, 5)
         )
 
-        assert available is True
+        assert available is SeamState.AVAILABLE
         assert [row.metadata["doc_title"] for row in engine_rows] == [
             "Guy wire handover"
         ], "RAG Answer's keyword leg lost the document it used to find"

@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
+
+
+def _is_async_callable(candidate: Any) -> bool:
+    """True when calling ``candidate`` returns an awaitable by contract.
+
+    Kept local rather than imported from ``Writing_Interop`` so the UI module
+    does not pull the interop package (and its server client) into its import
+    graph for a three-line predicate.
+    """
+    if inspect.iscoroutinefunction(candidate):
+        return True
+    call = getattr(candidate, "__call__", None)
+    return call is not None and inspect.iscoroutinefunction(call)
 
 
 class WritingController:
@@ -15,10 +29,21 @@ class WritingController:
         self.current_structure: Mapping[str, Any] | None = None
         self.selected_node: Mapping[str, Any] | None = None
 
-    async def _maybe_await(self, value: Any) -> Any:
-        if inspect.isawaitable(value):
-            return await value
-        return value
+    async def _call(self, method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Invoke a backend method without ever blocking the event loop.
+
+        TASK-21125: the old ``_maybe_await(service.method(...))`` form evaluated
+        the call *before* the await, so a synchronous backend (the local
+        SQLite writing service) ran open/query/commit on the Textual loop --
+        every outline click and every autosave. Asynchronous backends are
+        awaited directly; synchronous ones are dispatched to a worker thread.
+        """
+        if _is_async_callable(method):
+            return await method(*args, **kwargs)
+        result = await asyncio.to_thread(method, *args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     def _require_scope_service(self) -> Any:
         if self.scope_service is None:
@@ -27,7 +52,7 @@ class WritingController:
 
     async def load_projects(self, source: str) -> list[Any]:
         service = self._require_scope_service()
-        projects = await self._maybe_await(service.list_projects(mode=source))
+        projects = await self._call(service.list_projects, mode=source)
         self.current_projects = list(projects or [])
         return self.current_projects
 
@@ -35,8 +60,8 @@ class WritingController:
         self, source: str, project_id: str
     ) -> Mapping[str, Any]:
         service = self._require_scope_service()
-        structure = await self._maybe_await(
-            service.get_project_structure(project_id, mode=source)
+        structure = await self._call(
+            service.get_project_structure, project_id, mode=source
         )
         self.current_structure = dict(structure or {})
         return self.current_structure
@@ -63,8 +88,8 @@ class WritingController:
         if method_name is None:
             raise ValueError(f"Unsupported writing entity kind: {entity_kind}")
         method = getattr(service, method_name)
-        return await self._maybe_await(
-            method(entity_id, mode=source, include_deleted=include_deleted)
+        return await self._call(
+            method, entity_id, mode=source, include_deleted=include_deleted
         )
 
     async def autosave_current(
@@ -78,13 +103,12 @@ class WritingController:
         service = self._require_scope_service()
         data = dict(payload)
         if entity_kind == "scene" and "body_markdown" in data:
-            return await self._maybe_await(
-                service.autosave_scene(
-                    entity_id,
-                    mode=source,
-                    body_markdown=str(data.get("body_markdown") or ""),
-                    expected_version=expected_version,
-                )
+            return await self._call(
+                service.autosave_scene,
+                entity_id,
+                mode=source,
+                body_markdown=str(data.get("body_markdown") or ""),
+                expected_version=expected_version,
             )
         data.pop("body_markdown", None)
         return await self.save_current(
@@ -97,9 +121,7 @@ class WritingController:
 
     async def create_project(self, source: str, payload: Mapping[str, Any]) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(
-            service.create_project(mode=source, **dict(payload))
-        )
+        return await self._call(service.create_project, mode=source, **dict(payload))
 
     async def create_child(
         self,
@@ -110,32 +132,29 @@ class WritingController:
         service = self._require_scope_service()
         parent_kind = parent_context.get("kind")
         if parent_kind == "project":
-            return await self._maybe_await(
-                service.create_manuscript(
-                    parent_context["id"],
-                    mode=source,
-                    **dict(payload),
-                )
+            return await self._call(
+                service.create_manuscript,
+                parent_context["id"],
+                mode=source,
+                **dict(payload),
             )
         if parent_kind in {"manuscript", "unassigned_chapters"}:
-            return await self._maybe_await(
-                service.create_chapter(
-                    parent_context["project_id"],
-                    mode=source,
-                    manuscript_id=parent_context.get("id")
-                    if parent_kind == "manuscript"
-                    else None,
-                    **dict(payload),
-                )
+            return await self._call(
+                service.create_chapter,
+                parent_context["project_id"],
+                mode=source,
+                manuscript_id=parent_context.get("id")
+                if parent_kind == "manuscript"
+                else None,
+                **dict(payload),
             )
         if parent_kind == "chapter":
-            return await self._maybe_await(
-                service.create_scene(
-                    parent_context["project_id"],
-                    mode=source,
-                    chapter_id=parent_context["id"],
-                    **dict(payload),
-                )
+            return await self._call(
+                service.create_scene,
+                parent_context["project_id"],
+                mode=source,
+                chapter_id=parent_context["id"],
+                **dict(payload),
             )
         raise ValueError(f"Unsupported writing parent kind: {parent_kind}")
 
@@ -157,8 +176,8 @@ class WritingController:
         if method_name is None:
             raise ValueError(f"Unsupported writing entity kind: {entity_kind}")
         method = getattr(service, method_name)
-        return await self._maybe_await(
-            method(entity_id, dict(payload), expected_version, mode=source)
+        return await self._call(
+            method, entity_id, dict(payload), expected_version, mode=source
         )
 
     async def delete_current(
@@ -178,8 +197,8 @@ class WritingController:
         if method_name is None:
             raise ValueError(f"Unsupported writing entity kind: {entity_kind}")
         method = getattr(service, method_name)
-        return await self._maybe_await(
-            method(entity_id, expected_version=expected_version, mode=source)
+        return await self._call(
+            method, entity_id, expected_version=expected_version, mode=source
         )
 
     async def assign_chapter(
@@ -192,14 +211,13 @@ class WritingController:
         sort_order: float | None = None,
     ) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(
-            service.assign_chapter(
-                chapter_id,
-                manuscript_id,
-                mode=source,
-                expected_version=expected_version,
-                sort_order=sort_order,
-            )
+        return await self._call(
+            service.assign_chapter,
+            chapter_id,
+            manuscript_id,
+            mode=source,
+            expected_version=expected_version,
+            sort_order=sort_order,
         )
 
     async def reorder_items(
@@ -210,8 +228,8 @@ class WritingController:
         items: list[Mapping[str, Any]],
     ) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(
-            service.reorder_items(project_id, entity_type, items, mode=source)
+        return await self._call(
+            service.reorder_items, project_id, entity_type, items, mode=source
         )
 
     async def move_scene(
@@ -225,15 +243,14 @@ class WritingController:
         sort_order: float | None = None,
     ) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(
-            service.move_scene(
-                scene_id,
-                manuscript_id,
-                chapter_id,
-                mode=source,
-                expected_version=expected_version,
-                sort_order=sort_order,
-            )
+        return await self._call(
+            service.move_scene,
+            scene_id,
+            manuscript_id,
+            chapter_id,
+            mode=source,
+            expected_version=expected_version,
+            sort_order=sort_order,
         )
 
     async def search_project(
@@ -245,8 +262,8 @@ class WritingController:
         limit: int = 20,
     ) -> list[Any]:
         service = self._require_scope_service()
-        results = await self._maybe_await(
-            service.search_project(project_id, query, mode=source, limit=limit)
+        results = await self._call(
+            service.search_project, project_id, query, mode=source, limit=limit
         )
         return list(results or [])
 
@@ -263,13 +280,12 @@ class WritingController:
         label: str | None = None,
     ) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(
-            service.create_version(
-                entity_kind,
-                entity_id,
-                mode=source,
-                label=label,
-            )
+        return await self._call(
+            service.create_version,
+            entity_kind,
+            entity_id,
+            mode=source,
+            label=label,
         )
 
     async def list_versions(
@@ -279,8 +295,8 @@ class WritingController:
         entity_id: str,
     ) -> list[Any]:
         service = self._require_scope_service()
-        versions = await self._maybe_await(
-            service.list_versions(entity_kind, entity_id, mode=source)
+        versions = await self._call(
+            service.list_versions, entity_kind, entity_id, mode=source
         )
         return list(versions or [])
 
@@ -293,13 +309,12 @@ class WritingController:
         expected_version: int | None = None,
     ) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(
-            service.restore_version_to_working_state(
-                version_id,
-                mode=source,
-                entity_kind=entity_kind,
-                expected_version=expected_version,
-            )
+        return await self._call(
+            service.restore_version_to_working_state,
+            version_id,
+            mode=source,
+            entity_kind=entity_kind,
+            expected_version=expected_version,
         )
 
     async def list_trash(
@@ -308,7 +323,7 @@ class WritingController:
         project_id: str | None,
     ) -> list[Any]:
         service = self._require_scope_service()
-        entries = await self._maybe_await(service.list_trash(project_id, mode=source))
+        entries = await self._call(service.list_trash, project_id, mode=source)
         return list(entries or [])
 
     async def restore_deleted(
@@ -329,6 +344,6 @@ class WritingController:
         if method_name is None:
             raise ValueError(f"Unsupported writing entity kind: {entity_kind}")
         method = getattr(service, method_name)
-        return await self._maybe_await(
-            method(entity_id, mode=source, expected_version=expected_version)
+        return await self._call(
+            method, entity_id, mode=source, expected_version=expected_version
         )

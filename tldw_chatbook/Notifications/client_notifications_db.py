@@ -60,13 +60,49 @@ class ClientNotificationsDB(BaseDB):
     _LIVENESS_PING_IDLE_SECONDS = 30.0
 
     def __init__(self, db_path: str | Path, client_id: str = "default"):
-        # Both must precede super().__init__: BaseDB.__init__ calls
-        # _initialize_schema(), which already needs a connection.
+        # Both must precede super().__init__: _initialize_schema (run
+        # eagerly for :memory: below) already needs a connection.
         self._memory_conn: sqlite3.Connection | None = None
         self._thread_local = threading.local()
-        super().__init__(db_path, client_id)
+        # TASK-21105: file-backed schema creation is deferred to the first
+        # connection (initialize_schema=False below). Construction resolves
+        # the path only; no file/WAL sidecars are created until first
+        # feature use (an inbox read or a dispatched notification).
+        # ``:memory:`` stays eager so its single shared connection is
+        # created on the constructing thread, exactly as before.
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
+        super().__init__(db_path, client_id, initialize_schema=False)
+        if self.is_memory_db:
+            self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        """Create the schema exactly once, on first connection (TASK-21105).
+
+        Single-flight under a lock: the first touch can come from a
+        dispatch worker thread while the UI thread reads the inbox. A
+        failed attempt leaves ``_schema_ready`` False so the next
+        operation retries.
+        """
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            self._initialize_schema()
+            self._schema_ready = True
 
     def _get_connection(self) -> sqlite3.Connection:
+        self._ensure_schema()
+        return self._open_connection()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a raw connection without the first-use schema ensure.
+
+        ``_initialize_schema`` must use this directly: it runs inside
+        ``_ensure_schema``'s lock, and going through ``_get_connection``
+        there would deadlock on the non-reentrant lock.
+        """
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
@@ -188,7 +224,13 @@ class ClientNotificationsDB(BaseDB):
                 pass
 
     def _initialize_schema(self) -> None:
-        with self.connection() as conn:
+        # Raw connection: runs under _ensure_schema's lock (TASK-21105), so
+        # it cannot use connection()/_held_connection (both re-enter
+        # _get_connection). File-backed: one short-lived connection, closed
+        # below; the held per-thread connection opens on the first real
+        # operation. :memory:: the shared cached connection, never closed.
+        conn = self._open_connection()
+        try:
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -228,6 +270,9 @@ class ClientNotificationsDB(BaseDB):
                 );
                 """
             )
+        finally:
+            if not getattr(self, "is_memory_db", False):
+                conn.close()
 
     def insert_notification(
         self,

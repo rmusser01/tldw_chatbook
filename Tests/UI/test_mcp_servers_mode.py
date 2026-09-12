@@ -730,9 +730,11 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
         # nowhere near the height of an expanding 1fr container consuming
         # whatever vertical space the scroll pane has left.
         assert toggles.size.height < 12
-        # Nine gate checkboxes + a title + two subheadings + a note -- still
-        # a content-sized handful of rows, not an expanding 1fr container.
-        assert tool_gates.size.height < 20
+        # One row per `all_tool_gates()` entry + a title + two subheadings +
+        # the includes line + two apply notes (task-32284 added the
+        # external-MCP one) -- still a content-sized handful of rows, not an
+        # expanding 1fr container, which measured in the hundreds.
+        assert tool_gates.size.height < 26
 
         # The tool-gates container sits directly under the [mcp] toggles.
         gap_between = tool_gates.region.y - (toggles.region.y + toggles.region.height)
@@ -782,14 +784,20 @@ async def test_showing_builtin_detail_does_not_post_builtin_flag_changed():
 
 
 @pytest.mark.asyncio
-async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings_and_note(
+async def test_tool_gate_buttons_render_under_builtin_detail_with_subheadings_and_note(
     monkeypatch,
 ):
     """The builtin detail pane also renders a "Tool gates" group -- one
-    Checkbox per `all_tool_gates()` entry, under two subheadings ("Agent
-    built-ins" / "Local workspace, web, and Watchlists tools"), plus the ADAPTED restart note
-    (NOT the `[mcp]` toggles' "next client launch" wording -- these gates
-    affect the in-process agent runtime, no MCP client involved).
+    toggle Button per `all_tool_gates()` entry, under two subheadings ("Agent
+    built-ins" / "Local workspace, web, and Watchlists tools"), plus the
+    ADAPTED apply note (NOT the `[mcp]` toggles' "next client launch"
+    wording -- these gates affect the in-process agent runtime, no MCP
+    client involved).
+
+    task-32284: the rows are Buttons whose label spells the state out
+    ("Read file: on ▸"), not Checkboxes -- Textual's ToggleButton draws the
+    same `X` glyph in both states, so the old rows carried their state in
+    colour alone.
     """
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
@@ -825,22 +833,37 @@ async def test_tool_gate_checkboxes_render_under_builtin_detail_with_subheadings
         assert "Watchlists search/detail" in includes_text
         assert "web_deep_search is separately gated" in includes_text
 
-        first_cb = app.query_one(f"#mcp-gate-{first_builtin_key}", Checkbox)
-        assert first_cb.value is True
-        assert first_cb.tooltip
+        first_entry = _GATEABLE_BUILTINS[0]
+        first_button = app.query_one(f"#mcp-gate-{first_builtin_key}", Button)
+        assert str(first_button.label) == f"{first_entry.title}: on ▸"
+        assert str(first_button.tooltip) == first_entry.blurb
 
-        master_cb = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_cb.value is True
-
-        web_deep_search_cb = app.query_one(
-            f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox
+        master_button = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_button.label).endswith(": on ▸")
+        assert "Local workspace, web, and Watchlists tools (master switch)" in str(
+            master_button.label
         )
-        assert web_deep_search_cb.value is False  # not overridden -> default off
+
+        web_deep_search_button = app.query_one(
+            f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Button
+        )
+        # not overridden -> default off, and the label says so in text
+        assert str(web_deep_search_button.label).endswith(": off ▸")
 
         note = str(app.query_one("#mcp-gate-toggles-note", Static).renderable)
-        assert "Applies on next app restart" in note
-        assert "tool providers build their catalogs at startup" in note
+        assert "next Console agent run" in note
+        assert "restart" not in note.lower()
         assert "next client launch" not in note
+
+        # task-32284 AC#3: only the gate that ALSO decides what the built-in
+        # MCP server publishes carries a launch caveat, and it names itself.
+        restart_note = str(
+            app.query_one("#mcp-gate-restart-note", Static).renderable
+        )
+        assert "web_deep_search" in restart_note
+        assert "next client launch" in restart_note
+        assert "expose_local_tools" in restart_note
+        assert "read_file" not in restart_note
 
 
 @pytest.mark.asyncio
@@ -874,25 +897,26 @@ async def test_local_group_dependents_are_disabled_while_master_is_off(monkeypat
             note.renderable
         ) and "workspace, web, and Watchlists tools" in str(note.renderable)
 
-        master_cb = app.query_one(f"#mcp-gate-{LOCAL_TOOLS_MASTER_KEY}", Checkbox)
-        assert master_cb.value is False
-        assert master_cb.disabled is False  # the master itself stays clickable
+        master_button = app.query_one(f"#mcp-gate-{LOCAL_TOOLS_MASTER_KEY}", Button)
+        assert str(master_button.label).endswith(": off ▸")
+        assert master_button.disabled is False  # the master itself stays clickable
         assert "Local workspace, web, and Watchlists tools (master switch)" in str(
-            master_cb.label
+            master_button.label
         )
 
-        dependent_cb = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
-        assert dependent_cb.value is True  # its own gate really is on...
-        assert dependent_cb.disabled is True  # ...but unreachable while master is off
+        dependent = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Button)
+        # its own gate really is on...
+        assert str(dependent.label).endswith(": on ▸")
+        assert dependent.disabled is True  # ...but unreachable while master is off
 
-        # Builtin-group checkboxes are NEVER gated by the local master --
+        # Builtin-group gates are NEVER gated by the local master --
         # a different group entirely.
         from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
-        builtin_cb = app.query_one(
-            f"#mcp-gate-{_GATEABLE_BUILTINS[0].gate_key}", Checkbox
+        builtin_button = app.query_one(
+            f"#mcp-gate-{_GATEABLE_BUILTINS[0].gate_key}", Button
         )
-        assert builtin_cb.disabled is False
+        assert builtin_button.disabled is False
 
 
 @pytest.mark.asyncio
@@ -918,15 +942,15 @@ async def test_local_group_dependents_are_enabled_while_master_is_on(monkeypatch
 
         assert not list(app.query("#mcp-gate-local-master-off-note"))
 
-        dependent_cb = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
-        assert dependent_cb.disabled is False
+        dependent = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Button)
+        assert dependent.disabled is False
 
-        master_cb = app.query_one(f"#mcp-gate-{LOCAL_TOOLS_MASTER_KEY}", Checkbox)
-        assert master_cb.disabled is False
+        master_button = app.query_one(f"#mcp-gate-{LOCAL_TOOLS_MASTER_KEY}", Button)
+        assert master_button.disabled is False
 
 
 @pytest.mark.asyncio
-async def test_tool_gate_checkboxes_do_not_appear_for_non_builtin_detail():
+async def test_tool_gate_buttons_do_not_appear_for_non_builtin_detail():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
@@ -939,8 +963,9 @@ async def test_tool_gate_checkboxes_do_not_appear_for_non_builtin_detail():
 
 @pytest.mark.asyncio
 async def test_showing_builtin_detail_does_not_post_tool_gate_changed(monkeypatch):
-    """Mount-echo guard, gate-checkbox sibling of the BuiltinFlagChanged
-    test above -- same Checkbox-construction mechanism, same requirement."""
+    """Mount-echo guard, gate-row sibling of the BuiltinFlagChanged test
+    above: mounting the rows must post nothing (task-32284 keeps this true
+    by construction -- a Button only speaks when pressed)."""
     import tldw_chatbook.config as config_module
 
     monkeypatch.setattr(
@@ -955,7 +980,7 @@ async def test_showing_builtin_detail_does_not_post_tool_gate_changed(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_and_key(
+async def test_toggling_tool_gate_button_posts_tool_gate_changed_with_section_and_key(
     monkeypatch,
 ):
     """A [tools]-section gate (web_deep_search) and the [console]-section
@@ -992,29 +1017,79 @@ async def test_toggling_tool_gate_checkbox_posts_tool_gate_changed_with_section_
         await canvas.show_detail(builtin_readiness(enabled=True))
         await pilot.pause()
 
-        checkbox = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Checkbox)
-        assert checkbox.value is False  # declared, not accidental
-        assert checkbox.disabled is False  # master is on -> not disabled
+        button = app.query_one(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}", Button)
+        assert str(button.label).endswith(": off ▸")  # declared, not accidental
+        assert button.disabled is False  # master is on -> not disabled
 
-        await pilot.click(f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}")
+        # `.press()`, not `pilot.click` -- this test's own focus is the posted
+        # event's section/key/value; mouse hit-testing coverage for these
+        # rows lives in
+        # Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog.
+        button.press()
         await pilot.pause()
         assert len(app.events) == 1
         event = app.events[0]
         assert event.section == "tools"
         assert event.key == WEB_DEEP_SEARCH_GATE_KEY
-        assert event.value is True  # off -> the click turns it on
+        assert event.value is True  # off -> the press turns it on
 
-        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox.value is True  # declared, not accidental
-        assert master_checkbox.disabled is False  # the master itself is never disabled
+        master_button = app.query_one("#mcp-gate-local_tools_enabled", Button)
+        assert str(master_button.label).endswith(": on ▸")  # declared, not accidental
+        assert master_button.disabled is False  # the master is never disabled
 
-        await pilot.click("#mcp-gate-local_tools_enabled")
+        master_button.press()
         await pilot.pause()
         assert len(app.events) == 2
         event2 = app.events[1]
         assert event2.section == "console"
         assert event2.key == "local_tools_enabled"
-        assert event2.value is False  # was declared ON above -> the click turns it off
+        assert event2.value is False  # was declared ON above -> the press turns it off
+
+
+@pytest.mark.asyncio
+async def test_gate_row_state_is_spelled_out_and_follows_the_saved_value(monkeypatch):
+    """task-32284 AC#1: click `Read file: off ▸`, and once the workbench has
+    persisted `read_file_enabled = true` the row reads `Read file: on ▸`.
+
+    The live defect: the row was a compact `Checkbox`, whose glyph is `▐X▌`
+    in BOTH states (Textual's `ToggleButton._button` always draws `X`;
+    only the colour differs), so a click that really did flip the config
+    left the row looking identical. Here the saved value round-trips
+    through the same rebuild the workbench's resync performs.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
+    saved: dict[str, object] = {}
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        return saved.get(key, default)
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+    app = CanvasApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
+        assert str(row.label) == f"{entry.title}: off ▸"
+
+        await pilot.click(f"#mcp-gate-{entry.gate_key}")
+        await pilot.pause()
+        assert [(e.section, e.key, e.value) for e in app.events] == [
+            ("tools", entry.gate_key, True)
+        ]
+
+        # What the workbench does with that event: persist, then resync.
+        saved[entry.gate_key] = True
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
+        assert str(row.label) == f"{entry.title}: on ▸"
 
 
 @pytest.mark.asyncio
@@ -1770,3 +1845,91 @@ def test_named_items_text_truncates_at_named_items_cap():
     text = _named_items_text(items, key="name")
     assert text.startswith("10: tool0, tool1, tool2, tool3, tool4, tool5, tool6, tool7")
     assert text.endswith("… +2 more")
+
+
+@pytest.mark.asyncio
+async def test_two_gate_presses_before_a_resync_request_opposite_values(monkeypatch):
+    """Qodo #2600 #15: a gate row computed its next value from the cached
+    `ToolGate` that built its label, but did NOT update that cache before
+    posting -- so a second press landing before the workbench's save/resync
+    round trip re-read the stale `gate.enabled` and asked for the SAME state
+    again. An accidental toggle could not be reversed until the save
+    finished.
+
+    The cached gate AND the Button label are now updated optimistically;
+    `MCPWorkbench._save_tool_gate()` resyncs on failure too, so a rejected
+    write still repaints the persisted truth.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: False,
+    )
+
+    app = CanvasApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
+        assert str(row.label) == f"{entry.title}: off ▸"
+
+        # No `show_detail()` rebuild in between: the save is still in flight.
+        row.press()
+        await pilot.pause()
+        assert str(row.label) == f"{entry.title}: on ▸"
+        row.press()
+        await pilot.pause()
+
+        assert [(e.key, e.value) for e in app.events] == [
+            (entry.gate_key, True),
+            (entry.gate_key, False),
+        ]
+        assert str(row.label) == f"{entry.title}: off ▸"
+
+
+@pytest.mark.asyncio
+async def test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected(
+    monkeypatch,
+):
+    """The optimistic flip above is only safe because the rebuild
+    (`show_detail()` -> `_rebuild_tool_gate_buttons()` -> `all_tool_gates()`)
+    reads persisted config -- which is what `MCPWorkbench._save_tool_gate()`
+    now runs on its FAILURE paths too, not just on success."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    entry = next(e for e in _GATEABLE_BUILTINS if e.tool_name == "read_file")
+    monkeypatch.setattr(
+        config_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: False,
+    )
+
+    app = CanvasApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        app.query_one(f"#mcp-gate-{entry.gate_key}", Button).press()
+        await pilot.pause()
+        assert (
+            str(app.query_one(f"#mcp-gate-{entry.gate_key}", Button).label)
+            == f"{entry.title}: on ▸"
+        )
+
+        # The save failed -- nothing was persisted, so the resync rebuild
+        # must put the row back to "off".
+        await canvas.show_detail(builtin_readiness(enabled=True))
+        await pilot.pause()
+
+        assert (
+            str(app.query_one(f"#mcp-gate-{entry.gate_key}", Button).label)
+            == f"{entry.title}: off ▸"
+        )

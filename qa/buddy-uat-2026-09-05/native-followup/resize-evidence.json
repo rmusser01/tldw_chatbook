@@ -1,0 +1,382 @@
+{
+  "region": {
+    "x": 69,
+    "y": 25,
+    "width": 40,
+    "height": 21
+  },
+  "screen": "ChatScreen",
+  "pid": 34235,
+  "source_root": "/private/tmp/chatbook-migu-dragging-20260905",
+  "owner_current": true,
+  "events": [
+    {
+      "event": "on_mouse_move",
+      "x": 54,
+      "y": 33,
+      "button": 0,
+      "at": 1864173.349
+    },
+    {
+      "event": "on_mouse_down",
+      "x": 54,
+      "y": 33,
+      "button": 1,
+      "at": 1864173.503
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 55,
+      "y": 33,
+      "button": 1,
+      "at": 1864173.504
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 57,
+      "y": 33,
+      "button": 1,
+      "at": 1864173.505
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 58,
+      "y": 32,
+      "button": 1,
+      "at": 1864173.505
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 60,
+      "y": 32,
+      "button": 1,
+      "at": 1864173.545
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 62,
+      "y": 32,
+      "button": 1,
+      "at": 1864173.573
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 63,
+      "y": 31,
+      "button": 1,
+      "at": 1864173.615
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 65,
+      "y": 31,
+      "button": 1,
+      "at": 1864173.654
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 66,
+      "y": 31,
+      "button": 1,
+      "at": 1864173.69
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 68,
+      "y": 30,
+      "button": 1,
+      "at": 1864173.811
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 69,
+      "y": 30,
+      "button": 1,
+      "at": 1864173.812
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 71,
+      "y": 30,
+      "button": 1,
+      "at": 1864173.812
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 73,
+      "y": 29,
+      "button": 1,
+      "at": 1864173.85
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 74,
+      "y": 29,
+      "button": 1,
+      "at": 1864173.89
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 76,
+      "y": 29,
+      "button": 1,
+      "at": 1864173.932
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 77,
+      "y": 28,
+      "button": 1,
+      "at": 1864173.968
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 79,
+      "y": 28,
+      "button": 1,
+      "at": 1864174.015
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 80,
+      "y": 28,
+      "button": 1,
+      "at": 1864174.05
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 82,
+      "y": 27,
+      "button": 1,
+      "at": 1864174.161
+    },
+    {
+      "event": "on_mouse_up",
+      "x": 82,
+      "y": 27,
+      "button": 1,
+      "at": 1864174.162
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 96,
+      "y": 39,
+      "button": 0,
+      "at": 1864230.451
+    },
+    {
+      "event": "on_mouse_down",
+      "x": 96,
+      "y": 39,
+      "button": 1,
+      "at": 1864230.491
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 97,
+      "y": 39,
+      "button": 1,
+      "at": 1864230.565
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 98,
+      "y": 39,
+      "button": 1,
+      "at": 1864230.606
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 98,
+      "y": 40,
+      "button": 1,
+      "at": 1864230.641
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 99,
+      "y": 40,
+      "button": 1,
+      "at": 1864230.682
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 100,
+      "y": 40,
+      "button": 1,
+      "at": 1864230.789
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 101,
+      "y": 40,
+      "button": 1,
+      "at": 1864230.806
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 102,
+      "y": 41,
+      "button": 1,
+      "at": 1864230.843
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 103,
+      "y": 41,
+      "button": 1,
+      "at": 1864230.925
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 104,
+      "y": 41,
+      "button": 1,
+      "at": 1864230.963
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 104,
+      "y": 42,
+      "button": 1,
+      "at": 1864231.008
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 105,
+      "y": 42,
+      "button": 1,
+      "at": 1864231.04
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 106,
+      "y": 42,
+      "button": 1,
+      "at": 1864231.082
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 107,
+      "y": 42,
+      "button": 1,
+      "at": 1864231.195
+    },
+    {
+      "event": "on_mouse_move",
+      "x": 108,
+      "y": 43,
+      "button": 1,
+      "at": 1864231.198
+    },
+    {
+      "event": "on_mouse_up",
+      "x": 108,
+      "y": 43,
+      "button": 1,
+      "at": 1864231.239
+    }
+  ],
+  "changes": [
+    {
+      "region": {
+        "x": 41,
+        "y": 31,
+        "width": 28,
+        "height": 19
+      },
+      "at": 1835345.505
+    },
+    {
+      "region": {
+        "x": 41,
+        "y": 31,
+        "width": 28,
+        "height": 15
+      },
+      "at": 1835345.572
+    },
+    {
+      "region": {
+        "x": 47,
+        "y": 30,
+        "width": 28,
+        "height": 15
+      },
+      "at": 1864173.571
+    },
+    {
+      "region": {
+        "x": 53,
+        "y": 29,
+        "width": 28,
+        "height": 15
+      },
+      "at": 1864173.81
+    },
+    {
+      "region": {
+        "x": 64,
+        "y": 26,
+        "width": 28,
+        "height": 15
+      },
+      "at": 1864173.98
+    },
+    {
+      "region": {
+        "x": 67,
+        "y": 26,
+        "width": 28,
+        "height": 15
+      },
+      "at": 1864174.171
+    },
+    {
+      "region": {
+        "x": 69,
+        "y": 25,
+        "width": 28,
+        "height": 15
+      },
+      "at": 1864174.372
+    },
+    {
+      "region": {
+        "x": 69,
+        "y": 25,
+        "width": 29,
+        "height": 16
+      },
+      "at": 1864230.788
+    },
+    {
+      "region": {
+        "x": 69,
+        "y": 25,
+        "width": 34,
+        "height": 18
+      },
+      "at": 1864230.971
+    },
+    {
+      "region": {
+        "x": 69,
+        "y": 25,
+        "width": 36,
+        "height": 19
+      },
+      "at": 1864231.195
+    },
+    {
+      "region": {
+        "x": 69,
+        "y": 25,
+        "width": 40,
+        "height": 21
+      },
+      "at": 1864231.372
+    }
+  ],
+  "normal_config_unchanged": false
+}

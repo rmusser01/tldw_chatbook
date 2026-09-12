@@ -27,6 +27,7 @@ TAB_STTS = "stts"
 TAB_STUDY = "study"
 TAB_WRITING = "writing"
 TAB_RESEARCH = "research"
+TAB_RESEARCH_WORKSPACE = "research_workspace"
 TAB_SUBSCRIPTIONS = "subscriptions"
 TAB_CHATBOOKS = "chatbooks"
 TAB_HOME = "home"
@@ -40,6 +41,7 @@ TAB_MCP = "mcp"
 TAB_ACP = "acp"
 TAB_SKILLS = "skills"
 TAB_SETTINGS = "settings"
+TAB_MEETINGS = "meetings"
 
 # Library navigation-context contract keys and values.
 LIBRARY_NAV_CONTEXT_MODE = "mode"
@@ -53,12 +55,36 @@ LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID = "open_source_id"
 LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
+# Console navigation-context contract keys.
+CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
+    "resume_local_conversation_id"
+)
+CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET = "character_conversation_target"
+
+# Trusted character-conversation navigation context keys.
+ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION = "character_conversation"
+LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR = "character_repair"
+LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION = "character_unavailable_inspection"
+LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE = "character_unavailable_browse"
+CHARACTER_NAV_CONTEXT_RETURN_FOCUS = "return_focus"
+
+# Saved-conversation pagination shared by the Roleplay controller and inspector.
+PERSONAS_CONVERSATIONS_PAGE_SIZE = 20
+
 # Watchlists navigation-context contract keys and values.
 WATCHLISTS_NAV_CONTEXT_SECTION = "section"
 WATCHLISTS_NAV_CONTEXT_BACKEND = "backend"
 WATCHLISTS_NAV_CONTEXT_RUN_ID = "run_id"
+WATCHLISTS_NAV_CONTEXT_BRIEFING_ID = "briefing_id"
 WATCHLISTS_SECTION_NOTIFICATIONS = "notifications"
 WATCHLISTS_SECTION_RUNS = "runs"
+
+# Media navigation-context contract keys and values.
+# Applied pre-mount by handle_screen_navigation; MediaScreen stashes the
+# subview and applies it to the freshly composed MediaWindow on mount
+# (mirroring its saved-view restore pattern).
+MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW = "browse_subview"
+MEDIA_BROWSE_SUBVIEW_READ_IT_LATER = "read-it-later"
 
 ALL_TABS = [
     TAB_CHAT,
@@ -96,6 +122,7 @@ TAB_DISPLAY_LABELS = {
     TAB_STUDY: "Study",
     TAB_WRITING: "Writing",
     TAB_RESEARCH: "Research",
+    TAB_RESEARCH_WORKSPACE: "Research Workspace",
     TAB_CHATBOOKS: "Chatbooks",
     TAB_HOME: "Home",
     TAB_LIBRARY: "Library",
@@ -108,6 +135,7 @@ TAB_DISPLAY_LABELS = {
     TAB_ACP: "ACP",
     TAB_SKILLS: "Skills",
     TAB_SETTINGS: "Settings",
+    TAB_MEETINGS: "Meetings",
 }
 
 
@@ -1905,6 +1933,21 @@ options:
 [bold]--chat-template-args CHAT_TEMPLATE_ARGS[/]
     A JSON formatted string of arguments for the tokenizer's apply_chat_template, e.g. '{"enable_thinking":false}'
 """
+
+#: Worker group for the provider model-catalog refresh. One constant so the
+#: Default startup-splash duration in seconds. One source of truth for the
+#: SplashScreen constructor, the loaded-config fallback, the app compose
+#: fallback, the Settings viewer defaults, and the config.toml template
+#: (injected via its placeholder) -- so none of them can drift apart
+#: (Qodo review of PR #2329).
+DEFAULT_SPLASH_DURATION_SECONDS: float = 7.0
+
+
+#: dispatch sites and the worker-handler's acknowledgement set cannot drift
+#: apart through a spelling change — exclusivity and event routing both key
+#: off this exact string (Qodo review of PR #2131).
+MODEL_CATALOG_REFRESH_WORKER_GROUP = "model-catalog-refresh"
+
 
 # End of Constants.py
 ########################################################################################################################

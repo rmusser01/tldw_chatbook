@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Mapping, Sequence
 
 from loguru import logger
@@ -23,6 +24,15 @@ _ENDPOINT_CATALOG_SOURCES = {"persisted_discovered", "runtime_discovered"}
 _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS = {
     provider_config_key(provider) for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
 }
+
+
+class ConsoleModelProvenance(StrEnum):
+    """User-facing authority behind one Console model choice."""
+
+    SERVED_NOW = "served_now"
+    CURRENT_CATALOG = "current_catalog"
+    SAVED_FALLBACK = "saved_fallback"
+    CUSTOM_UNVERIFIED = "custom_unverified"
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,8 @@ class ResolvedProviderModelOption:
     capability_status: str
     persisted: bool
     warning: str = ""
+    provenance: ConsoleModelProvenance = ConsoleModelProvenance.CUSTOM_UNVERIFIED
+    verified_for_connection: bool = False
 
 
 def _selected_text(value: Any) -> bool:
@@ -84,7 +96,26 @@ def _warning_for_model(source: str, capability_status: str) -> str:
     return ""
 
 
-def _option_from_entry(entry: MergedModelEntry) -> ResolvedProviderModelOption:
+def _provenance_for_entry(
+    *,
+    source: str,
+    provider_key: str,
+) -> ConsoleModelProvenance:
+    if source == "saved":
+        return ConsoleModelProvenance.SAVED_FALLBACK
+    if (
+        source in _ENDPOINT_CATALOG_SOURCES
+        and provider_key in _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS
+    ):
+        return ConsoleModelProvenance.CURRENT_CATALOG
+    return ConsoleModelProvenance.CUSTOM_UNVERIFIED
+
+
+def _option_from_entry(
+    entry: MergedModelEntry,
+    *,
+    provider_key: str,
+) -> ResolvedProviderModelOption:
     model_id = str(entry.model_id).strip()
     source = str(entry.source)
     capability_status = str(entry.capability_status)
@@ -100,16 +131,25 @@ def _option_from_entry(entry: MergedModelEntry) -> ResolvedProviderModelOption:
         capability_status=capability_status,
         persisted=bool(entry.persisted),
         warning=_warning_for_model(source, capability_status),
+        provenance=_provenance_for_entry(
+            source=source,
+            provider_key=provider_key,
+        ),
     )
 
 
-def _option_from_saved_model(model_id: str) -> ResolvedProviderModelOption:
+def _option_from_saved_model(
+    model_id: str,
+    *,
+    provenance: ConsoleModelProvenance = ConsoleModelProvenance.SAVED_FALLBACK,
+) -> ResolvedProviderModelOption:
     return ResolvedProviderModelOption(
         label=model_id,
         model_id=model_id,
         source="saved",
         capability_status="known",
         persisted=True,
+        provenance=provenance,
     )
 
 
@@ -121,6 +161,7 @@ def _option_from_current_unlisted(model_id: str) -> ResolvedProviderModelOption:
         source="current_unlisted",
         capability_status="unknown",
         persisted=False,
+        provenance=ConsoleModelProvenance.CUSTOM_UNVERIFIED,
     )
 
 
@@ -273,7 +314,7 @@ async def resolve_provider_model_options(
             continue
         if endpoint_catalog_over_cap and source == "runtime_discovered":
             continue
-        option = _option_from_entry(entry)
+        option = _option_from_entry(entry, provider_key=provider_key)
         if option.model_id and option.model_id not in seen_model_ids:
             options.append(option)
             seen_model_ids.add(option.model_id)
@@ -283,7 +324,10 @@ async def resolve_provider_model_options(
         current_option = (
             _option_from_current_unlisted(current_model_id)
             if has_endpoint_catalog
-            else _option_from_saved_model(current_model_id)
+            else _option_from_saved_model(
+                current_model_id,
+                provenance=ConsoleModelProvenance.CUSTOM_UNVERIFIED,
+            )
         )
         options.insert(0, current_option)
     return options

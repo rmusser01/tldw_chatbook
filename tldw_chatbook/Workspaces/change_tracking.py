@@ -43,6 +43,8 @@ from typing import Sequence
 
 from loguru import logger
 
+from tldw_chatbook.Utils.path_validation import validate_path
+
 #: Patterns for the shadow repo's ``info/exclude`` — noise no review should
 #: carry. The user's own ``.gitignore`` files are additionally honored by git
 #: itself (with the tool-touched force-add carve-out applied in TASK-1971).
@@ -100,6 +102,8 @@ _LOCK_RETRY_SECONDS = 0.05
 
 _GIT_TIMEOUT_SECONDS = 120.0
 
+#: Maximum user-visible tracking-error length stored by this module.
+_TRACKING_ERROR_MAX_CHARS = 400
 
 class ChangeTrackingError(Exception):
     """A shadow-repo operation failed. Callers treat this as degradation,
@@ -262,7 +266,11 @@ class ShadowRepo:
         *args: str,
         check: bool = True,
         binary: bool = False,
+        input_data: str | bytes | None = None,
     ) -> subprocess.CompletedProcess:
+        if input_data is not None and binary != isinstance(input_data, bytes):
+            expected = "bytes" if binary else "str"
+            raise TypeError(f"binary={binary} requires {expected} input_data")
         cmd = [
             self._git,
             "--git-dir",
@@ -276,6 +284,7 @@ class ShadowRepo:
                 cmd,
                 capture_output=True,
                 env=self._env(),
+                input=input_data,
                 timeout=_GIT_TIMEOUT_SECONDS,
                 text=not binary,
             )
@@ -290,7 +299,8 @@ class ShadowRepo:
                 proc.stderr.decode("utf-8", "replace") if proc.stderr else ""
             )
             raise ChangeTrackingError(
-                f"git {args[0]} failed ({proc.returncode}): {stderr.strip()[:400]}"
+                f"git {args[0]} failed ({proc.returncode}): "
+                f"{stderr.strip()[:_TRACKING_ERROR_MAX_CHARS]}"
             )
         return proc
 
@@ -403,7 +413,185 @@ class ShadowRepo:
         proc = self._run("cat-file", "-e", f"{sha}^{{commit}}", check=False)
         return proc.returncode == 0
 
-    def snapshot(self, message: str) -> str:
+    def _exact_force_paths(self, paths: Sequence[str]) -> list[str]:
+        """Return safe existing file paths relative to the root."""
+        exact_paths: list[str] = []
+        for raw in paths:
+            if not raw or raw == ".":
+                continue
+            try:
+                resolved = validate_path(
+                    raw,
+                    self.root,
+                    redact_paths=True,
+                    allow_hidden=True,
+                )
+                relative = resolved.relative_to(self.root)
+            except ValueError:
+                continue
+            if relative == Path(".") or not resolved.exists():
+                continue
+            if resolved.is_dir():
+                continue
+            if self._nested_owner(resolved) is not None:
+                continue
+            exact_paths.append(relative.as_posix())
+        return exact_paths
+
+    def _nested_owner(self, path: Path) -> str | None:
+        """Return the nearest in-root ancestor carrying a Git marker."""
+        ancestor = path.parent
+        while ancestor != self.root:
+            try:
+                relative = ancestor.relative_to(self.root)
+            except ValueError:
+                return None
+            marker = ancestor / ".git"
+            if marker.is_file() or marker.is_dir():
+                return relative.as_posix()
+            ancestor = ancestor.parent
+        return None
+
+    def _update_index_exact_paths(
+        self, option: str, paths: Sequence[str]
+    ) -> None:
+        """Update exact index paths through Git's NUL-delimited stdin."""
+        if not paths:
+            return
+        input_data = b"".join(os.fsencode(path) + b"\0" for path in paths)
+        self._run(
+            "update-index",
+            option,
+            "-z",
+            "--stdin",
+            binary=True,
+            input_data=input_data,
+        )
+
+    def _validate_new_index_paths(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Remove nested-owned entries and unsafe or oversized new entries."""
+        from tldw_chatbook.Workspaces.change_bounds import (
+            DEFAULT_MAX_FILE_BYTES,
+            change_review_setting,
+        )
+
+        cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
+        tip = self.tip()
+        tip_paths = set(
+            self._z_tokens("ls-tree", "-r", "-z", "--name-only", tip)
+            if tip
+            else ()
+        )
+        stage_entries: list[tuple[str, str, str]] = []
+        for entry in self._z_tokens("ls-files", "--stage", "-z"):
+            metadata, separator, rel = entry.partition("\t")
+            fields = metadata.split()
+            if not separator or len(fields) != 3:
+                raise ChangeTrackingError("git ls-files returned malformed output")
+            mode, object_id, stage = fields
+            if stage == "0":
+                stage_entries.append((rel, object_id, mode))
+        if not stage_entries:
+            return (), ()
+
+        new_entries = tuple(
+            entry for entry in stage_entries if entry[0] not in tip_paths
+        )
+        nested_owners = {
+            rel: owner
+            for rel, _object_id, mode in stage_entries
+            if (
+                owner := (
+                    rel if mode == "160000" else self._nested_owner(self.root / rel)
+                )
+            )
+            is not None
+        }
+        regular_entries = tuple(
+            entry for entry in new_entries if entry[2] in {"100644", "100755"}
+        )
+        safe = {
+            rel
+            for rel, _object_id, _mode in regular_entries
+            if self._exact_force_paths((rel,)) == [rel]
+        }
+        for rel, _object_id, mode in new_entries:
+            path = Path(rel)
+            # Git stores a symlink's link text; do not resolve or read its target.
+            if (
+                mode == "120000"
+                and rel
+                and rel != "."
+                and not path.is_absolute()
+                and ".." not in path.parts
+                and self._nested_owner(self.root / path) is None
+            ):
+                safe.add(rel)
+        new_paths = {rel for rel, _object_id, _mode in new_entries}
+        unsafe_entries = tuple(
+            entry
+            for entry in stage_entries
+            if entry[0] in nested_owners
+            or (entry[0] in new_paths and entry[0] not in safe)
+        )
+        unsafe = tuple(rel for rel, _object_id, _mode in unsafe_entries)
+        if unsafe:
+            self._update_index_exact_paths("--force-remove", unsafe)
+        nested = tuple(
+            dict.fromkeys(
+                owner
+                for rel, _object_id, _mode in unsafe_entries
+                if (owner := nested_owners.get(rel)) is not None
+            )
+        )
+        self.last_nested_repos = tuple(
+            dict.fromkeys((*self.last_nested_repos, *nested))
+        )
+
+        object_ids = tuple(
+            dict.fromkeys(
+                object_id
+                for rel, object_id, _mode in regular_entries
+                if rel in safe
+            )
+        )
+        sizes: dict[str, int] = {}
+        if object_ids:
+            proc = self._run(
+                "cat-file",
+                "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+                input_data="".join(f"{object_id}\n" for object_id in object_ids),
+            )
+            lines = str(proc.stdout).splitlines()
+            if len(lines) != len(object_ids):
+                raise ChangeTrackingError("git cat-file returned malformed output")
+            for line in lines:
+                fields = line.split()
+                if len(fields) != 3 or fields[1] != "blob":
+                    raise ChangeTrackingError(
+                        "git cat-file returned malformed output"
+                    )
+                object_id, _object_type, size_text = fields
+                sizes[object_id] = int(size_text)
+
+        oversized = tuple(
+            rel
+            for rel, object_id, _mode in regular_entries
+            if rel in safe and sizes.get(object_id, 0) > cap
+        )
+        if oversized:
+            self._update_index_exact_paths("--force-remove", oversized)
+        included = safe.difference(oversized)
+        self.last_oversize_excluded = tuple(
+            rel
+            for rel in dict.fromkeys((*self.last_oversize_excluded, *oversized))
+            if rel not in included
+        )
+        return unsafe, oversized
+
+    def snapshot(self, message: str, *, force_paths: Sequence[str] = ()) -> str:
         """Stage everything and commit if anything changed; return the tip.
 
         A clean tree returns the existing tip without a new commit. The very
@@ -420,6 +608,8 @@ class ShadowRepo:
 
         Args:
             message: Commit message recorded on the snapshot (turn labels).
+            force_paths: Existing root-relative paths to stage despite ignore
+                rules before the ordinary snapshot add.
 
         Returns:
             The tip sha after the snapshot.
@@ -433,6 +623,9 @@ class ShadowRepo:
 
         with self._locked():
             self.ensure_initialized()
+            exact_paths = self._exact_force_paths(force_paths)
+            if exact_paths:
+                self._update_index_exact_paths("--add", exact_paths)
             scan = scan_root(
                 self.root,
                 max_files=_sys.maxsize,
@@ -492,6 +685,11 @@ class ShadowRepo:
                     "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
                     check=False,
                 )
+            if force_paths:
+                final_paths = self._exact_force_paths(force_paths)
+                if final_paths:
+                    self._update_index_exact_paths("--add", final_paths)
+            self._validate_new_index_paths()
             had_tip = self.tip() is not None
             if had_tip:
                 staged = self._run("diff", "--cached", "--quiet", check=False)
@@ -623,14 +821,38 @@ class ShadowRepo:
         than failing the snapshot.
 
         Args:
-            paths: Root-relative paths to stage with ``add -f``.
+            paths: Root-relative paths to stage exactly despite ignore rules.
         """
-        existing = [p for p in paths if (self.root / p).exists()]
-        if not existing:
+        if not paths:
             return
         with self._locked():
             self.ensure_initialized()
-            self._run("add", "-f", "--", *existing)
+            exact_paths = self._exact_force_paths(paths)
+            if exact_paths:
+                self._update_index_exact_paths("--add", exact_paths)
+                unsafe, oversized = self._validate_new_index_paths()
+                attempt_unsafe = tuple(
+                    rel for rel in unsafe if rel in exact_paths
+                )
+                if attempt_unsafe:
+                    paths_text = ", ".join(attempt_unsafe)
+                    raise ChangeTrackingError(
+                        (
+                            "forced path is no longer safe at staging boundary: "
+                            f"{paths_text}"
+                        )[:_TRACKING_ERROR_MAX_CHARS]
+                    )
+                attempt_oversized = tuple(
+                    rel for rel in oversized if rel in exact_paths
+                )
+                if attempt_oversized:
+                    paths_text = ", ".join(attempt_oversized)
+                    raise ChangeTrackingError(
+                        (
+                            "forced path exceeds change-tracking size cap: "
+                            f"{paths_text}"
+                        )[:_TRACKING_ERROR_MAX_CHARS]
+                    )
 
     # -- low-level restore (full revert semantics live in TASK-1974) -------
 

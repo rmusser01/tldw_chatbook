@@ -36,6 +36,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.library_screen import (
+    LibraryIngestState,
     LibraryScreen,
     _ParakeetV2NoPendingReportError,
 )
@@ -480,7 +481,8 @@ def test_preflight_result_notify_text_uses_mapped_message_not_raw_exception() ->
 def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> None:
     mapped = _failure(GatedRepositoryError(_RAW_MARKER))
     screen = object.__new__(LibraryScreen)
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state = LibraryIngestState()
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_provider": "parakeet-onnx",
@@ -498,7 +500,7 @@ def test_install_result_notify_text_uses_mapped_message_not_raw_exception() -> N
     notify_text = screen.app_instance.notify.call_args[0][0]
     assert mapped in notify_text
     assert _RAW_MARKER not in notify_text
-    assert screen._library_ingest_form.type_options["audio_video"] == {
+    assert screen._ingest_state.form.type_options["audio_video"] == {
         "transcription_provider": "parakeet-onnx",
         "transcription_model_dir": "/prior/external-parakeet",
     }
@@ -515,7 +517,8 @@ def test_successful_install_prefers_managed_and_clears_external_override(
 ) -> None:
     installed = tmp_path / "parakeet-v2"
     screen = object.__new__(LibraryScreen)
-    screen._library_ingest_form = LibraryIngestFormState(
+    screen._ingest_state = LibraryIngestState()
+    screen._ingest_state.form = LibraryIngestFormState(
         type_options={
             "audio_video": {
                 "transcription_model_dir": "/prior/external-parakeet",
@@ -529,7 +532,7 @@ def test_successful_install_prefers_managed_and_clears_external_override(
 
     screen._apply_parakeet_v2_install_result(installed, None)
 
-    options = screen._library_ingest_form.type_options["audio_video"]
+    options = screen._ingest_state.form.type_options["audio_video"]
     assert options["transcription_provider"] == "parakeet-onnx"
     assert options["transcription_precision"] == "int8"
     assert "transcription_model_dir" not in options

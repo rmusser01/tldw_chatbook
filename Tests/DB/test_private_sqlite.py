@@ -14,13 +14,13 @@ from threading import Barrier
 
 import pytest
 
-import tldw_chatbook.DB.private_sqlite as private_sqlite
 import tldw_chatbook.TTS.profile_migration_namespace as migration_namespace
+from tldw_chatbook.DB import private_sqlite, private_sqlite_files
 from tldw_chatbook.DB.private_sqlite import (
     SQLITE_OWNER_REGISTRY,
-    SQLiteRestoreIndeterminateError,
-    SQLiteRestoreBusyError,
     SQLitePrivacyUnverifiedWarning,
+    SQLiteRestoreBusyError,
+    SQLiteRestoreIndeterminateError,
     SQLiteTargetKind,
     _build_read_only_uri,
     backup_connection_to_private,
@@ -29,8 +29,30 @@ from tldw_chatbook.DB.private_sqlite import (
     copy_private_sqlite,
     restore_private_sqlite,
 )
+from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
+from tldw_chatbook.TTS.profile_errors import ProfileMigrationCleanupError
 from tldw_chatbook.TTS.profile_migration_namespace import MigrationTombstoneKey
 from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
+
+
+def _leaf_prepare_then_connect(owner_id, target, *, read_only=False, **kwargs):
+    """Exercise deterministic leaf races, then the actual exec seam on success.
+
+    Faults injected in this process cannot affect an exec child. These tests
+    first exercise the shared raw validator directly on closed fixtures. The
+    ordinary production connect still launches its real helper; it is never
+    replaced with local preparation.
+    """
+    private_sqlite_files.prepare_batch(
+        PrepareRequest(
+            str(private_sqlite.lexical_path(target)),
+            not read_only,
+            not read_only and not kwargs.get("must_exist", False),
+            read_only
+            and SQLITE_OWNER_REGISTRY[owner_id].preserve_read_only_source_mode,
+        )
+    )
+    return connect_private_sqlite(owner_id, target, read_only=read_only, **kwargs)
 
 
 class StringPath:
@@ -54,33 +76,52 @@ CONNECTION_BACKUP_OWNER_IDS = (
 )
 COPY_BACKUP_OWNER_IDS = (
     "settings.bulk_backup",
-    "settings.single_backup",
     "tts.profile_restore_stage",
 )
 OPEN_CONNECTION_BACKUP_OWNER_IDS = (
     "tts.profile_backup",
     "tts.profile_migration_backup",
 )
-RESTORE_BACKUP_OWNER_IDS = (
-    "settings.pre_restore_backup",
-    "settings.restore",
-)
 MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
+POSIX_PROFILE_MIGRATION_BOUNDARY = pytest.mark.skipif(
+    not private_sqlite.private_paths._posix_guards_available(),
+    reason="POSIX descriptor/ACL profile-migration contract (ADR-029)",
+)
 
 
-def test_notes_sync_state_owner_is_private_file_only_and_not_backup_enabled() -> None:
+def test_retired_settings_owner_policies_are_absent() -> None:
+    """Verify retired Settings owners stay absent while bulk owners remain."""
+
+    retired_owner_ids = {
+        "settings.schema",
+        "settings.single_backup",
+        "settings.pre_restore_backup",
+        "settings.restore",
+    }
+
+    assert retired_owner_ids.isdisjoint(SQLITE_OWNER_REGISTRY)
+    assert {
+        "settings.bulk_backup",
+        "settings.vacuum",
+        "settings.integrity",
+    } <= SQLITE_OWNER_REGISTRY.keys()
+
+
+def test_notes_sync_state_owner_allows_private_and_read_only_without_backup() -> None:
     policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
 
-    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert policy.allowed_target_kinds == frozenset(
+        {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI}
+    )
     assert policy.centralized_backup_allowed is False
+    assert policy.preserve_read_only_source_mode is False
     reason = policy.reason.casefold()
     assert "device-private import receipts" in reason
-    assert "future lasting-sync state" in reason
+    assert "lasting-sync state" in reason
     assert "notes.sync_state" not in {
         *CONNECTION_BACKUP_OWNER_IDS,
         *COPY_BACKUP_OWNER_IDS,
         *OPEN_CONNECTION_BACKUP_OWNER_IDS,
-        *RESTORE_BACKUP_OWNER_IDS,
         *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
     }
 
@@ -148,7 +189,6 @@ def test_every_backup_enabled_owner_has_a_behavioral_operation() -> None:
         *CONNECTION_BACKUP_OWNER_IDS,
         *COPY_BACKUP_OWNER_IDS,
         *OPEN_CONNECTION_BACKUP_OWNER_IDS,
-        *RESTORE_BACKUP_OWNER_IDS,
         *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
     }
 
@@ -159,6 +199,7 @@ def test_every_backup_enabled_owner_has_a_behavioral_operation() -> None:
     }
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_destination_is_opaque_private_and_exact(
     tmp_path: Path,
 ) -> None:
@@ -197,6 +238,7 @@ def test_profile_migration_boundary_destination_is_opaque_private_and_exact(
     assert not any(Path(f"{target}{suffix}").exists() for suffix in ("-wal", "-shm"))
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("unsafe_kind", ["symlink", "hardlink", "permissive"])
 def test_profile_migration_boundary_destination_refuses_existing_artifact(
     tmp_path: Path,
@@ -225,6 +267,7 @@ def test_profile_migration_boundary_destination_refuses_existing_artifact(
     assert outside.read_bytes() == b"outside-private-value"
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
 def test_profile_migration_boundary_refuses_preexisting_sidecar_namespace(
     tmp_path: Path,
@@ -246,6 +289,7 @@ def test_profile_migration_boundary_refuses_preexisting_sidecar_namespace(
     assert sidecar.read_bytes() == foreign
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_destination_rejects_substitution_before_copy(
     tmp_path: Path,
 ) -> None:
@@ -282,6 +326,7 @@ def test_profile_migration_boundary_destination_rejects_substitution_before_copy
         reopened.close()
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("unsafe_kind", ["attached", "populated", "transaction"])
 def test_profile_migration_boundary_destination_revalidates_connection_state(
     tmp_path: Path,
@@ -330,6 +375,7 @@ def test_profile_migration_boundary_destination_revalidates_connection_state(
         reopened.close()
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_rejects_substitution_during_final_fsync(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -381,6 +427,7 @@ def test_profile_migration_boundary_rejects_substitution_during_final_fsync(
         reopened.close()
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_profile_migration_boundary_revalidates_content_after_final_fsync(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -430,6 +477,7 @@ def test_profile_migration_boundary_revalidates_content_after_final_fsync(
     assert target.read_bytes().startswith(b"corrupt!")
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
 def test_profile_migration_boundary_rejects_dangling_sidecar_entry(
     tmp_path: Path,
@@ -463,6 +511,7 @@ def test_profile_migration_boundary_rejects_dangling_sidecar_entry(
     assert sidecar.readlink() == missing
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_reuses_tombstone_and_revokes_descriptors(
     tmp_path: Path,
 ) -> None:
@@ -512,6 +561,7 @@ def test_canonical_migration_candidate_reuses_tombstone_and_revokes_descriptors(
         )
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_rejects_substitution_before_sqlite_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -521,16 +571,16 @@ def test_canonical_migration_candidate_rejects_substitution_before_sqlite_open(
     replacement = tmp_path / "replacement.sqlite3"
     sqlite3.connect(replacement).close()
     replacement.chmod(0o600)
-    real_prepare = private_sqlite._prepare_artifact
+    real_prepare = private_sqlite.prepare_in_helper
     real_sqlite_connect = private_sqlite.sqlite3.connect
     sqlite_opens: list[object] = []
 
     def substitute_after_prepare(
-        selected: Path,
+        request: PrepareRequest,
         **kwargs: object,
-    ) -> bool:
-        prepared = real_prepare(selected, **kwargs)
-        if selected == target:
+    ):
+        prepared = real_prepare(request, **kwargs)
+        if Path(request.path) == private_sqlite.lexical_path(target):
             target.rename(retained)
             replacement.rename(target)
         return prepared
@@ -539,7 +589,7 @@ def test_canonical_migration_candidate_rejects_substitution_before_sqlite_open(
         sqlite_opens.append(database)
         return real_sqlite_connect(database, *args, **kwargs)
 
-    monkeypatch.setattr(private_sqlite, "_prepare_artifact", substitute_after_prepare)
+    monkeypatch.setattr(private_sqlite, "prepare_in_helper", substitute_after_prepare)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", record_sqlite_open)
 
     with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
@@ -554,6 +604,7 @@ def test_canonical_migration_candidate_rejects_substitution_before_sqlite_open(
     assert sqlite_opens == []
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_pins_exact_file_through_migration(
     tmp_path: Path,
 ) -> None:
@@ -595,6 +646,280 @@ def test_canonical_migration_candidate_pins_exact_file_through_migration(
         )
 
 
+def test_exclusive_descriptor_open_borrows_original_without_raw_close(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "exclusive.sqlite3"
+    sqlite3.connect(path).close()
+    path.chmod(0o600)
+    fd = os.open(path, os.O_RDONLY)
+    real_close = os.close
+    attempts = []
+    monkeypatch.setattr(
+        os, "close", lambda value: (attempts.append(value), real_close(value))[1]
+    )
+    try:
+        connection = private_sqlite.connect_private_sqlite_descriptor(
+            "tts.profile_migration_publication_descriptor",
+            fd,
+        )
+        assert attempts == []
+        connection.close()
+        assert os.fstat(fd).st_ino == path.stat().st_ino
+    finally:
+        real_close(fd)
+
+
+@pytest.mark.parametrize("callback_failure", [False, True])
+def test_candidate_callback_cannot_escape_live_connection(tmp_path, callback_failure):
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE proof (value)")
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        tmp_path / ".profile-migration-active.candidate.sqlite3",
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    escaped = []
+
+    def migrate(connection):
+        escaped.append(connection)
+        if callback_failure:
+            raise ValueError("owned callback failure")
+
+    try:
+        with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+            private_sqlite.migrate_profile_store_to_candidate(
+                source,
+                destination,
+                migrate=migrate,
+                validate=lambda connection: None,
+            )
+        with pytest.raises(sqlite3.ProgrammingError):
+            escaped[0].execute("SELECT 1")
+    finally:
+        for connection in escaped:
+            connection.close()
+        private_sqlite.close_profile_migration_destination(destination)
+        source.close()
+
+
+@pytest.mark.parametrize("carried_body_owner", [False, True])
+@pytest.mark.parametrize("control_flow", [False, True])
+def test_candidate_step_close_failure_retains_prior_owner_and_signal(
+    monkeypatch, carried_body_owner, control_flow
+):
+    import asyncio
+
+    from tldw_chatbook.TTS import profile_migration_candidate as candidate
+    from tldw_chatbook.TTS.profile_errors import (
+        _migration_cleanup_owner,
+        _ProfileMigrationValidationOwner,
+    )
+
+    signal = asyncio.CancelledError() if control_flow else OSError("private close")
+
+    class CloseOnce(sqlite3.Connection):
+        close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise signal
+            super().close()
+
+    connection = sqlite3.connect(":memory:", factory=CloseOnce)
+    earlier = _ProfileMigrationValidationOwner(-1)
+    earlier.connection = sqlite3.connect(":memory:")
+    body_error = (
+        ProfileMigrationCleanupError(earlier)
+        if carried_body_owner
+        else ValueError("private validation")
+    )
+
+    def fail_validation(value):
+        raise body_error
+
+    monkeypatch.setattr(candidate, "_read_source_version", fail_validation)
+    try:
+        with pytest.raises(
+            asyncio.CancelledError if control_flow else ProfileMigrationCleanupError
+        ) as failure:
+            candidate.step_profile_migration_candidate(connection)
+        if control_flow:
+            assert failure.value is signal
+        else:
+            assert failure.value.__cause__ is None
+            assert failure.value.__context__ is None
+        retained = _migration_cleanup_owner(failure.value)
+        assert retained is not None
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+        retained.close()
+        assert connection.close_calls == 2
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+        if carried_body_owner:
+            assert earlier.connection is None
+    finally:
+        sqlite3.Connection.close(connection)
+        earlier.close()
+
+
+def test_candidate_callback_carried_owner_includes_destination(tmp_path):
+    from tldw_chatbook.TTS.profile_errors import _ProfileMigrationValidationOwner
+
+    source = sqlite3.connect(":memory:")
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        tmp_path / ".profile-migration-active.candidate.sqlite3",
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    earlier = _ProfileMigrationValidationOwner(-1)
+    earlier.connection = sqlite3.connect(":memory:")
+    escaped = []
+
+    def migrate(connection):
+        escaped.append(connection)
+        raise ProfileMigrationCleanupError(earlier)
+
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            private_sqlite.migrate_profile_store_to_candidate(
+                source,
+                destination,
+                migrate=migrate,
+                validate=lambda connection: pytest.fail("validation resumed"),
+            )
+        failure.value.owner.close()
+        assert earlier.connection is None
+        with pytest.raises(sqlite3.ProgrammingError):
+            escaped[0].execute("SELECT 1")
+        assert (
+            object.__getattribute__(
+                destination, "_ProfileMigrationBoundaryDestination__file_fd"
+            )
+            == -1
+        )
+        assert (
+            object.__getattribute__(
+                destination, "_ProfileMigrationBoundaryDestination__parent_fd"
+            )
+            == -1
+        )
+    finally:
+        earlier.close()
+        private_sqlite.close_profile_migration_destination(destination)
+        source.close()
+
+
+def test_canonical_setup_close_failure_retains_sqlite_and_raw_pins(
+    tmp_path, monkeypatch
+):
+    from Tests.TTS.test_profile_migration_publication import CloseOnceFailure
+
+    path = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    real_connect = private_sqlite._connect_registered_sqlite
+    real_close = os.close
+    proxies = []
+    attempts = []
+
+    def connect(*args, **kwargs):
+        proxy = CloseOnceFailure(real_connect(*args, **kwargs))
+        proxies.append(proxy)
+        return proxy
+
+    def close(fd):
+        if proxies and proxies[0].close_calls:
+            attempts.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(private_sqlite, "_connect_registered_sqlite", connect)
+    monkeypatch.setattr(
+        private_sqlite,
+        "_verify_profile_migration_destination",
+        lambda *a, **k: (_ for _ in ()).throw(ValueError()),
+    )
+    monkeypatch.setattr(os, "close", close)
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            private_sqlite.open_canonical_profile_migration_destination(
+                path,
+                schema_version=0,
+                tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+            )
+        assert attempts == []
+        assert failure.value.__context__ is None
+        assert failure.value.__cause__ is None
+        failure.value.owner.close()
+        assert proxies[0].close_calls == 2
+        assert len(attempts) == 2
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
+
+
+@pytest.mark.parametrize("boundary", [False, True])
+def test_migration_immutable_failure_retains_complete_destination(
+    tmp_path, monkeypatch, boundary
+):
+    from Tests.TTS.test_profile_migration_publication import CloseOnceFailure
+
+    destination = private_sqlite.open_canonical_profile_migration_destination(
+        tmp_path / ".profile-migration-active.candidate.sqlite3",
+        schema_version=0,
+        tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+    )
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE proof (value)")
+    original_connect = private_sqlite._connect_registered_sqlite
+    real_close = os.close
+    proxies = []
+    attempts = []
+
+    def connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        if kwargs.get("immutable"):
+            proxy = CloseOnceFailure(connection)
+            proxies.append(proxy)
+            return proxy
+        return connection
+
+    def close(fd):
+        if proxies and proxies[0].close_calls:
+            attempts.append(fd)
+        return real_close(fd)
+
+    monkeypatch.setattr(private_sqlite, "_connect_registered_sqlite", connect)
+    monkeypatch.setattr(os, "close", close)
+    try:
+        with pytest.raises(ProfileMigrationCleanupError) as failure:
+            if boundary:
+                private_sqlite.backup_profile_migration_boundary(
+                    source,
+                    destination,
+                    schema_version=0,
+                    validate=lambda connection: None,
+                )
+            else:
+                private_sqlite.migrate_profile_store_to_candidate(
+                    source,
+                    destination,
+                    migrate=lambda connection: connection.close(),
+                    validate=lambda connection: None,
+                )
+        assert attempts == []
+        assert failure.value.__context__ is None
+        assert failure.value.__cause__ is None
+        failure.value.owner.close()
+        assert proxies[0].close_calls == 2
+        assert len(attempts) == (4 if boundary else 2)
+    finally:
+        for proxy in proxies:
+            proxy.connection.close()
+        private_sqlite.close_profile_migration_destination(destination)
+        source.close()
+
+
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_substitution_preserves_retained_exact_inode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -656,6 +981,7 @@ def test_canonical_migration_candidate_substitution_preserves_retained_exact_ino
     )
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_close_error_retains_live_connection(
     tmp_path: Path,
 ) -> None:
@@ -683,8 +1009,12 @@ def test_canonical_migration_candidate_close_error_retains_live_connection(
         "_ProfileMigrationBoundaryDestination__connection",
         FailingClose(),
     )
-    with pytest.raises(private_sqlite.SQLitePrivateDestinationError) as caught:
+    from tldw_chatbook.TTS.profile_errors import ProfileMigrationCleanupError
+
+    with pytest.raises(ProfileMigrationCleanupError) as caught:
         private_sqlite.close_profile_migration_destination(destination)
+
+    assert caught.value.owner is destination
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
@@ -726,6 +1056,7 @@ def test_canonical_migration_candidate_close_error_retains_live_connection(
     )
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_canonical_migration_candidate_late_hardlink_preserves_all_bytes(
     tmp_path: Path,
 ) -> None:
@@ -766,6 +1097,7 @@ def test_canonical_migration_candidate_late_hardlink_preserves_all_bytes(
     assert alias.read_bytes() == before
 
 
+@POSIX_PROFILE_MIGRATION_BOUNDARY
 def test_discard_never_truncates_after_atomic_quarantine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -805,6 +1137,29 @@ def test_discard_never_truncates_after_atomic_quarantine(
     assert not target.exists()
     assert tombstone.read_bytes() == before
     assert alias.read_bytes() == before
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows fail-closed posture")
+def test_windows_profile_migration_destinations_fail_closed_without_residue(
+    tmp_path: Path,
+) -> None:
+    boundary = tmp_path / "boundary.sqlite3"
+    canonical = tmp_path / ".profile-migration-active.candidate.sqlite3"
+    existing_entries = set(tmp_path.iterdir())
+
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.open_profile_migration_boundary_destination(
+            boundary,
+            schema_version=2,
+        )
+    with pytest.raises(private_sqlite.SQLitePrivateDestinationError):
+        private_sqlite.open_canonical_profile_migration_destination(
+            canonical,
+            schema_version=0,
+            tombstone_key=MigrationTombstoneKey.ACTIVE_CANDIDATE,
+        )
+
+    assert set(tmp_path.iterdir()) == existing_entries
 
 
 @pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)
@@ -910,7 +1265,7 @@ def test_restore_backup_owners_execute_real_restore_and_safety_snapshot(tmp_path
     pre_restore_path = tmp_path / "restore-safety.sqlite"
 
     for path, value in ((source_path, 42), (destination_path, 7)):
-        connection = connect_private_sqlite("settings.restore", path)
+        connection = connect_private_sqlite("tts.profile_restore_stage", path)
         try:
             connection.execute("CREATE TABLE owner_matrix_restore (value INTEGER)")
             connection.execute(
@@ -922,20 +1277,20 @@ def test_restore_backup_owners_execute_real_restore_and_safety_snapshot(tmp_path
             connection.close()
 
     restore_private_sqlite(
-        "settings.restore",
-        "settings.pre_restore_backup",
+        "tts.profile_restore_stage",
+        "tts.profile_restore_stage",
         source_path,
         destination_path,
         pre_restore_path,
     )
 
     restored = connect_private_sqlite(
-        "settings.restore",
+        "tts.profile_restore_stage",
         destination_path,
         read_only=True,
     )
     safety_snapshot = connect_private_sqlite(
-        "settings.pre_restore_backup",
+        "tts.profile_restore_stage",
         pre_restore_path,
         read_only=True,
     )
@@ -984,9 +1339,12 @@ def test_connection_accepts_str_path_and_pathlike_file_targets(tmp_path):
 
 def test_connection_selection_never_resolves_path(tmp_path, monkeypatch):
     target = tmp_path / "db.sqlite"
+    real_resolve = Path.resolve
 
-    def fail_resolve(*args, **kwargs):
-        pytest.fail("database target selection called Path.resolve()")
+    def fail_resolve(path, *args, **kwargs):
+        if path == target:
+            pytest.fail("database target selection called Path.resolve()")
+        return real_resolve(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "resolve", fail_resolve)
     connection = connect_private_sqlite("db.base", target)
@@ -1135,7 +1493,7 @@ def test_wrong_owner_main_database_blocks_raw_connect(tmp_path, monkeypatch):
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert caught.value.result.status is PrivatePathStatus.WRONG_OWNER
 
@@ -1186,7 +1544,7 @@ def test_database_replacement_between_classification_and_open_is_rejected(
     replacement = tmp_path / "replacement.sqlite"
     target.write_bytes(b"first")
     replacement.write_bytes(b"replacement")
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     raced = False
 
     def replace_then_open(parent_fd, leaf, *, writable, create):
@@ -1196,7 +1554,7 @@ def test_database_replacement_between_classification_and_open_is_rejected(
             replacement.replace(target)
         return real_open(parent_fd, leaf, writable=writable, create=create)
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_then_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", replace_then_open)
     monkeypatch.setattr(
         private_sqlite.sqlite3,
         "connect",
@@ -1204,7 +1562,7 @@ def test_database_replacement_between_classification_and_open_is_rejected(
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert caught.value.result.reason == "private_sqlite_identity_changed"
 
@@ -1219,7 +1577,7 @@ def test_database_replacement_between_hardening_and_writable_reopen_is_rejected(
     target.write_bytes(b"first")
     target.chmod(0o400)
     replacement.write_bytes(b"replacement")
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     target_open_count = 0
 
     def replace_before_writable_reopen(parent_fd, leaf, *, writable, create):
@@ -1231,7 +1589,7 @@ def test_database_replacement_between_hardening_and_writable_reopen_is_rejected(
         return real_open(parent_fd, leaf, writable=writable, create=create)
 
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_open_artifact_fd",
         replace_before_writable_reopen,
     )
@@ -1242,7 +1600,7 @@ def test_database_replacement_between_hardening_and_writable_reopen_is_rejected(
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert target_open_count == 2
     assert caught.value.result.reason == "private_sqlite_identity_changed"
@@ -1253,7 +1611,7 @@ def test_database_postcondition_failure_blocks_raw_connect(tmp_path, monkeypatch
     target = tmp_path / "db.sqlite"
     target.write_bytes(b"")
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_artifact_postcondition_holds",
         lambda *args, **kwargs: False,
     )
@@ -1264,7 +1622,7 @@ def test_database_postcondition_failure_blocks_raw_connect(tmp_path, monkeypatch
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert caught.value.result.reason == "private_sqlite_postcondition_failed"
 
@@ -1425,7 +1783,7 @@ def test_wrong_owner_existing_sidecar_blocks_raw_connect(
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert caught.value.result.status is PrivatePathStatus.WRONG_OWNER
 
@@ -1445,7 +1803,7 @@ def test_safe_sidecar_replacement_at_first_open_is_fully_revalidated(
     replacement = tmp_path / f"replacement{suffix}"
     replacement.write_bytes(b"replacement")
     replacement.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     raced = False
     raw_connect_calls = []
 
@@ -1456,14 +1814,14 @@ def test_safe_sidecar_replacement_at_first_open_is_fully_revalidated(
             replacement.replace(sidecar)
         return real_open(parent_fd, leaf, writable=writable, create=create)
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_then_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", replace_then_open)
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
         return sqlite3.Connection(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raced is True
@@ -1488,7 +1846,7 @@ def test_safe_sidecar_replacement_at_writable_reopen_is_fully_revalidated(
     replacement = tmp_path / f"replacement{suffix}"
     replacement.write_bytes(b"replacement")
     replacement.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     sidecar_open_count = 0
     raw_connect_calls = []
 
@@ -1501,7 +1859,7 @@ def test_safe_sidecar_replacement_at_writable_reopen_is_fully_revalidated(
         return real_open(parent_fd, leaf, writable=writable, create=create)
 
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_open_artifact_fd",
         replace_before_writable_reopen,
     )
@@ -1511,7 +1869,7 @@ def test_safe_sidecar_replacement_at_writable_reopen_is_fully_revalidated(
         return sqlite3.Connection(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert sidecar_open_count == 4
@@ -1533,9 +1891,9 @@ def test_sidecar_postcondition_failure_blocks_raw_connect(
     sidecar = Path(f"{target}{suffix}")
     sidecar.write_bytes(b"sidecar")
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_artifact_postcondition_holds",
-        lambda *args, **kwargs: False if kwargs.get("selected") == sidecar else True,
+        lambda *args, **kwargs: kwargs.get("selected") != sidecar,
     )
     monkeypatch.setattr(
         private_sqlite.sqlite3,
@@ -1544,7 +1902,7 @@ def test_sidecar_postcondition_failure_blocks_raw_connect(
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert caught.value.result.reason == "optional_sqlite_generation_churn"
 
@@ -1581,7 +1939,7 @@ def test_optional_sidecar_unlinked_after_open_is_treated_as_vanished(
     sidecar = Path(f"{target}{suffix}")
     sidecar.write_bytes(b"transient")
     sidecar.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     raw_connect_calls = []
 
     def unlink_after_open(parent_fd, leaf, *, writable, create):
@@ -1594,10 +1952,10 @@ def test_optional_sidecar_unlinked_after_open_is_treated_as_vanished(
         raw_connect_calls.append((database, kwargs))
         return sqlite3.Connection(":memory:")
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", unlink_after_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", unlink_after_open)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
 
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raw_connect_calls
@@ -1620,7 +1978,7 @@ def test_optional_replaced_sidecar_unlinked_after_initial_open_is_vanished(
     replacement = tmp_path / f"generation-b{suffix}"
     replacement.write_bytes(b"generation-b")
     replacement.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     raw_connect_calls = []
 
     def replace_open_and_unlink(parent_fd, leaf, *, writable, create):
@@ -1636,13 +1994,13 @@ def test_optional_replaced_sidecar_unlinked_after_initial_open_is_vanished(
         return sqlite3.Connection(":memory:")
 
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_open_artifact_fd",
         replace_open_and_unlink,
     )
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
 
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raw_connect_calls
@@ -1665,7 +2023,7 @@ def test_optional_replaced_sidecar_unlinked_after_writable_reopen_is_vanished(
     replacement = tmp_path / f"generation-b{suffix}"
     replacement.write_bytes(b"generation-b")
     replacement.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     sidecar_opens = 0
     raw_connect_calls = []
 
@@ -1690,13 +2048,13 @@ def test_optional_replaced_sidecar_unlinked_after_writable_reopen_is_vanished(
         return sqlite3.Connection(":memory:")
 
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_open_artifact_fd",
         replace_open_and_unlink,
     )
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
 
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raw_connect_calls
@@ -1720,7 +2078,7 @@ def test_optional_safe_sidecar_replacement_after_unlink_is_fully_revalidated(
     replacement = tmp_path / f"replacement{suffix}"
     replacement.write_bytes(b"replacement")
     replacement.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     replaced = False
     raw_connect_calls = []
 
@@ -1733,14 +2091,14 @@ def test_optional_safe_sidecar_replacement_after_unlink_is_fully_revalidated(
             replacement.replace(sidecar)
         return file_fd
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_after_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", replace_after_open)
 
     def observe_connect(database, **kwargs):
         raw_connect_calls.append((database, kwargs))
         return sqlite3.Connection(":memory:")
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raw_connect_calls
@@ -1763,7 +2121,7 @@ def test_eligible_0644_sidecar_replacement_is_hardened_before_raw_connect(
     replacement = tmp_path / f"replacement{suffix}"
     replacement.write_bytes(b"historical")
     replacement.chmod(0o644)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     replaced = False
     observed_modes = []
 
@@ -1778,9 +2136,9 @@ def test_eligible_0644_sidecar_replacement_is_hardened_before_raw_connect(
         observed_modes.append(stat.S_IMODE(sidecar.stat().st_mode))
         return sqlite3.Connection(":memory:")
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_then_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", replace_then_open)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert observed_modes == [0o600]
@@ -1800,7 +2158,7 @@ def test_optional_sidecar_disappearing_during_open_is_treated_as_absent(
     sidecar = Path(f"{target}{suffix}")
     sidecar.write_bytes(b"transient")
     sidecar.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     removed = False
     raw_connect_calls = []
 
@@ -1815,9 +2173,9 @@ def test_optional_sidecar_disappearing_during_open_is_treated_as_absent(
         raw_connect_calls.append((database, kwargs))
         return sqlite3.Connection(":memory:")
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", unlink_before_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", unlink_before_open)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raw_connect_calls
@@ -1866,7 +2224,7 @@ def test_optional_sidecar_initial_unlinked_snapshot_revalidates_current_generati
     monkeypatch.setattr(private_sqlite.os, "stat", report_unlinked_first_generation)
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
 
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raw_connect_calls
@@ -1890,7 +2248,7 @@ def test_safe_sidecar_replacement_during_postcondition_is_revalidated(
     replacement = tmp_path / f"replacement{suffix}"
     replacement.write_bytes(b"replacement")
     replacement.chmod(0o600)
-    real_postcondition = private_sqlite._artifact_postcondition_holds
+    real_postcondition = private_sqlite_files._artifact_postcondition_holds
     replaced = False
     raw_connect_calls = []
 
@@ -1907,12 +2265,12 @@ def test_safe_sidecar_replacement_during_postcondition_is_revalidated(
         return sqlite3.Connection(":memory:")
 
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_artifact_postcondition_holds",
         replace_during_postcondition,
     )
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
-    connection = connect_private_sqlite("db.base", target)
+    connection = _leaf_prepare_then_connect("db.base", target)
     connection.close()
 
     assert raw_connect_calls
@@ -1946,7 +2304,7 @@ def test_unsafe_sidecar_replacement_fails_before_raw_connect(
     outside = tmp_path / f"outside{suffix}"
     outside.write_bytes(b"outside")
     alias = tmp_path / f"alias{suffix}"
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     real_classify = private_sqlite.private_paths._classify_private_file_stat
     replacement_identity = None
     replaced = False
@@ -1981,7 +2339,7 @@ def test_unsafe_sidecar_replacement_fails_before_raw_connect(
             return PrivatePathStatus.WRONG_OWNER
         return real_classify(file_stat, expected_uid=expected_uid)
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_after_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", replace_after_open)
     if unsafe_kind == "wrong_owner":
         monkeypatch.setattr(
             private_sqlite.private_paths,
@@ -1997,7 +2355,7 @@ def test_unsafe_sidecar_replacement_fails_before_raw_connect(
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert caught.value.result.status is expected_status
 
@@ -2015,7 +2373,7 @@ def test_continuous_safe_sidecar_churn_exhausts_budget_and_fails_closed(
     sidecar = Path(f"{target}{suffix}")
     sidecar.write_bytes(b"generation-0")
     sidecar.chmod(0o600)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
     generations = 0
 
     def replace_every_open(parent_fd, leaf, *, writable, create):
@@ -2028,7 +2386,7 @@ def test_continuous_safe_sidecar_churn_exhausts_budget_and_fails_closed(
             sidecar.chmod(0o600)
         return file_fd
 
-    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_every_open)
+    monkeypatch.setattr(private_sqlite_files, "_open_artifact_fd", replace_every_open)
     monkeypatch.setattr(
         private_sqlite.sqlite3,
         "connect",
@@ -2038,7 +2396,7 @@ def test_continuous_safe_sidecar_churn_exhausts_budget_and_fails_closed(
     )
 
     with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
     assert caught.value.result.reason == "optional_sqlite_generation_churn"
     assert generations == 4
@@ -2059,7 +2417,7 @@ def test_optional_hardlinked_sidecar_cannot_be_laundered_by_unlink(
     sidecar.chmod(0o600)
     alias = tmp_path / f"alias{suffix}"
     os.link(sidecar, alias)
-    real_open = private_sqlite._open_artifact_fd
+    real_open = private_sqlite_files._open_artifact_fd
 
     def unlink_all_names_after_open(parent_fd, leaf, *, writable, create):
         file_fd = real_open(parent_fd, leaf, writable=writable, create=create)
@@ -2069,7 +2427,7 @@ def test_optional_hardlinked_sidecar_cannot_be_laundered_by_unlink(
         return file_fd
 
     monkeypatch.setattr(
-        private_sqlite,
+        private_sqlite_files,
         "_open_artifact_fd",
         unlink_all_names_after_open,
     )
@@ -2082,7 +2440,7 @@ def test_optional_hardlinked_sidecar_cannot_be_laundered_by_unlink(
     )
 
     with pytest.raises(PrivatePathError):
-        connect_private_sqlite("db.base", target)
+        _leaf_prepare_then_connect("db.base", target)
 
 
 def _assert_private_regular_owned(path: Path) -> None:
@@ -2152,7 +2510,19 @@ def test_real_reopen_hardens_existing_wal_and_shm_before_use(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "name", ["space name.sqlite", "query?.sqlite", "hash#.sqlite", "雪.sqlite"]
+    "name",
+    [
+        "space name.sqlite",
+        pytest.param(
+            "query?.sqlite",
+            marks=pytest.mark.skipif(
+                os.name == "nt",
+                reason="Question marks are illegal in Windows filenames",
+            ),
+        ),
+        "hash#.sqlite",
+        "雪.sqlite",
+    ],
 )
 def test_read_only_uri_preserves_special_filename_identity_and_rejects_writes(
     tmp_path,
@@ -2298,9 +2668,13 @@ def test_read_only_rejects_unsafe_source_kinds(tmp_path, monkeypatch, unsafe_kin
         monkeypatch.setattr(private_sqlite.os, "fstat", report_wrong_owner)
 
     with pytest.raises(PrivatePathError):
-        connect_private_sqlite("settings.integrity", target, read_only=True)
+        _leaf_prepare_then_connect("settings.integrity", target, read_only=True)
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Question marks are illegal in Windows filenames; builder coverage is pure",
+)
 def test_read_only_path_query_characters_are_percent_encoded(tmp_path, monkeypatch):
     target = tmp_path / "db.sqlite?immutable=1#fragment"
     target.write_bytes(b"")
@@ -2341,10 +2715,14 @@ def test_windows_read_only_uri_builder_percent_encodes_path(path, expected):
     assert _build_read_only_uri(path, windows=True) == expected
 
 
-def test_simulated_windows_file_open_warns_but_memory_is_filesystem_free(
+def test_simulated_windows_file_open_warns_unverified_but_memory_is_filesystem_free(
     tmp_path,
     monkeypatch,
 ):
+    path_sentinel = "SQLITE-PATH-SENTINEL-37f9"
+    credential_sentinel = "SQLITE-CREDENTIAL-SENTINEL-a11c"
+    selected_parent = tmp_path / path_sentinel
+    selected_parent.mkdir()
     monkeypatch.setattr(
         private_sqlite,
         "_WARNED_UNVERIFIED_OWNER_IDS",
@@ -2359,8 +2737,11 @@ def test_simulated_windows_file_open_warns_but_memory_is_filesystem_free(
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        for name in ["first.sqlite", "second.sqlite"]:
-            connection = connect_private_sqlite("db.base", tmp_path / name)
+        for name in [
+            f"first-{credential_sentinel}.sqlite",
+            f"second-{credential_sentinel}.sqlite",
+        ]:
+            connection = connect_private_sqlite("db.base", selected_parent / name)
             connection.close()
         other_owner = connect_private_sqlite("db.evals", tmp_path / "evals.sqlite")
         other_owner.close()
@@ -2372,9 +2753,14 @@ def test_simulated_windows_file_open_warns_but_memory_is_filesystem_free(
         if warning.category is SQLitePrivacyUnverifiedWarning
     ]
     assert len(privacy_warnings) == 2
-    assert all(
-        "privacy is unverified" in str(warning.message) for warning in privacy_warnings
-    )
+    for warning in privacy_warnings:
+        assert warning.category is SQLitePrivacyUnverifiedWarning
+        message = str(warning.message)
+        assert "permission verification is unavailable" in message
+        assert "database operation continues" in message
+        assert "unverified privacy posture" in message
+        assert path_sentinel not in message
+        assert credential_sentinel not in message
 
 
 def test_unverified_privacy_warning_is_thread_safe_per_owner(monkeypatch):
@@ -2400,6 +2786,12 @@ def test_unverified_privacy_warning_is_thread_safe_per_owner(monkeypatch):
         list(executor.map(lambda _: warn_together(), range(workers)))
 
     assert len(recorded) == 1
+    args, _kwargs = recorded[0]
+    assert args[1] is SQLitePrivacyUnverifiedWarning
+    message = str(args[0])
+    assert "permission verification is unavailable" in message
+    assert "database operation continues" in message
+    assert "unverified privacy posture" in message
 
 
 def test_unverified_warning_error_does_not_suppress_later_warning(monkeypatch):
@@ -2650,7 +3042,7 @@ def test_copy_private_sqlite_rejects_unsafe_destination_before_raw_open(
 
     with pytest.raises(PrivatePathError):
         copy_private_sqlite(
-            "settings.single_backup",
+            "settings.bulk_backup",
             source_path,
             target,
         )
@@ -2794,7 +3186,7 @@ def test_copy_close_failure_is_independent_and_keeps_committed_target(
 
     with pytest.warns(RuntimeWarning, match="copy close failure"):
         copy_private_sqlite(
-            "settings.single_backup",
+            "settings.bulk_backup",
             source_path,
             target,
         )
@@ -2829,8 +3221,8 @@ def test_restore_keeps_idle_connection_coherent_and_creates_pre_restore_backup(
     idle = sqlite3.connect(destination, timeout=0)
     try:
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -2888,8 +3280,8 @@ def test_restore_fails_promptly_and_unchanged_for_active_transactions(
             match="[Cc]lose.*retry|retry.*[Cc]lose",
         ):
             restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
+                "tts.profile_restore_stage",
+                "tts.profile_restore_stage",
                 source_path,
                 destination,
                 pre_restore,
@@ -2925,8 +3317,8 @@ def test_restore_fails_closed_for_queried_idle_wal_connection(
     try:
         with pytest.raises(SQLiteRestoreBusyError, match="live restore is unavailable"):
             restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
+                "tts.profile_restore_stage",
+                "tts.profile_restore_stage",
                 source_path,
                 destination,
                 pre_restore,
@@ -3031,8 +3423,8 @@ def test_restore_failure_before_final_backup_keeps_old_data_and_wal_mode(
         match="injected WAL restoration failure",
     ):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3093,8 +3485,8 @@ def test_restore_mode_failure_after_final_backup_rolls_back_data_and_mode(
         match="post-backup mode restoration failure",
     ):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3128,14 +3520,14 @@ def test_restore_rollback_failure_reports_indeterminate_live_state(
     final_backup_completed = False
     rollback_failed = False
 
-    def fail_post_commit_reverification(source_pin):
+    def fail_post_commit_reverification(source_pin, *, deadline):
         if final_backup_completed:
             raise private_sqlite._failure(
                 source_path,
                 PrivatePathStatus.OPERATION_FAILED,
                 "injected_post_commit_source_change",
             )
-        return real_reverify(source_pin)
+        return real_reverify(source_pin, deadline=deadline)
 
     def fail_recovery_backup(source, target, *, restore):
         nonlocal final_backup_completed, restore_backup_calls, rollback_failed
@@ -3179,8 +3571,8 @@ def test_restore_rollback_failure_reports_indeterminate_live_state(
         match="may already contain restored data",
     ) as caught:
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3222,8 +3614,8 @@ def test_restore_final_backup_failure_is_transactional_and_keeps_prebackup(
 
     with pytest.raises(RuntimeError, match="injected final backup failure"):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             source_path,
             destination,
             pre_restore,
@@ -3276,7 +3668,7 @@ def test_restore_close_failure_does_not_mask_commit_or_skip_other_connections(
         read_only=False,
         **kwargs,
     ):
-        if owner_id == "settings.pre_restore_backup":
+        if Path(database) == pre_restore:
             kwargs["factory"] = FailingPreRestoreConnection
         elif read_only:
             kwargs["factory"] = SourceConnection
@@ -3299,8 +3691,8 @@ def test_restore_close_failure_does_not_mask_commit_or_skip_other_connections(
     try:
         with pytest.warns(RuntimeWarning, match="pre-restore close failure"):
             restore_private_sqlite(
-                "settings.restore",
-                "settings.pre_restore_backup",
+                "tts.profile_restore_stage",
+                "tts.profile_restore_stage",
                 source_path,
                 destination,
                 pre_restore,
@@ -3331,8 +3723,8 @@ def test_restore_rejects_same_source_and_destination_before_open(
 
     with pytest.raises(ValueError, match="same"):
         restore_private_sqlite(
-            "settings.restore",
-            "settings.pre_restore_backup",
+            "tts.profile_restore_stage",
+            "tts.profile_restore_stage",
             database,
             database,
             tmp_path / "pre-restore.sqlite",

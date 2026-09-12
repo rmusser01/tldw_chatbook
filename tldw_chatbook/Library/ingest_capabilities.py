@@ -1295,6 +1295,39 @@ def generic_option_default(name: str, fallback: Any = None) -> Any:
     return fallback
 
 
+#: The generic group's Analyze-after-import toggle. Its state rides the
+#: collapsed panel title (task-28007 AC#6) instead of hiding inside the
+#: fold, so the title builder also drops it from the changed-value pairs
+#: rather than stuttering it twice on one line.
+ANALYSIS_STATE_FIELD = "analyze"
+
+
+def type_group_state_summary(
+    cap: TypeGroupCapabilities, values: dict[str, Any]
+) -> str:
+    """The group's collapsed-title label, carrying state the fold hides.
+
+    task-28007 AC#6: "Import behavior" is collapsed by default and its
+    headline setting -- whether every imported item gets an LLM analysis --
+    was invisible until the panel was opened. Only the group that owns the
+    toggle gains the clause; every other label is returned unchanged.
+
+    Args:
+        cap: The group's capability schema.
+        values: Current per-group option values (a missing key falls back
+            to the field's schema default, as everywhere else here).
+
+    Returns:
+        ``"Import behavior · analysis on"`` / ``"… · analysis off"`` for the
+        owning group, else ``cap.label``.
+    """
+    gate = next((f for f in cap.fields if f.name == ANALYSIS_STATE_FIELD), None)
+    if gate is None:
+        return cap.label
+    on = bool(values.get(ANALYSIS_STATE_FIELD, gate.default))
+    return f"{cap.label} · analysis {'on' if on else 'off'}"
+
+
 def field_disabled_state(
     field: OptionField,
     cap: TypeGroupCapabilities,

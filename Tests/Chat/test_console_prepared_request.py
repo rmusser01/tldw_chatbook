@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+from tldw_chatbook.Chat import console_prepared_request as prepared_request
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     MEMORY_CLOSE_TAG,
@@ -23,6 +24,13 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    DerivedTraceProvenance,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceSource,
 )
 
 
@@ -53,6 +61,30 @@ def _capacity(ceiling: int | None):
     )
 
 
+def test_idle_request_sentinel_is_fixed_immutable_and_app_owned() -> None:
+    sentinel = getattr(prepared_request, "IDLE_REQUEST_SENTINEL", None)
+    assert sentinel is not None, "canonical idle sentinel must be defined"
+
+    assert sentinel["role"] == "user"
+    assert sentinel["content"] == prepared_request.IDLE_REQUEST_SENTINEL_TEXT
+    assert (
+        sentinel[prepared_request.IDLE_REQUEST_OWNER_KEY]
+        == prepared_request.IDLE_REQUEST_OWNER_VALUE
+    )
+    with pytest.raises(TypeError):
+        sentinel["content"] = "mutated"
+
+    projected = prepare_provider_request(
+        PreparedConsoleRequest(active_request=(sentinel,)),
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+        apply_safety_window=False,
+    )
+    assert prepared_request.IDLE_REQUEST_OWNER_KEY not in projected.messages[0]
+
+
 def test_semantic_request_is_immutable_and_preserves_complete_units() -> None:
     source = [
         {"role": "system", "content": "  original system bytes  "},
@@ -76,10 +108,117 @@ def test_semantic_request_is_immutable_and_preserves_complete_units() -> None:
         "assistant",
         "tool",
     ]
+    assert [row["role"] for row in request.active_tool_loop] == ["assistant", "tool"]
     with pytest.raises(TypeError):
         request.system[0]["content"] = "changed"  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         request.active_request = ()  # type: ignore[misc]
+
+
+def test_shrinking_request_preserves_capture_durability_and_reasoning_replay() -> None:
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
+    policy = ReasoningReplayPolicy(mode="current", source="Explicit setting")
+    request = replace(
+        build_console_request(
+            [
+                {"role": "user", "content": "old"},
+                {"role": "assistant", "content": "old answer"},
+                {"role": "user", "content": "current"},
+            ],
+            message_provenance=tuple(
+                SavedRevisionTraceProvenance(new_opaque_id()) for _ in range(3)
+            ),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            capture_policy=FrozenTracePolicy(
+                new_opaque_id(), "credentials-v1", False, None
+            ),
+        ),
+        reasoning_replay=policy,
+        capture_durability="temporary",
+    )
+    shrunk = request.without_oldest_units(1)
+    assert not shrunk.compactable
+    assert shrunk.active_request == request.active_request
+    assert shrunk.reasoning_replay is policy
+    assert shrunk.capture_durability == "temporary"
+
+
+def test_fenced_tool_loop_rows_have_a_distinct_provider_neutral_category() -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "Find it"},
+            {
+                "role": "assistant",
+                "content": '```tool_call\n{"name":"lookup","arguments":{}}\n```',
+            },
+            {"role": "user", "content": "Tool result for lookup: found"},
+        ]
+    )
+
+    assert [row["role"] for row in request.active_request] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert [row["role"] for row in request.active_tool_loop] == [
+        "assistant",
+        "user",
+    ]
+    assert [row["role"] for row in request.flattened_messages()] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+
+
+@pytest.mark.parametrize("tag", ("tool", "tool_calls", "tool_call_schema"))
+def test_fenced_tool_lookalikes_remain_ordinary_assistant_text(tag: str) -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "Explain this"},
+            {
+                "role": "assistant",
+                "content": f'```{tag}\n{{"name":"lookup","arguments":{{}}}}\n```',
+            },
+        ]
+    )
+
+    assert request.active_tool_loop == ()
+
+
+def test_completed_tool_loop_keeps_following_assistant_in_message_order() -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "Find it"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c"}]},
+            {"role": "tool", "tool_call_id": "c", "content": "found"},
+            {"role": "assistant", "content": "The answer is found."},
+            {"role": "user", "content": "Next"},
+        ]
+    )
+
+    assert [row["role"] for row in request.compactable[0].messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert [row["role"] for row in request.compactable[0].tool_loop] == [
+        "assistant",
+        "tool",
+    ]
+    assert [row["role"] for row in request.flattened_messages()] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
 
 
 def test_single_preamble_serialization_keeps_original_and_tagged_memory_owned() -> None:
@@ -186,6 +325,56 @@ def test_distinct_role_serialization_keeps_system_and_memory_rows_separate() -> 
     assert "_tldw_context_owner" not in prepared.messages[1]
 
 
+@pytest.mark.parametrize("wire_style", ["distinct_roles", "single_preamble"])
+def test_memory_wire_projection_is_unique_owned_and_private_anchor_free(
+    wire_style: str,
+) -> None:
+    memory = tagged_memory_message("PROJECTED-MEMORY-CANARY")
+    semantic = build_console_request(
+        [
+            {
+                "role": "system",
+                "content": "ORIGINAL-SYSTEM-CANARY",
+                prepared_request.PERSISTED_MESSAGE_ID_KEY: "system-private",
+                prepared_request.PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+            {
+                "role": "user",
+                "content": "active",
+                prepared_request.PERSISTED_MESSAGE_ID_KEY: "u1",
+                prepared_request.PERSISTED_CONVERSATION_ID_KEY: "conversation-1",
+            },
+        ],
+        memory=(memory,),
+    )
+
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style=wire_style,
+        model="m",
+        capacity=_capacity(None),
+        count_fn=_word_count,
+        apply_safety_window=False,
+    )
+
+    wire = "\n".join(str(row.get("content", "")) for row in prepared.messages_payload)
+    if prepared.system_message:
+        wire = prepared.system_message + "\n" + wire
+    assert wire.count("PROJECTED-MEMORY-CANARY") == 1
+    assert wire.index("ORIGINAL-SYSTEM-CANARY") < wire.index("PROJECTED-MEMORY-CANARY")
+    assert all(
+        prepared_request.PERSISTED_MESSAGE_ID_KEY not in row
+        and prepared_request.PERSISTED_CONVERSATION_ID_KEY not in row
+        for row in (*prepared.messages, *prepared.messages_payload)
+    )
+    assert not any(
+        row.get("role") == "user"
+        and "PROJECTED-MEMORY-CANARY" in str(row.get("content", ""))
+        for row in prepared.messages_payload
+    )
+    assert prepared.accounting.memory_tokens > 0
+
+
 def test_tagged_memory_survives_raw_agent_handoff_without_becoming_user_system() -> (
     None
 ):
@@ -289,6 +478,59 @@ def test_known_mandatory_overflow_is_explicit_and_compaction_cannot_remove_it() 
     )
 
 
+@pytest.mark.parametrize("ceiling", [3, 7])
+def test_project_context_cannot_evict_its_current_user(ceiling: int) -> None:
+    """An appended context rider must not turn the user's ask into history."""
+    semantic = build_console_request(
+        [
+            {"role": "user", "content": "old question"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "current question"},
+            {
+                "role": "user",
+                "content": "project guidance",
+                "_chatbook_ephemeral_origin": "project_instructions",
+            },
+        ]
+    )
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        model="m",
+        capacity=_capacity(ceiling),
+        count_fn=_word_count,
+    )
+
+    assert [row["content"] for row in prepared.messages_payload] == [
+        "current question",
+        "project guidance",
+    ]
+    assert prepared.dropped_messages == 2
+    assert prepared.known_overflow is (ceiling == 3)
+
+
+def test_historical_project_context_stays_in_its_complete_turn() -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "old question"},
+            {
+                "role": "user",
+                "content": "old context",
+                "_chatbook_ephemeral_origin": "project_instructions",
+            },
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "current question"},
+        ]
+    )
+
+    assert len(request.compactable) == 1
+    assert [row["content"] for row in request.compactable[0].messages] == [
+        "old question",
+        "old context",
+        "old answer",
+    ]
+
+
 def test_unknown_and_user_overridden_limits_are_honestly_labeled() -> None:
     semantic = build_console_request([{"role": "user", "content": "hello"}])
     unknown = prepare_provider_request(
@@ -381,7 +623,9 @@ def test_multimodal_and_tool_schema_material_is_in_exact_accounting() -> None:
     assert rich_prepared.accounting.total_input_tokens > (
         plain_prepared.accounting.total_input_tokens + 900
     )
-    assert rich_prepared.accounting.mandatory_tokens > 0
+    # TASK-26019: tool schemas are now their own bucket instead of riding
+    # inside mandatory -- the pin's intent (tools ARE counted) is unchanged.
+    assert rich_prepared.accounting.tool_schema_tokens > 0
     assert rich_prepared.tools == rich.tools
 
 
@@ -583,6 +827,10 @@ async def test_gateway_agent_tool_payload_is_prepared_once_as_complete_unit(
         "assistant",
         "tool",
     ]
+    assert [row["role"] for row in artifacts[0].semantic.active_tool_loop] == [
+        "assistant",
+        "tool",
+    ]
     assert dispatched["tools"] == tools
     await gateway.aclose()
 
@@ -733,3 +981,179 @@ def test_active_private_group_is_mandatory_and_fails_closed_when_over_budget() -
     assert prepared.known_overflow is True
     assert prepared.dropped_units == 0
     assert prepared.continuation_groups == (group,)
+
+
+# --- TASK-26019: category breakdown fields on the accounting ----------------
+
+
+def _breakdown_policy():
+    from tldw_chatbook.Chat.console_trace_models import (
+        FrozenTracePolicy,
+        new_opaque_id,
+    )
+
+    return FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+
+
+def test_tool_schemas_split_out_of_mandatory_by_construction() -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "inspect",
+                "description": "words " * 50,
+                "parameters": {"type": "object"},
+            },
+        }
+    ]
+    with_tools = prepare_provider_request(
+        build_console_request([{"role": "user", "content": "describe"}], tools=tools),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+    without_tools = prepare_provider_request(
+        build_console_request([{"role": "user", "content": "describe"}]),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+
+    accounting = with_tools.accounting
+    assert accounting.tool_schema_tokens > 0
+    assert accounting.mandatory_tokens == 0, (
+        "tool schemas must no longer masquerade as mandatory context"
+    )
+    assert without_tools.accounting.tool_schema_tokens == 0
+    # the split is a partition of the same total, not a new estimate
+    assert accounting.total_input_tokens == (
+        accounting.system_tokens
+        + accounting.memory_tokens
+        + accounting.tool_schema_tokens
+        + accounting.mandatory_tokens
+        + accounting.compactable_tokens
+        + accounting.active_request_tokens
+    )
+    # the one existing consumer reads non_compactable -- unchanged meaning
+    assert accounting.non_compactable_tokens == (
+        accounting.total_input_tokens - accounting.compactable_tokens
+    )
+
+
+def test_attachment_tokens_cover_conversation_image_parts() -> None:
+    prepared = prepare_provider_request(
+        build_console_request(
+            [
+                {"role": "user", "content": "one"},
+                {"role": "assistant", "content": "a1"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "see"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AA"},
+                        },
+                    ],
+                },
+            ]
+        ),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+
+    accounting = prepared.accounting
+    assert accounting.attachment_tokens > 0
+    assert accounting.attachment_tokens <= (
+        accounting.compactable_tokens + accounting.active_request_tokens
+    )
+
+
+def test_rag_context_attributes_only_with_provenance() -> None:
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ProviderArtifactTraceProvenance,
+        TraceProvenanceSource,
+    )
+
+    policy = _breakdown_policy()
+    rag_row = {"role": "system", "content": "retrieved snippet " * 30}
+    plain_row = {"role": "system", "content": "instructions"}
+
+    without_provenance = prepare_provider_request(
+        build_console_request(
+            [{"role": "user", "content": "q"}],
+            mandatory=[rag_row, plain_row],
+        ),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+    assert without_provenance.accounting.rag_attributed is False
+    assert without_provenance.accounting.rag_context_tokens == 0
+
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleTraceCaptureMode,
+    )
+
+    with_provenance = prepare_provider_request(
+        build_console_request(
+            [{"role": "user", "content": "q"}],
+            mandatory=[rag_row, plain_row],
+            message_provenance=(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.ACTIVE_REQUEST, policy
+                ),
+            ),
+            memory_provenance=(),
+            mandatory_provenance=[
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.RAG_CONTEXT, policy
+                ),
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.MANDATORY_CONTEXT, policy
+                ),
+            ],
+            tool_provenance=(),
+            capture_policy=policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        ),
+        wire_style="distinct_roles",
+        model="gpt-4o",
+        capacity=_capacity(None),
+    )
+    accounting = with_provenance.accounting
+    assert accounting.rag_attributed is True
+    assert 0 < accounting.rag_context_tokens < accounting.mandatory_tokens
+
+
+def test_saved_continuation_is_a_policy_owned_provider_artifact() -> None:
+    group = _private_group("a1", call_id="call_1")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    semantic = build_console_request(
+        [
+            {
+                "role": "assistant",
+                "content": "answer",
+                CONTINUATION_OWNER_KEY: "a1",
+            }
+        ],
+        continuation_groups=(group,),
+        message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+    )
+
+    assert semantic.provenance is not None
+    descriptor = semantic.provenance.active_continuations[0]
+    assert isinstance(descriptor, DerivedTraceProvenance)
+    assert isinstance(descriptor.artifact, ProviderArtifactTraceProvenance)
+    assert descriptor.artifact.source is TraceProvenanceSource.CONTINUATION
+    assert descriptor.artifact.policy == policy

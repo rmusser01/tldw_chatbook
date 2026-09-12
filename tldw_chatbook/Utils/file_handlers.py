@@ -9,6 +9,7 @@ that users can attach to chat messages. Each handler processes files differently
 - Data files: Format and insert content
 """
 
+import asyncio
 import json
 import mimetypes
 import yaml
@@ -18,8 +19,57 @@ from pathlib import Path
 from typing import List, Optional, Literal, Union, TYPE_CHECKING
 from loguru import logger
 
+from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
+
 if TYPE_CHECKING:
     pass
+
+
+async def _extract_local_ingest_text(file_path: Path, *, kind_label: str) -> str:
+    """Extract text via the shared local-ingestion parser (task-19576).
+
+    This is the same extractor (``parse_local_file_for_ingest``) Library ▸
+    Import uses -- PDF/document/ebook handlers used to return a placeholder
+    telling the user to visit a "Media Ingestion tab" that was retired (its
+    route now aliases to Library; see ``UI/Navigation/screen_registry.py``).
+
+    Runs off the event loop: PDF/document/ebook extraction is CPU-bound and
+    can easily exceed the repo's 100ms worker budget. No database write and
+    no LLM analysis happen here (``perform_analysis`` defaults to False in
+    ``parse_local_file_for_ingest``) -- this only reads and extracts text.
+    The 100MB attachment cap enforced upstream by
+    ``Chat/attachment_core.py``'s ``MAX_ATTACHMENT_BYTES`` (checked before
+    any handler is dispatched) already bounds this, matching Library ▸
+    Import's own extraction, which imposes no additional file-size cap of
+    its own at this layer.
+
+    Args:
+        file_path: Path to the file to extract text from.
+        kind_label: Human-readable file-type label used only when no text
+            could be extracted (e.g. "PDF", "document", "ebook").
+
+    Returns:
+        Formatted content wrapped with the same
+        ``--- Contents of ... ---``/``--- End of ... ---`` markers the other
+        inline handlers in this module use, or an honest "no extractable
+        text" notice (naming no destination) when extraction produced
+        nothing.
+
+    Raises:
+        Exception: Whatever ``parse_local_file_for_ingest`` raises (missing
+            optional dependency, corrupt file, etc.) -- callers catch this
+            and surface an honest, non-placeholder error message.
+    """
+    from ..Local_Ingestion.local_file_ingestion import parse_local_file_for_ingest
+
+    payload = await asyncio.to_thread(parse_local_file_for_ingest, str(file_path), {})
+    content = (payload.get("content") or "").strip()
+    if not content:
+        return f"[No extractable text found in {kind_label} file: {file_path.name}]"
+    return (
+        f"--- Contents of {file_path.name} ---\n{content}\n"
+        f"--- End of {file_path.name} ---"
+    )
 
 
 @dataclass
@@ -81,8 +131,13 @@ class ImageFileHandler(FileHandler):
                 insert_mode="attachment",
                 file_type="image",
             )
-        except Exception as e:
-            logger.error(f"Failed to process image {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to process image "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             raise
 
 
@@ -119,8 +174,13 @@ class TextFileHandler(FileHandler):
                 insert_mode="inline",
                 file_type="text",
             )
-        except Exception as e:
-            logger.error(f"Failed to read text file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to read text file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error reading file: {file_path.name}]",
                 display_name=file_path.name,
@@ -205,8 +265,13 @@ class CodeFileHandler(FileHandler):
                 insert_mode="inline",
                 file_type="code",
             )
-        except Exception as e:
-            logger.error(f"Failed to read code file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to read code file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error reading code file: {file_path.name}]",
                 display_name=file_path.name,
@@ -256,8 +321,13 @@ class DataFileHandler(FileHandler):
                 insert_mode="inline",
                 file_type="data",
             )
-        except Exception as e:
-            logger.error(f"Failed to process data file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to process data file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error processing data file: {file_path.name}]",
                 display_name=file_path.name,
@@ -311,7 +381,7 @@ class DataFileHandler(FileHandler):
 
 
 class PDFFileHandler(FileHandler):
-    """Handler for PDF files using local ingestion."""
+    """Handler for PDF files, extracting real text via local ingestion."""
 
     SUPPORTED_EXTENSIONS = {".pdf"}
 
@@ -319,12 +389,25 @@ class PDFFileHandler(FileHandler):
         return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
 
     async def process(self, file_path: Path) -> ProcessedFile:
-        """Process PDF file - just return a placeholder for now."""
-        # For now, we'll just indicate that PDF files should be processed separately
-        # The actual ingestion should happen through the dedicated ingestion UI/API
+        """Extract PDF text via the shared local-ingestion parser (task-19576).
+
+        This used to return a placeholder pointing at a retired "Media
+        Ingestion tab" -- see `_extract_local_ingest_text`'s docstring.
+        """
+        try:
+            content = await _extract_local_ingest_text(file_path, kind_label="PDF")
+        except Exception as exc:
+            logger.error(
+                f"Failed to extract PDF text "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
+            content = (
+                f"[Could not extract text from PDF file: {file_path.name} ({exc})]"
+            )
         return ProcessedFile(
-            content=f"[PDF File: {file_path.name}]\n"
-            f"To process this PDF file, please use the Media Ingestion tab.",
+            content=content,
             display_name=file_path.name,
             insert_mode="inline",
             file_type="pdf",
@@ -332,7 +415,8 @@ class PDFFileHandler(FileHandler):
 
 
 class DocumentFileHandler(FileHandler):
-    """Handler for document files (Word, RTF, ODT) using local ingestion."""
+    """Handler for document files (Word, RTF, ODT), extracting real text via
+    local ingestion."""
 
     SUPPORTED_EXTENSIONS = {".doc", ".docx", ".rtf", ".odt"}
 
@@ -340,12 +424,25 @@ class DocumentFileHandler(FileHandler):
         return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
 
     async def process(self, file_path: Path) -> ProcessedFile:
-        """Process document file - just return a placeholder for now."""
-        # For now, we'll just indicate that document files should be processed separately
-        # The actual ingestion should happen through the dedicated ingestion UI/API
+        """Extract document text via the shared local-ingestion parser
+        (task-19576). This used to return a placeholder pointing at a
+        retired "Media Ingestion tab" -- see `_extract_local_ingest_text`'s
+        docstring.
+        """
+        try:
+            content = await _extract_local_ingest_text(file_path, kind_label="document")
+        except Exception as exc:
+            logger.error(
+                f"Failed to extract document text "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
+            content = (
+                f"[Could not extract text from document file: {file_path.name} ({exc})]"
+            )
         return ProcessedFile(
-            content=f"[Document File: {file_path.name}]\n"
-            f"To process this document file, please use the Media Ingestion tab.",
+            content=content,
             display_name=file_path.name,
             insert_mode="inline",
             file_type="document",
@@ -353,7 +450,8 @@ class DocumentFileHandler(FileHandler):
 
 
 class EbookFileHandler(FileHandler):
-    """Handler for ebook files (EPUB, MOBI, AZW3) using local ingestion."""
+    """Handler for ebook files (EPUB, MOBI, AZW3), extracting real text via
+    local ingestion."""
 
     SUPPORTED_EXTENSIONS = {".epub", ".mobi", ".azw", ".azw3", ".fb2"}
 
@@ -361,12 +459,25 @@ class EbookFileHandler(FileHandler):
         return file_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
 
     async def process(self, file_path: Path) -> ProcessedFile:
-        """Process ebook file - just return a placeholder for now."""
-        # For now, we'll just indicate that ebook files should be processed separately
-        # The actual ingestion should happen through the dedicated ingestion UI/API
+        """Extract ebook text via the shared local-ingestion parser
+        (task-19576). This used to return a placeholder pointing at a
+        retired "Media Ingestion tab" -- see `_extract_local_ingest_text`'s
+        docstring.
+        """
+        try:
+            content = await _extract_local_ingest_text(file_path, kind_label="ebook")
+        except Exception as exc:
+            logger.error(
+                f"Failed to extract ebook text "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
+            content = (
+                f"[Could not extract text from ebook file: {file_path.name} ({exc})]"
+            )
         return ProcessedFile(
-            content=f"[Ebook File: {file_path.name}]\n"
-            f"To process this ebook file, please use the Media Ingestion tab.",
+            content=content,
             display_name=file_path.name,
             insert_mode="inline",
             file_type="ebook",
@@ -388,28 +499,46 @@ class PlaintextDatabaseHandler(FileHandler):
         return file_path.stat().st_size > 100 * 1024
 
     async def process(self, file_path: Path) -> ProcessedFile:
-        """Process plaintext file for database ingestion."""
+        """Process plaintext file for database ingestion.
+
+        Task-19576: both branches used to name a "Media Ingestion tab" that
+        no longer exists (its route now aliases to Library; see
+        `UI/Navigation/screen_registry.py`). Unlike the PDF/document/ebook
+        handlers above, this is a deliberate size-based deferral, not a
+        missing-capability placeholder: reading text out of a plaintext
+        file needs no extraction step, but inlining a many-hundred-KB (or
+        multi-MB) file straight into a chat turn's context is a real
+        cost/context-window concern of its own, so this still defers to
+        Library's RAG-searchable ingestion instead of dumping raw text
+        inline -- only the (now retired) destination name is fixed.
+        """
         try:
             # Check file size
             if file_path.stat().st_size > self.MAX_FILE_SIZE:
                 return ProcessedFile(
                     content=f"[File too large: {file_path.name} ({file_path.stat().st_size / 1024 / 1024:.1f}MB)]\n"
-                    f"To process large text files, please use the Media Ingestion tab.",
+                    f"To ingest this file for search, add it via the Library tab.",
                     display_name=file_path.name,
                     insert_mode="inline",
                     file_type="text",
                 )
 
-            # For large text files, suggest using the ingestion tab
+            # For large text files, suggest using Library's RAG-searchable
+            # ingestion rather than inlining the whole file into this chat turn.
             return ProcessedFile(
                 content=f"[Large Text File: {file_path.name} ({file_path.stat().st_size / 1024:.1f}KB)]\n"
-                f"To process this file for RAG search, please use the Media Ingestion tab.",
+                f"To process this file for RAG search, add it via the Library tab.",
                 display_name=file_path.name,
                 insert_mode="inline",
                 file_type="text",
             )
-        except Exception as e:
-            logger.error(f"Failed to check text file {file_path}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to check text file "
+                f"path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__} "
+                f"exception_type={type(exc).__name__}"
+            )
             return ProcessedFile(
                 content=f"[Error checking text file: {file_path.name}]",
                 display_name=file_path.name,
@@ -504,7 +633,10 @@ class FileHandlerRegistry:
             file_path = Path(file_path)
 
         if not file_path.exists():
-            logger.error(f"File not found: {file_path}")
+            logger.error(
+                f"File not found path_sha256={content_fingerprint(str(file_path))} "
+                f"suffix={file_path.suffix.lower()} handler={type(self).__name__}"
+            )
             return ProcessedFile(
                 content=f"[File not found: {file_path.name}]",
                 display_name=file_path.name,
@@ -515,11 +647,19 @@ class FileHandlerRegistry:
         # Find the first handler that can process this file
         for handler in self.handlers:
             if handler.can_handle(file_path):
-                logger.debug(f"Using {handler.__class__.__name__} for {file_path.name}")
+                logger.debug(
+                    f"Using file handler "
+                    f"path_sha256={content_fingerprint(str(file_path))} "
+                    f"suffix={file_path.suffix.lower()} "
+                    f"handler={type(handler).__name__}"
+                )
                 return await handler.process(file_path)
 
         # This should never happen since DefaultFileHandler handles everything
-        logger.error(f"No handler found for {file_path}")
+        logger.error(
+            f"No handler found path_sha256={content_fingerprint(str(file_path))} "
+            f"suffix={file_path.suffix.lower()} handler={type(self).__name__}"
+        )
         return ProcessedFile(
             content=f"[No handler for: {file_path.name}]",
             display_name=file_path.name,

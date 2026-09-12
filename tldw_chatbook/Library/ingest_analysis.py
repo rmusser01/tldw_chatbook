@@ -35,6 +35,13 @@ from tldw_chatbook.Chat.provider_readiness import (
 #: provider at all. Also the substring the panel hint builds on.
 NO_ANALYSIS_PROVIDER_REASON = "no analysis provider is configured"
 
+#: task-31981: the next step for the no-provider case, appended to the
+#: surfaced reason in the app's "reason · action" grammar (see the
+#: watchlists Generate gate's "Settings ▸ Providers & Models" phrasing).
+#: Only this branch has a single obvious fix; the provider-not-ready
+#: branch's fix depends on the specific readiness gap, so it stays bare.
+NO_ANALYSIS_PROVIDER_NEXT_STEP = "Set one in Settings ▸ Providers & Models"
+
 # ---------------------------------------------------------------------------
 # (task-3301 xhigh review round, F10) The full [analysis_defaults] call
 # shape. Defaults mirror the Media viewer's analysis panel
@@ -221,6 +228,37 @@ def resolve_ingest_analysis_provider(
             "Imports will run without analysis."
         ),
     )
+
+
+def analysis_unavailable_reason(resolution: IngestAnalysisResolution) -> str:
+    """One-sentence reason an analysis call cannot be made now, or ``""``.
+
+    task-28007 AC#5: the Reader's Generate action learned this only AFTER
+    the click, as a toast. Both the disabled control's tooltip and the
+    handler's post-click guard read it from here, so the label and the
+    refusal can never say different things. ``short_reason`` (not
+    ``hint``) is the source: the hint is written for the ingest panel and
+    talks about imports.
+
+    Args:
+        resolution: The outcome of :func:`resolve_ingest_analysis_provider`.
+
+    Returns:
+        A capitalised, full-stopped sentence, or ``""`` when ready.
+    """
+    if resolution.ready:
+        return ""
+    # Strip BEFORE the fallback: a whitespace-only short_reason is truthy,
+    # and stripping it afterwards left "" for `reason[0]` to raise on. No
+    # resolution the resolver builds is blank today, but this is a public
+    # seam other gates feed resolutions into.
+    reason = (resolution.short_reason or "").strip() or NO_ANALYSIS_PROVIDER_REASON
+    sentence = reason[0].upper() + reason[1:]
+    if reason == NO_ANALYSIS_PROVIDER_REASON:
+        # task-31981: a blocked Generate/Analyze must name the next step,
+        # not just the fault -- "reason · action" grammar.
+        return f"{sentence} · {NO_ANALYSIS_PROVIDER_NEXT_STEP}."
+    return sentence if sentence.endswith(".") else f"{sentence}."
 
 
 def _optional_str(value: Any) -> Optional[str]:

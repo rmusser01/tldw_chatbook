@@ -30,6 +30,7 @@ status fallback) feeding one bridge-lifetime fan-out. These tests pin:
 Each test is mutation-tested (Task 2 report): every listed mutation makes
 the named test fail on its own assertion.
 """
+
 from __future__ import annotations
 
 import threading
@@ -113,14 +114,12 @@ def test_drain_fires_once_with_terminal_rows_and_a_finished_coordinator(
     _join_fleet_threads()
 
     assert len(fires) == 1, (
-        "the drain must fire exactly once per drain, not per child: "
-        f"{fires}"
+        f"the drain must fire exactly once per drain, not per child: {fires}"
     )
     fire = fires[0]
     assert fire["thread"].startswith("fleet-"), fire
     assert fire["db_statuses"] == ["done", "done"], (
-        "every settled row must be terminal at fire time on the happy "
-        f"path: {fire}"
+        f"every settled row must be terminal at fire time on the happy path: {fire}"
     )
     assert all(s != "running" for s in fire["coordinator_statuses"]), (
         "the drain fires strictly after fleet.finish -- unlike the "
@@ -220,8 +219,7 @@ def test_change_window_close_completes_before_the_drain_fires(tmp_path):
     _join_fleet_threads()
 
     assert order == ["change-window-closed", "drain"], (
-        "the change window must have fully closed before the drain "
-        f"fires: {order}"
+        f"the change window must have fully closed before the drain fires: {order}"
     )
 
 
@@ -276,13 +274,12 @@ def test_a_raising_settle_hook_never_reaches_the_child_threads_excepthook(
 
     monkeypatch.setattr(threading, "excepthook", recording_excepthook)
 
-    def raising_hook(self, conversation_id, session_id, assistant_message_id,
-                     run_id, status):
+    def raising_hook(
+        self, conversation_id, session_id, assistant_message_id, run_id, status
+    ):
         raise RuntimeError("induced: the settle hook itself is broken")
 
-    monkeypatch.setattr(
-        ConsoleAgentBridge, "_on_fleet_child_settled", raising_hook
-    )
+    monkeypatch.setattr(ConsoleAgentBridge, "_on_fleet_child_settled", raising_hook)
 
     gate, gateway, db, store, session, aid, bridge = _survivor_bridge(
         tmp_path,
@@ -305,12 +302,10 @@ def test_a_raising_settle_hook_never_reaches_the_child_threads_excepthook(
         "a raising settle hook must be contained inside run_child's "
         f"finally, never killing the child's thread: {fleet_deaths}"
     )
-    assert not [
-        t for t in threading.enumerate() if t.name.startswith("fleet-")
-    ], "the child thread must have finished cleanly"
-    row = next(
-        r for r in db.list_runs("conv-hook") if r["agent_kind"] == "subagent"
+    assert not [t for t in threading.enumerate() if t.name.startswith("fleet-")], (
+        "the child thread must have finished cleanly"
     )
+    row = next(r for r in db.list_runs("conv-hook") if r["agent_kind"] == "subagent")
     assert row["status"] == "done", row
 
 
@@ -358,15 +353,11 @@ def test_a_consumer_registered_once_fires_once_per_drain_across_turns(
     aid_1 = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     ).id
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     events: list[FleetDrained] = []
     bridge.on_fleet_drained("once", events.append)
 
-    outcome = _run(
-        bridge, store, session, aid_1, conversation_id="conv-turns"
-    )
+    outcome = _run(bridge, store, session, aid_1, conversation_id="conv-turns")
     assert outcome.status == "done"
     _join_fleet_threads()
     assert len(events) == 1, events
@@ -375,9 +366,7 @@ def test_a_consumer_registered_once_fires_once_per_drain_across_turns(
     aid_2 = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     ).id
-    outcome = _run(
-        bridge, store, session, aid_2, conversation_id="conv-turns"
-    )
+    outcome = _run(bridge, store, session, aid_2, conversation_id="conv-turns")
     assert outcome.status == "done"
     _join_fleet_threads()
 

@@ -55,7 +55,7 @@ class WorkflowsScreen(BaseAppScreen):
         )
         self._refresh_latest_console_context(has_recent_work)
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="workflows-refresh-console-context", thread=True)
     def _refresh_latest_console_context(self, has_recent_work: bool) -> None:
         latest_console_item = self._latest_console_follow_item_from_adapter(
             has_recent_work

@@ -23,8 +23,6 @@ tests (`Tests/conftest.py::_no_local_server_probes`) and the socket guard
 from __future__ import annotations
 
 import pytest
-from textual.app import App
-
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -38,6 +36,10 @@ from tldw_chatbook.Chat.local_server_discovery import (
     discover_local_servers,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleModelDiscoveryIdentity,
+    ConsoleUnverifiedModelDecision,
+)
 
 
 class ConsoleHarness(ConsolidatedCSSApp):
@@ -49,6 +51,24 @@ class ConsoleHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         await self.push_screen(ChatScreen(self.app_instance))
+
+
+def test_unverified_model_decision_is_not_endpoint_agnostic() -> None:
+    """An approval for one canonical endpoint cannot authorize another endpoint."""
+    first = ConsoleModelDiscoveryIdentity(
+        provider_key="vllm",
+        connection_identity=("vllm", "http://127.0.0.1:8000"),
+        draft_generation=3,
+    )
+    second = ConsoleModelDiscoveryIdentity(
+        provider_key="vllm",
+        connection_identity=("vllm", "http://127.0.0.1:8001"),
+        draft_generation=4,
+    )
+
+    assert ConsoleUnverifiedModelDecision(first, "custom") != (
+        ConsoleUnverifiedModelDecision(second, "custom")
+    )
 
 
 def _blocked_provider_app():

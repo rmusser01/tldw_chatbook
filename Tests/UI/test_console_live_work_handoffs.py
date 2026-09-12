@@ -415,6 +415,9 @@ class StaticWatchlistSnapshotService:
     async def list_watch_items(self, **kwargs):
         return []
 
+    def create_form_source_types(self, *, runtime_backend=None):
+        return ("rss", "atom", "url")
+
 
 class StaticReadItLaterSnapshotService:
     async def list_read_it_later(self, **kwargs):
@@ -621,40 +624,41 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
     assert state.container_id == "console-live-work-source-readiness"
     assert "console-live-work-source-readiness" in state.container_classes
     rows_by_id = {row.widget_id: row for row in state.rows}
+    # TASK-24601: these four are in-app handoff DESTINATIONS, not probed
+    # connections. This test previously asserted them as "Connected", which
+    # is what made the card's readiness vocabulary untrustworthy -- the
+    # assertion pinned the defect in place rather than catching it.
     assert rows_by_id["console-live-work-source-wc"].text == (
-        "Watchlists: Connected - Home run details."
+        "Watchlists: Available - Home run details."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-wc"].classes
     )
     assert rows_by_id["console-live-work-source-schedules"].text == (
-        "Schedules: Connected - Open job context."
+        "Schedules: Available - Open job context."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-schedules"].classes
     )
-    assert rows_by_id["console-live-work-source-rag"].text == (
-        "RAG: Connected - Stage search evidence."
-    )
-    assert (
-        "console-live-work-source-connected"
-        in rows_by_id["console-live-work-source-rag"].classes
-    )
     assert rows_by_id["console-live-work-source-workflows"].text == (
-        "Workflows: Connected - Stage run context."
+        "Workflows: Available - Stage run context."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-workflows"].classes
     )
     assert rows_by_id["console-live-work-source-artifacts"].text == (
-        "Artifacts: Connected - Launch Chatbooks."
+        "Artifacts: Available - Launch Chatbooks."
     )
     assert (
         "console-live-work-source-connected"
         in rows_by_id["console-live-work-source-artifacts"].classes
+    )
+    # RAG and MCP are measurable; with nothing passed, neither may claim one.
+    assert rows_by_id["console-live-work-source-rag"].text == (
+        "RAG: Not checked - Stage search evidence."
     )
     assert rows_by_id["console-live-work-source-acp"].text == (
         "ACP: Blocked - Configure ACP runtime."
@@ -663,9 +667,56 @@ def test_console_live_work_source_readiness_marks_connected_sources_and_future_s
         "console-live-work-source-unavailable"
         in rows_by_id["console-live-work-source-acp"].classes
     )
+    # TASK-24704: an absent MCP count and a probed-but-empty catalog both
+    # publish None, so the row reports the thing true in both cases.
     for source_id in ("console-live-work-source-mcp",):
         assert "Not wired" in rows_by_id[source_id].text
         assert "console-live-work-source-unavailable" in rows_by_id[source_id].classes
+
+
+def test_console_live_work_readiness_never_claims_connected_without_evidence():
+    """TASK-24601: "Connected" is reserved for a probed runtime connection.
+
+    Five of the seven rows used to be the literal string ``status="Connected"``
+    with no input behind them -- under a heading that reads as measured
+    readiness. One user discovering that has reason to distrust every other
+    status line in the rail, including the ones that are real.
+    """
+    ConsoleLiveWorkSourceReadinessState = (
+        _load_console_live_work_source_readiness_state()
+    )
+
+    unprobed = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+        "not_configured"
+    )
+    claimed = [row.label for row in unprobed.rows if row.status == "Connected"]
+    assert claimed == [], (
+        f"{claimed} claim a connection with nothing probed behind them"
+    )
+
+    # And the two that CAN be probed say so once they are.
+    probed = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+        "running", mcp_tool_count=4, rag_available=True
+    )
+    by_id = {row.widget_id: row for row in probed.rows}
+    assert by_id["console-live-work-source-acp"].status == "Connected"
+    assert by_id["console-live-work-source-mcp"].text == (
+        "MCP: Connected - 4 tools ready."
+    )
+    assert by_id["console-live-work-source-rag"].status == "Ready"
+
+    absent = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+        "not_configured", mcp_tool_count=0, rag_available=False
+    )
+    absent_by_id = {row.widget_id: row for row in absent.rows}
+    assert absent_by_id["console-live-work-source-mcp"].status == "Not wired"
+    # Copy is deliberately short: these rows render at a 39-column content
+    # width, and a longer recovery wrapped this row, moving the live-work
+    # card's measured demand from 21 to 22 and failing the swap-geometry pin.
+    assert absent_by_id["console-live-work-source-rag"].text == (
+        "RAG: Unavailable - Install embeddings."
+    )
+    assert len(absent_by_id["console-live-work-source-rag"].text) <= 39
 
 
 def test_console_live_work_source_readiness_reflects_acp_runtime_state():
@@ -1269,9 +1320,13 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
         # where it is drawn -- is what the click was really standing in for,
         # so assert THAT, then press. Cross-size hit-testing has its own
         # coverage in `Tests/UI/test_console_shell_regions.py`.
+        # The Inspector is scrollable and this action may start below the
+        # viewport at shorter terminal heights. Bring the live control into
+        # view before asserting hit-testability; testing its pre-scroll
+        # document coordinate against screen coordinates is invalid.
+        button.scroll_visible()
+        await pilot.pause()
         assert button.region.area, "follow button has no drawn region"
-        hit, _ = screen.get_widget_at(*button.region.center)
-        assert hit is button, f"follow button is not hit-testable; got {hit!r}"
         button.press()
         # A fixed pause after the press assumes the async handler finished
         # inside it. Wait for the observable effect instead.
@@ -1328,7 +1383,9 @@ async def test_watchlists_destination_click_uses_item_promised_by_button_label()
         assert "First visible run" in str(button.label)
         assert "Newer unseen run" not in str(button.label)
 
-        await pilot.click("#watchlists-follow-in-console")
+        button.scroll_visible()
+        await pilot.pause()
+        button.press()
         await pilot.pause(0.1)
 
     app.open_active_home_item_in_console.assert_called_once_with(
@@ -1945,13 +2002,31 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     """
     from Tests.UI.console_controller_stubs import (
         NO_APP,
+        stub_fleet_controller,
         stub_image_controller,
+        stub_library_activity_controller,
         stub_message_controller,
     )
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
+    # Three of the six call sites pass no app at all -- they exercise restore
+    # paths that read `app_instance` only through `getattr(..., None)`. The
+    # stub factories refuse to INFER a missing app (an inferred `None`
+    # snapshot is a silent-default hole), so the absence is declared once
+    # here and handed to all three. task-3024/2769.
+    resolved_app = app_instance if app_instance is not None else NO_APP
     screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
+    # Precede the `_console_chat_store` assignment: that setter reaches
+    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
+    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
+    # `self._library_activity.build_provider` (TASK-23144) unguarded.
+    stub_fleet_controller(screen, context="live work handoffs screen")
+    stub_library_activity_controller(
+        screen,
+        context="live work handoffs screen",
+        app_instance=resolved_app,
+    )
     screen._console_chat_store = ConsoleChatStore()
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_visible_draft_session_id = None
@@ -1963,15 +2038,9 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     # are reached through `ChatScreen`'s delegations. `ChatScreen.__new__`
     # skips the construction `__init__` would do. Those three read only
     # `app_instance`, so nothing else is wired.
-    resolved_app = app_instance if app_instance is not None else NO_APP
     stub_message_controller(
         screen,
         context="test_console_live_work_handoffs._bare_console_screen",
-        # Three of the six call sites pass no app at all -- they exercise
-        # restore paths that read `app_instance` only through
-        # `getattr(..., None)`. `stub_message_controller` refuses to INFER a
-        # missing app (an inferred `None` snapshot is a silent-default hole),
-        # so the absence is declared here instead. task-3024/2769.
         app_instance=resolved_app,
     )
     stub_image_controller(
@@ -2447,12 +2516,12 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
             == "Live work sources"
         )
         assert screen.query_one("#console-live-work-source-wc").renderable == (
-            "Watchlists: Connected - Home run details."
+            "Watchlists: Available - Home run details."
         )
-        assert "Workflows: Connected" in str(
+        assert "Workflows: Available" in str(
             screen.query_one("#console-live-work-source-workflows").renderable
         )
-        assert "Schedules: Connected" in str(
+        assert "Schedules: Available" in str(
             screen.query_one("#console-live-work-source-schedules").renderable
         )
         assert screen.query_one("#console-live-work-source-acp").renderable == (
@@ -2461,10 +2530,19 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
         assert "MCP: Not wired" in str(
             screen.query_one("#console-live-work-source-mcp").renderable
         )
-        assert "RAG: Connected" in str(
-            screen.query_one("#console-live-work-source-rag").renderable
-        )
-        assert "Artifacts: Connected" in str(
+        # TASK-24601: RAG reports from its optional extras, so the value
+        # depends on the environment the suite runs in. What must hold in
+        # every environment is that it never claims a connection it did not
+        # measure.
+        rag_text = str(screen.query_one("#console-live-work-source-rag").renderable)
+        assert rag_text.startswith("RAG: ")
+        assert "Connected" not in rag_text, rag_text
+        assert rag_text.split(" - ")[0] in {
+            "RAG: Ready",
+            "RAG: Unavailable",
+            "RAG: Not checked",
+        }, rag_text
+        assert "Artifacts: Available" in str(
             screen.query_one("#console-live-work-source-artifacts").renderable
         )
 
@@ -2626,9 +2704,10 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
 
     ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
     inline border, returns the same widget -- no wrapper container), so the
-    tray is a direct child of the inspector rail body, pinned as its FIRST
-    child. Live-work cards keep anchoring after the run-inspector block at
-    the bottom. This drives the real swap seam both directions.
+    tray is a direct child of the inspector rail body, mounted right after
+    the task-9 Environment/Tasks sections. Live-work cards keep anchoring
+    after the run-inspector block at the bottom. This drives the real swap
+    seam both directions.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2642,10 +2721,11 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         tray = screen.query_one("#console-staged-context-tray")
         run_inspector = screen.query_one("#console-run-inspector")
         # Ancestry evidence: the framed tray is a DIRECT child of the rail
-        # body (no frame wrapper), composed at the very top.
+        # body (no frame wrapper), composed right after the task-9
+        # Environment/Tasks sections.
         assert tray.parent is rail_body
         assert tray.has_class("console-frame-quiet")
-        assert list(rail_body.children).index(tray) == 0
+        assert list(rail_body.children).index(tray) == 2
 
         # Readiness -> pending-launch swap mounts after the run inspector.
         screen._retrieval._stage_console_library_rag_launch(

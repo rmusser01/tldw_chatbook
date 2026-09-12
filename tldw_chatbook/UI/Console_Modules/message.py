@@ -96,14 +96,14 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
   command-dispatch orchestration (command registry parsing, skill-blocked
   hints, the keyboard-capture draft stash shared with `on_key`, itself out
   of scope this wave) that only ever REACHES message creation by calling
-  `_dispatch_console_draft_send` -> `_submit_console_native_draft` ->
+  `_dispatch_console_draft_send` -> runtime custody ->
   `ConsoleChatController.submit_draft` (business logic already outside
   `ChatScreen`), none of which are `*message*`-named or move this task.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
@@ -116,7 +116,11 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.widgets import Button
 
-from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_chat_controller import (
+    ConsoleChatController,
+    ConsoleNoteDraft,
+    ConsoleSubmitResult,
+)
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -124,7 +128,11 @@ from ...Chat.console_chat_models import (
     ConsoleVariantSet,
     MessageAttachment,
 )
-from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleThinkingCompatibilityError,
+)
+from ...Chat.console_chat_fork import ConsoleForkEligibility
 from ...Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -137,13 +145,17 @@ from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import (
     ConsoleActionResult,
+    ConsoleCanvasBlockReference,
     ConsoleMessageActionService,
+    canvas_compile_repair_result,
+    resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
     derive_console_save_title,
     resolve_console_artifact_owner_request,
 )
+from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
@@ -152,11 +164,14 @@ from ...Notes.notes_scope_service import ScopeType
 from ...Widgets.Console import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
+    ConsoleEditThinkingModal,
     ConsoleSaveAsModal,
+    ConsoleThinkingEditResult,
 )
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
+    from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
 
 logger = logger.bind(module="ChatScreen")
 
@@ -227,9 +242,17 @@ class ConsoleMessageController:
         keep_console_generation_variant: Callable[[Any], None],
         handle_console_toggle_image_view: Callable[[str], None],
         invalidate_console_persisted_rows_cache: Callable[[], None],
+        invalidate_console_fork_image_selections: (
+            Callable[[Sequence[str]], None] | None
+        ) = None,
         play_console_video: Callable[[str], Any] | None = None,
         save_console_video_copy: Callable[[str], Any] | None = None,
         regenerate_console_video_message: Callable[[str], Any] | None = None,
+        request_console_chat_fork: Callable[[str], Any] | None = None,
+        open_canvas_block: (
+            Callable[[ConsoleCanvasBlockReference, str], Any] | None
+        ) = None,
+        prefill_canvas_repair: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -370,9 +393,17 @@ class ConsoleMessageController:
         self._invalidate_console_persisted_rows_cache_fn = (
             invalidate_console_persisted_rows_cache
         )
+        self._invalidate_console_fork_image_selections_fn = (
+            invalidate_console_fork_image_selections or (lambda _message_ids: None)
+        )
         self._play_console_video_fn = play_console_video
         self._save_console_video_copy_fn = save_console_video_copy
         self._regenerate_console_video_message_fn = regenerate_console_video_message
+        self._request_console_chat_fork_fn = request_console_chat_fork or (
+            lambda _message_id: None
+        )
+        self._open_canvas_block_fn = open_canvas_block
+        self._prefill_canvas_repair_fn = prefill_canvas_repair
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -380,7 +411,9 @@ class ConsoleMessageController:
         # `_console_speaking_message_id`) or a staying screen method still
         # reads/writes -- see `chat_screen.py`'s own "Message cluster state"
         # comment block for the exact list.
-        self._console_message_action_service = ConsoleMessageActionService()
+        self._console_message_action_service = ConsoleMessageActionService(
+            canvas_enabled_reader=self._canvas_enabled
+        )
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
         self._console_original_attempt_previews: Dict[str, str] = {}
@@ -393,6 +426,18 @@ class ConsoleMessageController:
         self._pending_console_swipe_selection: str | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
+
+    def _canvas_enabled(self) -> bool:
+        """Read the app-owned restart-latched Canvas execution gate."""
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        reader = getattr(runtime, "canvas_enabled", None)
+        if not callable(reader):
+            return False
+        try:
+            return reader() is True
+        except Exception:  # noqa: BLE001 - message actions fail closed
+            return False
 
     @property
     def run_worker(self) -> Any:
@@ -489,6 +534,10 @@ class ConsoleMessageController:
     @property
     def _invalidate_console_persisted_rows_cache(self) -> Any:
         return self._invalidate_console_persisted_rows_cache_fn
+
+    @property
+    def _invalidate_console_fork_image_selections(self) -> Any:
+        return self._invalidate_console_fork_image_selections_fn
 
     @property
     def _play_console_video(self) -> Any:
@@ -635,6 +684,9 @@ class ConsoleMessageController:
             "turn_id": message.turn_id,
             "status": message.status,
             "persisted_message_id": message.persisted_message_id,
+            "assistant_generation_state": getattr(
+                message, "assistant_generation_state", None
+            ),
             "feedback": message.feedback,
             "variants": cls._serialize_console_variants(message.variants),
             "image_mime_type": getattr(message, "image_mime_type", None),
@@ -734,6 +786,11 @@ class ConsoleMessageController:
             persisted_message_id=(
                 str(payload["persisted_message_id"])
                 if payload.get("persisted_message_id") is not None
+                else None
+            ),
+            assistant_generation_state=(
+                str(payload["assistant_generation_state"])
+                if payload.get("assistant_generation_state") is not None
                 else None
             ),
             variants=cls._restore_console_variants(payload.get("variants")),
@@ -969,12 +1026,28 @@ class ConsoleMessageController:
                 # outcome could be attributed to it -- nothing to append to.
                 pass
         else:
+            creating_blank_session = store.active_session_id is None
+            app_config = getattr(self.app_instance, "app_config", {})
+            if not isinstance(app_config, Mapping):
+                app_config = {}
+            settings = blank_console_session_settings(app_config)
             session = store.ensure_session(
                 title=self._console_initial_session_title_for_workspace(
                     store.workspace_context.active_workspace_id
                 ),
                 workspace_id=store.workspace_context.active_workspace_id,
+                settings=settings,
+                canonical_settings_baseline=settings,
             )
+            if creating_blank_session:
+                generation = getattr(
+                    self.app_instance,
+                    "console_new_chat_default_generation",
+                    0,
+                )
+                session.new_chat_default_generation = (
+                    generation if type(generation) is int and generation >= 0 else 0
+                )
             store.append_message(
                 session.id,
                 role=ConsoleMessageRole.SYSTEM,
@@ -1094,8 +1167,28 @@ class ConsoleMessageController:
                 return False
             return True
 
+        from tldw_chatbook.Persona_Buddy.console_adapter import BuddyLifecycleEvent
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        buddy_sink = getattr(runtime, "persona_buddy_sink", None)
+        buddy_owner = f"speech:{uuid.uuid4().hex}"
+
         def report_playback(state: str) -> None:
-            if playback_is_current():
+            current = playback_is_current()
+            if buddy_sink is not None and (
+                (current and state == "playing") or state in {"stopped", "failed"}
+            ):
+                # Exact playback ownership outlives the visible session. A stale
+                # stop acknowledgement releases only this request's voice lease.
+                buddy_sink.publish(
+                    BuddyLifecycleEvent(
+                        source="voice",
+                        owner=buddy_owner,
+                        state="speaking" if state == "playing" else "idle",
+                        terminal=state in {"stopped", "failed"},
+                    )
+                )
+            if current:
                 self._settle_console_speech_presentation(
                     message_id,
                     request_generation,
@@ -1174,10 +1267,7 @@ class ConsoleMessageController:
         for other_id, state in tuple(self._console_speech_states.items()):
             if other_id == message_id:
                 continue
-            if (
-                other_id != prior_message_id
-                or state in {"stopped", "failed"}
-            ):
+            if other_id != prior_message_id or state in {"stopped", "failed"}:
                 self._console_speech_states.pop(other_id, None)
         self._console_speech_request_generation += 1
         self._console_speech_states[message_id] = "generating"
@@ -1236,8 +1326,7 @@ class ConsoleMessageController:
             try:
                 return bool(
                     self._ensure_console_chat_store() is store
-                    and self._console_speech_lifetime_generation
-                    == lifetime_generation
+                    and self._console_speech_lifetime_generation == lifetime_generation
                     and store.active_session_id == session_id
                     and store.active_session_epoch() == session_epoch
                 )
@@ -1410,6 +1499,28 @@ class ConsoleMessageController:
             )
             return True
 
+        if action_id == "summarize-note":
+            self.run_worker(
+                self._summarize_console_span_as_note(message_id),
+                exclusive=True,
+                group="console-note-actions",
+            )
+            return True
+
+        if action_id == "save-transcript-note":
+            self.run_worker(
+                self._save_console_transcript_as_note(message_id),
+                exclusive=True,
+                group="console-note-actions",
+            )
+            return True
+
+        if action_id == "fork":
+            eligibility = self.console_fork_eligibility(message_id)
+            if not eligibility.eligible:
+                self.app_instance.notify(eligibility.reason, severity="warning")
+                return True
+
         presentation = self._console_message_presentation(message)
         result = self._console_message_action_service.dispatch(action_id, message)
         if result.clipboard_text is not None:
@@ -1419,7 +1530,59 @@ class ConsoleMessageController:
             and result.target_content is not None
         ):
             result = replace(result, target_content=presentation.content)
+        if result.status == "canvas_repair_requested":
+            repair = result.target_content
+            if repair is None or self._prefill_canvas_repair_fn is None:
+                self.app_instance.notify(
+                    "Canvas repair is unavailable in this Console.", severity="warning"
+                )
+                return True
+            applied = self._prefill_canvas_repair_fn(repair)
+            if inspect.isawaitable(applied):
+                await applied
+            self._last_console_action = replace(result, target_content=None)
+            return True
+        if result.status == "canvas_open_requested":
+            reference = result.canvas_block_ref
+            block = (
+                resolve_canvas_html_block(message, reference)
+                if reference is not None
+                else None
+            )
+            if block is None or self._open_canvas_block_fn is None:
+                self.app_instance.notify(
+                    "That HTML block is no longer available.", severity="warning"
+                )
+                return True
+            from ...Canvas.compiler import CanvasCompileError
+
+            try:
+                opened = self._open_canvas_block_fn(reference, block.html)
+                if inspect.isawaitable(opened):
+                    await opened
+            except CanvasCompileError as exc:
+                result = canvas_compile_repair_result(
+                    action_id, message, reference, exc
+                )
+                repair = result.target_content
+                if repair is None or self._prefill_canvas_repair_fn is None:
+                    self.app_instance.notify(
+                        "Canvas repair is unavailable in this Console.",
+                        severity="warning",
+                    )
+                    return True
+                applied = self._prefill_canvas_repair_fn(repair)
+                if inspect.isawaitable(applied):
+                    await applied
+                result = replace(result, target_content=None)
+            self._last_console_action = result
+            return True
         self._last_console_action = result
+        if action_id == "fork" and result.status == "fork_requested":
+            requested = self._request_console_chat_fork_fn(message_id)
+            if inspect.isawaitable(requested):
+                await requested
+            return True
         if action_id == "view-original-attempt" and result.status == "completed":
             controller = self._ensure_console_chat_controller()
             original_attempt = controller.original_attempt_for_message(message_id)
@@ -1643,7 +1806,9 @@ class ConsoleMessageController:
             # descendant-to-session identity is still available.
             controller.clear_original_attempts_for_session(session_id)
             self._console_original_attempt_previews.clear()
+            subtree_ids = store.subtree_message_ids(message_id)
             store.delete_message(message_id)
+            self._invalidate_console_fork_image_selections(subtree_ids)
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate
             # so the next sync reflects it immediately.
@@ -1667,6 +1832,27 @@ class ConsoleMessageController:
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    def console_fork_eligibility(self, message_id: str) -> ConsoleForkEligibility:
+        """Return the store-owned frozen eligibility for one rendered boundary."""
+        try:
+            return self._ensure_console_chat_store().fork_eligibility(message_id)
+        except (KeyError, ValueError):
+            return ConsoleForkEligibility(False, "Message is not forkable.")
+
+    def sync_selected_fork_eligibility(
+        self, transcript: Any
+    ) -> tuple[str | None, ConsoleForkEligibility | None]:
+        """Push the selected row's current fork eligibility into a transcript."""
+        selected_id = transcript.selected_message_id
+        eligibility = (
+            self.console_fork_eligibility(selected_id)
+            if selected_id is not None
+            else None
+        )
+        if selected_id is not None:
+            transcript.set_fork_eligibilities({selected_id: eligibility})
+        return selected_id, eligibility
 
     def _console_message_presentation(
         self, message: ConsoleChatMessage
@@ -1954,6 +2140,112 @@ class ConsoleMessageController:
         # FB-07 (TASK-2154.17): success confirmations read as success.
         self.app_instance.notify("Saved message as Note.", severity="success")
 
+    def _save_console_note_draft(
+        self, draft: "ConsoleNoteDraft", *, action_id: str, saved_copy: str
+    ) -> None:
+        """Persist a controller-built note draft; notify either way.
+
+        Shared tail of the TASK-31759 More-menu note actions: the draft
+        already carries title/content (and its provenance header); this
+        writes it through the same notes seam as save-as Note.
+        """
+
+        async def _run() -> None:
+            notes_scope_service = getattr(
+                self.app_instance, "notes_scope_service", None
+            )
+            save_note = getattr(notes_scope_service, "save_note", None)
+            if not callable(save_note):
+                self.app_instance.notify(
+                    "Saving as a Note is unavailable: Notes service is not ready.",
+                    severity="warning",
+                )
+                return
+            try:
+                result = save_note(
+                    scope=ScopeType.LOCAL_NOTE.value,
+                    title=draft.title,
+                    content=draft.content,
+                    note_id=None,
+                    version=None,
+                    # TASK-31759 review: notes are owned by the configured
+                    # notes identity (app.notes_user_id drives every local
+                    # note view/ingest), NOT current_user -- saving under a
+                    # different id would make the note invisible in the
+                    # library.
+                    user_id=getattr(self.app_instance, "notes_user_id", None)
+                    or "default_user",
+                    workspace_id=None,
+                    keywords=["console"],
+                )
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:
+                logger.opt(exception=True).warning("Console note action failed.")
+                self.app_instance.notify(
+                    f"Saving as a Note failed: {exc}", severity="error"
+                )
+                return
+            if not result:
+                self.app_instance.notify("Saving as a Note failed.", severity="error")
+                return
+            self._last_console_action = ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy=saved_copy,
+            )
+            self.app_instance.notify(saved_copy, severity="success")
+
+        self.run_worker(_run(), exclusive=True, group="console-note-actions")
+
+    async def _summarize_console_span_as_note(self, message_id: str) -> None:
+        """Summarize the active-path span up to message_id into a Note.
+
+        The controller call is stateless with respect to compaction: no
+        attempt ledger, no branch memory, and the /rewind context summary
+        boundary is never moved (TASK-31759).
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            self.app_instance.notify(
+                "Summarization is unavailable: Console is not ready.",
+                severity="warning",
+            )
+            return
+        draft = await controller.summarize_span_as_note(message_id)
+        if isinstance(draft, ConsoleSubmitResult):
+            self.app_instance.notify(
+                draft.visible_copy or "Summarization was blocked.", severity="warning"
+            )
+            return
+        self._save_console_note_draft(
+            draft,
+            action_id="summarize-note",
+            saved_copy="Saved summary as Note.",
+        )
+
+    async def _save_console_transcript_as_note(self, message_id: str) -> None:
+        """Save the formatted active-path span up to message_id as a Note."""
+        controller = self._console_chat_controller
+        if controller is None:
+            self.app_instance.notify(
+                "Saving as a Note is unavailable: Console is not ready.",
+                severity="warning",
+            )
+            return
+        draft = controller.build_transcript_note(message_id)
+        if isinstance(draft, ConsoleSubmitResult):
+            self.app_instance.notify(
+                draft.visible_copy or "Saving the transcript was blocked.",
+                severity="warning",
+            )
+            return
+        self._save_console_note_draft(
+            draft,
+            action_id="save-transcript-note",
+            saved_copy="Saved transcript as Note.",
+        )
+
     async def _save_console_message_as_media(self, message_id: str) -> None:
         """Persist one selected Console message as a Library media item."""
         media_db = getattr(self.app_instance, "media_db", None)
@@ -2195,6 +2487,14 @@ class ConsoleMessageController:
             )
             return
         can_resend = message.role is ConsoleMessageRole.USER
+        clears_generation_provenance = bool(
+            message.role is ConsoleMessageRole.ASSISTANT
+            and (
+                message.thinking is not None
+                or message.opaque_thinking_json is not None
+                or message.provider_continuation is not None
+            )
+        )
 
         def _apply_edit(result: ConsoleEditResult | None) -> None:
             if result is None:
@@ -2242,7 +2542,109 @@ class ConsoleMessageController:
             )
 
         await self.push_screen(
-            ConsoleEditMessageModal(content=content, can_resend=can_resend),
+            ConsoleEditMessageModal(
+                content=content,
+                can_resend=can_resend,
+                clears_generation_provenance=clears_generation_provenance,
+            ),
+            callback=_apply_edit,
+        )
+
+    def _console_thinking_edit_target(
+        self, activity_id: str
+    ) -> tuple[str, str, str] | None:
+        """Resolve a thinking row's editable displayable block.
+
+        Returns ``None`` when ``activity_id`` is not a projected thinking row
+        or carries no displayable block; the caller decides how to respond.
+        """
+        from ...Widgets.Console.console_transcript import ConsoleTranscript
+
+        try:
+            transcript = self._screen.query_one(
+                "#console-native-transcript", ConsoleTranscript
+            )
+        except Exception:
+            return None
+        if transcript.thinking_owner_message_id(activity_id) is None:
+            return None
+        return transcript.thinking_editable_block(activity_id)
+
+    async def handle_console_thinking_edit_requested(
+        self, event: "ConsoleThinkingEditRequested"
+    ) -> None:
+        """Open the block-scoped thinking edit modal (TASK-32312).
+
+        Called by ``ChatScreen``'s ``@on(ConsoleThinkingEditRequested)``
+        handler: the transcript posts the event from the thinking row's
+        keyboard edit seam (mirroring copy, which has no action buttons
+        either), and the screen resolves the displayable block from the
+        display model because the display-only activity id can never
+        resolve in the store.
+
+        Args:
+            event: Thinking-row edit request carrying the projected
+                activity id of the selected disclosure row.
+        """
+        editable = self._console_thinking_edit_target(event.activity_id)
+        if editable is None:
+            self.app_instance.notify(
+                "This thinking block cannot be edited.", severity="warning"
+            )
+            return
+        owner_message_id, block_id, text = editable
+        await self._open_console_thinking_edit_modal(
+            owner_message_id=owner_message_id,
+            block_id=block_id,
+            text=text,
+        )
+
+    async def _open_console_thinking_edit_modal(
+        self, *, owner_message_id: str, block_id: str, text: str
+    ) -> None:
+        """Open the block-scoped thinking edit modal for one displayable block."""
+        store = self._ensure_console_chat_store()
+
+        def _apply_edit(result: ConsoleThinkingEditResult | None) -> None:
+            if result is None:
+                return
+            try:
+                store.update_message_thinking_block(
+                    owner_message_id,
+                    block_id,
+                    result.text,
+                    expected_text=text,
+                )
+            except ValueError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except ConsoleThinkingCompatibilityError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except KeyError:
+                self.app_instance.notify(
+                    "Console message action target no longer exists.",
+                    severity="error",
+                )
+                return
+            self._last_console_action = ConsoleActionResult(
+                action_id="edit",
+                status="completed",
+                visible_copy="Edited thinking block.",
+                target_message_id=owner_message_id,
+                target_content=result.text,
+            )
+            self.run_worker(
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            self.app_instance.notify(
+                "Edited thinking block.", severity="information"
+            )
+
+        await self.push_screen(
+            ConsoleEditThinkingModal(text=text),
             callback=_apply_edit,
         )
 
@@ -2262,6 +2664,8 @@ class ConsoleMessageController:
             ("console-message-action-keep-", "keep"),
             ("console-message-action-review-changes-", "review-changes"),
             ("console-message-action-save-as-", "save-as"),
+            ("console-message-action-save-transcript-note-", "save-transcript-note"),
+            ("console-message-action-summarize-note-", "summarize-note"),
             ("console-message-action-save-image-", "save-image"),
             ("console-message-action-video-play-", "video-play"),
             ("console-message-action-video-save-copy-", "video-save-copy"),
@@ -2279,6 +2683,7 @@ class ConsoleMessageController:
             ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),
+            ("console-message-action-fork-", "fork"),
         )
         for prefix, action_id in prefixes:
             if button_id.startswith(prefix):
@@ -2349,6 +2754,31 @@ class ConsoleMessageController:
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
         await self._sync_native_console_chat_ui()
+
+    def apply_rewind_position(
+        self,
+        session_id: str,
+        message_id: str,
+        active_path: Sequence[str],
+        index: int,
+    ) -> None:
+        """Move the active cursor immediately before a selected prompt.
+
+        Args:
+            session_id: Console session whose active path should be updated.
+            message_id: Selected prompt before which to place the cursor.
+            active_path: Ordered message identifiers on the current active path.
+            index: Position of ``message_id`` within ``active_path``.
+        """
+        store = self._ensure_console_chat_store()
+        if index > 0:
+            store.set_active_leaf(session_id, active_path[index - 1])
+            return
+        if not store.set_active_path_before(session_id, message_id):
+            self.app_instance.notify(
+                "Rewound for this session, but the restart position could not be saved.",
+                severity="warning",
+            )
 
     def _select_console_message_variant(
         self, message_id: str, *, direction: str

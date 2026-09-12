@@ -85,7 +85,7 @@ from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Button, DataTable, Select, Static
+from textual.widgets import Button, Collapsible, DataTable, Select, Static
 from textual.widgets.data_table import CellDoesNotExist, ColumnKey, RowDoesNotExist
 
 from ...Subscriptions.briefing_audio import audio_file_path_is_safe
@@ -161,6 +161,14 @@ class GenerateBriefingRequested(Message):
 
 class RefreshBriefingsRequested(Message):
     """Posted when the user asks to re-read the briefing list."""
+
+
+class InspectArtifactRecoveryRequested(Message):
+    """Open the owning inspection surface for an artifact recovery state."""
+
+    def __init__(self, destination: str) -> None:
+        self.destination = destination
+        super().__init__()
 
 
 class ExportBriefingRequested(Message):
@@ -404,9 +412,9 @@ _APP_DEFAULT_PRESET_LABEL = "App default"
 #: among the option values, `None` is a legal, distinct selection.
 _CADENCE_OPTIONS: list[tuple[str, int | None]] = [
     ("Off", None),
-    ("Every 12h", 43_200),
-    ("Daily", 86_400),
-    ("Weekly", 604_800),
+    ("Every 12 hours", 43_200),
+    ("Every 24 hours", 86_400),
+    ("Every 7 days", 604_800),
 ]
 
 #: What each non-Off cadence means in the scope label's own words, keyed by
@@ -414,9 +422,9 @@ _CADENCE_OPTIONS: list[tuple[str, int | None]] = [
 #: cadence option cannot silently drift out of sync with what the scope
 #: label says about it. `cadence_scope_phrase` below is the only reader.
 _CADENCE_SCOPE_PHRASES: dict[int, str] = {
-    43_200: "every 12h",
-    86_400: "daily",
-    604_800: "weekly",
+    43_200: "every 12 hours",
+    86_400: "every 24 hours",
+    604_800: "every 7 days",
 }
 
 
@@ -763,6 +771,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     _AUDIO_FAILED_STYLE = "bold red"
 
     briefings = reactive[list[dict[str, Any]]](list, recompose=True)
+    #: Operational overlay state. Deliberately not recompose=True: refresh and
+    #: generation must leave the last-good table, body, selection and citations
+    #: mounted. The watcher patches the small state strip in place.
+    view_state = reactive("idle")
+    view_message = reactive("")
     #: Task-15779: deliberately NOT `recompose=True`, unlike (almost) every
     #: other reactive on this pane. A selection recompose destroys the very
     #: `DataTable` the user is arrow-keying through -- focus, cursor and
@@ -778,6 +791,9 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: The scope line, supplied by the screen: which watchlist these
     #: briefings belong to, or the reason there are none to show.
     scope_label = reactive("", recompose=True)
+    #: Compact operational state for the selected collection's automation:
+    #: interval, app-open boundary, eligibility/history, and reload attention.
+    automation_receipt = reactive("", recompose=True)
     #: False when no single watchlist is in scope -- briefings are per
     #: watchlist by schema, so there is nothing for Generate to act on.
     can_generate = reactive(False, recompose=True)
@@ -882,7 +898,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: own. Gates the Export Feed button's disabled state: a dead control
     #: offering to export nothing is a spec violation (phase 2b shipped a
     #: disabled Play for exactly this reason).
-    has_audio_episodes = reactive(False, recompose=True)
+    has_audio_episodes = reactive(False)
     #: task-1780, Task 5: whether the screen has a live ChaChaNotes handle
     #: (`getattr(app_instance, "chachanotes_db", None) is not None`).
     #: Screen-supplied, exactly like `has_audio_episodes` above -- this
@@ -892,7 +908,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: and the Kept Briefings… button (which needs nothing else at all --
     #: see `KeptBriefingsRequested`'s own docstring on why that surface is
     #: scope-independent).
-    chachanotes_available = reactive(False, recompose=True)
+    chachanotes_available = reactive(False)
     #: task-1760: whether the screen holds a directory `export_feed_
     #: directory` has already written to this session -- the Serve button
     #: needs SOMETHING to serve, and (unlike `has_audio_episodes`, which
@@ -901,7 +917,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: episodes` above: this widget owns no filesystem state of its own,
     #: and the directory is `Subscriptions.feed_server.FeedDirectoryServer`'s
     #: to hold, not this pane's.
-    can_serve_feed = reactive(False, recompose=True)
+    can_serve_feed = reactive(False)
     #: task-1760: whether the screen's `FeedDirectoryServer` is currently
     #: serving. Screen-supplied -- this pane never starts or stops the
     #: server itself, it only posts `ServeFeedRequested`/`StopFeedServer
@@ -910,12 +926,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: describes for audio PLAYBACK state (a recompose must never silently
     #: reset "is something running" back to a default that disagrees with
     #: reality).
-    feed_server_running = reactive(False, recompose=True)
+    feed_server_running = reactive(False)
     #: task-1760: the running server's URL, or `None` when nothing is
     #: being served. Screen-supplied alongside `feed_server_running` --
     #: used only for the Stop button's tooltip (the toast that announces a
     #: fresh URL is the screen's own responsibility, not this pane's).
-    feed_server_url = reactive[str | None](None, recompose=True)
+    feed_server_url = reactive[str | None](None)
     #: Task 6: every `[item N]` id the SELECTED briefing's body cites,
     #: resolved once per selection by the screen (`_load_briefings`, via
     #: `get_subscription_items_by_ids`) -- `{"item_id": int, "label": Text,
@@ -941,6 +957,49 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: addressing, mirroring `_briefings_column_keys` one level down
     #: (task-16852).
     _scripts_column_keys: tuple[ColumnKey, ...] = ()
+
+    _VIEW_STATES = frozenset(
+        {"idle", "loading", "refreshing", "failed", "storage_mismatch"}
+    )
+
+    def set_view_state(self, state: str, message: str = "") -> None:
+        """Set one bounded operational state without replacing artifact data."""
+        if state not in self._VIEW_STATES:
+            raise ValueError(f"Unknown Artifacts view state: {state}")
+        self.view_message = strip_control_characters(message)[:400]
+        self.view_state = state
+        self._update_view_state_ui()
+
+    def on_mount(self) -> None:
+        self._update_view_state_ui()
+        self._update_more_actions_ui()
+
+    def watch_view_state(self) -> None:
+        self._update_view_state_ui()
+
+    def watch_view_message(self) -> None:
+        self._update_view_state_ui()
+
+    def _update_view_state_ui(self) -> None:
+        """Patch the inline state/recovery controls without recomposing."""
+        try:
+            region = self.query_one("#artifacts-state-region")
+            status = self.query_one("#artifacts-state-message", Static)
+            retry = self.query_one("#artifacts-retry-button", Button)
+            inspect = self.query_one("#artifacts-inspect-runs-button", Button)
+        except NoMatches:
+            return
+        visible = self.view_state != "idle"
+        region.display = visible
+        retry.display = self.view_state in {"failed", "storage_mismatch"}
+        inspect.display = self.view_state == "storage_mismatch"
+        fallback = {
+            "loading": "Loading briefings…",
+            "refreshing": "Refreshing briefings… Last good content remains visible.",
+            "failed": "Briefings could not be refreshed. Last good content remains visible.",
+            "storage_mismatch": "Briefing saved, but this view could not reload it.",
+        }.get(self.view_state, "")
+        status.update(Text(self.view_message or fallback))
 
     def _preset_select_options(self) -> list[tuple[str, int | None]]:
         """Options for the default-preset picker: "App default" then every
@@ -1125,6 +1184,33 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             )
         return disabled, tooltip
 
+    def _serve_button_state(self) -> tuple[bool, str]:
+        """Return Serve's disabled state and current recovery explanation."""
+        if self.feed_server_running:
+            return True, (
+                "A feed is already being served. Stop it before serving "
+                "a different export."
+            )
+        if not self.can_serve_feed:
+            return True, "Export a feed directory first, then serve it over localhost."
+        return False, (
+            "Serve the exported feed directory over localhost -- no "
+            "authentication; anyone who can reach the address can read it."
+        )
+
+    def _stop_feed_button(self) -> Button:
+        """Build the conditional Stop action for the downstream toolbar."""
+        return Button(
+            "Stop Serving",
+            id="artifacts-stop-feed-button",
+            compact=True,
+            tooltip=(
+                f"Stop serving {self.feed_server_url}."
+                if self.feed_server_url
+                else "Stop serving."
+            ),
+        )
+
     def compose(self):
         # `Text`, not a bare `str`: `Static` parses Rich markup by default
         # (`Static(..., markup=True)`), and this line carries a user-authored
@@ -1157,14 +1243,33 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 f"{scope_text} Generate will use "
                 f"{self.default_provider_display}."
             )
+        yield Static(
+            Text(
+                self.automation_receipt
+                or "Automation: select a collection to inspect its schedule."
+            ),
+            id="artifacts-automation-receipt",
+        )
         yield Static(Text(scope_text), id="artifacts-scope-note")
+        with Horizontal(id="artifacts-state-region"):
+            yield Static("", id="artifacts-state-message")
+            yield Button(
+                "Retry",
+                id="artifacts-retry-button",
+                compact=True,
+            )
+            yield Button(
+                "Inspect Runs",
+                id="artifacts-inspect-runs-button",
+                compact=True,
+            )
         with Horizontal(id="artifacts-toolbar", classes="destination-filter-strip"):
             # `compact=True` for the reason TASK-995 records for the Sources
             # toolbar: `.destination-filter-strip` is `height: 1`, and a
             # default bordered Button is three rows, so only its top border
             # would paint.
             yield Button(
-                "Generate",
+                "Generate briefing",
                 id="artifacts-generate-button",
                 variant="primary",
                 compact=True,
@@ -1181,158 +1286,6 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 compact=True,
                 tooltip="Re-read this watchlist's briefings.",
             )
-            # Task 1 (phase 3): exporting is an action on THE SELECTED
-            # briefing, so -- unlike Generate/Refresh, which are
-            # watchlist-wide -- it is disabled with nothing selected, and
-            # ALSO disabled for any non-`complete` row: a `failed`/`empty`/
-            # `generating` briefing has no body worth exporting (`empty`
-            # writes no body by design, `failed` recorded none, and
-            # `generating` has not finished). Placed in this SAME toolbar
-            # rather than a new `Horizontal` -- adding a row here would cost
-            # height this pane's budget cannot spare (see the module
-            # docstring's own note on the pane's fixed `fr` split).
-            #
-            # Task-15779: the disabled/tooltip pair comes from `_export_
-            # button_state`, shared with the in-place update `watch_
-            # selected_briefing` performs -- a selection no longer
-            # recomposes this pane, so these two buttons are the one piece
-            # of selection-dependent chrome OUTSIDE `BriefingDetailRegion`
-            # and must be patchable without a rebuild.
-            export_disabled, export_tooltip = self._export_button_state()
-            yield Button(
-                "Export…",
-                id="artifacts-export-button",
-                compact=True,
-                disabled=export_disabled,
-                tooltip=export_tooltip,
-            )
-            # task-1780, Task 5: keeping a briefing into ChaChaNotes so it
-            # survives this watchlist's deletion. Same disabled shape as
-            # Export above (no selection, or a non-`complete` row) PLUS a
-            # second, independent requirement: a live ChaChaNotes handle --
-            # `keep_briefing` writes into a database this pane has no
-            # access to at all, so a missing handle degrades this ONE
-            # button (never the whole pane, never the whole toolbar), with
-            # a tooltip naming which of the two conditions is unmet.
-            keep_disabled, keep_tooltip = self._keep_button_state(export_disabled)
-            yield Button(
-                "Keep",
-                id="artifacts-keep-button",
-                compact=True,
-                disabled=keep_disabled,
-                tooltip=keep_tooltip,
-            )
-            # Opens Task 5's `KeptBriefingsModal` -- deliberately gated on
-            # `chachanotes_available` ALONE, unlike every sibling button in
-            # this toolbar: it lists ChaChaNotes content directly, so it
-            # needs no selected briefing and no watchlist in scope at all
-            # (see `KeptBriefingsRequested`'s own docstring).
-            yield Button(
-                "Kept Briefings…",
-                id="artifacts-kept-briefings-button",
-                compact=True,
-                disabled=not self.chachanotes_available,
-                tooltip=(
-                    "Connect a ChaChaNotes database to browse kept "
-                    "briefings."
-                    if not self.chachanotes_available
-                    else "Browse, cast from, or delete briefings you have "
-                    "kept."
-                ),
-            )
-            # Task 5 (phase 3): review round 1, Important #1. The brief
-            # originally placed this button in `#artifacts-audio-toolbar`,
-            # which only renders once a SCRIPT is selected -- but the feed
-            # export itself is WATCHLIST-scoped (every complete episode
-            # across the whole watchlist), not script-scoped, so a user
-            # could not find it without first selecting some unrelated
-            # script. Moved to THIS toolbar instead: it is the one Task 1's
-            # own watchlist-scoped markdown Export already lives in, and it
-            # renders unconditionally (see `compose`'s own top-level
-            # structure -- unlike the picker/scripts/audio sections below,
-            # nothing gates this `Horizontal` at all), so the button is
-            # discoverable the moment a watchlist is in scope, exactly like
-            # Generate/Refresh/Export are. Still costs zero rows: both are
-            # EXISTING `.destination-filter-strip` toolbars, `height: 1`
-            # either way -- see the pinned geometry tests re-run for this
-            # move (`test_the_list_the_button_and_the_body_are_all_on_
-            # screen`, `test_the_briefings_table_keeps_at_least_three_
-            # usable_rows`).
-            yield Button(
-                "Export Feed…",
-                id="artifacts-export-feed-button",
-                compact=True,
-                disabled=not self.has_audio_episodes,
-                tooltip=(
-                    "This watchlist has no complete audio episodes to "
-                    "export."
-                    if not self.has_audio_episodes
-                    else "Export this watchlist's audio episodes as a "
-                    "podcast feed directory."
-                ),
-            )
-            # task-1760: Serve/Stop, adjacent to Export Feed for the same
-            # reason Export Feed itself lives here (review round 1,
-            # Important #1, above) -- serving a feed is the natural next
-            # step after exporting one, and this toolbar is the one place
-            # that is guaranteed reachable regardless of any briefing/
-            # script selection. Two buttons, not one toggling label,
-            # mirroring `#artifacts-audio-toolbar`'s own Play/Stop pair
-            # below: Serve disabled while already running OR with nothing
-            # exported yet; Stop (TASK-2310) rendered only while running --
-            # see its own comment below for why it has no useful
-            # disabled-but-visible state. This also means a SECOND
-            # `ServeFeedRequested` while one is
-            # already running is unreachable through the button itself --
-            # the screen's handler still re-checks (see that message's own
-            # docstring), since the button's disabled state and the
-            # message it posts are two different frames, same as every
-            # other guard on this pane.
-            if self.feed_server_running:
-                serve_tooltip = (
-                    "A feed is already being served. Stop it before "
-                    "serving a different export."
-                )
-            elif not self.can_serve_feed:
-                serve_tooltip = (
-                    "Export a feed directory first, then serve it over "
-                    "localhost."
-                )
-            else:
-                serve_tooltip = (
-                    "Serve the exported feed directory over localhost -- "
-                    "no authentication; anyone who can reach the address "
-                    "can read it while it is serving."
-                )
-            yield Button(
-                "Serve Feed",
-                id="artifacts-serve-feed-button",
-                compact=True,
-                disabled=self.feed_server_running or not self.can_serve_feed,
-                tooltip=serve_tooltip,
-            )
-            # TASK-2310: unlike every sibling button in this toolbar, "Stop
-            # Serving" has no useful disabled-but-visible state -- it can
-            # only ever act on a server THIS pane just started, so a user
-            # who has never pressed Serve has nothing it could explain by
-            # staying visible (contrast Export/Keep/Serve, which stay
-            # visible-but-disabled specifically so a first-time user can
-            # discover them before they apply). UAT: the toolbar showed
-            # "Stop Serving" before any briefing existed, one of 12 controls
-            # crowding a brand-new watchlist's empty state. Rendered only
-            # once there is something it could act on.
-            if self.feed_server_running:
-                yield Button(
-                    "Stop Serving",
-                    id="artifacts-stop-feed-button",
-                    compact=True,
-                    tooltip=(
-                        f"Stop serving {self.feed_server_url}."
-                        if self.feed_server_url
-                        else "Stop serving."
-                    ),
-                )
-
         if self.can_generate:
             # Task 4 (phase 2a): the selection-mode and default-preset
             # pickers, plus the entry into Task 3's preset manager. Task 4
@@ -1409,18 +1362,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                         "-- it will resume firing as soon as scheduling is "
                         "turned back on."
                         if schedules_disabled
-                        # Task-1812, AC #2: a freshly picked cadence is not
-                        # instant -- the running scheduler only re-reads
-                        # schedules every `queue_reload_interval_ticks`
-                        # (`Scheduling/scheduler/loop.py`, ~30 minutes by
-                        # default), so a pick made right now can sit inert
-                        # until the next reload. Stated here, and in
-                        # `Docs/User_Guide/watchlists.md`'s "Scheduled
-                        # briefings" section.
                         else "How often this watchlist writes a new briefing "
                         "on its own, while the app is open. Off by default. "
-                        "A freshly picked cadence can take up to ~30 minutes "
-                        "(one scheduler reload cycle) to start."
+                        "After a durable save, a scheduler reload is requested "
+                        "immediately and the receipt reports whether it was "
+                        "acknowledged."
                     ),
                 )
                 yield Button(
@@ -1429,6 +1375,64 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     compact=True,
                     tooltip="Create, edit, or delete briefing presets.",
                 )
+
+        export_disabled, export_tooltip = self._export_button_state()
+        keep_disabled, keep_tooltip = self._keep_button_state(export_disabled)
+        serve_disabled, serve_tooltip = self._serve_button_state()
+        with Collapsible(
+            title="More briefing actions",
+            collapsed=True,
+            id="artifacts-more-actions",
+        ):
+            with Horizontal(
+                id="artifacts-more-actions-toolbar",
+                classes="destination-filter-strip",
+            ):
+                yield Button(
+                    "Export…",
+                    id="artifacts-export-button",
+                    compact=True,
+                    disabled=export_disabled,
+                    tooltip=export_tooltip,
+                )
+                yield Button(
+                    "Keep",
+                    id="artifacts-keep-button",
+                    compact=True,
+                    disabled=keep_disabled,
+                    tooltip=keep_tooltip,
+                )
+                yield Button(
+                    "Kept Briefings…",
+                    id="artifacts-kept-briefings-button",
+                    compact=True,
+                    disabled=not self.chachanotes_available,
+                    tooltip=(
+                        "Connect a ChaChaNotes database to browse kept briefings."
+                        if not self.chachanotes_available
+                        else "Browse, cast from, or delete kept briefings."
+                    ),
+                )
+                yield Button(
+                    "Export Feed…",
+                    id="artifacts-export-feed-button",
+                    compact=True,
+                    disabled=not self.has_audio_episodes,
+                    tooltip=(
+                        "This watchlist has no complete audio episodes to export."
+                        if not self.has_audio_episodes
+                        else "Export this watchlist's audio as a podcast feed."
+                    ),
+                )
+                yield Button(
+                    "Serve Feed",
+                    id="artifacts-serve-feed-button",
+                    compact=True,
+                    disabled=serve_disabled,
+                    tooltip=serve_tooltip,
+                )
+                if self.feed_server_running:
+                    yield self._stop_feed_button()
 
         selected_key = (
             str(self.selected_briefing.get("id")) if self.selected_briefing else None
@@ -1978,6 +1982,68 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             button.disabled = disabled
             button.tooltip = tooltip
 
+    def watch_has_audio_episodes(self) -> None:
+        self._update_more_actions_ui()
+
+    def watch_chachanotes_available(self) -> None:
+        self._update_more_actions_ui()
+
+    def watch_can_serve_feed(self) -> None:
+        self._update_more_actions_ui()
+
+    def watch_feed_server_running(self) -> None:
+        self._sync_stop_feed_button()
+        self._update_more_actions_ui()
+
+    def watch_feed_server_url(self) -> None:
+        self._update_more_actions_ui()
+
+    def _update_more_actions_ui(self) -> None:
+        """Patch downstream action availability without collapsing its owner."""
+        self._update_selection_dependent_buttons()
+        try:
+            kept = self.query_one("#artifacts-kept-briefings-button", Button)
+            export_feed = self.query_one("#artifacts-export-feed-button", Button)
+            serve = self.query_one("#artifacts-serve-feed-button", Button)
+        except NoMatches:
+            return
+        kept.disabled = not self.chachanotes_available
+        kept.tooltip = (
+            "Connect a ChaChaNotes database to browse kept briefings."
+            if kept.disabled
+            else "Browse, cast from, or delete kept briefings."
+        )
+        export_feed.disabled = not self.has_audio_episodes
+        export_feed.tooltip = (
+            "This watchlist has no complete audio episodes to export."
+            if export_feed.disabled
+            else "Export this watchlist's audio as a podcast feed."
+        )
+        serve.disabled, serve.tooltip = self._serve_button_state()
+        try:
+            stop = self.query_one("#artifacts-stop-feed-button", Button)
+        except NoMatches:
+            return
+        stop.tooltip = (
+            f"Stop serving {self.feed_server_url}."
+            if self.feed_server_url
+            else "Stop serving."
+        )
+
+    def _sync_stop_feed_button(self) -> None:
+        """Mount or remove Stop without rebuilding sibling actions."""
+        try:
+            toolbar = self.query_one("#artifacts-more-actions-toolbar", Horizontal)
+        except NoMatches:
+            return
+        stop_buttons = self.query("#artifacts-stop-feed-button")
+        if self.feed_server_running:
+            if not stop_buttons:
+                toolbar.mount(self._stop_feed_button())
+            return
+        for button in stop_buttons:
+            button.remove()
+
     def _refresh_detail_region(self) -> None:
         """Schedule ONE rebuild of everything below the briefings table.
 
@@ -2233,7 +2299,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
-        if button_id == "artifacts-generate-button":
+        if button_id == "artifacts-retry-button":
+            self.post_message(RefreshBriefingsRequested())
+        elif button_id == "artifacts-inspect-runs-button":
+            self.post_message(InspectArtifactRecoveryRequested("runs"))
+        elif button_id == "artifacts-generate-button":
             self.post_message(GenerateBriefingRequested())
         elif button_id == "artifacts-refresh-button":
             self.post_message(RefreshBriefingsRequested())
