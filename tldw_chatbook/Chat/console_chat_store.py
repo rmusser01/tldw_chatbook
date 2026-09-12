@@ -177,6 +177,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     expand_character_template,
     normalize_chat_display_name,
     resolve_console_message_presentation,
+    session_assistant_display_name,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
@@ -12667,6 +12668,35 @@ class ConsoleChatStore:
             source_changed=source_changed,
         )
 
+    def seed_persona_roleplay(
+        self,
+        session_id: str,
+        *,
+        system_template: str,
+        global_default: object,
+    ) -> None:
+        """Seed the trusted persona system source into a fresh session.
+
+        Persona profiles have no greeting field, so unlike
+        ``seed_character_roleplay`` this never appends a message.
+        """
+        session = self._session_or_raise(session_id)
+        source = (
+            system_template
+            if isinstance(system_template, str) and system_template.strip()
+            else None
+        )
+        source_changed = session.persona_system_template != source
+        session.persona_system_template = source
+        if source_changed:
+            self._bump_identity_revision(session_id)
+        context_persisted = self._persist_roleplay_context(session)
+        self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        if not context_persisted:
+            logger.warning("Failed to persist seeded Console persona context.")
+
     def swap_session_character_roleplay(
         self,
         session_id: str,
@@ -12726,10 +12756,16 @@ class ConsoleChatStore:
         identity_changed = (
             session.character_name != new_name
             or session.character_system_template != source
+            or session.assistant_name is not None
+            or session.persona_system_template is not None
         )
         source_changed = session.character_system_template != source
         session.character_name = new_name
         session.character_system_template = source
+        # One-name-set invariant (ADR-149): a character swap retires any
+        # persona identity bound to this session.
+        session.assistant_name = None
+        session.persona_system_template = None
         if identity_changed:
             self._bump_identity_revision(session_id)
 
@@ -12829,6 +12865,32 @@ class ConsoleChatStore:
         )
         return session, persisted
 
+    def set_session_assistant_name(
+        self,
+        session_id: str,
+        assistant_name: str | None,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set persona identity through the projection revision seam.
+
+        Setting a non-blank persona name clears any character name, keeping
+        the one-name-set invariant (ADR-149).
+        """
+        session = self._session_or_raise(session_id)
+        normalized = assistant_name.strip() if isinstance(assistant_name, str) else ""
+        new_name = normalized or None
+        if session.assistant_name == new_name:
+            return session, True
+        session.assistant_name = new_name
+        if new_name is not None:
+            session.character_name = None
+        self._bump_identity_revision(session_id)
+        persisted = self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        return session, persisted
+
     def _bump_identity_revision(self, session_id: str) -> None:
         session = self._session_or_raise(session_id)
         session.identity_revision += 1
@@ -12858,19 +12920,45 @@ class ConsoleChatStore:
             and bool(session.character_name.strip())
         )
 
+    @staticmethod
+    def _is_named_persona_session(session: ConsoleChatSession) -> bool:
+        return (
+            session.assistant_kind == "persona"
+            and isinstance(session.assistant_name, str)
+            and bool(session.assistant_name.strip())
+        )
+
+    @classmethod
+    def _is_named_identity_session(cls, session: ConsoleChatSession) -> bool:
+        return cls._is_named_character_session(
+            session
+        ) or cls._is_named_persona_session(session)
+
+    @staticmethod
+    def _identity_system_template(session: ConsoleChatSession) -> str | None:
+        """Return the trusted template for the session's bound kind."""
+        if session.assistant_kind == "persona":
+            return session.persona_system_template
+        return session.character_system_template
+
+    @staticmethod
+    def _identity_display_name(session: ConsoleChatSession) -> str:
+        """Return the session's bound assistant display name, or ""."""
+        return (session_assistant_display_name(session) or "").strip()
+
     def _roleplay_projection_is_stale(
         self, session: ConsoleChatSession, global_default: object
     ) -> bool:
-        if not self._is_named_character_session(session):
+        if not self._is_named_identity_session(session):
             return False
         context = self.presentation_context(session.id, global_default)
-        character_name = (session.character_name or "").strip()
-        template = session.character_system_template
+        identity_name = self._identity_display_name(session)
+        template = self._identity_system_template(session)
         if template and session.settings is not None:
             if session.settings.system_prompt != expand_character_template(
                 template,
                 user_name=context.user_name,
-                character_name=character_name,
+                character_name=identity_name,
             ):
                 return True
         for message in self._nodes_by_session.get(session.id, {}).values():
@@ -12883,7 +12971,7 @@ class ConsoleChatStore:
                 != expand_character_template(
                     metadata.template_source,
                     user_name=context.user_name,
-                    character_name=character_name,
+                    character_name=identity_name,
                 )
             ):
                 return True
@@ -12912,17 +13000,18 @@ class ConsoleChatStore:
     ) -> ConsoleRoleplayProjectionPersistencePlan | None:
         """Update owner-thread state and return frozen durable call arguments."""
         session = self._session_or_raise(session_id)
-        if not self._is_named_character_session(session):
+        if not self._is_named_identity_session(session):
             return None
         context = self.presentation_context(session_id, global_default)
-        character_name = (session.character_name or "").strip()
+        identity_name = self._identity_display_name(session)
+        template = self._identity_system_template(session)
         system_prompt_write: _RoleplaySystemPromptWrite | None = None
         message_writes: list[_RoleplayMessageProjectionWrite] = []
-        if session.character_system_template and session.settings is not None:
+        if template and session.settings is not None:
             projected_system = expand_character_template(
-                session.character_system_template,
+                template,
                 user_name=context.user_name,
-                character_name=character_name,
+                character_name=identity_name,
             )
             if session.settings.system_prompt != projected_system:
                 prior_system_prompt = session.settings.system_prompt
@@ -12952,7 +13041,7 @@ class ConsoleChatStore:
             projected = expand_character_template(
                 metadata.template_source,
                 user_name=context.user_name,
-                character_name=character_name,
+                character_name=identity_name,
             )
             if message.content == projected and not force_persistence:
                 continue
