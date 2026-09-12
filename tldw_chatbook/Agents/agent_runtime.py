@@ -1118,6 +1118,7 @@ def run_agent_loop(
     #: text or a tool call, so two empties separated by real content are two
     #: blips rather than a deterministic fault.
     consecutive_empty_turns = 0
+    consecutive_denials = 0
     spawned = 0
     model_turns = 0
     total_tokens = 0
@@ -1132,6 +1133,22 @@ def run_agent_loop(
     consecutive_tool_failures = 0
     context_trace_reserved = False
     current_call_correlation = ""
+
+    def account_denial(
+        *,
+        review: ToolReviewDecision,
+        result: ToolResult | None,
+        synthetic_restore: bool = False,
+    ) -> None:
+        """Update this invocation's authoritative trailing denial streak."""
+        nonlocal consecutive_denials
+        denied = False
+        if not synthetic_restore and not (result is not None and result.ok):
+            if result is not None:
+                denied = result.approval_decision == "denied"
+            elif review.verdict != "proceed":
+                denied = review.approval_decision == "denied"
+        consecutive_denials = consecutive_denials + 1 if denied else 0
 
     def message_metadata(result: ToolResult | None = None) -> str:
         from .fleet_message_tools import metadata
@@ -2387,11 +2404,12 @@ def run_agent_loop(
             current_call_correlation = str(call_trace[id(call)]["correlation"])
             display_call_projection = project_record("display", call)
             display_call_arguments = dict(display_call_projection.arguments)
-            verdict = _effective_review_verdict(
+            review_decision = _effective_review_decision(
                 call,
                 verdicts,
                 call_id=current_call_correlation,
             )
+            verdict = review_decision.verdict
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
             # the dispatch chain below, not after. `call.name`/`call.args`
             # are already known here, so nothing is gained by waiting -- and
@@ -2538,6 +2556,13 @@ def run_agent_loop(
                         return continuation_error()
                 else:
                     _append_tool_result(messages, call, content)
+                account_denial(
+                    review=review_decision,
+                    result=None,
+                    synthetic_restore=(
+                        restoring_batch and verdict == "ERROR: restored_pending"
+                    ),
+                )
                 if reader_cycle_stuck(call, None):
                     return _outcome(RUN_STUCK)
                 continue
@@ -3025,6 +3050,10 @@ def run_agent_loop(
                     return continuation_error()
             else:
                 _append_tool_result(messages, call, content)
+            account_denial(
+                review=review_decision,
+                result=result if verdict == "proceed" else None,
+            )
 
             if tool_outcome == TOOL_OUTCOME_FAILED:
                 consecutive_tool_failures = (
@@ -3049,3 +3078,17 @@ def run_agent_loop(
                 return _outcome(RUN_STUCK)
             if reader_cycle_stuck(call, result if verdict == "proceed" else None):
                 return _outcome(RUN_STUCK)
+        if deps.should_cancel():
+            return _outcome(RUN_CANCELLED)
+        coherent_len = len(messages)
+        if (
+            budget.denial_circuit_breaker_limit
+            and consecutive_denials >= budget.denial_circuit_breaker_limit
+        ):
+            summary = (
+                f"Agent stopped: {consecutive_denials} consecutive tool calls "
+                "were denied. Review the denial reasons or rephrase, then retry."
+            )
+            add(STEP_ERROR, summary=summary)
+            _emit_record(deps, "error", content=summary, status=RUN_STUCK)
+            return _outcome(RUN_STUCK, denial_count=consecutive_denials)

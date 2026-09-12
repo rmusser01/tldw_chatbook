@@ -1095,6 +1095,8 @@ MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
 
 # TASK-18600: the Console agent's run budget, exposed in Settings ▸ Console
 # Behavior and resolved per run by `console_agent_bridge.console_run_budget()`.
+# `[agents] denial_circuit_breaker_limit` is resolved separately per run;
+# default 3 stops after a fully settled denied tail, while 0 disables it.
 # These override `Agents.agent_models.RunBudget`'s own dataclass defaults
 # (8 steps / 240s / 30 turns / 0 tokens / 300s per tool call), which stay
 # deliberately conservative for any non-Console caller.
@@ -3813,6 +3815,10 @@ openai_cache_key = false
 # between the child's own steps, so it does not interrupt a provider call
 # already in flight.
 # child_max_wall_seconds = 1800.0
+#
+# Stop one run after a fully settled batch leaves this many consecutive
+# authoritative tool denials. The default is 3; 0 disables the breaker.
+# denial_circuit_breaker_limit = 3
 #
 # TASK-25911: deterministic stale tool-result pruning on the agent send
 # payload -- big old tool outputs shrink to a bounded head plus a note,

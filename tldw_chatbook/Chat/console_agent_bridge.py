@@ -565,6 +565,9 @@ def console_run_budget() -> RunBudget:
         unable to run an agent.
     """
     try:
+        from tldw_chatbook.Agents.agent_models import (
+            coerce_denial_circuit_breaker_limit,
+        )
         from tldw_chatbook.config import (
             DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
@@ -616,7 +619,15 @@ def console_run_budget() -> RunBudget:
             return UNLIMITED_TOOL_CALL_DEADLINE_SECONDS
         return resolved
 
+    def _denial_limit() -> int:
+        try:
+            raw = get_cli_setting("agents", "denial_circuit_breaker_limit", 3)
+        except Exception:  # noqa: BLE001
+            raw = 3
+        return coerce_denial_circuit_breaker_limit(raw)
+
     return RunBudget(
+        denial_circuit_breaker_limit=_denial_limit(),
         max_steps=_int(
             "agent_max_steps",
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
@@ -691,14 +702,20 @@ def intersect_console_run_budget(
             ceiling(maximum.max_tool_result_chars, live.max_tool_result_chars)
         ),
         max_model_turns=min(maximum.max_model_turns, live.max_model_turns),
-        max_total_tokens=int(
-            ceiling(maximum.max_total_tokens, live.max_total_tokens)
-        ),
+        max_total_tokens=int(ceiling(maximum.max_total_tokens, live.max_total_tokens)),
         max_tool_call_seconds=float(
             ceiling(maximum.max_tool_call_seconds, live.max_tool_call_seconds)
         ),
         max_model_retries=min(maximum.max_model_retries, live.max_model_retries),
-        budget_warning_fraction=min(maximum.budget_warning_fraction, live.budget_warning_fraction),
+        budget_warning_fraction=min(
+            maximum.budget_warning_fraction, live.budget_warning_fraction
+        ),
+        denial_circuit_breaker_limit=int(
+            ceiling(
+                maximum.denial_circuit_breaker_limit,
+                live.denial_circuit_breaker_limit,
+            )
+        ),
     )
 
 

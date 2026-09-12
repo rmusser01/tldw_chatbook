@@ -572,6 +572,23 @@ class ModelTurn:
     provider_continuation: ProviderContinuationCheckpoint | None = None
 
 
+DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT = 3
+
+
+def coerce_denial_circuit_breaker_limit(value: object) -> int:
+    """Resolve the per-run denial limit without accepting bools or numerics."""
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isascii() and stripped.isdigit():
+            try:
+                return int(stripped)
+            except ValueError:
+                pass
+    return DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
+
+
 @dataclass(frozen=True)
 class RunBudget:
     """Caps bounding one agent run: steps, wall-clock, sub-agents, and
@@ -641,6 +658,7 @@ class RunBudget:
     #: once to start wrapping up. The notice rides the newest tool result --
     #: never a synthetic user turn -- so the prompt-cache prefix stays intact.
     budget_warning_fraction: float = 0.8
+    denial_circuit_breaker_limit: int = DEFAULT_DENIAL_CIRCUIT_BREAKER_LIMIT
 
     def __post_init__(self) -> None:
         if self.max_steps > MAX_RUN_CONTROL_STEPS:
@@ -648,6 +666,11 @@ class RunBudget:
                 f"max_steps must be <= {MAX_RUN_CONTROL_STEPS} to preserve "
                 "agent trace storage bands"
             )
+        object.__setattr__(
+            self,
+            "denial_circuit_breaker_limit",
+            coerce_denial_circuit_breaker_limit(self.denial_circuit_breaker_limit),
+        )
 
 
 #: Fleet spec §4: validation caps for user-authored agent definitions.
@@ -888,6 +911,7 @@ class RunOutcome:
     # coordinator's retention store reads it off the outcome;
     # ``AgentService._persist`` never writes it to the database.
     final_messages: list[dict] | None = None
+    denial_count: int = 0
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
@@ -953,6 +977,7 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_model_turns=child.max_model_turns,
         max_total_tokens=child.max_total_tokens,
         max_tool_call_seconds=child.max_tool_call_seconds,
+        denial_circuit_breaker_limit=child.denial_circuit_breaker_limit,
     )
 
 
@@ -1079,4 +1104,5 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
         max_model_turns=child.max_model_turns,
         max_total_tokens=child.max_total_tokens,
         max_tool_call_seconds=child.max_tool_call_seconds,
+        denial_circuit_breaker_limit=child.denial_circuit_breaker_limit,
     )
