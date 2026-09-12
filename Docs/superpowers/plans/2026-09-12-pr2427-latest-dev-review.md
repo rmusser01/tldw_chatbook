@@ -187,3 +187,65 @@ The existing heartbeat was refreshed to use this plan and current TASK-31932
 instead of stale dev934 instructions; its existing weekly schedule was preserved.
 It must not merge automatically. The unresolved Qodo size finding, separate
 resource/preload/CSS gates, and final-head review remain open.
+
+### Published head and terminal evidence
+
+Published `975e1a941b9b3428f0a5517f86efb42bdc7afdeb` with the exact lease
+against the prior remote head. GitHub confirms base
+`78ef9928bdfcf103d815990865135824611cfde1`, no merge conflicts, and blocked
+mergeability. Future pushes must re-read the remote head rather than reuse the
+old lease.
+
+The native eight-file run ended **577 passed / 15 failed** in 850.60s. Seven
+failures are the already-fixed footer/label/route-double cases, whose complete
+owning files passed separately after the fixes. Eight additional failures are
+in `Tests/UI/test_console_native_chat_flow.py`: settings return status-fault
+retry, blocked-send draft preservation, immediate send echo, local-service flat
+conversation listing/search, tab-switch composer focus, compact tab close, and
+confirmed tab closure. Final observation: **33 descriptors, 26 SQLite-named
+handles, zero instance locks**. Do not claim resource closure or an all-green
+592-case final-head run.
+
+A fresh targeted run of those eight cases on published head reproduces seven
+failures / one pass (33.03s); tab-switch composer focus passes on retry and
+remains intermittent, not fixed. The settings-return test calls a saved unbound
+controller method with the Screen as `self` at line 1956, while its second call
+already uses `console._settings_navigation`. This is a concrete test-owner
+mismatch; no patch has been applied in this checkpoint. Diagnose the remaining
+collaborators, timing, and retained SQLite owners before choosing other fixes.
+Logs: `pytest.log`, `fd_identity.jsonl`, and `native-eight-current.log` in the
+report directory above.
+
+GitHub Actions `UI latency guardrails` fails the boot CSS byte ratchet:
+**770,847 > 768,000 bytes**, over by 2,847. Local reproduction agrees.
+Run: https://github.com/rmusser01/tldw_chatbook/actions/runs/34724010594/job/103634837885
+All other completed non-skipped Actions checks pass; PR Fast Lane was still
+running at this checkpoint. Logs: `ui-latency-ci.log`, `css-budget-red.log`.
+
+Proposed CI repair, **awaiting explicit approval under gh-fix-ci**:
+
+1. Audit the `lab-*`-pure rules in `features/_lab.tcss` against every compose
+   site and reachable Lab route. A read-only call to the existing conservative
+   `split_owned_module`, including later-module cascade demotion, identifies
+   8,507 candidate bytes. This is an estimate, not verified runtime savings.
+2. Reuse `ScreenOwnedSplit` and `_SCREEN_OWNED_ROUTE_CSS` to load only proven
+   Lab-owned rules on first Models/Speech/Evals navigation. Leave shared or
+   ambiguous selectors in the boot bundle. Preserve app-tier priority, variable
+   scope, cascade order, and harness fallback behavior. No new loader or cap rise.
+3. Add negative-controlled owner/cascade and first-visit/re-entry verification;
+   run complete affected build, Lab UI and boot-budget tests. Regenerate sheets
+   with the existing builder. Independently review before publication.
+
+ADR required: no new ADR for reuse of the existing lazy-sheet boundary.
+ADR path: `backlog/decisions/097-boot-budget-ratchets.md` and existing
+TASK-24459 screen-owned split contract.
+Reason: defer existing non-boot cost without changing UI behavior or ownership.
+If the owner audit contradicts this scope, stop and revise the proposal.
+
+Qodo's latest formal review remains attached to an older head, not 975e1a.
+Its current summary still names the four controller-size violations and warns
+that 50 lower-priority findings were omitted. Do not infer full review from a
+refreshed summary timestamp. The existing size thread stays open; current local
+size ratchets remain 14 failed / 33 passed. Independent bounded deletion triage
+found no sufficient verified dead-code removal for the four named controllers;
+this does not establish that new architecture is necessary or authorize it.
