@@ -1,5 +1,5 @@
 ---
-id: TASK-32478
+id: TASK-32504
 title: Fix MCP documentation-contract drift (39 failing tests on clean dev)
 status: To Do
 assignee: []

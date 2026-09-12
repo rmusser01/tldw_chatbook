@@ -1,5 +1,5 @@
 ---
-id: TASK-32476
+id: TASK-32502
 title: 'MCP Hub: rail keyboard navigation (F2)'
 status: Done
 assignee: []
