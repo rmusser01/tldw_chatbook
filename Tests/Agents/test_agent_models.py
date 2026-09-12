@@ -8,16 +8,18 @@ import pytest
 import tldw_chatbook.Agents.agent_models as agent_models
 
 from tldw_chatbook.Agents.agent_models import (
-    MAX_RUN_CONTROL_STEPS,
     CHECK_AGENTS_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     DIRECT_DISCLOSURE_CONTEXT_FRACTION,
     FORK_CHAT_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
+    LOOP_DETECTION_N,
+    MAX_RUN_CONTROL_STEPS,
     MERGE_AGENT_WORKTREE_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
-    LOOP_DETECTION_N,
     NEW_CHAT_TOOL_NAME,
+    READ_AGENT_MESSAGES_TOOL_NAME,
+    REPORT_TO_SUPERVISOR_TOOL_NAME,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -32,6 +34,7 @@ from tldw_chatbook.Agents.agent_models import (
     SEND_TO_AGENT_TOOL_NAME,
     SPAWN_TOOL_NAME,
     TERMINAL_RUN_STATUSES,
+    WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentDefinition,
     AgentStep,
@@ -42,7 +45,6 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
-    WAIT_AGENTS_TOOL_NAME,
     clamp_child_budget,
     contain_child_budget,
     definition_fingerprint,
@@ -110,6 +112,8 @@ def test_runtime_tool_names():
         DISCARD_AGENT_WORKTREE_TOOL_NAME,
         FORK_CHAT_TOOL_NAME,
         NEW_CHAT_TOOL_NAME,
+        REPORT_TO_SUPERVISOR_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
     }
     assert LOOP_DETECTION_N == 3
 
@@ -426,6 +430,35 @@ def test_valid_definition_passes():
     assert validate_agent_definition(_valid_definition()) == []
 
 
+@pytest.mark.parametrize("value", [0.25, 1, 30.0, 10**400])
+def test_definition_wall_cap_accepts_only_positive_finite_numbers(value):
+    errors = validate_agent_definition(_valid_definition(max_wall_seconds=value))
+    if value == 10**400:
+        assert any("finite positive" in error for error in errors)
+    else:
+        assert errors == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        True,
+        False,
+        "30",
+        object(),
+        float("nan"),
+        float("inf"),
+        -float("inf"),
+        0,
+        -1,
+        -0.25,
+    ],
+)
+def test_definition_wall_cap_rejects_invalid_values(value):
+    errors = validate_agent_definition(_valid_definition(max_wall_seconds=value))
+    assert any("finite positive" in error for error in errors)
+
+
 def test_name_must_be_slug():
     for bad in ("Researcher", "re searcher", "-x", "9x", "a" * 65, ""):
         assert validate_agent_definition(_valid_definition(name=bad)), bad
@@ -470,6 +503,22 @@ def test_fingerprint_covers_identity_fields_only():
     assert len(definition_fingerprint(a)) == 16
 
 
+def test_uncapped_definition_preserves_pre_field_fingerprint_bytes():
+    assert definition_fingerprint(_valid_definition()) == "e0f489b923e08bac"
+    assert definition_fingerprint(_valid_definition(max_wall_seconds=None)) == (
+        "e0f489b923e08bac"
+    )
+
+
+def test_definition_fingerprint_normalizes_numeric_wall_cap():
+    assert definition_fingerprint(_valid_definition(max_wall_seconds=30)) == (
+        definition_fingerprint(_valid_definition(max_wall_seconds=30.0))
+    )
+    assert definition_fingerprint(_valid_definition(max_wall_seconds=0.25)) != (
+        definition_fingerprint(_valid_definition())
+    )
+
+
 def test_definition_from_row_round_trip():
     row = {
         "name": "critic",
@@ -487,4 +536,20 @@ def test_definition_from_row_round_trip():
         tool_allowlist=("calculator",),
         model="m1",
         enabled=True,
+        max_wall_seconds=None,
     )
+
+
+def test_definition_from_row_reads_optional_wall_cap():
+    defn = definition_from_row(
+        {
+            "name": "critic",
+            "description": "Reviews drafts.",
+            "instructions": "Critique carefully.",
+            "tool_allowlist": [],
+            "model": "",
+            "enabled": 1,
+            "max_wall_seconds": 0.25,
+        }
+    )
+    assert defn.max_wall_seconds == 0.25
