@@ -25785,16 +25785,6 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
-    def _refuse_project_instruction_setup(
-        self, session_id: str, assistant_message_id: str, visible_copy: str
-    ) -> ConsoleSubmitResult:
-        """Release setup recovery using the existing disable decision contract."""
-        try:
-            self.store.mark_message_failed(assistant_message_id)
-        except KeyError:
-            return self._session_closed_result(session_id=session_id)
-        return self._block(session_id, visible_copy)
-
     @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
         self,
@@ -25962,8 +25952,8 @@ class ConsoleChatController:
                 else:
                     callback = self._select_project_instruction_binding
                     if callback is None:
-                        return self._refuse_project_instruction_setup(
-                            session_id, assistant_message_id, str(exc)
+                        return self._refuse_turn_for_project_setup(
+                            assistant_message_id, session_id, str(exc)
                         )
                     action, binding_id = await callback(session_id, options, str(exc))
                     action, project_selection = (
@@ -25979,15 +25969,15 @@ class ConsoleChatController:
                     )
                     if action == "disable":
                         self._clear_project_instruction_delivery(session_id)
-                        return self._refuse_project_instruction_setup(
-                            session_id,
+                        return self._refuse_turn_for_project_setup(
                             assistant_message_id,
+                            session_id,
                             "project_instructions_disabled",
                         )
                     if action != "select" or project_selection is None:
                         self._clear_project_instruction_delivery(session_id)
-                        return self._refuse_project_instruction_setup(
-                            session_id, assistant_message_id, str(exc)
+                        return self._refuse_turn_for_project_setup(
+                            assistant_message_id, session_id, str(exc)
                         )
             if project_selection is not None:
                 state = project_state
@@ -27022,6 +27012,35 @@ class ConsoleChatController:
             session_id=session_id,
         )
         return ConsoleSubmitResult(True, True, failed.content)
+
+    def _refuse_turn_for_project_setup(
+        self,
+        assistant_message_id: str,
+        session_id: str,
+        visible_copy: str,
+    ) -> ConsoleSubmitResult:
+        """Terminalize a turn refused at project-instruction setup (task-32483).
+
+        Every other refusal path (skill ``_block``, runtime cancel, failure)
+        terminalizes the run state and resolves the pending placeholder; the
+        setup-refusal early returns in ``_run_agent_reply`` did neither, so
+        the run state stayed non-terminal and the send gate stuck at
+        "Wait for this turn to be accepted before queueing a message."
+        forever. Mirrors the cancel path: a present placeholder is marked
+        failed; the returned result keeps the exact refusal shape the queue
+        machinery already handles (not accepted, draft preserved).
+        """
+        placeholder = self._ensure_assistant_placeholder(
+            assistant_message_id, session_id
+        )
+        if placeholder is not None:
+            self.store.mark_message_failed(assistant_message_id)
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy), session_id=session_id
+        )
+        return ConsoleSubmitResult(
+            accepted=False, should_clear_draft=False, visible_copy=visible_copy
+        )
 
     async def _finalize_agent_success(
         self,
