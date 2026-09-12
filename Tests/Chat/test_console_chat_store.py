@@ -5573,3 +5573,18 @@ def test_promotion_transaction_rolls_back_created_conversation_on_context_failur
 
     assert persistence.created_conversations == []
     assert session.ephemeral is True
+
+
+
+def test_presentation_context_carries_persona_display_name():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    context = store.presentation_context(session.id, "")
+    assert context.assistant_kind == "persona"
+    assert context.assistant_name == "Archivist"
+    assert context.character_name is None
