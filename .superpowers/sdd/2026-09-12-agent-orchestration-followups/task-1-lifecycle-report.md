@@ -66,7 +66,7 @@ Task-scoped commit; its hash is reported in the final handoff.
 
 ## Remaining concerns
 
-- Independent scoped review has not yet run, so TASK-15666 remains In Progress and AC #5 remains unchecked.
+- Independent scoped review and correction re-review approved through 8f9f8619a8. Root closed TASK-15666 with all five AC checked; integration remains pending.
 - Whole-file Ruff/format failures are existing large-file debt; the Ruff count matches baseline and changed-line filtering is clean.
 
 ## Review corrections and executed placement mutation

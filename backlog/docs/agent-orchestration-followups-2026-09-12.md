@@ -9,17 +9,17 @@ This inventory distinguishes current code observations from old ticket claims.
 It does not treat every old failure as a current product defect.
 
 The current follow-up branch is `codex/agent-orchestration-followups`.
-TASK-13215, TASK-2155, TASK-22720, and TASK-19642.8.3 are Done on that branch
-after task review and final review; integration is pending. TASK-15666 has
-passed its scoped review and is receiving one final headless-lifecycle check.
+TASK-15666, TASK-13215, TASK-2155, TASK-22720, and TASK-19642.8.3 are Done on
+that branch after task review, final review, and scoped review of the headless
+lifecycle amendment. Integration is pending.
 
 ## Reliability and resource follow-ups
 
 | Task | Current evidence | Remaining work |
 | --- | --- | --- |
 | [TASK-13215](../tasks/task-13215%20-%20Fleet-approval-revocation-add-a-revoked-run-tombstone-and-close-the-residual-arm-read-windows.md) | Reproduced late approval after revoke, including a real local write, and mixed multi-row verdict snapshots. The old cross-lock premise was stale. | **Done on this branch** (`838e0fb1c3`, documentation correction `13456c5393`): per-kind late-arm fences, atomic verdict snapshots, content-free unowned warnings, mutation-sensitive sibling recovery. Host-lifetime tombstones intentionally retain revoked IDs; safe reclamation requires physical-worker drain proof. |
-| [TASK-15666](../tasks/task-15666%20-%20busy_fleet_session_count-prunes-the-fleet-as-a-side-effect-of-a-read.md) | Coordinator terminal pruning was already at turn start; the remaining defect was retained-owner cleanup during the count. | **Done on this branch** (`726409de10`): observational snapshot, real controller/bridge regression, preserved cleanup; 10 targeted tests passed and independent review approved. |
-| [TASK-18601](../tasks/task-18601%20-%20Agent-run-step-log-is-a-single-JSON-blob-column-and-does-not-scale-to-the-raised-step-budget.md) | DB child-table storage and metadata-only reads already shipped; three AC are checked. `ConsoleRunLogModal` still receives/stores a complete `log_text` and builds one `TextArea`. | Finish viewer paging/bounded memory. Do not redo the DB migration. |
+| [TASK-15666](../tasks/task-15666%20-%20busy_fleet_session_count-prunes-the-fleet-as-a-side-effect-of-a-read.md) | Coordinator terminal pruning was already at turn start; the remaining defect was retained-owner cleanup during the count. | **Done on this branch**: observational snapshot (`726409de10`) plus explicit headless next-turn cleanup (`b377eca2ff`, tests hardened in `8f9f8619a8`). Final fleet selection: 12 passed. A real placement mutation failed the intended disabled-path assertion; live-owner cancellation remains covered. All reviews approved. |
+| [TASK-18601](../tasks/task-18601%20-%20Agent-run-step-log-is-a-single-JSON-blob-column-and-does-not-scale-to-the-raised-step-budget.md) | DB child-table storage and metadata-only reads already shipped; three AC are checked. `ConsoleRunLogModal` still receives/stores a complete `log_text` and builds one `TextArea`. The current full-log path loads filesystem log segments through `load_run_log_text`, not the DB step table; the load runs in a worker, but all records and rendered text are materialized. | Finish viewer paging/bounded memory across the actual log source and modal. Reconcile the old child-table paging proposal with the current segment-log viewer; do not redo the DB migration. |
 | [TASK-18929](../tasks/task-18929%20-%20Agent-loop-consecutive-denial-circuit-breaker.md) | Existing run budgets bound execution; a separate consecutive-denial streak guard remains an open proposal. | Add a per-run breaker with honest terminal messaging, reset and sibling-isolation tests. Resolve the ticket's suggested small default versus its “0 or absent disables” AC before implementation. |
 | [TASK-31511](../tasks/task-31511%20-%20Agent-run-webhook-delivery-spawns-a-thread-and-event-loop-per-run.md) | `schedule_run_webhook` starts a daemon thread running `asyncio.run` per delivery. | Reuse bounded delivery workers and avoid repeated unchanged-settings reads while keeping finalization nonblocking. Requires a runtime-lifecycle ADR check. |
 
@@ -95,8 +95,9 @@ separately; changed lines introduce no static-check findings.
 
 ## Boundaries and order
 
-Burn down confirmed cancellation/read-path defects first, reconcile stale tests,
-then address bounded log rendering and denial behavior. Worktree confirmation
+The cancellation/read-path repairs and three stale verification tickets in this
+wave are closed locally. Next, reconcile the seven inherited approval UI
+failures, then address bounded log rendering and denial behavior. Worktree confirmation
 precedes durable worktree recovery; live status and webhook delivery can follow
 as separate, reviewable tasks.
 
@@ -109,3 +110,32 @@ Direct peer addressing, progress-triggered wakes, and durable progress inboxes
 remain optional designs outside [ADR-136](../decisions/136-scoped-child-progress-and-supervisor-relay.md).
 The implemented communication remains bounded process-local steering/progress,
 explicit supervisor relay, and versioned session tasks.
+
+## Decisions made during this wave
+
+These preserve the decisions and their costs if mistaken, including the
+headless-cleanup assumption corrected by final revalidation:
+
+1. Include retained-owner mutation in TASK-15666's observational-read contract.
+   The initial assumption that other cleanup paths bounded retention proved
+   incomplete for headless turns; see decision 7.
+2. Continue the user-authorized reliability repairs without repeating design
+   approval. Persistent-worktree and peer-messaging designs stay separate; the
+   cost of this scope choice is that those capabilities remain unfinished.
+3. Keep revoked-run fences for the interrupt host lifetime. This prevents an
+   abandoned worker from regaining approval, at the cost of memory proportional
+   to distinct revoked IDs. Reclamation requires physical-drain evidence.
+4. Treat the atomic final verdict snapshot as the approval commitment point.
+   Revocation before it denies the batch; revocation after it cannot retract a
+   completed approval or side effect.
+5. Include the one-line configuration-callback assertion improvement in the
+   reviewed test-reconciliation batch. There is no runtime change; the tradeoff
+   is broader test-file scope in that batch.
+6. Normalize the old task's multiline command to a fenced block, while keeping
+   dependency and temporary-directory warnings disclosed. Formatting has no
+   runtime cost; the environment warnings remain unresolved.
+7. Reopen TASK-15666 after a real two-turn probe showed headless owner
+   accumulation. Add cleanup at the next turn boundary while preserving live
+   owners and terminal-handle timing. A settled owner may wait until that
+   boundary or another lifecycle cleanup; releasing a live owner would lose
+   cancellation authority, so the regression covers both states.

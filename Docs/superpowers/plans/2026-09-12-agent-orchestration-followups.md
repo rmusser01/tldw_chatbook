@@ -156,8 +156,12 @@ ADR required: no new ADR
 ADR path: backlog/decisions/129-fleet-mailbox-and-wake-reliability.md
 Reason: complete the cleanup transfer required by the read-only snapshot contract; no new ownership or runtime boundary.
 
-- [ ] Add deterministic real bridge/service/coordinator coverage proving the next turn releases prior settled owners without any live_snapshot read. Include a still-live survivor control and the fleet-disabled early return so cancellation ownership cannot disappear. Use the probe in task-1-lifecycle-recheck.md as evidence, not as a source-text test.
-- [ ] Run the regression red before changing production. Add _prune_settled_fleet_survivors at the beginning of _conversation_fleet_coordinator, before reading/returning for the kill switch and outside admission locks. Keep fleet_snapshot observational and coordinator.prune_terminal timing unchanged. No completion callback or new locks.
-- [ ] Update the nearby retention comments to state next-turn/lifecycle cleanup accurately; do not claim settled owners are capped solely by the live-child count or released immediately.
-- [ ] Run the existing 10-case fleet selection plus the new lifecycle regressions and changed-line static/whitespace checks. Independent scoped review verifies the amendment and final integration boundaries; no second broad branch review or unrelated UI test sweep.
-- [ ] Record evidence and close TASK-15666 only after that review.
+- [x] Add deterministic real bridge/service/coordinator coverage proving the next turn releases prior settled owners without any live_snapshot read. Include a still-live survivor control and the fleet-disabled early return so cancellation ownership cannot disappear. Use the probe in task-1-lifecycle-recheck.md as evidence, not as a source-text test.
+- [x] Run the regression red before changing production. Add _prune_settled_fleet_survivors at the beginning of _conversation_fleet_coordinator, before reading/returning for the kill switch and outside admission locks. Keep fleet_snapshot observational and coordinator.prune_terminal timing unchanged. No completion callback or new locks.
+- [x] Update the nearby retention comments to state next-turn/lifecycle cleanup accurately; do not claim settled owners are capped solely by the live-child count or released immediately.
+- [x] Run the existing 10-case fleet selection plus the new lifecycle regressions and changed-line static/whitespace checks. Independent scoped review verifies the amendment and final integration boundaries; no second broad branch review or unrelated UI test sweep.
+- [x] Record evidence and close TASK-15666 only after that review.
+
+## Final verification and status
+
+All five scoped tickets are Done on `codex/agent-orchestration-followups`, pending integration. Task reviews and the whole-branch review approved; the final headless lifecycle amendment received its own scoped review and correction re-review through `8f9f8619a8`. The final fleet selection passed 12 tests, including failure-safe cleanup and a proven disabled-path placement mutation. Earlier approval/harness selections and their exact baseline exclusions remain documented in the task notes and durable inventory. No full suite was run.

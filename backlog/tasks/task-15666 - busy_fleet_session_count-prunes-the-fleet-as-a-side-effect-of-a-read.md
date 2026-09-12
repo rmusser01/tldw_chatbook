@@ -1,11 +1,11 @@
 ---
 id: TASK-15666
 title: busy_fleet_session_count prunes the fleet as a side effect of a read
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-11 21:30'
-updated_date: '2026-09-12 07:28'
+updated_date: '2026-09-12 07:39'
 labels:
   - console
   - agents
@@ -26,7 +26,7 @@ The navigation confirmation uses busy_fleet_session_count to inspect live work. 
 - [x] #2 Pruning still happens where it did before (between turns), on the same schedule
 - [x] #3 A test asserts that taking the busy count leaves the handle set unchanged
 - [x] #4 Taking the busy count does not remove retained survivor owners; existing lifecycle and rail cleanup still release settled owners.
-- [ ] #5 Repeated headless turns release settled retained service owners at the next turn boundary without a rail read; live survivors remain retained and stoppable.
+- [x] #5 Repeated headless turns release settled retained service owners at the next turn boundary without a rail read; live survivors remain retained and stoppable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,4 +54,6 @@ Final lifecycle revalidation exposed an incomplete cleanup transfer: two headles
 Implemented the headless cleanup amendment by pruning settled survivor owners at `_conversation_fleet_coordinator` entry, before the fleet-disabled return and outside admission locks. Real bridge/service/coordinator regressions prove the next headless turn releases settled owners, preserves a newer live owner and its cancellation authority, and preserves a live survivor when the fleet is disabled. The amended fleet selection passes 12 tests; changed-line Ruff and `git diff --check` pass. Whole-file Ruff/format debt remains at baseline and independent review is pending.
 
 Amendment review corrections make every new gated stage release and boundedly verify worker termination in `finally`. The fleet-disabled regression now carries both a settled and live retained owner, proving the disabled next-turn boundary drops only the settled owner and preserves real cancellation authority. An executed mutation moving cleanup below the early return failed that assertion as intended; after restoring production placement, all 12 targeted cases pass.
+
+Final headless lifecycle amendment approved after scoped review and re-review (b377eca2ff, 8f9f8619a8). The next turn reclaims settled owners before the fleet-disabled return; live survivors retain real cancellation capability. Every added gated stage has failure-safe bounded termination checks. A real placement mutation failed the disabled-path settled-owner assertion; after restoration the final fleet selection passed 12 tests. Zero changed-line Ruff findings; whole-file baseline debt and environment warnings remain documented. All five AC satisfied on codex/agent-orchestration-followups; integration remains pending.
 <!-- SECTION:NOTES:END -->
