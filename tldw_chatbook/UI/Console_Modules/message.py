@@ -2113,8 +2113,8 @@ class ConsoleMessageController:
         """Return the identity every Console note write is saved under.
 
         ``user_id`` becomes the row's ``client_id`` -- the author id sync
-        attribution and optimistic locking read -- and the key
-        ``Notes_Library`` caches one DB connection per. It is NOT a
+        attribution and optimistic locking read -- and the key under which
+        ``Notes_Library`` caches one DB connection. It is NOT a
         visibility filter: the ``notes`` table has no owner column and
         ``list_notes`` has no owner clause, so Library ▸ Notes lists every
         note whatever id wrote it. ``_save_console_message_as_note`` used to
