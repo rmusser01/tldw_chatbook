@@ -109,6 +109,33 @@ def _parse_header(line: str) -> dict[str, str] | None:
     return fields
 
 
+def decode_record_header(line: bytes) -> tuple[RunLogRecord, int] | None:
+    """Decode bounded header bytes into empty-content metadata and body size."""
+    fields = _parse_header(line.decode("utf-8", "replace"))
+    if fields is None:
+        return None
+    try:
+        size = int(fields.get("bytes", "0"))
+        number = int(fields["number"])
+        truncated = int(fields.get("truncated", "0") or 0)
+    except (KeyError, ValueError):
+        return None
+    if size < 0:
+        return None
+    return RunLogRecord(
+        number=number,
+        run_id=fields.get("run", _PLACEHOLDER),
+        kind=fields.get("kind", _PLACEHOLDER),
+        type=fields.get("type", _PLACEHOLDER),
+        ts=fields.get("ts", _PLACEHOLDER),
+        content="",
+        tool=_placeholder_to_empty(fields.get("tool", _PLACEHOLDER)),
+        status=_placeholder_to_empty(fields.get("status", _PLACEHOLDER)),
+        call_id=_placeholder_to_empty(fields.get("call", _PLACEHOLDER)),
+        truncated_from=truncated,
+    ), size
+
+
 def iter_records(data: bytes) -> Iterator[RunLogRecord]:
     """Parse every COMPLETE record in ``data``, in file order.
 

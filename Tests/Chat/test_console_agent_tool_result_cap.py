@@ -556,3 +556,148 @@ def test_load_run_log_text_window_grows_with_a_raised_max_record_bytes_config(
 
     assert big_content in text
     assert "Use offset=" not in text
+
+
+@pytest.fixture
+def paged_authority(tmp_path):
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = manager.snapshot("paged-session")
+    db = AgentRunsDB(tmp_path / "paged.db", client_id="t")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=ConsoleChatStore(), provider_gateway=None
+    )
+    lease_entries = []
+
+    @contextlib.contextmanager
+    def access_scope():
+        with manager.lease(snapshot) as root:
+            lease_entries.append(root)
+            yield root
+
+    writer = RunLogWriter(
+        root=snapshot.root,
+        access_scope=access_scope,
+        max_record_bytes=4_000_000,
+        on_bound=functools.partial(
+            bridge._remember_run_log_authority,
+            session_id="paged-session",
+            access_scope=access_scope,
+        ),
+    )
+    primary = db.create_run(conversation_id="conv", agent_kind=AGENT_KIND_PRIMARY)
+    child = db.create_run(
+        conversation_id="conv",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        parent_run_id=primary,
+        task="child",
+    )
+    writer.bind(primary)
+    writer.append(
+        run_id=primary, kind="primary", type="model", content="sibling" * 400_000
+    )
+    writer.append(run_id=child, kind="subagent", type="model", content="é" * 200_000)
+    yield bridge, manager, snapshot, primary, child, lease_entries
+    manager.close("paged-session")
+    assert manager.wait_for_cleanup(timeout_seconds=2.0)
+
+
+def test_run_log_page_primary_child_and_per_call_lease(paged_authority):
+    bridge, manager, snapshot, primary, child, entries = paged_authority
+    before = len(entries)
+    first = bridge.load_run_log_page(primary)
+    assert first.slices[0].record.run_id == primary
+    child_page = bridge.load_run_log_page(child)
+    assert child_page.slices[0].record.run_id == child
+    assert child_page.slices[0].record.content == "é" * 128_000
+    assert child_page.scanned_bytes < 257_000
+    last = bridge.load_run_log_page(child, cursor=child_page.next_cursor)
+    assert last.slices[0].record.content == "é" * 72_000
+    assert len(entries) == before + 3
+    with manager.lease(snapshot):
+        manager.close("paged-session")
+        assert bridge.load_run_log_page(child, cursor=child_page.next_cursor) is None
+        assert bridge.run_log_available(child) is False
+
+
+def test_run_log_page_requires_process_local_authority(paged_authority):
+    bridge, _manager, _snapshot, primary, child, _entries = paged_authority
+    bridge.forget_session_file_authority("paged-session")
+    assert bridge.load_run_log_page(primary) is None
+    assert bridge.load_run_log_page(child) is None
+
+
+def test_availability_is_metadata_only_and_checks_each_scan_lease(
+    paged_authority, monkeypatch
+):
+    from pathlib import Path
+
+    bridge, _manager, _snapshot, _primary, child, entries = paged_authority
+    original = Path.open
+    reads = []
+
+    class Reader:
+        def __init__(self, file):
+            self.file = file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.file.close()
+
+        def __getattr__(self, name):
+            return getattr(self.file, name)
+
+        def read(self, size=-1):
+            assert 0 <= size <= 1
+            value = self.file.read(size)
+            reads.append(len(value))
+            return value
+
+        def readline(self, size=-1):
+            assert 0 <= size <= 16_385
+            value = self.file.readline(size)
+            reads.append(len(value))
+            return value
+
+    def recording_open(path, *args, **kwargs):
+        file = original(path, *args, **kwargs)
+        return Reader(file) if args and args[0] == "rb" else file
+
+    monkeypatch.setattr(Path, "open", recording_open)
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda *a: pytest.fail("whole segment read")
+    )
+    before = len(entries)
+    assert bridge.run_log_available(child)
+    assert len(entries) > before
+    assert sum(reads) < 1000
+
+
+@pytest.mark.parametrize("revoke", [False, True])
+def test_availability_continues_empty_scan_and_rechecks_authority(
+    paged_authority, monkeypatch, revoke
+):
+    from tldw_chatbook.Agents import run_log_paging
+    from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+
+    bridge, manager, snapshot, primary, child, entries = paged_authority
+    log_dir = resolve_existing_log_dir(primary, root=snapshot.root)
+    segment = next(log_dir.glob("logs.*.txt"))
+    segment.write_bytes(b"malformed\n" * 1000 + segment.read_bytes())
+    real_loader = run_log_paging.load_record_metadata_page
+    calls = []
+
+    def small_chunks(*args, **kwargs):
+        result = real_loader(*args, **kwargs, max_scan_bytes=1000)
+        calls.append(result)
+        if revoke:
+            manager.close("paged-session")
+        return result
+
+    monkeypatch.setattr(run_log_paging, "load_record_metadata_page", small_chunks)
+    before = len(entries)
+    assert bridge.run_log_available(child) is (not revoke)
+    assert not calls[0].slices and calls[0].next_cursor is not None
+    assert len(entries) - before == len(calls)
+    assert (len(calls) == 1) if revoke else (len(calls) > 1)

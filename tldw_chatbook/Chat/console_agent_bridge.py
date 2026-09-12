@@ -30,6 +30,7 @@ from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
     from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
@@ -8673,40 +8674,59 @@ class ConsoleAgentBridge:
         return parent_run_id or run_id
 
     def run_log_available(self, run_id: str) -> bool:
-        """Whether an on-disk run log exists for ``run_id``.
+        """Confirm a complete matching record using bounded metadata chunks.
 
-        TASK-870 (AC#6/#7): gates the Console's "View full log" affordance
-        -- present only when this is ``True``, absent (not merely disabled)
-        otherwise, so the button can never dangle on a run that has nothing
-        to show (logging disabled, no root resolvable, or a run so short it
-        never wrote a single record).
-
-        Review finding B: ``run_id`` may name a sub-agent run, whose
-        records live inside its PRIMARY's log directory rather than one of
-        its own (see ``_owning_run_id_for_log``). For a primary run this is
-        exactly the pre-fix check (directory exists and holds a segment
-        file); for a sub-agent, that same directory check only proves the
-        PRIMARY logged something -- this additionally confirms at least one
-        record in it actually carries the sub-agent's own run id, so the
-        affordance never appears for a sub-agent that itself never
-        produced a single logged step even though its primary did.
-
-        Args:
-            run_id: The run's id (``AgentRunsDB`` run id, matches
-                ``RunLogRecord.run_id``).
-
-        Returns:
-            ``True`` when a log exists for ``run_id`` -- its own directory
-            for a primary run, or at least one tagged record within its
-            owning primary's directory for a sub-agent run.
+        Call from a worker: a child's first record may follow many chunks.
+        Each chunk reacquires the captured owner's lease so revocation stops
+        an ongoing probe before the next chunk. No bodies are retained.
         """
-        from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+        owner = self._owning_run_id_for_log(run_id)
+        authority = self._run_log_authority_for(owner)
+        cursor = None
+        while True:
+            page = self._read_run_log_page(
+                run_id, owner, authority, cursor=cursor, metadata_only=True
+            )
+            if page is None:
+                return False
+            if page.slices:
+                return True
+            if page.next_cursor is None:
+                return False
+            cursor = page.next_cursor
 
-        owner_run_id = self._owning_run_id_for_log(run_id)
-        authority = self._run_log_authority_for(owner_run_id)
+    def load_run_log_page(
+        self, run_id: str, *, cursor: RunLogPageCursor | None = None
+    ) -> RunLogPage | None:
+        """Load one bounded page under the owning primary's scratch lease."""
+        owner = self._owning_run_id_for_log(run_id)
+        return self._read_run_log_page(
+            run_id, owner, self._run_log_authority_for(owner), cursor=cursor
+        )
+
+    def _read_run_log_page(
+        self,
+        run_id: str,
+        owner: str,
+        authority: _ConsoleRunLogAuthority | None,
+        *,
+        cursor: RunLogPageCursor | None,
+        metadata_only: bool = False,
+    ) -> RunLogPage | None:
+        from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+        from tldw_chatbook.Agents.run_log_paging import (
+            load_record_metadata_page,
+            load_record_page,
+        )
+
         if self._store is not None and authority is None:
-            return False
+            return None
         try:
+            if (
+                authority is not None
+                and self._run_log_authority_for(owner) is not authority
+            ):
+                return None
             access_scope = (
                 authority.access_scope
                 if authority is not None
@@ -8714,18 +8734,18 @@ class ConsoleAgentBridge:
             )
             with access_scope():
                 log_dir = resolve_existing_log_dir(
-                    owner_run_id,
-                    root=(authority.root if authority is not None else None),
+                    owner, root=authority.root if authority is not None else None
                 )
                 if log_dir is None:
-                    return False
-                if owner_run_id == run_id:
-                    return True
-                from tldw_chatbook.Agents.run_log_search import load_records
-
-                return any(record.run_id == run_id for record in load_records(log_dir))
-        except Exception:  # noqa: BLE001 -- stale authority fails closed
-            return False
+                    return None
+                loader = (
+                    load_record_metadata_page if metadata_only else load_record_page
+                )
+                return loader(
+                    log_dir, cursor=cursor, run_id=run_id if owner != run_id else None
+                )
+        except Exception:  # noqa: BLE001 -- stale authority and unreadable logs fail closed
+            return None
 
     def load_run_log_text(self, run_id: str) -> str:
         """Render ``run_id``'s full, untruncated run log for display.
