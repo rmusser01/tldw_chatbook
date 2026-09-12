@@ -405,7 +405,7 @@ print('retired and reopened')
 
 
 @pytest.mark.parametrize("selector", ["custom", "default"])
-def test_isolated_profile_selector_is_refused_without_rewriting_capture(
+def test_isolated_profile_selector_maps_selected_root_without_rewriting_capture(
     tmp_path, selector
 ):
     script = r"""
@@ -452,12 +452,13 @@ for row in document['directories']:
   destinations[row['logical_id']]=isolated/('config' if row.get('synthetic') else ('data/restored/rag_profiles' if ':rag.definitions:' in row['logical_id'] else 'data/restored/chromadb'))
 destinations['profile:source:paths.data_dir']=isolated/'data'
 plan=plan_restore(archive,mode='isolated',destinations=destinations,target=None,profile_names={'source':'restored'})
-try:
- candidate=stage_restore(archive,plan,root/'work',Event())
-except ValueError as error:
- assert selector is not None and str(error)=='rag_definition_root_mapping_required',str(error)
-else:
- assert selector is None,'unmapped original live selector accepted'
+candidate=stage_restore(archive,plan,root/'work',Event())
+profile_id=next(item.logical_id for item in scope.items if item.path==profile)
+row=next(row for row in json.loads((candidate/'candidate.json').read_text())['artifacts'] if row['logical_id']==profile_id)
+staged=json.loads(Path(row['candidate']).read_text())
+expected=json.loads(original)
+if selector is not None:expected['rag_config']['vector_store']['persist_directory']=str(isolated/'data/restored/chromadb')
+assert staged==expected
 assert profile.read_bytes()==original and not list(index.iterdir())
 assert next(path for item,path in payloads if item.path==profile).read_bytes()==original
 print('retired and reopened')

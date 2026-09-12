@@ -249,7 +249,19 @@ def _validate_dependencies(doc, items, owners, candidate_paths, topology, plan=N
                 continue
             restore_check = getattr(owner, "validate_restore_dependencies", None)
             legacy_check = getattr(owner, "validate_dependencies", None)
-            if callable(restore_check):
+            from .rag_inventory import _Definitions
+
+            if type(owner) is _Definitions:
+                issues = restore_check(
+                    item,
+                    candidate_paths[key],
+                    MappingProxyType(candidate_paths),
+                    topology=topology,
+                    mapping=dict(plan.restore) if plan else {},
+                    source_items=tuple(items.values()),
+                    synthetic=synthetic,
+                )
+            elif callable(restore_check):
                 issues = restore_check(
                     item,
                     candidate_paths[key],
@@ -551,6 +563,7 @@ def stage_restore(
                     # Replace only this exclusively created private working file.
                     candidate.write_text(toml.dumps(data), encoding="utf-8")
                 from .config_adapter import _ChatbookRegistry
+                from .rag_inventory import _Definitions
 
                 if type(owner) is _ChatbookRegistry:
                     owner.validate_restore_reference_owners(
@@ -570,6 +583,16 @@ def stage_restore(
                 elif type(owner) is _ChatbookRegistry:
                     owner.relocate_restore(
                         item, candidate, selected, tuple(items.values())
+                    )
+                elif type(owner) is _Definitions:
+                    owner.relocate_restore(
+                        item,
+                        candidate,
+                        selected,
+                        tuple(items.values()),
+                        synthetic={
+                            row.logical_id for row in doc.directories if row.synthetic
+                        },
                     )
                 elif callable(relocate):
                     relocate(item, candidate, selected)

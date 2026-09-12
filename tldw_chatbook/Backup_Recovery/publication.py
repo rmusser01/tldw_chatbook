@@ -2106,7 +2106,19 @@ def _validate_installed_copies(
                 continue
             validator = getattr(owner, "validate_restore_dependencies", None)
             legacy = getattr(owner, "validate_dependencies", None)
-            if callable(validator):
+            from .rag_inventory import _Definitions
+
+            if type(owner) is _Definitions:
+                issues = validator(
+                    item,
+                    candidates[key],
+                    MappingProxyType(candidates),
+                    topology=MappingProxyType(topology),
+                    mapping=dict(plan.restore) if plan else {},
+                    source_items=tuple(items.values()),
+                    synthetic=synthetic,
+                )
+            elif callable(validator):
                 issues = validator(
                     item,
                     candidates[key],

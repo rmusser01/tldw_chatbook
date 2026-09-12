@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.models import (
     StorageItem,
@@ -74,28 +75,33 @@ def _engine(value):
 class _Definitions(_RawDeclaration):
     max_bytes: int = 16 * 1024**2
 
-    def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
-        """Refuse unmapped installed root selectors only when restoring definitions."""
-        if item.metadata is None or item.metadata.kind != "file":
-            return ()
+    def _document(self, item, candidate):
         import tomllib
 
         from .credentials import (
-            _rag_config_sections,
             _rag_definition_kind,
             _rag_definition_valid,
-            _read,
         )
+        from .storage_admission import _read_recovery_file
 
         kind = _rag_definition_kind(item.metadata.relative_path)
+        encoded = _read_recovery_file(
+            self.owner_id, candidate, max_bytes=self.max_bytes
+        )
         data = (
-            tomllib.loads(_read(candidate).decode())
+            tomllib.loads(encoded.decode())
             if kind == "pipeline"
-            else json.loads(_read(candidate))
+            else json.loads(encoded)
         )
         if not _rag_definition_valid(kind, data):
-            return ("rag_definition_format_unsupported",)
-        # Known config positions only; descriptions and experiment history are opaque.
+            raise ValueError("rag_definition_format_unsupported")
+        return kind, data
+
+    @staticmethod
+    def _selectors(kind, data):
+        from .credentials import _rag_config_sections
+
+        # Descriptions and historical free text are never filesystem selectors.
         for parent, key, _ in _rag_config_sections(kind, data):
             section = parent[key]
             for config in (
@@ -109,8 +115,128 @@ class _Definitions(_RawDeclaration):
                     config.get("vector_store", {}),
                     config.get("chroma", {}),
                 ):
-                    if _text(_mapping(selected).get("persist_directory")):
-                        return ("rag_definition_root_mapping_required",)
+                    selected = _mapping(selected)
+                    value = _text(selected.get("persist_directory"))
+                    if value:
+                        historical = Path(value)
+                        if not historical.is_absolute() or ".." in historical.parts:
+                            raise ValueError("rag_definition_root_mapping_required")
+                        yield selected, historical
+
+    @staticmethod
+    def _roots(
+        item, mapping, source_items, synthetic, *, topology=None, candidates=None
+    ):
+        """Use authenticated selected root declarations, never receiver path probes."""
+        parts = item.logical_id.split(":")
+        if len(parts) != 4 or parts[0] != "profile" or parts[2] != "rag.definitions":
+            raise ValueError("rag_definition_root_mapping_required")
+        config_id = f"profile:{parts[1]}:config"
+        if not mapping or config_id not in item.dependencies:
+            raise ValueError("rag_definition_root_mapping_required")
+        config_path = mapping.get(config_id)
+        if not isinstance(config_path, Path) or not config_path.is_absolute():
+            raise ValueError("rag_definition_root_mapping_required")
+        from .models import DiscoveryContext
+
+        context = DiscoveryContext(config_path, parts[1])
+        prefix = f"profile:{parts[1]}:rag.projections:"
+        roots = []
+        for root in source_items:
+            metadata = root.metadata
+            destination = mapping.get(root.logical_id)
+            if (
+                root.owner != "rag.projections"
+                or not root.logical_id.startswith(prefix)
+                or len(root.logical_id.split(":")) != 4
+                or root.logical_id in synthetic
+                or root.status != "included_directory"
+                or metadata is None
+                or metadata.kind != "directory"
+                or metadata.root_id != root.logical_id
+                or metadata.parent_id is not None
+                or metadata.relative_path != ""
+                or item.logical_id not in root.dependencies
+                or config_id not in root.dependencies
+                or not isinstance(destination, Path)
+                or not destination.is_absolute()
+                or (candidates is not None and root.logical_id not in candidates)
+                or (
+                    topology is not None
+                    and topology.get(root.logical_id)
+                    != (root.logical_id, None, "", "directory")
+                )
+            ):
+                continue
+            roots.append((root.logical_id, destination))
+        return context, roots
+
+    def relocate_restore(
+        self, item, candidate, mapping, source_items=(), *, synthetic=()
+    ):
+        """Relocate known absolute selectors through their exact captured root ID."""
+        from .credentials import _write
+        from .recovery_files import _tree_member_id
+
+        kind, data = self._document(item, candidate)
+        selectors = tuple(self._selectors(kind, data))
+        if not selectors:
+            return
+        context, roots = self._roots(item, mapping, source_items, synthetic)
+        changed = False
+        for selected, historical in selectors:
+            key = _tree_member_id(context, "rag.projections", historical, historical)
+            matches = [destination for root_id, destination in roots if root_id == key]
+            if (
+                len(matches) != 1
+                or sum(destination == matches[0] for _, destination in roots) != 1
+            ):
+                raise ValueError("rag_definition_root_mapping_required")
+            destination = str(matches[0])
+            if selected["persist_directory"] != destination:
+                selected["persist_directory"] = destination
+                changed = True
+        if changed:
+            import toml
+
+            _write(
+                candidate, toml.dumps(data) if kind == "pipeline" else json.dumps(data)
+            )
+
+    def validate_restore_dependencies(
+        self,
+        item,
+        candidate,
+        candidates,
+        *,
+        topology,
+        mapping=None,
+        source_items=(),
+        synthetic=(),
+    ):
+        """Check final selector targets in both staging and installed private copies."""
+        if item.metadata is None or item.metadata.kind != "file":
+            return ()
+        try:
+            kind, data = self._document(item, candidate)
+            selectors = tuple(self._selectors(kind, data))
+            if not selectors:
+                return ()
+            _, roots = self._roots(
+                item,
+                mapping,
+                source_items,
+                synthetic,
+                topology=topology,
+                candidates=candidates,
+            )
+            for _, selected in selectors:
+                if sum(destination == selected for _, destination in roots) != 1:
+                    return ("rag_definition_root_mapping_required",)
+        except ValueError as error:
+            if str(error) == "rag_definition_format_unsupported":
+                return (str(error),)
+            return ("rag_definition_root_mapping_required",)
         return ()
 
     def discover(self, config):

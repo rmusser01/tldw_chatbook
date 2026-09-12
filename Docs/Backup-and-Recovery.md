@@ -190,6 +190,11 @@ local contents, and explicitly rebuild derived indexes when required. Missing mo
 files are setup requirements; restore does not automatically download them. Historic
 queued work and old permissions do not authorize replay.
 
+Saved RAG profiles can relocate known absolute index-directory settings when the
+corresponding captured projection root is selected for restore. Missing or mismatched
+roots are refused. Retained profiles, tracking records and index files still require
+owner review and index validation before retrieval can use them.
+
 For an existing local HF embedding model, use **Settings → Library/RAG** with the
 active RAG profile selected and any draft changes saved or discarded:
 
