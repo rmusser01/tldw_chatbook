@@ -836,6 +836,20 @@ automatic-sync setting.
    prompt "Use this note as context and help me work with it." ready to
    send or rewrite.
 
+### Capture a Console answer as a note
+The return leg of **Use in Console**. In the Console, select an assistant
+reply, click **More…**, then **Capture as note**. The reply is saved here
+immediately — titled with its first line of text (a leading code fence or
+heading mark is dropped), holding the answer verbatim — and
+a "Saved to Notes" receipt offers **Open note**, which lands you on that note
+in the editor.
+
+A captured note carries three keywords: `console`, `conversation:<id>` and
+`message:<id>`. They are ordinary keywords, so filtering the list on
+`conversation:` finds every answer kept from one chat. Capturing is blocked
+while the Console chat is temporary — a temporary chat promises nothing is
+written locally, and a note is a local write.
+
 ### Export a note as Markdown
 1. Open the note, choose **Info**, and click **Export Markdown**.
 2. Choose a destination in the "Export Note as Markdown" dialog — the
@@ -1320,6 +1334,16 @@ focuses it — clicking in and typing an absolute path used to leave
 field instead of inside the dialog's bottom border. With nothing remembered, a
 picker opens at `[notes] sync_directory` before falling back to home. Verified
 live at 235x52.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146: Console's **More… ▸ Capture as note** walked live at 235x52 and
+100x30 — the receipt's **Open note** landed on the new note in this screen's
+editor, and the note's `console` / `conversation:<id>` / `message:<id>`
+keywords were read back from the database.)*
+
+*Verified against fix/library-notes-w3-capture-console — 2026-09-11
+(task-32146 fix round 1: the title wording above gained the code-fence /
+heading rule; copy-only, no live walk.)*
 
 *Verified against fix/library-notes-w3-chrome-strip — 2026-09-11 (task-32143:
 the note editor gained a chrome strip — one right-aligned row under the body

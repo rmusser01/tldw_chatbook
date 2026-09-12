@@ -234,11 +234,19 @@ def _build_screen():
 
 
 def _dispatch_event(action_id: str, message_id: str):
+    """One Button.Pressed shaped as ``ConsoleTranscript.
+    dispatch_captured_message_action`` posts it after a More-menu choice:
+    the id plus both ``console_*`` attributes the dispatcher reads first.
+    (task-32146 fix round 1: the bare-id form only ever reached the
+    dispatcher's prefix table, which production never uses for More rows.)
+    """
     from types import SimpleNamespace
 
     return SimpleNamespace(
         button=SimpleNamespace(
-            id=f"console-message-action-{action_id}-{message_id}"
+            id=f"console-message-action-{action_id}-{message_id}",
+            console_action_id=action_id,
+            console_message_id=message_id,
         ),
         stop=lambda: None,
     )
@@ -428,3 +436,160 @@ async def test_oversized_span_blocks_at_the_real_budget(tmp_path):
     assert blocked.accepted is False
     assert "too large" in blocked.visible_copy
     assert gateway.calls == 0
+
+
+# --- task-32146: capture one answer as a Library note -----------------------
+
+
+@pytest.mark.asyncio
+async def test_capture_note_dispatches_one_exclusive_note_worker():
+    """The new per-message capture rides the same note worker group as the
+    TASK-31759 span actions (never console-run, so it cannot cancel a
+    live stream)."""
+    app, screen = _build_screen()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    completed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+
+    spawned = []
+
+    def fake_run_worker(work, **kwargs):
+        spawned.append(kwargs)
+        if asyncio.iscoroutine(work):
+            work.close()
+        return SimpleNamespace(cancel=lambda: None)
+
+    screen.run_worker = fake_run_worker
+
+    handled = await screen.handle_console_message_action(
+        _dispatch_event("capture-note", completed.id)
+    )
+
+    assert handled is True
+    assert len(spawned) == 1
+    assert spawned[0].get("group") == "console-note-actions"
+    assert spawned[0].get("exclusive") is True
+
+
+@pytest.mark.asyncio
+async def test_capture_note_records_the_conversation_and_message_it_came_from():
+    """task-32146 AC#2: the captured note is titled by the answer's own
+    first line, carries the answer verbatim, and records its provenance as
+    keywords; the created note id is handed to the receipt."""
+    app, screen = _build_screen()
+    app.notes_user_id = "notes-owner-1"
+    saved: list[dict] = []
+
+    class StubNotesService:
+        async def save_note(self, **kwargs):
+            saved.append(kwargs)
+            return {"id": "note-42", "version": 1}
+
+    app.notes_scope_service = StubNotesService()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    session.persisted_conversation_id = "conv-7"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    completed = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Use a worker for slow work.\n\nThen stream the result.",
+    )
+
+    offered: list[str] = []
+
+    async def fake_receipt(note_id: str) -> None:
+        offered.append(note_id)
+
+    screen._message._offer_captured_note_handoff = fake_receipt
+
+    await screen._message._capture_console_answer_as_note(completed.id)
+
+    assert len(saved) == 1
+    call = saved[0]
+    assert call["scope"] == "local_note"
+    assert call["title"] == "Use a worker for slow work."
+    assert call["content"] == (
+        "Use a worker for slow work.\n\nThen stream the result."
+    )
+    assert call["keywords"] == [
+        "console",
+        "conversation:conv-7",
+        f"message:{completed.id}",
+    ]
+    assert call["user_id"] == "notes-owner-1"
+    assert offered == ["note-42"]
+
+
+@pytest.mark.asyncio
+async def test_console_note_writes_use_the_configured_notes_identity():
+    """Regression (task-32146): Save as... > Note wrote under a `current_user`
+    attribute that nothing in the tree ever sets, so every note it saved
+    carried the literal "default_user" as its author id (the client_id sync
+    attribution and optimistic locking read) and opened a second cached DB
+    connection. Not a visibility bug -- notes have no owner column and the
+    list has no owner filter -- so this pins only the identity recorded
+    (fix round 1 corrected the docstring; the assertion is unchanged)."""
+    app, screen = _build_screen()
+    app.notes_user_id = "notes-owner-1"
+    saved: list[dict] = []
+
+    class StubNotesService:
+        async def save_note(self, **kwargs):
+            saved.append(kwargs)
+            return {"id": "note-9"}
+
+    app.notes_scope_service = StubNotesService()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+
+    await screen._message._save_console_message_as_note(message.id)
+
+    assert saved and saved[0]["user_id"] == "notes-owner-1"
+
+
+@pytest.mark.asyncio
+async def test_capture_note_dispatch_refuses_a_temporary_chat_before_any_worker():
+    """task-32146 fix round 1 (review finding 3): the ephemeral registry is
+    consulted again at dispatch -- the same defence the regenerate
+    image/video branches carry -- so a temporary chat gets the registry's
+    reason and no note worker is started, whatever built the button."""
+    from tldw_chatbook.Chat.console_ephemeral import EPHEMERAL_BLOCKED_ACTIONS
+
+    app, screen = _build_screen()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    session.ephemeral = True
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q")
+    completed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+    assert screen._message._console_active_session_is_ephemeral() is True
+
+    spawned = []
+
+    def fake_run_worker(work, **kwargs):
+        spawned.append(kwargs)
+        if asyncio.iscoroutine(work):
+            work.close()
+        return SimpleNamespace(cancel=lambda: None)
+
+    screen.run_worker = fake_run_worker
+    notices: list[tuple[str, str | None]] = []
+    app.notify = lambda message, **kwargs: notices.append(
+        (message, kwargs.get("severity"))
+    )
+
+    handled = await screen.handle_console_message_action(
+        _dispatch_event("capture-note", completed.id)
+    )
+
+    assert handled is True
+    assert spawned == []
+    assert notices == [(EPHEMERAL_BLOCKED_ACTIONS["capture-note"], "warning")]
