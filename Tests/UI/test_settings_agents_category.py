@@ -175,11 +175,115 @@ async def test_panel_creates_definition_via_form(runs_db):
     assert [r["name"] for r in rows] == ["researcher"]
 
 
+@pytest.mark.asyncio
+async def test_panel_round_trips_and_clears_child_time_cap(runs_db):
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        panel.query_one("#agents-name-input").value = "researcher"
+        panel.query_one("#agents-description-input").value = "Searches sources."
+        panel.query_one("#agents-instructions-area").text = "Cite sources."
+        panel.query_one("#agents-wall-seconds-input").value = "12.5"
+        await pilot.click("#agents-save-button")
+        await pilot.pause()
+
+        stored = runs_db.list_agent_definitions()[0]
+        assert stored["max_wall_seconds"] == 12.5
+
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        list_view = panel.query_one("#agents-definition-list", ListView)
+        list_view.focus()
+        list_view.index = 0
+        list_view.action_select_cursor()
+        await pilot.pause()
+        assert panel._selected_id == stored["id"]
+        assert panel.query_one("#agents-wall-seconds-input").value == "12.5"
+
+        panel.query_one("#agents-wall-seconds-input").value = "7.25"
+        await pilot.click("#agents-save-button")
+        await pilot.pause()
+
+    assert runs_db.get_agent_definition(stored["id"])["max_wall_seconds"] == 7.25
+
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        list_view = panel.query_one("#agents-definition-list", ListView)
+        list_view.focus()
+        list_view.index = 0
+        list_view.action_select_cursor()
+        await pilot.pause()
+        assert panel._selected_id == stored["id"]
+        assert panel.query_one("#agents-wall-seconds-input").value == "7.25"
+        panel.query_one("#agents-wall-seconds-input").value = ""
+        await pilot.click("#agents-save-button")
+        await pilot.pause()
+
+    stored = runs_db.list_agent_definitions()[0]
+    assert stored["max_wall_seconds"] is None
+
+
+@pytest.mark.parametrize(
+    "invalid", ["not-a-number", "true", "nan", "inf", "1e999", "0", "-1"]
+)
+@pytest.mark.asyncio
+async def test_invalid_child_time_cap_keeps_selected_definition_unchanged(
+    runs_db, invalid
+):
+    seeded = AgentDefinition(
+        name="researcher",
+        description="Original description.",
+        instructions="Original instructions.",
+        tool_allowlist=("fs_read",),
+        model="parent-model",
+        enabled=False,
+        max_wall_seconds=30.0,
+    )
+    seeded_id = runs_db.create_agent_definition(seeded)
+    before = runs_db.get_agent_definition(seeded_id)
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        list_view = panel.query_one("#agents-definition-list", ListView)
+        list_view.focus()
+        list_view.index = 0
+        list_view.action_select_cursor()
+        await pilot.pause()
+
+        panel.query_one("#agents-name-input").value = "changed-name"
+        panel.query_one("#agents-description-input").value = "Changed."
+        panel.query_one("#agents-instructions-area").text = "Changed instructions."
+        panel.query_one("#agents-model-input").value = "changed-model"
+        panel.query_one("#agents-tools-input").value = "fs_list"
+        panel.query_one("#agents-enabled-switch").value = True
+        panel.query_one("#agents-wall-seconds-input").value = invalid
+        await pilot.click("#agents-save-button")
+        await pilot.pause()
+
+        status = _static_text(panel.query_one("#agents-status"))
+        assert "Child time cap (seconds)" in status
+        assert panel._selected_id == seeded_id
+
+    assert runs_db.get_agent_definition(seeded_id) == before
+
+
+@pytest.mark.asyncio
+async def test_new_clears_child_time_cap(runs_db):
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        panel.query_one("#agents-wall-seconds-input").value = "5"
+        await pilot.click("#agents-new-button")
+        await pilot.pause()
+        assert panel.query_one("#agents-wall-seconds-input").value == ""
+
+
 @pytest.mark.parametrize("preset", AGENT_PRESETS, ids=lambda preset: preset.name)
 @pytest.mark.asyncio
 async def test_preset_load_prefills_unsaved_editable_definition(runs_db, preset):
     panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
     async with ProductionCssPanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        panel.query_one("#agents-wall-seconds-input").value = "41.5"
         panel.query_one("#agents-preset-select", Select).value = preset.name
         await pilot.click("#agents-load-preset-button")
         await pilot.pause()
@@ -189,6 +293,7 @@ async def test_preset_load_prefills_unsaved_editable_definition(runs_db, preset)
         assert panel.query_one("#agents-instructions-area").text == preset.instructions
         assert panel.query_one("#agents-model-input").value == ""
         assert panel.query_one("#agents-tools-input").value == ", ".join(preset.tool_allowlist)
+        assert panel.query_one("#agents-wall-seconds-input").value == ""
         assert "save" in _static_text(panel.query_one("#agents-status")).lower()
         if preset.name == BULK_READER_NAME:
             assert "cheaper" in _static_text(panel.query_one("#agents-status")).lower()
@@ -334,6 +439,7 @@ async def test_preset_actions_render_with_production_css(runs_db, size):
                 "fs_grep",
                 ", ".join(BULK_READER_TOOLS),
             ),
+            ("#agents-wall-seconds-input", "empty = existing", None, ""),
         )
         for selector, rest_text, focused_text, expected_value in focused_values:
             field = panel.query_one(selector)
@@ -479,6 +585,7 @@ async def test_panel_inputs_carry_the_compact_class_that_makes_them_paint(runs_d
             "#agents-description-input",
             "#agents-model-input",
             "#agents-tools-input",
+            "#agents-wall-seconds-input",
         ):
             widget = panel.query_one(widget_id)
             assert widget.has_class("settings-compact-input"), (

@@ -468,6 +468,10 @@ already streaming.
   belong in this filter. If you enter one, Save omits it and names every
   omitted tool in the visible result. If that leaves the filter empty, the
   result also explains that the agent inherits the parent's tools.
+- **Child time cap (seconds)** optionally tightens the existing child wall-clock
+  limit for this definition. Leave it empty to use the existing child limit.
+  A definition cap can shorten a run but cannot extend a tighter parent,
+  automatic, or global bound.
 - When a reply spawns a named agent, the transcript's `⤷ spawned sub-agent: …`
   marker and the Agent rail's per-sub-agent line both show it as
   `[<name>] <task>` while the run is live. That prefix is a display detail of
@@ -1138,6 +1142,11 @@ others make:
   The ceiling is checked *between* the child's steps, so a child stuck
   inside a single long provider call is not cut off until that call
   returns.
+  A named definition's optional **Child time cap (seconds)** in
+  **Settings ▸ Agents** can tighten this ceiling. Each continuation receives
+  fresh per-run time, but a lineage that has used a definition cap keeps its
+  admitted ceiling: raising or removing the definition cap does not widen an
+  existing lineage. Start a fresh named sub-agent to use the changed policy.
 - **How many at once** — `[agents] max_live_subagents`, which counts
   survivors from earlier messages against the same cap. Per conversation
   and per running app: N conversations can hold N × the cap between them.
@@ -1145,6 +1154,12 @@ others make:
   its own rather than a slice of the parent's remainder, so a fleet's
   worst-case spend scales with the number of children, not with what the
   parent had left.
+
+Waiting for your approval pauses the current tool call's execution deadline;
+it does not pause the run's automatic elapsed wall-clock deadline. Cancellation
+is cooperative, and a timed-out or cancelled result does not guarantee that an
+underlying Python worker or remote side effect has stopped. A worker keeps its
+physical execution slot until it actually exits.
 
 **Changes it makes to files.** Change review keeps a survivor's edits in
 their own record instead of folding them into whatever turn happens to be

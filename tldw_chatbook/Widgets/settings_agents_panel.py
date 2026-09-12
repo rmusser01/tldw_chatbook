@@ -121,6 +121,13 @@ class AgentsSettingsPanel(Vertical):
                     classes="settings-compact-input",
                 )
             with Horizontal(classes="settings-input-row agents-field-row"):
+                yield Static("Child time cap (seconds)", classes="settings-input-label")
+                yield Input(
+                    placeholder="empty = existing child limit",
+                    id="agents-wall-seconds-input",
+                    classes="settings-compact-input",
+                )
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static(
                     "Tools (comma-separated; empty = inherit all; names "
                     "only narrow, never grant)",
@@ -202,6 +209,10 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-description-input", Input).value = row["description"]
         self.query_one("#agents-instructions-area", TextArea).text = row["instructions"]
         self.query_one("#agents-model-input", Input).value = row["model"]
+        wall_seconds = row.get("max_wall_seconds")
+        self.query_one("#agents-wall-seconds-input", Input).value = (
+            "" if wall_seconds is None else str(wall_seconds)
+        )
         self.query_one("#agents-tools-input", Input).value = ", ".join(
             row["tool_allowlist"]
         )
@@ -228,6 +239,7 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-description-input", Input).value = ""
         self.query_one("#agents-instructions-area", TextArea).text = ""
         self.query_one("#agents-model-input", Input).value = ""
+        self.query_one("#agents-wall-seconds-input", Input).value = ""
         self.query_one("#agents-tools-input", Input).value = ""
         self.query_one("#agents-enabled-switch", Switch).value = True
         self._set_status("")
@@ -241,6 +253,7 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-instructions-area", TextArea).text = preset.instructions
         model_input = self.query_one("#agents-model-input", Input)
         model_input.value = ""
+        self.query_one("#agents-wall-seconds-input", Input).value = ""
         tools_input = self.query_one("#agents-tools-input", Input)
         tools_input.value = ", ".join(preset.tool_allowlist)
         self.query_one("#agents-enabled-switch", Switch).value = preset.enabled
@@ -258,6 +271,13 @@ class AgentsSettingsPanel(Vertical):
             stored_tools, _ = _parse_requested_tools(
                 self.query_one("#agents-tools-input", Input).value
             )
+        raw_wall_seconds = self.query_one(
+            "#agents-wall-seconds-input", Input
+        ).value.strip()
+        try:
+            max_wall_seconds = None if not raw_wall_seconds else float(raw_wall_seconds)
+        except ValueError as exc:
+            raise ValueError("Child time cap (seconds) must be a number.") from exc
         return AgentDefinition(
             name=self.query_one("#agents-name-input", Input).value.strip(),
             description=self.query_one(
@@ -269,6 +289,7 @@ class AgentsSettingsPanel(Vertical):
             tool_allowlist=stored_tools,
             model=self.query_one("#agents-model-input", Input).value.strip(),
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
+            max_wall_seconds=max_wall_seconds,
         )
 
     async def _save(self) -> None:
@@ -286,7 +307,8 @@ class AgentsSettingsPanel(Vertical):
             # message, not an uncaught exception that would crash the
             # Settings screen's compose (compose-exception lesson: a crash
             # there kills navigation for the whole app).
-            self._set_status(str(exc))
+            message = str(exc).replace("max_wall_seconds", "Child time cap (seconds)")
+            self._set_status(message)
             return
         notice = f"Saved '{defn.name}'."
         if omitted_runtime_tools:
