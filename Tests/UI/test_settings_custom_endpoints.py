@@ -241,6 +241,71 @@ def test_edit_mutation_clearing_env_var_deletes_reference_on_disk(
 
 
 @pytest.mark.asyncio
+async def test_settings_screen_duplicate_button_opens_template_modal(
+    tmp_path, monkeypatch
+):
+    """H5: each Custom endpoints row has a Duplicate button that opens the
+    Console template-creation modal seeded from that entry (same-family
+    starter per H5/P2-6), and a completed create confirms in the panel's
+    shared status line."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+    )
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    _activate_temp_config(tmp_path, monkeypatch, _REGISTRY_ENTRY_TOML)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    try:
+        async with host.run_test(size=(120, 35)) as pilot:
+            screen = _active_destination_screen(host)
+            for _ in range(8):
+                await pilot.pause(0.05)
+            await pilot.app.workers.wait_for_complete()
+            screen.query_one("#settings-category-providers-models", Button).press()
+            for _ in range(8):
+                await pilot.pause(0.05)
+            screen.query_one("#settings-cep-duplicate-gpu", Button).press()
+            for _ in range(4):
+                await pilot.pause(0.05)
+
+            modal = pilot.app.screen
+            assert isinstance(modal, ConsoleEndpointTemplateModal)
+            from textual.widgets import Input, Select
+
+            # Seeded from the entry: llama family starter, blank name/URL.
+            assert (
+                modal.query_one("#endpoint-template-family", Select).value
+                == "llama_cpp"
+            )
+            assert modal.query_one("#endpoint-template-url", Input).value == ""
+            assert modal.query_one("#endpoint-template-name", Input).value == ""
+
+            # Create a sibling endpoint from the starter prefill.
+            modal.query_one("#endpoint-template-name", Input).value = "GPU two"
+            modal.query_one("#endpoint-template-url", Input).value = (
+                "http://192.168.1.7:8080"
+            )
+            await pilot.pause(0.1)
+            modal.query_one("#endpoint-template-create", Button).press()
+            for _ in range(15):
+                await pilot.pause(0.1)
+
+            status = screen.query_one("#settings-custom-endpoints-status", Static)
+            status_text = str(
+                getattr(status.renderable, "plain", status.renderable)
+            )
+            assert "Created endpoint 'GPU two'" in status_text
+            assert "gpu-two" in load_custom_endpoints(load_settings())
+    finally:
+        _reload_config()
+
+
+@pytest.mark.asyncio
 async def test_settings_screen_edit_flow_clears_env_var_reference(
     tmp_path, monkeypatch
 ):

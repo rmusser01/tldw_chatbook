@@ -94,6 +94,7 @@ from ...Chat.console_provider_endpoints import (
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
     build_entry_mutation,
+    entry_for,
     load_custom_endpoints,
     validate_entry,
 )
@@ -149,6 +150,9 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.Console.console_endpoint_template_modal import (
+    ConsoleEndpointTemplateModal,
+)
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
@@ -16368,10 +16372,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Button(
                     "Rename",
                     id=f"settings-cep-rename-{slug}",
-                    tooltip=(
-                        "Rename this endpoint. The slug (its provider "
-                        "id) never changes."
-                    ),
+                    tooltip="Rename this endpoint. Its id never changes.",
                 )
                 yield Button(
                     "Edit",
@@ -16380,6 +16381,15 @@ class SettingsScreen(BaseAppScreen):
                         "Edit the endpoint URL, credential variable, or "
                         "model list. Existing conversations re-resolve "
                         "on their next send."
+                    ),
+                )
+                yield Button(
+                    "Duplicate",
+                    id=f"settings-cep-duplicate-{slug}",
+                    tooltip=(
+                        "Create another endpoint from this one via the "
+                        "template flow: same family, new URL (a full copy "
+                        "stays one row below the preselected starter)."
                     ),
                 )
                 yield Button(
@@ -16426,7 +16436,9 @@ class SettingsScreen(BaseAppScreen):
                         placeholder="http://127.0.0.1:8080",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Env var", classes="settings-input-label")
+                    yield Static(
+                        "Credential env var (name)", classes="settings-input-label"
+                    )
                     yield Input(
                         value=entry.api_key_env or "",
                         id="settings-cep-edit-key-env",
@@ -16659,6 +16671,7 @@ class SettingsScreen(BaseAppScreen):
         for prefix, handler in (
             ("rename-", self._custom_endpoint_open_rename),
             ("edit-", self._custom_endpoint_open_edit),
+            ("duplicate-", self._custom_endpoint_duplicate_requested),
             ("delete-", self._custom_endpoint_delete_requested),
             ("detach-", self._custom_endpoint_detach_requested),
             ("convert-", self._custom_endpoint_convert_requested),
@@ -16670,6 +16683,36 @@ class SettingsScreen(BaseAppScreen):
                 if remainder:
                     handler(remainder)
                 return
+
+    @on(ConsoleEndpointTemplateModal.EndpointCreated)
+    def _custom_endpoint_created_from_template(
+        self, event: ConsoleEndpointTemplateModal.EndpointCreated
+    ) -> None:
+        """Confirm a template-modal creation opened from this panel (H5)."""
+        event.stop()
+        entry = entry_for(self._custom_endpoints_view_config(), event.provider_id)
+        name = entry.display_name if entry is not None else event.provider_id
+        self._custom_endpoints_report(f"Created endpoint '{name}'.")
+
+    def _custom_endpoint_duplicate_requested(self, slug: str) -> None:
+        """Open the template modal seeded from this row's entry (H5).
+
+        Mirrors the Console settings modal's ``_open_endpoint_template_modal``
+        seam: the shared app config mapping plus configured provider models.
+        The modal reports back through ``EndpointCreated``, confirmed above.
+        """
+        providers_models = getattr(self.app_instance, "providers_models", None)
+        self.app.push_screen(
+            ConsoleEndpointTemplateModal(
+                app_config=self._app_config_mapping(),
+                providers_models=(
+                    dict(providers_models)
+                    if isinstance(providers_models, Mapping)
+                    else {}
+                ),
+                template_provider=f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}",
+            )
+        )
 
     def _custom_endpoint_open_rename(self, slug: str) -> None:
         self._custom_endpoint_rename_slug = slug
