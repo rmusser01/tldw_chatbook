@@ -1,0 +1,35 @@
+[
+  {
+    "name": "fixed-startup-close",
+    "command": [
+      "/home/ml-user/tts-linux-cuda-20260912/venv-chatterbox-py312/bin/python",
+      "-I",
+      "-B",
+      "/home/ml-user/tts-linux-cuda-20260912/verify-fixed-startup-close.py"
+    ],
+    "pid": 978818,
+    "exit": 0,
+    "finished_at": 125742.591731797
+  },
+  {
+    "name": "chatterbox-cuda-03-asr",
+    "command": [
+      "/home/ml-user/tts-linux-cuda-20260912/venv-kokoro-py312/bin/python",
+      "-I",
+      "-B",
+      "/home/ml-user/tts-linux-cuda-20260912/guard-asr.py",
+      "/home/ml-user/tts-linux-cuda-20260912/source/scripts/verify_live_tts_content.py",
+      "--evidence",
+      "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-03/evidence.json",
+      "--model",
+      "/home/ml-user/tts-linux-cuda-20260912/models/whisper-small",
+      "--language",
+      "en",
+      "--output",
+      "/home/ml-user/tts-linux-cuda-20260912/runs/chatterbox-cuda-03/content.json"
+    ],
+    "pid": 978898,
+    "exit": 1,
+    "finished_at": 125749.635165988
+  }
+]

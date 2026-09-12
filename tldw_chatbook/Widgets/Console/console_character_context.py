@@ -8,6 +8,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -56,6 +57,8 @@ class CharacterConversationButton(Button):
     ) -> None:
         super().__init__(*args, **kwargs)
         self.character_row = row
+        self.progress_base_label = str(self.label)
+        self.progress_count = 0
 
     async def _on_click(self, event: Click) -> None:
         event.prevent_default()
@@ -124,6 +127,17 @@ class ConsoleCharacterContext(Vertical):
     def on_mount(self) -> None:
         self.watch(self.screen, "focused", self._observe_focus_intent)
         self._start(self._controller.refresh_if_scope_changed())
+        self.set_interval(0.5, self._sync_progress_counts)
+
+    def _sync_progress_counts(self) -> None:
+        """Refresh literal counts without collecting reports or rebuilding focus."""
+        for button in self.query(CharacterConversationButton):
+            count = self._controller.pending_progress_count(button.character_row)
+            if count != button.progress_count:
+                button.progress_count = count
+                prefix = f"Progress: {count} · " if count else ""
+                button.label = Text(prefix + button.progress_base_label)
+                button.tooltip = prefix + button.progress_base_label
 
     def _observe_focus_intent(self, old: Any, new: Any) -> None:
         """External focus wins; pruning the owning node is not a new intent."""

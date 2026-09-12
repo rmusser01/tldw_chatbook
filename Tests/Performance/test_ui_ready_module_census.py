@@ -129,6 +129,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # TASK-32507: run-hook commands and summaries are lifecycle-event work.
+    "tldw_chatbook.Agents.run_hooks",
     # Speculative voice resources are first-voice work, never first paint.
     "tldw_chatbook.Audio.native_duplex_stream",
     "tldw_chatbook.Audio.voice_process_types",

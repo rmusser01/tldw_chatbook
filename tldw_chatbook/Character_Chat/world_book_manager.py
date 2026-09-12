@@ -660,7 +660,7 @@ class WorldBookManager:
     # --- Conversation Association Functions ---
 
     def associate_world_book_with_conversation(
-        self, conversation_id: int, world_book_id: int, priority: int = 0
+        self, conversation_id: str, world_book_id: int, priority: int = 0
     ) -> bool:
         """
         Associate a world book with a conversation.
@@ -683,7 +683,7 @@ class WorldBookManager:
             return True
 
     def disassociate_world_book_from_conversation(
-        self, conversation_id: int, world_book_id: int
+        self, conversation_id: str, world_book_id: int
     ) -> bool:
         """
         Remove association between a world book and conversation.
@@ -705,7 +705,7 @@ class WorldBookManager:
             return cursor.rowcount > 0
 
     def get_world_books_for_conversation(
-        self, conversation_id: int, enabled_only: bool = True
+        self, conversation_id: str, enabled_only: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Get all world books associated with a conversation.

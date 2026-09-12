@@ -174,7 +174,12 @@ class _FakeService:
         return SimpleNamespace(provider_id=self._provider_id)
 
     async def synthesize_default(
-        self, *, text, voice_override=None, progress_sink=None
+        self,
+        *,
+        text,
+        voice_override=None,
+        response_format_override=None,
+        progress_sink=None,
     ):
         self.synthesize_default_calls.append((text, voice_override))
         return self._response

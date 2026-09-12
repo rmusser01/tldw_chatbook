@@ -325,6 +325,8 @@ class ConsoleConversationBrowserRow:
     star_enabled: bool = True
     source_kind: str = "persisted"
     subagent_count: int = 0
+    #: Session-only pending reports, separate from saved sub-agent runs.
+    progress_count: int = 0
     #: TASK-717: False when the conversation record is known to be missing.
     openable: bool = True
     #: Parallel-agents spec PA-T8: resolved fleet run-marker glyph, or "".
@@ -473,6 +475,7 @@ def build_console_conversation_browser_state(
     result_limit: int = CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     group_row_limit: int = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     subagent_counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
     now: datetime | None = None,
 ) -> ConsoleConversationBrowserState:
     """Build the deterministic flat Default/unassigned browser snapshot.
@@ -494,6 +497,7 @@ def build_console_conversation_browser_state(
         subagent_counts: Historical sub-agent count keyed by conversation id.
             Only persisted rows can carry a non-zero count; missing/None
             entries default to 0.
+        progress_counts: Body-free pending reports keyed by live native session identity.
         now: Reference time for computing relative age labels. Defaults to now.
 
     Returns:
@@ -532,6 +536,7 @@ def build_console_conversation_browser_state(
         group_row_limit=safe_group_row_limit,
         empty_copy="No Default or unassigned conversations. Named-workspace conversations are under Workspaces.",
         counts=counts,
+        progress_counts=progress_counts,
     )
 
     sections = (chats_section,)
@@ -600,6 +605,7 @@ def _normalize_input_row(
 def _to_browser_row(
     row: ConsoleConversationBrowserInputRow,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> ConsoleConversationBrowserRow:
     subagent_count = int((counts or {}).get(row.conversation_id or "", 0))
     return ConsoleConversationBrowserRow(
@@ -617,6 +623,9 @@ def _to_browser_row(
         star_enabled=row.star_enabled,
         source_kind=row.source_kind,
         subagent_count=subagent_count,
+        progress_count=max(
+            0, int((progress_counts or {}).get(row.native_session_id or "", 0))
+        ),
         openable=bool(row.openable),
         run_marker=str(row.run_marker or ""),
         queued_count=max(0, int(row.queued_count)),
@@ -637,9 +646,12 @@ def _build_row_section(
     group_row_limit: int,
     empty_copy: str,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> ConsoleConversationBrowserSection:
     collapsed = preference_collapsed and not (query_active and bool(rows))
-    visible_rows, hidden_count = _visible_rows(rows, collapsed, group_row_limit, counts)
+    visible_rows, hidden_count = _visible_rows(
+        rows, collapsed, group_row_limit, counts, progress_counts
+    )
     return ConsoleConversationBrowserSection(
         section_id=section_id,
         label=label,
@@ -749,6 +761,7 @@ def _build_workspace_groups(
     query_active: bool,
     group_row_limit: int,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> tuple[ConsoleConversationBrowserGroup, ...]:
     groups: list[
         tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]]
@@ -773,7 +786,7 @@ def _build_workspace_groups(
         )
         collapsed = preference_collapsed and not (query_active and bool(group_rows))
         visible_rows, hidden_count = _visible_rows(
-            group_rows, collapsed, group_row_limit, counts
+            group_rows, collapsed, group_row_limit, counts, progress_counts
         )
         browser_groups.append(
             ConsoleConversationBrowserGroup(
@@ -807,13 +820,14 @@ def _visible_rows(
     collapsed: bool,
     group_row_limit: int,
     counts: Mapping[str, int] | None = None,
+    progress_counts: Mapping[str, int] | None = None,
 ) -> tuple[tuple[ConsoleConversationBrowserRow, ...], int]:
     if collapsed:
         return (), 0
     visible_input_rows = rows[:group_row_limit] if group_row_limit else ()
     hidden_count = max(0, len(rows) - len(visible_input_rows))
     return tuple(
-        _to_browser_row(row, counts) for row in visible_input_rows
+        _to_browser_row(row, counts, progress_counts) for row in visible_input_rows
     ), hidden_count
 
 

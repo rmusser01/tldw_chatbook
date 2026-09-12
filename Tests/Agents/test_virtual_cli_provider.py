@@ -9,6 +9,9 @@ import tldw_chatbook.Agents.virtual_cli_provider as virtual_cli_provider
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LOCAL_DENY_REFUSAL,
+    LOCAL_GATE_ERROR_REFUSAL,
+    LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
@@ -100,6 +103,90 @@ def admitted_root(
         guard=guard,
         workspace_executor=executor,
     )
+
+
+# -- task-32280 fix round: one refusal token per REFUSER ----------------------
+#
+# This provider recorded a flat "denied" for six different refusers. Audit
+# now renders that token as "Denied by you", so five of the six were a lie
+# about who said no.
+
+
+def _boom_state(_hub):
+    raise RuntimeError("store gone")
+
+
+def _deny_callback(pendings):
+    return {(p.call_id or p.llm_name): "deny" for p in pendings}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "decision", "refusal"),
+    [
+        pytest.param(
+            {"local_tools_enabled": lambda: False},
+            "denied-killswitch",
+            LOCAL_KILL_SWITCH_REFUSAL,
+            id="local-tools-off",
+        ),
+        pytest.param(
+            {"kill_switch": lambda: True},
+            "denied-killswitch",
+            LOCAL_KILL_SWITCH_REFUSAL,
+            id="kill-switch",
+        ),
+        pytest.param(
+            {"resolve_state": _boom_state},
+            "denied-unresolved",
+            LOCAL_GATE_ERROR_REFUSAL,
+            id="gate-error",
+        ),
+        pytest.param(
+            {"state": DENY}, "denied-policy", LOCAL_DENY_REFUSAL, id="permissions-off"
+        ),
+        pytest.param(
+            {"state": ASK, "approval_callback": _deny_callback},
+            "denied",
+            LOCAL_DENY_REFUSAL,
+            id="user-deny",
+        ),
+    ],
+)
+def test_each_refuser_records_its_own_decision(tmp_path, kwargs, decision, refusal):
+    recorded: list[tuple[str, str]] = []
+    provider = make_provider(
+        tmp_path,
+        record_decision=lambda hub, value: recorded.append((hub.name, value)),
+        **kwargs,
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert not result.ok and result.error == refusal
+    assert [value for _name, value in recorded] == [decision]
+
+
+def test_a_changed_workspace_root_is_not_recorded_as_the_user_denying(tmp_path):
+    """The root moved underfoot -- nobody decided anything."""
+    recorded: list[tuple[str, str]] = []
+    provider = make_provider(
+        tmp_path,
+        state=ALLOW,
+        record_decision=lambda hub, value: recorded.append((hub.name, value)),
+        admitted_roots=(
+            admitted_root(
+                "folder-a",
+                tmp_path / "a",
+                RecordingWorkspaceExecutor(),
+                guard=lambda _write: False,
+            ),
+        ),
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert not result.ok and result.error == LOCAL_ROOT_CHANGED_REFUSAL
+    assert [value for _name, value in recorded] == ["denied-unresolved"]
 
 
 def test_provider_exposes_one_structured_model_tool(tmp_path):
@@ -577,6 +664,121 @@ def test_permission_is_rechecked_after_review(tmp_path):
         result = provider.invoke("virtual_cli", call.args)
 
     assert not result.ok and result.outcome == "blocked"
+
+
+# -- task-32281: "Always allow this exact input" is honoured, not dropped ---
+#
+# `pending_gate_for()` offers `allow_matching` (it passes no `options`, so
+# the approval card renders all five decisions -- see
+# `chat_approval_card.py`'s `_DECISION_OPTIONS`), but `_ask_verdict()` used
+# to recognise only approve_once/approve_session/always_allow/deny/timeout:
+# a pre-stamped "allow_matching" matched neither its allow branch nor its
+# deny/timeout branch and fell through to a silent re-ask (or "timeout"
+# with no callback); the live-callback counterpart came back as the literal
+# string "allow_matching", which `invoke()`'s `verdict != "allow"` check
+# then DENIED outright. Both paths now persist an exact-input rule (via the
+# injected `persist_arg_rule` callable) and allow the call, mirroring
+# `MCPToolProvider._apply_verdict()`'s own "allow_matching" handling.
+
+
+def test_allow_matching_stamp_persists_rule_and_allows_this_call(tmp_path):
+    persisted = []
+    provider = make_provider(
+        tmp_path,
+        persist_arg_rule=lambda hub, args: persisted.append((hub.name, dict(args))),
+    )
+    call = ToolCall("virtual_cli", {"command": "ls", "argv": ["."]}, "c1")
+    pending = provider.pending_gate_for(call)
+    assert pending is not None
+    provider.apply_batch_decisions("run", {"c1": "allow_matching"}, [pending])
+
+    with use_run_id("run"), use_tool_call_id("c1"):
+        result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert result.ok
+    assert persisted == [("ls", {"command": "ls", "argv": ["."]})]
+
+
+def test_allow_matching_via_live_callback_persists_rule_and_allows(tmp_path):
+    persisted = []
+
+    def approve_callback(pendings):
+        return {(p.call_id or p.llm_name): "allow_matching" for p in pendings}
+
+    provider = make_provider(
+        tmp_path,
+        approval_callback=approve_callback,
+        persist_arg_rule=lambda hub, args: persisted.append((hub.name, dict(args))),
+    )
+
+    result = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert result.ok
+    assert persisted == [("ls", {"command": "ls", "argv": ["."]})]
+
+
+def test_arg_rule_allows_skips_the_card_for_a_matching_call(tmp_path):
+    """A rule an earlier `allow_matching` decision persisted is CONSULTED
+    on the next call -- `pending_gate_for()` never offers a card for it,
+    and `invoke()` allows it without a callback at all. A different `argv`
+    for the same command still asks (and times out with no callback)."""
+    provider = make_provider(
+        tmp_path,
+        arg_rule_allows=lambda hub, args: args.get("argv") == ["."],
+    )
+    call = ToolCall("virtual_cli", {"command": "ls", "argv": ["."]}, "c1")
+
+    assert provider.pending_gate_for(call) is None
+
+    matching = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    other = provider.invoke("virtual_cli", {"command": "ls", "argv": ["subdir"]})
+
+    assert matching.ok
+    assert not other.ok and other.outcome == "blocked"
+
+
+def test_allow_matching_through_the_real_store_and_service_allows_next_call(tmp_path):
+    """Review round 1 (Minor 2): every other allow_matching test stubs
+    `persist_arg_rule`/`arg_rule_allows` with plain closures over a list --
+    this one wires them to the REAL `UnifiedMCPControlPlaneService` seams
+    (`add_tool_arg_rule`/`arg_rule_allows_call`) backed by a REAL
+    `MCPPermissionStore` on disk, persists an allow_matching decision on
+    one call, then makes a SECOND, independent `invoke()` call (no stamp,
+    no callback) with the identical arguments and asserts it resolves
+    allow purely from what's now on disk -- proving the whole chain
+    (provider -> service -> store -> back) actually works, not just each
+    stubbed half."""
+    from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    service = UnifiedMCPControlPlaneService.__new__(UnifiedMCPControlPlaneService)
+    service._permission_store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+
+    def persist_arg_rule(hub, args):
+        service.add_tool_arg_rule(hub.server_key, hub.name, args=args, tool=hub)
+
+    def arg_rule_allows(hub, args):
+        return service.arg_rule_allows_call(hub, args)
+
+    provider = make_provider(
+        tmp_path,
+        persist_arg_rule=persist_arg_rule,
+        arg_rule_allows=arg_rule_allows,
+    )
+    call = ToolCall("virtual_cli", {"command": "ls", "argv": ["."]}, "c1")
+    pending = provider.pending_gate_for(call)
+    assert pending is not None
+    provider.apply_batch_decisions("run", {"c1": "allow_matching"}, [pending])
+
+    with use_run_id("run"), use_tool_call_id("c1"):
+        first = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+    assert first.ok
+
+    second = provider.invoke("virtual_cli", {"command": "ls", "argv": ["."]})
+
+    assert second.ok
 
 
 def test_console_virtual_cli_callbacks_capture_the_exact_named_profile(tmp_path):

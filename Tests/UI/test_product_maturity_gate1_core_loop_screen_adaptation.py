@@ -97,6 +97,8 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        # This harness bypasses startup and directly mounts the ready Console.
+        self.app_instance._ui_ready = True
         await self.push_screen(ChatScreen(self.app_instance))
 
 

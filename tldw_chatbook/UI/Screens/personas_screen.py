@@ -428,6 +428,15 @@ logger = logger.bind(module="PersonasScreen")
 #: ``shell_destinations``), so it is no longer offered as a Personas mode.
 MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "lore")
 
+#: Single-letter mode hotkeys, zipped against MODE_CHIP_ORDER positionally:
+#: c Characters, p Personas, d Dictionaries, l Lore. ADR-031 rule 3 (htop-style
+#: printable keys) / ADR-152: the ctrl+digit chords these replaced belong to
+#: the app-global shell destination layer, which screens must not bind.
+#: Printable keys are consumed first by focused text inputs, so the letters
+#: only act from list/button focus. Known shadow: the persona-buddy overlay
+#: binds "c" (collapse) while the buddy itself holds DOM focus.
+MODE_HOTKEYS: tuple[str, ...] = ("c", "p", "d", "l")
+
 #: One-line "what this mode is" copy, shown under the title and as chip tooltips.
 _MODE_DESCRIPTORS: dict[str, str] = {
     "characters": "Characters — who the AI plays.",
@@ -955,15 +964,18 @@ class PersonasScreen(BaseAppScreen):
         Binding("ctrl+enter", "personas_attach", "Send to Console draft"),
         Binding("ctrl+s", "personas_save", "Save", show=False),
         Binding("escape", "personas_escape", "Back", show=False),
-        # Ctrl+1..5 mirror the mode strip order (MODE_CHIP_ORDER).
+        # Single-letter mode keys mirror the mode strip order (MODE_CHIP_ORDER
+        # + MODE_HOTKEYS), per ADR-031 rule 3 / ADR-152. The ctrl+1..4 chords
+        # these replaced shadowed the app-global shell destination hotkeys on
+        # this screen, making the nav bar's ⌃1..⌃3 labels lie here.
         *[
             Binding(
-                f"ctrl+{index + 1}",
+                key,
                 f"personas_mode('{mode}')",
                 MODE_LABELS.get(mode, mode),
                 show=False,
             )
-            for index, mode in enumerate(MODE_CHIP_ORDER)
+            for key, mode in zip(MODE_HOTKEYS, MODE_CHIP_ORDER)
         ],
         # [ / ] cycle the mode strip. They are printable keys, so text widgets
         # consume them as input first; they only act from list/button focus.
@@ -1419,10 +1431,11 @@ class PersonasScreen(BaseAppScreen):
                         label,
                         id=f"personas-mode-{mode}",
                         classes=classes,
-                        # F-038: the chip tooltip discloses its Ctrl+N jump key
-                        # (the binding mirrors the strip order).
+                        # F-038: the chip tooltip discloses its mode key
+                        # (the binding mirrors the strip order via
+                        # MODE_HOTKEYS).
                         tooltip=(
-                            f"{self._mode_descriptor_text(mode)} (Ctrl+{index + 1})"
+                            f"{self._mode_descriptor_text(mode)} ({MODE_HOTKEYS[index]})"
                         ),
                     )
             with Horizontal(
@@ -15388,40 +15401,19 @@ class PersonasScreen(BaseAppScreen):
             )
         except QueryError:
             pass
-        # The character dictionaries panel (Roleplay P1f) is chrome shown
-        # alongside the character card/editor, not one of the exclusive
-        # _CENTER_VIEW_IDS pages - it must still be hidden outside a
-        # character context so it doesn't dock space away from (or overlap)
-        # the dictionary/persona/lore views. This gate must run before the
-        # conversation-actions early-return below (and not depend on it
-        # succeeding) - otherwise a failed actions lookup would skip setting
-        # `.display` here, and the panel (which has no `display: none` of its
-        # own in BUNDLED_CSS) would default visible in every mode.
-        try:
-            dict_panel = self.query_one(PersonasCharacterDictionariesWidget)
-        except Exception:
-            dict_panel = None
-        if dict_panel is not None:
-            dict_panel.display = (
-                visible_id
-                in (
-                    "#ccp-character-card-view",
-                    "#ccp-character-editor-view",
-                )
-                and self.state.runtime_source == "local"
-            )
         # The wrapper that holds BOTH character-attachment sections
         # (Roleplay P2f Task 6 added the world-books panel alongside the
         # P1f dictionaries panel inside #personas-character-attachments)
-        # is the single source of truth for the same characters-only
-        # condition as dict_panel above - gating the wrapper hides both
-        # children in one step. This has to be re-derived here (not left to
-        # a mode-level toggle alone) because _show_center also runs *within*
-        # Characters mode when swapping to the conversation transcript view
-        # (see personas_conversations_controller.open_conversation), which
-        # must hide the wrapper too so it doesn't stay visible with
-        # stale data over the transcript, or empty at initial mount before
-        # any character is selected.
+        # is the single source of truth for character-attachment
+        # visibility; neither child carries its own gate (TASK-411
+        # removed the P1f-era dict_panel.display line that duplicated
+        # this condition verbatim). This has to be re-derived here (not
+        # left to a mode-level toggle alone) because _show_center also
+        # runs *within* Characters mode when swapping to the conversation
+        # transcript view (see personas_conversations_controller.
+        # open_conversation), which must hide the wrapper too so it
+        # doesn't stay visible with stale data over the transcript, or
+        # empty at initial mount before any character is selected.
         try:
             attachments_wrapper = self.query_one("#personas-character-attachments")
         except QueryError:
@@ -15824,7 +15816,7 @@ class PersonasScreen(BaseAppScreen):
             self._focus_library_list(force=True)
 
     async def action_personas_mode(self, mode: str) -> None:
-        """Ctrl+1..5: same guarded path as the mode chips."""
+        """Single-letter mode keys (c/p/d/l): same guarded path as the mode chips."""
         if mode not in MODE_CHIP_ORDER or mode == self.state.active_mode:
             return
         await self._run_guarded(lambda: self._apply_mode(mode))
@@ -15958,7 +15950,7 @@ class PersonasScreen(BaseAppScreen):
                 # F-038: disclose the always-on accelerators that used to be
                 # invisible (show=False bindings with no footer/chip mention).
                 ShortcutAction("f6", "pane"),
-                ShortcutAction("ctrl+1-4", "mode"),
+                ShortcutAction("c/p/d/l", "mode"),
                 ShortcutAction("[ ]", "mode"),
                 # F-040: the sort cycle key applies where the Sort button shows.
                 ShortcutAction(
