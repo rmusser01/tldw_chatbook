@@ -4,10 +4,29 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Revision `a5843f36e87faf10a42d19953ad02336498b39ea` passes all actual installed
+macOS product cases: three F9 modes (90.90 seconds), two-profile restore/open
+(55.16 seconds), and combined replacement/later rollback (187.14 seconds, tested
+before commit with the same production change). Windows full matrix
+[34723256876](https://github.com/rmusser01/tldw_chatbook/actions/runs/34723256876)
+completed with native294/294 and product55 passes/two shared-seed failures.
+All three F9 modes, two-profile and support51 passed; replacement and rollback
+still expired during seed capture before their target workflows started. All114
+artifact hashes match clean source and installed-package receipts. The shared
+seed's diagnostic wrapped roughly two million native calls; an otherwise unchanged
+run without this all-call timing observer will isolate its overhead. Lightweight
+stack/failure observers remain, with production code and deadlines unchanged.
+The same revision passes actual Linux reader/admission checks
+(67 cases, 15.51 seconds), three F9 modes (112.66 seconds), installed-wheel
+two-profile restore/open (68.45 seconds), and combined replacement/later rollback
+(278.16 seconds). Linux public codeload SHA256:
+`ddf7f210480e0e74a015df89764a8636dac087fa6646b3c563edece838095c21`.
+
 Windows matrix [34722216765](https://github.com/rmusser01/tldw_chatbook/actions/runs/34722216765)
 at `85d614822d4e6a7dbcebe1533cb2e4a1b3ce9206` passed all three F9
 create/restore/open modes, installed-wheel two-profile restore/open, support43,
-and native42 in each of seven jobs. Replacement and rollback still failed their
+and native42 in each of seven jobs. All 117 artifact hashes verified.
+Replacement and rollback still failed their
 300-second seed observers, after successful maintenance admission. Stacks show
 repeated native containment walks over 21 roots during discovery and capture.
 Capture now tries lexical owner candidates first, then retains every other root
