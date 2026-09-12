@@ -144,6 +144,7 @@ from ...Chat.console_hands_free import (
     SuppressReplySpeech,
 )
 from ...Chat.reply_sentence_sequencer import SentenceSequencer
+from ...TTS.playback_capability import locally_playable_formats
 from ...Widgets.Console import ConsoleComposerBar
 
 if TYPE_CHECKING:
@@ -179,10 +180,19 @@ def _load_default_speculative_voice_factory() -> Callable[..., Any]:
 #: `webrtcvad` is unavailable. Reuses `VAD_UNAVAILABLE_MESSAGE`'s own
 #: framing (see `console_voice_input.VoiceVadUnavailable`'s docstring):
 #: without it, the silence gate that drives auto-send/barge-in never fires.
+#:
+#: TASK-32014 copy correction: the earlier draft recommended spoken
+#: "Console, stop." as an exit -- impossible advice in exactly this mode,
+#: where segments only finalize at capture stop so mid-capture spoken
+#: commands can never fire (`VoiceVadUnavailable`'s own docstring). It also
+#: hid where retained text goes: in degraded mode NOTHING is ever
+#: auto-sent (the 60 s capture limit exits the loop and inserts the text
+#: into the draft, `_handle_console_dictation_limit`), so it must say so.
 CONSOLE_HANDS_FREE_DEGRADED_MESSAGE = (
     "Hands-free is degraded: voice-activity detection (webrtcvad) is not "
     "installed, so it cannot auto-send on a pause or hear a spoken barge-in. "
-    'Use the mic button, "Console, stop.", or Esc/ctrl+shift+h to end a turn.'
+    "Nothing is sent automatically -- retained speech lands in your draft. "
+    "Use the mic button or Esc/ctrl+shift+h to end a capture."
 )
 
 
@@ -252,6 +262,18 @@ class ConsoleHandsFreeSession:
     countdown_remaining: float = 0.0
     pending_session_id: str | None = None
     pending_existing_assistant_ids: frozenset[str] = frozenset()
+    #: TASK-32013 whole-reply escalation bookkeeping: utterances this reply
+    #: dispatched vs. how many reported failure. A reply in which EVERY
+    #: utterance failed is indistinguishable from silence to the user (the
+    #: sequencer skips failed utterances and keeps moving), so the terminal
+    #: tap escalates to a visible notice once per reply. Reset in
+    #: `_begin_console_hands_free_reply`.
+    utterances_dispatched: int = 0
+    utterances_failed: int = 0
+    #: One-way latch for `_maybe_escalate_all_failed_reply` -- both settle
+    #: points (completion tap, drained tap) evaluate the same condition, so
+    #: whichever fires second must not re-notify. Reset per reply.
+    escalation_shown_for_reply: bool = False
 
 
 def speculative_voice_qualified() -> bool:
@@ -1204,6 +1226,10 @@ class ConsoleHandsFreeController:
                 self.app_instance.notify(
                     CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE, severity="warning"
                 )
+                # TASK-32014: the Switch gesture flips the widget visually
+                # before this refusal runs -- repaint it back so the control
+                # never claims a mode that refused to start.
+                self._sync_hands_free_switch(False)
                 return
             self._enter_console_realtime_loop(capture_live=capture_live)
             return
@@ -1231,6 +1257,51 @@ class ConsoleHandsFreeController:
         if existing is not None:
             existing.controller.enter(capture_live=capture_live)
             return
+        # TASK-32014 entry preflight (mic half): refuse BEFORE the session
+        # exists when dictation cannot run at all, with the probe's own
+        # reason+remedy -- previously the loop started, the first capture
+        # failed asynchronously, and the Switch stayed ON over a dead
+        # microphone. A probe crash is not a refusal (same rule as
+        # `_console_pipeline_hands_free_blocker`); the capture itself
+        # would surface a real failure and exit the loop.
+        try:
+            availability = console_voice_input.probe()
+        except Exception:  # noqa: BLE001 - a probe crash is not a refusal
+            logger.opt(exception=True).debug(
+                "Console hands-free: dictation availability probe crashed"
+            )
+            availability = None
+        if availability is not None and not availability.ok:
+            reason = availability.reason or "dictation is unavailable"
+            remedy = str(availability.remedy or "").strip()
+            self.app_instance.notify(
+                f"{reason} {remedy}".strip(), severity="error"
+            )
+            self._sync_hands_free_switch(False)
+            return
+        # TASK-32014 entry preflight (playback half): with no way to play
+        # ANY format, replies will be silent -- warn once per app run but
+        # still enter (mic-only dictation-with-spoken-commands use is
+        # legitimate, and the adaptive-format/remedy paths in the TTS
+        # layer own the per-failure signal).
+        try:
+            playable = locally_playable_formats()
+        except Exception:  # noqa: BLE001 - a probe crash is not a warning
+            logger.opt(exception=True).debug(
+                "Console hands-free: playback capability probe crashed"
+            )
+            playable = None
+        if playable is not None and not playable:
+            if not getattr(
+                self.app_instance, "_console_hands_free_playback_warned", False
+            ):
+                self.app_instance._console_hands_free_playback_warned = True
+                self.app_instance.notify(
+                    "No audio output on this machine: hands-free replies will "
+                    "be silent. Install a player (e.g. mpv) or set Speech "
+                    "settings ▸ Output format to WAV.",
+                    severity="warning",
+                )
         if self._try_enter_qualified_console_voice(capture_live=capture_live):
             return
         if self._console_hands_free_vad_degraded:
@@ -1506,6 +1577,9 @@ class ConsoleHandsFreeController:
         session.sequencer.begin_reply()
         session.reply_id = None
         session.toast_shown_for_reply = False
+        session.utterances_dispatched = 0
+        session.utterances_failed = 0
+        session.escalation_shown_for_reply = False
 
     def _console_hands_free_exit_loop(self) -> None:
         """`ExitLoop`: the controller deliberately does NOT emit
@@ -1890,6 +1964,38 @@ class ConsoleHandsFreeController:
         session.controller.on_reply_started()
         session.sequencer.reply_completed()
         session.controller.on_reply_finished()
+        self._maybe_escalate_all_failed_reply(session)
+
+    def _maybe_escalate_all_failed_reply(
+        self, session: "ConsoleHandsFreeSession"
+    ) -> None:
+        """TASK-32013 whole-reply escalation, once per reply.
+
+        Generation SUCCEEDED but every dispatched utterance failed to play
+        -- to the user this reply was silent from start to finish, and
+        playback failures never post their own per-utterance toast (the
+        synthesis-side `toast_shown_for_reply` latch cannot cover them).
+        Evaluated from BOTH settle points (the completion tap and the
+        sequencer-drained tap) because either can land first: only when
+        the FSM has actually completed the reply (`state == "listening"`
+        requires BOTH `on_reply_finished` and `on_sequencer_drained`) are
+        the utterance counters final.
+        """
+        if session.escalation_shown_for_reply:
+            return
+        if session.controller.state != "listening":
+            return
+        if (
+            session.utterances_dispatched > 0
+            and session.utterances_failed >= session.utterances_dispatched
+        ):
+            session.escalation_shown_for_reply = True
+            self.app_instance.notify(
+                "Reply speech failed: that reply could not be spoken. Check "
+                "audio output -- install a player (e.g. mpv) or set Speech "
+                "settings ▸ Output format to WAV.",
+                severity="error",
+            )
 
     def _dispatch_console_hands_free_speak(self, text: str) -> None:
         """`SentenceSequencer`'s `speak` callable: dispatch one utterance.
@@ -1905,6 +2011,7 @@ class ConsoleHandsFreeController:
         if session is None:
             return
         session.controller.on_first_utterance()
+        session.utterances_dispatched += 1
         token = session.sequencer.current_utterance_token
         self.run_worker(
             self._speak_console_hands_free_utterance(text, token),
@@ -1945,6 +2052,7 @@ class ConsoleHandsFreeController:
                 return
             if not ok:
                 session.toast_shown_for_reply = True
+                session.utterances_failed += 1
             session.sequencer.utterance_finished(ok, token=token)
 
         await handler.speak_utterance(text, on_finished=_on_finished, quiet=quiet)
@@ -1966,6 +2074,7 @@ class ConsoleHandsFreeController:
         if session is None:
             return
         session.controller.on_sequencer_drained()
+        self._maybe_escalate_all_failed_reply(session)
 
     async def _deliver_console_hands_free_capture_ended(
         self, scheduled_for: "ConsoleHandsFreeSession", had_segments: bool
