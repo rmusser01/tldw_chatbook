@@ -23018,7 +23018,14 @@ class ChatScreen(BaseAppScreen):
             timer.stop()
         self._console_resume_handoff_timers = []
         self._message.invalidate_console_speech_context()
-        self._console_auto_speak.unmount()
+        # TASK-32509 (UAT-found): skip the coordinator quiesce while ITS OWN
+        # consent modal is the screen that suspended us -- unmount tombstones
+        # the pending modal callback, so the user's Enable press would arrive
+        # dead and the consent would be silently discarded (switch snaps
+        # back OFF). A consent modal keeps the console semi-visible; the
+        # disposition gating still refuses speech for hidden turns.
+        if not self._console_auto_speak.modal_open:
+            self._console_auto_speak.unmount()
         self._stop_console_transcript_sync_timer()
         self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()

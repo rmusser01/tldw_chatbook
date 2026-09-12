@@ -232,6 +232,18 @@ class ConsoleAutoSpeakCoordinator:
         self._modal_open = False
         self._modal_callback_consumed = True
 
+    @property
+    def modal_open(self) -> bool:
+        """Whether the destination-consent modal is currently open.
+
+        TASK-32509: pushing that modal SUSPENDS the ChatScreen underneath,
+        and `on_screen_suspend` quiesces this coordinator -- whose unmount
+        tombstones the pending modal callback, so the user's Enable press
+        arrives dead and consent is silently discarded. The suspend path
+        consults this property to leave a mid-consent coordinator mounted.
+        """
+        return self._modal_open
+
     def _schedule_work(
         self,
         coroutine: Coroutine[Any, Any, Any],
