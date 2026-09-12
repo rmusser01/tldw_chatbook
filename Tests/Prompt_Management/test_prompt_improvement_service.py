@@ -35,6 +35,9 @@ from tldw_chatbook.Prompt_Management.prompt_improvement_models import (
     fingerprint_block_definition,
     fingerprint_text,
 )
+from tldw_chatbook.Prompt_Management.prompt_improvement_prompts import (
+    trusted_optimizer_instructions,
+)
 from tldw_chatbook.Prompt_Management.prompt_improvement_service import (
     UNKNOWN_MODEL_CONTEXT_CAP_TOKENS,
     PromptImprovementService,
@@ -67,8 +70,22 @@ class FakeAuxiliaryGateway:
         return len(self.requests)
 
     async def complete_auxiliary(
-        self, request: AuxiliaryCompletionRequest
+        self, request: AuxiliaryCompletionRequest, route: Any | None = None
     ) -> AuxiliaryCompletionResult:
+        """Return the next queued canned response for one auxiliary request.
+
+        Args:
+            request: The typed auxiliary completion request under test.
+            route: Optional routing override accepted for signature parity with
+                the real gateway; recorded requests are unaffected by it.
+
+        Returns:
+            An ``AuxiliaryCompletionResult`` wrapping the queued response text.
+
+        Raises:
+            BaseException: Re-raises the queued value when it is an exception,
+                so error-path tests can queue provider failures.
+        """
         assert isinstance(request, AuxiliaryCompletionRequest)
         self.requests.append(request)
         response = self._responses.pop(0)
@@ -257,7 +274,7 @@ def _service(
 def test_task10_gateway_signature_and_application_cap_are_reused() -> None:
     signature = inspect.signature(ConsoleProviderGateway.complete_auxiliary)
 
-    assert tuple(signature.parameters) == ("self", "request")
+    assert tuple(signature.parameters) == ("self", "request", "route")
     assert MAX_AUXILIARY_OUTPUT_TOKENS == 16_384
     assert UNKNOWN_MODEL_CONTEXT_CAP_TOKENS == 32_768
 
@@ -585,26 +602,44 @@ async def test_adversarial_source_is_only_an_exact_json_value_in_last_message() 
 
 
 @pytest.mark.asyncio
-async def test_trusted_prompt_is_lean_outcome_first_and_never_answers_source() -> None:
+@pytest.mark.parametrize("mode", ["auto", "review"])
+async def test_trusted_prompt_uses_default_rewrite_template_and_never_answers_source(
+    mode: str,
+) -> None:
     gateway = FakeAuxiliaryGateway([_rewrite_response("Better")])
 
-    await _service(gateway).improve(_snapshot())
+    await _service(gateway).improve(_snapshot(mode=mode))
 
     trusted = gateway.requests[0].messages[0]["content"]
     for required in (
+        # Owner-selected four-section default template.
+        "expert prompt engineer",
+        "**Situation**",
+        "**Task**",
+        "**Objective**",
+        "**Knowledge**",
+        "`source_prompt`",
+        # Non-negotiable safety and semantic-preservation guards.
         "Rewrite the source request; never answer it",
-        "desired outcome",
-        "success criteria",
-        "constraints",
-        "output envelope",
-        "stop rule",
-        "Do not invent",
-        "personality",
-        "collaboration",
+        "business invariants",
+        "approval and side-effect limits",
+        "protected material",
+        "Do not invent requirements, facts, evidence, metrics, names, tools, capabilities, or permissions.",
+        # Closed response envelope and final recency anchor.
         "JSON object only",
+        "never a minor edit, summary, or near-copy",
     ):
         assert required in trusted
-    assert "always add headings" not in trusted.casefold()
+
+
+def test_trusted_optimizer_instructions_keep_recipe_mode_and_reject_unknown() -> None:
+    recipe = trusted_optimizer_instructions("recipe")
+
+    assert "You optimize prompts for another model." in recipe
+    assert "recipe_fingerprint" in recipe
+    assert "expert prompt engineer" not in recipe
+    with pytest.raises(ValueError):
+        trusted_optimizer_instructions("bogus")
 
 
 @pytest.mark.asyncio
@@ -1178,7 +1213,7 @@ class SequenceEstimator:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("context_limit", "expected_kind"),
-    [(1_324, "success"), (1_323, "context_limit")],
+    [(1_724, "success"), (1_723, "context_limit")],
 )
 async def test_context_preflight_accepts_exact_equality_and_rejects_one_over(
     context_limit: int, expected_kind: str
@@ -1197,7 +1232,7 @@ async def test_context_preflight_accepts_exact_equality_and_rejects_one_over(
 
 @pytest.mark.asyncio
 async def test_unknown_model_uses_exact_documented_32768_context_cap() -> None:
-    boundary_estimator = SequenceEstimator([10_000, 10_000, 11_744])
+    boundary_estimator = SequenceEstimator([10_000, 10_000, 2_348])
     gateway = FakeAuxiliaryGateway([_rewrite_response("Better")])
 
     at_boundary = await _service(
@@ -1207,13 +1242,13 @@ async def test_unknown_model_uses_exact_documented_32768_context_cap() -> None:
     ).improve(_snapshot())
 
     assert at_boundary.kind == "success"
-    assert gateway.requests[0].max_output_tokens == 12_768
+    assert gateway.requests[0].max_output_tokens == 12_764
 
     overflow_gateway = FakeAuxiliaryGateway(["unused"])
     overflow = await _service(
         overflow_gateway,
-        token_estimator=SequenceEstimator([10_000, 10_000, 11_744]),
-        context_limit_resolver=lambda _provider, _model: 32_767,
+        token_estimator=SequenceEstimator([10_000, 10_000, 2_348]),
+        context_limit_resolver=lambda _provider, _model: 32_763,
     ).improve(_snapshot())
     assert overflow.kind == "context_limit"
     assert overflow_gateway.call_count == 0
