@@ -457,6 +457,7 @@ from ...Widgets.Library import (
     skill_editor_warning_lines,
 )
 from ...Widgets.Library.library_rail import (
+    LibraryDetailsRow,
     library_db_size_rows,
     library_diagnostics_disclosure,
 )
@@ -772,6 +773,8 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
+    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP,
+    LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
     LIBRARY_SKILL_DIRTY_VETO_COPY,
     LIBRARY_SKILL_TRUST_MISMATCH_COPY,
@@ -2899,6 +2902,9 @@ class LibraryScreen(BaseAppScreen):
             refresh_local_source_snapshot=(
                 lambda *a, **k: self._refresh_local_source_snapshot(*a, **k)
             ),
+            register_footer_shortcuts=(
+                lambda *a, **k: self._register_footer_shortcuts(*a, **k)
+            ),
             run_library_service_call=(
                 lambda *a, **k: self._run_library_service_call(*a, **k)
             ),
@@ -4331,6 +4337,36 @@ class LibraryScreen(BaseAppScreen):
                     + trash_keys
                     + escape_chip
                 )
+            if self._library_prompt_editor_active():
+                # task-32393: while the prompt editor REFUSES Escape
+                # (``_exit_library_prompt_editor_guarded``'s two vetoes, which
+                # now both say so) the chip names the blocker rather than
+                # promising an exit the key will not make. The skill editor's
+                # own set two branches below is the same idiom.
+                #
+                # Order matches that seam's own checks -- an in-flight write is
+                # tested BEFORE ``dirty``, so a busy editor that is also dirty
+                # reports the blocker the key will actually hit (PR #2655, Qodo
+                # finding 1: a clean prompt deletion left this chip promising
+                # "back to list" for the whole write).
+                blocker = (
+                    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP
+                    if self._prompts_state.mutation_in_flight
+                    else (
+                        LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP
+                        if self._prompts_state.dirty
+                        else ""
+                    )
+                )
+                if blocker:
+                    # Spliced, never re-literalled -- the Trash branch's rule
+                    # above (review round 1, F2): the constant stays the one
+                    # definition of the keys this set shares with it.
+                    return tuple(
+                        pair
+                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                        if pair[0] != "esc"
+                    ) + (("esc", blocker),)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -10412,6 +10448,8 @@ class LibraryScreen(BaseAppScreen):
                     getattr(row, "media_id", "")
                 ):
                     self.set_focus(row)
+                    if self.focused is not row:
+                        self._retry_library_list_entry_focus_while_armed()
                     return
         target = rows[0]
         media_return = self._library_pending_list_entry_media_return
@@ -10431,6 +10469,22 @@ class LibraryScreen(BaseAppScreen):
             # ``on_descendant_focus`` and activate the Reader before Enter.
             self._library_notes_programmatic_focus_target = target
         self.set_focus(target, scroll_visible=False)
+        if self.focused is not target:
+            # task-32302: a MOUNTED row is not necessarily a FOCUSABLE one --
+            # ``Widget.focusable`` is also false while it is disabled, hidden or
+            # loading, and ``set_focus`` on such a widget is a silent no-op. The
+            # Conversations regression was exactly that: dev's archive-scope
+            # recovery hop fires a second page request during route entry, and
+            # ``LibraryConversationRecovery.project`` folds ``loading`` into
+            # ``actions_disabled``, which the canvas paints onto every row
+            # (``button.disabled = actions_disabled``). The first load's rows
+            # were up, the arm's one attempt spent itself on a disabled row, and
+            # returning here made that indistinguishable from success -- the
+            # same rule the empty-list fallback above already applies to its
+            # controls. Keep the arm owed a landing instead; the retry chain is
+            # bounded by the arm's own window either way (task-32301 owns that).
+            self._retry_library_list_entry_focus_while_armed()
+            return
         if row_class == "library-media-row" and media_return is not None:
             scroll_offset = media_return.scroll_offset
             if scroll_offset is not None:
@@ -14123,12 +14177,12 @@ class LibraryScreen(BaseAppScreen):
                 id="library-details-group-workspace",
                 classes="library-details-group",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text("Active", state.workspace_name),
                 id="library-workspaces-active-workspace",
                 classes="library-details-row",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text(
                     "Handoff", self._workspace_handoff_summary_label(state)
                 ),
@@ -14245,7 +14299,7 @@ class LibraryScreen(BaseAppScreen):
         # it joins the other Details actions and says what it does.
         widgets.extend(
             (
-                Static(
+                LibraryDetailsRow(
                     "Chunking Lab — compare how text is split for search",
                     id="library-details-chunking-gloss",
                     classes="library-details-row",
@@ -15448,7 +15502,9 @@ class LibraryScreen(BaseAppScreen):
                 existing[0].update(rendered)
                 previous = existing[0]
                 continue
-            row = Static(rendered, id=row_id, classes="library-details-row")
+            row = LibraryDetailsRow(
+                rendered, id=row_id, classes="library-details-row"
+            )
             try:
                 await parent.mount(row, after=previous)
             except Exception:

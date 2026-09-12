@@ -203,6 +203,17 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 LIBRARY_PROMPT_DIRTY_VETO_COPY = (
     "Unsaved Prompt changes — Save or Discard changes first."
 )
+# task-32393: the footer's Escape chip while that veto is in force. "esc back to
+# list" is a promise the key will refuse to keep once the editor is dirty, which
+# is the same lie task-31271/31272 closed at the other Library seams -- so the
+# chip names the blocker instead, in the veto toast's own words.
+LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP = "save or discard first"
+# PR #2655 (Qodo finding 1): the same rule for the OTHER state that seam
+# refuses in -- ``_exit_library_prompt_editor_guarded`` returns False on an
+# in-flight write before it ever reads ``dirty``, so a clean prompt deletion
+# left the chip promising an exit the key would only answer with the busy
+# warning. Takes precedence over the dirty chip, matching that check order.
+LIBRARY_PROMPT_BUSY_ESCAPE_CHIP = "busy, try again"
 # Exact outcome copy for the skill editor's #library-skill-save-status line,
 # keyed by ``classify_skill_save_error``'s return value. "version-conflict"
 # is deliberately absent -- it routes into the conflict banner instead (see

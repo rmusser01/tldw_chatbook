@@ -24,6 +24,10 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SOURCE_TYPES,
     library_rag_source_scope_summary,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
@@ -78,13 +82,22 @@ def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
 
 
 def console_rag_source_toggle_label(source_type: str, selected: bool) -> str:
-    """Return one source toggle's visible label ("✓ Notes" / "○ Prompts").
+    """Return one source toggle's visible label ("☑ Notes" / "☐ Prompts").
 
     Mirrors the Library Search canvas's own toggle marker convention
     (`scope_toggle_label`) minus its `(N)` count suffix: the Console has
     no per-source counts to show, and inventing one would be a lie. The
     display label itself comes from Library's one label table, so this
     modal never introduces a second source vocabulary.
+
+    task-32303 (user decision: this modal adopts Library's legend, reading the
+    shared constants): these toggles are a selection the user makes, so they
+    wear the checkbox pair from ``library_shell_state`` -- the SAME constants
+    Library's own toggles read, not a second copy of the glyphs. "○" keeps the
+    one meaning task-32235 left it (blocked/disabled), which is why an
+    unchecked source can no longer borrow it. Scoped to this modal: the
+    per-conversation library-access modal's RADIO pair is still ●/○ (its own
+    decision, task-32464).
 
     Args:
         source_type: A Library source-type identifier.
@@ -93,7 +106,7 @@ def console_rag_source_toggle_label(source_type: str, selected: bool) -> str:
     Returns:
         The toggle Button's label text.
     """
-    marker = "✓" if selected else "○"
+    marker = LIBRARY_GLYPH_SELECTED if selected else LIBRARY_GLYPH_UNSELECTED
     return f"{marker} {_SOURCE_TYPE_LABELS.get(source_type, source_type)}"
 
 
