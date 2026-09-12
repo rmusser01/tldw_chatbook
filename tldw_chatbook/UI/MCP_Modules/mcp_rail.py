@@ -1,6 +1,6 @@
 """MCP Hub left rail: source switch, server rows with readiness badges, scope.
 
-(CI retrigger note: no code change in this commit.)"""
+(CI retrigger note 2: no code change; path-filtered workflows skipped a rebase-only push.)"""
 
 from __future__ import annotations
 
