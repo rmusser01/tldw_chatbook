@@ -1,4 +1,6 @@
-"""MCP Hub left rail: source switch, server rows with readiness badges, scope."""
+"""MCP Hub left rail: source switch, server rows with readiness badges, scope.
+
+(CI retrigger note: no code change in this commit.)"""
 
 from __future__ import annotations
 
