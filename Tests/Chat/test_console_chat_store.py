@@ -1,6 +1,7 @@
 import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -5588,3 +5589,120 @@ def test_presentation_context_carries_persona_display_name():
     assert context.assistant_kind == "persona"
     assert context.assistant_name == "Archivist"
     assert context.character_name is None
+
+
+def _persona_settings() -> ConsoleSessionSettings:
+    return ConsoleSessionSettings(provider="anthropic", model="claude-3-haiku")
+
+
+def _persona_session(store: ConsoleChatStore) -> ConsoleChatSession:
+    return store.create_session(
+        title="Chat with Archivist",
+        settings=_persona_settings(),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+
+
+def test_named_identity_gates_separate_kinds():
+    persona = SimpleNamespace(
+        assistant_kind="persona", character_name=None, assistant_name="Archivist"
+    )
+    character = SimpleNamespace(
+        assistant_kind="character", character_name="Alraune", assistant_name=None
+    )
+    generic = SimpleNamespace(
+        assistant_kind="generic", character_name=None, assistant_name=None
+    )
+    assert ConsoleChatStore._is_named_persona_session(persona) is True
+    assert ConsoleChatStore._is_named_character_session(persona) is False
+    assert ConsoleChatStore._is_named_persona_session(character) is False
+    assert ConsoleChatStore._is_named_character_session(character) is True
+    assert ConsoleChatStore._is_named_identity_session(persona) is True
+    assert ConsoleChatStore._is_named_identity_session(character) is True
+    assert ConsoleChatStore._is_named_identity_session(generic) is False
+
+
+def test_persona_seed_expands_identity_macros_into_system_prompt():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id,
+        system_template="Guide {{user}} as {{persona}}.",
+        global_default="Rowan",
+    )
+    assert session.persona_system_template == "Guide {{user}} as {{persona}}."
+    assert session.settings is not None
+    assert session.settings.system_prompt == "Guide Rowan as Archivist."
+    # Personas have no greeting: seeding never appends a message.
+    assert store.messages_for_session(session.id) == []
+
+
+def test_persona_seed_without_system_prompt_keeps_default_settings():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id, system_template="  ", global_default="Rowan"
+    )
+    assert session.persona_system_template is None
+    assert session.settings is not None
+    assert session.settings.system_prompt == _persona_settings().system_prompt
+    assert session.assistant_name == "Archivist"
+
+
+def test_persona_rename_rematerializes_projection():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id,
+        system_template="I am {{char}} for {{user}}.",
+        global_default="Rowan",
+    )
+    _session, persisted = store.set_session_assistant_name(
+        session.id, "Scribe", global_default="Rowan"
+    )
+    assert persisted is True
+    assert session.assistant_name == "Scribe"
+    assert session.settings is not None
+    assert session.settings.system_prompt == "I am Scribe for Rowan."
+
+
+def test_set_session_assistant_name_clears_character_name():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Alraune",
+        settings=_persona_settings(),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    store.set_session_assistant_name(session.id, "Archivist", global_default="Rowan")
+    assert session.assistant_name == "Archivist"
+    assert session.character_name is None
+
+
+def test_character_swap_off_persona_session_clears_persona_identity():
+    store = ConsoleChatStore()
+    session = _persona_session(store)
+    store.seed_persona_roleplay(
+        session.id, system_template="Guide {{user}}.", global_default="Rowan"
+    )
+    # The screen sets kind/id fields before calling the store seam; mirror it.
+    session.assistant_kind = "character"
+    session.assistant_id = "7"
+    session.character_id = 7
+    _session, _greeting, persisted = store.swap_session_character_roleplay(
+        session.id,
+        character_name="Alraune",
+        system_template="Be {{char}}.",
+        greeting_template="",
+        global_default="Rowan",
+    )
+    assert persisted is True
+    assert session.character_name == "Alraune"
+    assert session.assistant_name is None
+    assert session.persona_system_template is None
+    assert session.settings is not None
+    assert session.settings.system_prompt == "Be Alraune."
