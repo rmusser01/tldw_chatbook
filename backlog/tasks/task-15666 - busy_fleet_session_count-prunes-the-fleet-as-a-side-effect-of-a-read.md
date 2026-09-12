@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-11 21:30'
-updated_date: '2026-09-12 06:49'
+updated_date: '2026-09-12 07:00'
 labels:
   - console
   - agents
@@ -17,7 +17,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`busy_fleet_session_count` calls `fleet_snapshot`, which prunes terminal handles as a side effect, and it is called from the UI thread to build a navigation confirm. A read-shaped method on the UI thread should not mutate coordinator state that worker threads also write. The count itself was fixed in PR 3a-1 Task 6b (it previously reported "0 runs will be killed" and then killed one); this is about how it obtains the number.
+The navigation confirmation uses busy_fleet_session_count to inspect live work. That read must leave coordinator handles and retained service owners unchanged, while normal rail, cancellation, lifecycle, and between-turn cleanup still release settled state. Current revalidation found terminal handles already pruned between turns; the remaining mutation was retained-owner cleanup inside fleet_snapshot.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -43,10 +43,7 @@ Reason: restore the documented read-only fleet snapshot without changing ownersh
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-- Made `ConsoleAgentBridge.fleet_snapshot()` observational by removing its retained-owner cleanup call while preserving the existing service lookup and live survivor filtering.
-- Extended the real bridge/controller regression to prove both live and terminal busy-count reads preserve retained owners and coordinator handles. The established `live_snapshot()` path still releases settled owners, and terminal coordinator handles remain until next-turn pruning.
-- Updated lifecycle documentation and removed the controller's stale prune-on-read comment. No ADR was added; ADR-129 already defines the lifecycle contract.
-- Targeted verification passes (10 tests). Ruff reports only existing large-file debt: 235 findings versus 237 at `HEAD`, zero findings on changed lines, and the same three files requiring whole-file formatting. `git diff --check` passes. Independent review and final task completion remain with the root task owner.
-
-Independent task review approved spec compliance and code quality on commit 726409de10. Existing ADR-129 applies. Targeted tests: 10 passed; no changed-line Ruff findings and no whitespace errors. Whole-file lint/format debt remains unchanged in scope; no thresholds were raised.
+Made ConsoleAgentBridge.fleet_snapshot observational by removing its retained-owner cleanup call; service lookup and live survivor filtering remain unchanged. The real controller/bridge regression verifies live and terminal busy-count reads preserve both retained owners and coordinator handles. Existing live_snapshot cleanup still releases settled owners, and the next turn still prunes terminal handles.
+ADR required: no new ADR; existing backlog/decisions/129-fleet-mailbox-and-wake-reliability.md applies. Updated bridge/controller lifecycle comments and the affected survivor cleanup assertion.
+Verified commit 726409de10 with 10 targeted tests; the strengthened regression failed on the original retained-owner mutation and passed after the fix. Independent task review approved spec and quality. Zero changed-line Ruff findings and git diff --check passed. Whole-file Ruff/format debt and environment dependency/temp-cleanup warnings remain; no guard or lint threshold was raised.
 <!-- SECTION:NOTES:END -->

@@ -43,6 +43,51 @@ Open PR #2427 was checked for overlap: it lists none of the four test files
 above. No open PR or remote branch name matched TASK-13215 or TASK-15666 when
 this wave started. Repeat the check before later changes or integration.
 
+The parent program's deferred notes were also inspected:
+
+- The mutually exclusive named-agent/skill spawn guard now raises `ValueError`;
+  that old implementation note is superseded. A supplied roster has a real
+  no-reread regression (`test_run_turn_reuses_planned_agent_roster_without_db_reread`).
+  The older `test_definitions_load_once_per_turn_roster_in_protocol` checks
+  roster disclosure, not a read count; direct-load call-count coverage still
+  needs reconciliation before closing the parent's testing note.
+- Settings still constructs an `AgentsSettingsPanel` on category rendering;
+  its `_derive_runs_db` opens an owned `AgentRunsDB`, and the panel has no
+  explicit close hook. This ownership cleanup remains open.
+- `_form_definition` still drops `RUNTIME_TOOL_NAMES` from the typed allowlist;
+  the Save path does not explain those omissions. Per-save feedback remains open.
+- Settings category placement is a product preference, not a correctness bug.
+
+## Additional approval-harness failures observed in this wave
+
+The broad affected-file run for TASK-13215 exposed these **seven inherited
+failure nodes**, each reproduced with the original production files restored.
+They remain verification follow-ups; these observations alone do not establish
+seven product defects:
+
+| Test file | Exact node | Observed failure |
+| --- | --- | --- |
+| `Tests/UI/test_console_parked_payload_rekey.py` | `test_bridges_do_not_share_a_head` | Legacy mounted-payload readiness times out; failing test leaves a waiter alive. |
+| Same | `test_promoted_round_mounts_with_remaining_time_not_original_timeout` | Expects wall-clock countdown, sees the original 30-second answerable-time budget. Reconcile with current decision visibility before changing assertions. |
+| `Tests/UI/test_console_mcp_approval.py` | `test_finishing_card_is_not_counted_and_keyboard_focuses_the_card` | Expected card is hidden. |
+| Same | `test_alt_a_focuses_the_pending_approval_decision_select` | Focus stays on `console-setup-modal-action`. |
+| Same | `test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed` | Same setup-modal focus mismatch. |
+| Same | `test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css` | Expected row header has zero geometry. |
+| Same | `test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css` | Expected fast-approve button has zero geometry. |
+
+`test_falsy_run_id_is_normalized` also fails after those leaking harness tests,
+but passes alone; it is not counted as an independent human-wait defect.
+The affected same-session skill-script test's preregistration/publication race
+was repaired within TASK-13215 by waiting for its actual badge/payload and
+ensuring worker shutdown in `finally`.
+
+The final approval selection passed **197 tests, 5 deselected** (the five mounted
+MCP cases above); a separate approval/payload selection passed **30**, and the
+local-provider selection passed **16**. These selections overlap and are not
+summed. Both parked-payload failures above remain outside that green selection.
+Whole-file formatter/lint debt and environment dependency warnings are recorded
+separately; changed lines introduce no static-check findings.
+
 ## Boundaries and order
 
 Burn down confirmed cancellation/read-path defects first, reconcile stale tests,

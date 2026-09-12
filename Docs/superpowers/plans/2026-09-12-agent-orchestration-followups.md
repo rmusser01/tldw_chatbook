@@ -35,7 +35,7 @@ Reason: restore the documented read-only interface; no new ownership, storage, p
 - Produces the same counts and snapshots without changing coordinator handles or retained owner membership.
 - Existing `live_snapshot`, cancellation, and lifecycle cleanup continue dropping settled owners. `_conversation_fleet_coordinator` continues pruning terminal handles at the next turn start.
 
-- [ ] Extend `test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor` to capture the real coordinator snapshot and retained owner list before reading the count while the child is live and after releasing its gate and joining it. Assert the count is respectively 1 and 0, and both snapshots remain unchanged. Core assertions:
+- [x] Extend `test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor` to capture the real coordinator snapshot and retained owner list before reading the count while the child is live and after releasing its gate and joining it. Assert the count is respectively 1 and 0, and both snapshots remain unchanged. Core assertions:
 
 ```python
 owners_before = bridge._retained_fleet_owners(session.id)
@@ -47,17 +47,17 @@ assert bridge._conversation_fleet_handles(session.id) == handles_before
 ```
 
   After the terminal read, call `live_snapshot` and assert the owner is released while the terminal handle remains until the next turn. Reuse real bridge/service/coordinator and the existing gated provider fake; do not mock the method under test.
-- [ ] Run that exact test before production changes. The intended failure is retained owners disappearing on the terminal busy-count read, not a provider/setup error.
-- [ ] Remove the `_prune_settled_fleet_survivors(conversation_id)` call from `fleet_snapshot` only. Keep the service lookup and survivor handle filtering unchanged. Update its and the cleanup helper's documentation to describe the current lifecycle. Remove the controller comment saying the navigation count prunes coordinator state.
-- [ ] Update `test_a_survivor_is_visible_and_stoppable_after_its_turn_returns` so its retained-owner cleanup assertion follows `live_snapshot`, the existing cleanup path. The read-only snapshot still returns an empty live fleet after settlement.
-- [ ] Run the existing targeted selection:
+- [x] Run that exact test before production changes. The intended failure is retained owners disappearing on the terminal busy-count read, not a provider/setup error.
+- [x] Remove the `_prune_settled_fleet_survivors(conversation_id)` call from `fleet_snapshot` only. Keep the service lookup and survivor handle filtering unchanged. Update its and the cleanup helper's documentation to describe the current lifecycle. Remove the controller comment saying the navigation count prunes coordinator state.
+- [x] Update `test_a_survivor_is_visible_and_stoppable_after_its_turn_returns` so its retained-owner cleanup assertion follows `live_snapshot`, the existing cleanup path. The read-only snapshot still returns an empty live fleet after settlement.
+- [x] Run the existing targeted selection:
 
 ```sh
 .superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python -m pytest Tests/Chat/test_console_agent_bridge.py -q -k 'busy_fleet_session_count or survivor or finished_childs_row or fleet_coordinator_factory'
 ```
 
-- [ ] Run changed-line Ruff/lint and formatting checks without reformatting pre-existing large-file debt; record exact commands, failures, and baseline comparisons. Run `git diff --check`.
-- [ ] Record implementation notes, red/green evidence, and any limitations. Commit only task-scoped files. Root arranges independent task review and whole-branch review, then sets Done via Backlog CLI once all criteria and checks are satisfied.
+- [x] Run changed-line Ruff/lint and formatting checks without reformatting pre-existing large-file debt; record exact commands, failures, and baseline comparisons. Run `git diff --check`.
+- [x] Record implementation notes, red/green evidence, and any limitations. Commit only task-scoped files. Root arranges independent task review and whole-branch review, then sets Done via Backlog CLI once all criteria and checks are satisfied.
 
 ### Task 2: Fence late approval arms and serialize final verdicts (TASK-13215)
 
@@ -104,6 +104,7 @@ with self.lock:
 **Files:**
 - Modify: `Tests/UI/test_console_dictionary_send_integration.py` (real durable-policy test setup).
 - Modify: `Tests/Chat/test_console_local_citation_boundary.py` (remove the one TASK-22720 xfail marker only).
+- Modify: `Tests/UI/test_console_mcp_approval.py` (one assertion from Task 2's approved review).
 - Update: the three existing task files for TASK-2155, TASK-22720 (now named `Agent-bridge-placeholder-replacement-test-trips-the-unresolved-recovery-guard`), and TASK-19642.8.3.
 
 **Spec:** The three task acceptance criteria. No production behavior changes.
@@ -134,6 +135,7 @@ await store.hydrate_session_library_policy(session.id)
   A small helper within this test module may share this setup. Do not import from the world-info test, which already imports this module. Keep production gateway/controller behavior intact; if another harness defect surfaces, identify its cause before fixing it and record the evidence.
 - [ ] Run the dictionary module before and after its harness edit. Extend the agent path with the same raw stored user-text assertion already present in the provider test, so fixing dispatch cannot accidentally endorse substituting persisted text.
 - [ ] Remove the `pytest.mark.xfail` attached to `test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair`. Run that exact test and nearby `citation_repair_agent` cases normally. The expected replacement content/status/visible-output assertions remain unchanged.
+- [ ] Address the approved Task 2 review's minor precision finding: in `test_revoked_arm_is_refused_before_configuration_read`, replace `assert all(not registry for registry in observed)` with `assert observed == []`. Run both parametrized cases. This pins the already-implemented early return before any configuration callback, not merely an empty registry inside it.
 - [ ] Reconcile TASK-19642.8.3 using the four exact nodes from root's passing baseline and inspect the assertions in the two wake modules. Same manual authority gates and frozen run budget still apply; automatic-chain budgets add restrictions under ADR-134. Correct the old headless test docstring only if necessary for accuracy; no production changes or new budget behavior.
 - [ ] Run the targeted dictionary module, the citation agent selection, and the four named wake nodes. Do not add the entire Chat/UI suites. Run changed-line lint/format checks and whitespace checks, recording any pre-existing debt precisely.
 - [ ] Update all three task implementation notes with current root causes, unchanged production contracts, verification commands/results, and ADR decisions. Do not mark Done until independent review. Commit the batch's scoped files and write `task-3-report.md` with exact evidence.
