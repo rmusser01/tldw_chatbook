@@ -39,6 +39,7 @@ _SYSTEM_SIDS = frozenset(
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
     }
 )
+_OWNER_RIGHTS_SID = "S-1-3-4"
 _READ_CONTROL = 0x20000
 _WRITE_DAC = 0x40000
 _DELETE = 0x10000
@@ -140,7 +141,11 @@ def _component(name: str) -> str:
 
 
 def _acl_mode(
-    aces: list[tuple[int, int, int, str]], current_sid: str, *, is_directory: bool
+    aces: list[tuple[int, int, int, str]],
+    current_sid: str,
+    *,
+    is_directory: bool,
+    owner_sid: str | None = None,
 ) -> int:
     """Conservatively project effective public grants; never assume deny order.
 
@@ -155,6 +160,12 @@ def _acl_mode(
     public_add = False
     public_destructive = False
     for kind, flags, mask, sid in aces:
+        # OWNER RIGHTS grants apply to this object's actual owner, not to all
+        # users. CPython mkdir(0700) emits OW rather than an explicit user SID.
+        # Resolve against the owner read from the same security descriptor; an
+        # unavailable/untrusted owner never becomes a trusted principal here.
+        if sid == _OWNER_RIGHTS_SID and owner_sid is not None:
+            sid = owner_sid
         if flags & 8:  # INHERIT_ONLY_ACE
             if (
                 is_directory
@@ -460,7 +471,9 @@ class _Native:
                 mask = struct.unpack("<I", C.string_at(ace.value + 4, 4))[0]
                 trustee = self.sid_string(ace.value + 8) if kind in {0, 1} else ""
                 aces.append((kind, flags, mask, trustee))
-            return uid, _acl_mode(aces, self.user_sid, is_directory=is_directory)
+            return uid, _acl_mode(
+                aces, self.user_sid, is_directory=is_directory, owner_sid=sid
+            )
         finally:
             self.kernel.LocalFree(descriptor)
 

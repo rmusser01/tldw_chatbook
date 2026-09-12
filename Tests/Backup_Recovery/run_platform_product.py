@@ -14,6 +14,7 @@ import stat
 import struct
 import subprocess  # nosec B404 - fixed local commands and arguments only
 import sys
+import tarfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -114,36 +115,102 @@ def _run_git(workspace: Path, *arguments: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
-    return completed.stdout.strip()
+    return completed.stdout.rstrip("\r\n")
 
 
-def _source_receipt(workspace: Path) -> dict[str, object]:
-    """Identify every tracked source file used to build the installed fixture."""
-    tracked = _run_git(
-        workspace,
-        "ls-files",
-        "--",
-        "tldw_chatbook",
-        "Tests/Backup_Recovery",
-        "Tests/ProductionApp",
-        "Tests/Utils/test_windows_files.py",
-        "Tests/network_guard.py",
-        ".github/workflows/test.yml",
-    ).splitlines()
+def _tracked_files(workspace: Path) -> tuple[str, ...]:
+    """Return exact tracked path names without Git's display quoting."""
+    return tuple(
+        relative
+        for relative in _run_git(workspace, "ls-files", "-z").split("\0")
+        if relative
+    )
+
+
+def _create_private_root(evidence_root: Path) -> Path:
+    """Create the test-only private root below a platform-trusted ancestor."""
+    if os.name != "nt":
+        private_root = evidence_root / "private"
+        private_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return private_root
+
+    from tldw_chatbook.Utils.windows_files import WindowsOS
+
+    windows = WindowsOS()
+    trusted_temp = Path.home() / "AppData" / "Local" / "Temp"
+    private_root = trusted_temp / f"tldw-backup-platform-{os.getpid()}"
+    windows.mkdir(private_root, 0o700)
+    info = windows.stat(private_root)
+    if info.st_uid != windows.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise OSError("windows_private_root_not_private")
+    return private_root
+
+
+def _copy_tracked_source(workspace: Path, private_root: Path) -> tuple[Path, str]:
+    """Copy exact tracked HEAD bytes into the private runtime without secrets."""
+    if _run_git(workspace, "status", "--porcelain=v1"):
+        raise RuntimeError("source_checkout_not_clean")
+    archive_path = private_root / "tracked-head.tar"
+    source_copy = private_root / "source"
+    if os.name == "nt":
+        from tldw_chatbook.Utils.windows_files import WindowsOS
+
+        WindowsOS().mkdir(source_copy, 0o700)
+    else:
+        source_copy.mkdir(mode=0o700)
+
+    executable = shutil.which("git")
+    if executable is None:
+        raise RuntimeError("Git is unavailable for tracked source copy")
+    subprocess.run(  # nosec B603 - fixed Git archive of the selected HEAD
+        [executable, "archive", "--format=tar", "-o", str(archive_path), "HEAD"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    tracked = set(_tracked_files(workspace))
+    with tarfile.open(archive_path, mode="r:") as archive:
+        members = archive.getmembers()
+        archived = {member.name.rstrip("/") for member in members if member.isfile()}
+        if archived != tracked or any(
+            not (member.isfile() or member.isdir()) for member in members
+        ):
+            raise RuntimeError("tracked_source_archive_mismatch")
+        archive.extractall(source_copy, filter="data")
+    copied = {
+        str(path.relative_to(source_copy)).replace("\\", "/")
+        for path in source_copy.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+    if copied != tracked:
+        raise RuntimeError("tracked_source_copy_mismatch")
+    return source_copy, _sha256(archive_path)
+
+
+def _source_receipt(
+    workspace: Path, source_copy: Path, archive_sha256: str
+) -> dict[str, object]:
+    """Identify and hash every tracked file in the private execution copy."""
+    tracked = _tracked_files(workspace)
     files = {}
     for relative in tracked:
-        candidate = workspace / relative
+        candidate = source_copy / relative
         if candidate.is_file() and not candidate.is_symlink():
             files[relative] = _sha256(candidate)
+    if len(files) != len(tracked):
+        raise RuntimeError("source_receipt_file_count_mismatch")
     package = importlib.metadata.distribution("tldw_chatbook")
     return {
-        "schema": 1,
+        "schema": 2,
         "git_head": _run_git(workspace, "rev-parse", "HEAD"),
         "git_status": _run_git(workspace, "status", "--porcelain=v1"),
         "distribution_version": package.version,
-        "loaded_package": str((workspace / "tldw_chatbook/__init__.py").resolve()),
+        "execution_source": "private_tracked_head_copy",
+        "source_archive_sha256": archive_sha256,
         "files": files,
     }
 
@@ -214,6 +281,7 @@ def _windows_ancestor_receipt(workspace: Path, private_root: Path) -> dict[str, 
         native.user_sid: "CURRENT_USER",
         "S-1-5-18": "LOCAL_SYSTEM",
         "S-1-5-32-544": "BUILTIN_ADMINISTRATORS",
+        "S-1-3-4": "OWNER_RIGHTS",
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464": (
             "TRUSTED_INSTALLER"
         ),
@@ -359,11 +427,22 @@ def _redact(text: str) -> str:
     )
 
 
-def _sanitize_file(source: Path, destination: Path) -> None:
+def _sanitize_file(
+    source: Path, destination: Path, *, private_root: Path | None = None
+) -> None:
     """Copy a UTF-8 evidence file while applying the fixed redaction policy."""
     destination.parent.mkdir(parents=True, exist_ok=True)
+    content = _redact(source.read_text(encoding="utf-8", errors="replace"))
+    if private_root is not None:
+        private_value = str(private_root)
+        for value in {
+            private_value,
+            private_value.replace("\\", "/"),
+            private_value.replace("/", "\\"),
+        }:
+            content = content.replace(value, "[PRIVATE_ROOT]")
     destination.write_text(
-        _redact(source.read_text(encoding="utf-8", errors="replace")),
+        content,
         encoding="utf-8",
     )
 
@@ -439,10 +518,10 @@ def _run_pytest_phase(
             output.write(f"\n{phase.upper()} PYTEST PHASE TIMED OUT\n")
             pytest_returncode = 124
 
-    _sanitize_file(raw_log, artifacts / raw_log.name)
+    _sanitize_file(raw_log, artifacts / raw_log.name, private_root=private_root)
     junit = {"collected": 0, "skipped": [], "failed": [], "parse_error": None}
     if raw_junit.is_file():
-        _sanitize_file(raw_junit, artifacts / raw_junit.name)
+        _sanitize_file(raw_junit, artifacts / raw_junit.name, private_root=private_root)
         try:
             junit.update(_junit_result(raw_junit))
         except (OSError, ET.ParseError) as error:
@@ -493,7 +572,11 @@ def _collect_safe_logs(private_root: Path, artifacts: Path) -> int:
             if source.is_symlink() or not source.is_file():
                 continue
             relative = source.relative_to(phase_root)
-            _sanitize_file(source, artifacts / "test-logs" / phase / relative)
+            _sanitize_file(
+                source,
+                artifacts / "test-logs" / phase / relative,
+                private_root=private_root,
+            )
             count += 1
     return count
 
@@ -511,12 +594,15 @@ def run(workspace: Path, evidence_root: Path) -> int:
     """Execute the finite qualification and retain safe failure evidence."""
     workspace = workspace.resolve()
     evidence_root = evidence_root.resolve()
-    private_root = evidence_root / "private"
     artifacts = evidence_root / "artifacts"
-    private_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     artifacts.mkdir(parents=True, exist_ok=True, mode=0o700)
+    private_root = _create_private_root(evidence_root)
+    source_copy, archive_sha256 = _copy_tracked_source(workspace, private_root)
 
-    _write_json(artifacts / "source-receipt.json", _source_receipt(workspace))
+    _write_json(
+        artifacts / "source-receipt.json",
+        _source_receipt(workspace, source_copy, archive_sha256),
+    )
     try:
         ancestor_receipt = _windows_ancestor_receipt(workspace, private_root)
     except Exception as error:  # noqa: BLE001 - preserve diagnostic failure
@@ -530,9 +616,9 @@ def run(workspace: Path, evidence_root: Path) -> int:
         }
     _write_json(artifacts / "windows-ancestor-security.json", ancestor_receipt)
     _write_json(artifacts / "native-identity.json", _native_identity(private_root))
-    environment = _private_environment(workspace, private_root)
+    environment = _private_environment(source_copy, private_root)
     native_phase = _run_pytest_phase(
-        workspace=workspace,
+        workspace=source_copy,
         private_root=private_root,
         artifacts=artifacts,
         environment=environment,
@@ -542,7 +628,7 @@ def run(workspace: Path, evidence_root: Path) -> int:
         timeout_seconds=10 * 60,
     )
     product_phase = _run_pytest_phase(
-        workspace=workspace,
+        workspace=source_copy,
         private_root=private_root,
         artifacts=artifacts,
         environment=environment,

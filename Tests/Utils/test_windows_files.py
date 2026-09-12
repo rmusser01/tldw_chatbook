@@ -214,7 +214,7 @@ def test_inherit_only_public_acl_hardened_before_ordinary_children(tmp_path):
         capture_output=True,
     )  # nosec B603 B607 -- synthetic private fixture
     assert win.stat(path).st_mode & 0o044
-    secure_private_directory(path)
+    secure_private_directory(path, create=False, application_owned=True)
     child = path / "ordinary-child"
     child.write_bytes(b"created without the facade")
     assert stat.S_IMODE(win.stat(child).st_mode) == 0o600
@@ -239,3 +239,62 @@ def test_directory_namespace_barriers_after_empty_create_rename_and_remove(tmp_p
         assert win.listdir(parent) == []
     finally:
         win.close(parent)
+
+
+@pytest.mark.parametrize("directory", [True, False])
+def test_owner_rights_resolves_only_to_measured_current_owner(directory):
+    expected = 0o700 if directory else 0o600
+    assert (
+        _acl_mode(
+            [(0, 3, 0x1F01FF, "S-1-3-4")], "me", is_directory=directory, owner_sid="me"
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize("owner", [None, "another-user"])
+def test_owner_rights_does_not_trust_an_unknown_or_different_owner(owner):
+    assert (
+        _acl_mode(
+            [(0, 3, 0x1F01FF, "S-1-3-4")], "me", is_directory=True, owner_sid=owner
+        )
+        & 0o066
+    )
+
+
+def test_owner_rights_does_not_mask_other_public_inheritance():
+    assert (
+        _acl_mode(
+            [(0, 3, 0x1F01FF, "S-1-3-4"), (0, 11, 0x1F01FF, "everyone")],
+            "me",
+            is_directory=True,
+            owner_sid="me",
+        )
+        & 0o044
+    )
+
+
+@native
+def test_stdlib_private_mkdir_and_ordinary_children_are_private(tmp_path):
+    import sqlite3
+
+    win = WindowsOS()
+    path = tmp_path / "stdlib-private"
+    # CPython's Windows mkdir(0700) uses a protected SYSTEM/Admin/OWNER RIGHTS
+    # DACL. Exercise that actual descriptor, not one created by our facade.
+    path.mkdir(mode=0o700)
+    info = win.stat(path)
+    assert info.st_uid == win.geteuid()
+    assert stat.S_IMODE(info.st_mode) == 0o700
+    ordinary = path / "ordinary.txt"
+    ordinary.write_text("private content", encoding="utf-8")
+    assert stat.S_IMODE(win.stat(ordinary).st_mode) == 0o600
+    database = path / "ordinary.db"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("CREATE TABLE synthetic (value TEXT)")
+        connection.execute("INSERT INTO synthetic VALUES (?)", ("private",))
+        connection.commit()
+        assert stat.S_IMODE(win.stat(database).st_mode) == 0o600
+    finally:
+        connection.close()
