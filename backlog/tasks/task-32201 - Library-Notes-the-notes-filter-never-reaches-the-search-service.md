@@ -1,7 +1,8 @@
 ---
 id: TASK-32201
 title: >-
-  Library Notes: the notes filter never reaches the search service
+  Library Notes: the notes filter never reached search_note_tree_placements
+  (the shared fake lacked the seam)
 status: Done
 assignee: []
 created_date: '2026-09-10 07:30'
@@ -52,7 +53,7 @@ Reproduction, exact assertion text per node:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Typing a filter value into `#library-notes-filter` and pressing Enter calls the notes scope service's `search_notes` and narrows the rendered rows to the matches (`test_library_note_keyboard_capability_matrix[filter-terminal_size0]` and `[filter-terminal_size1]` pass)
+- [x] #1 Typing a filter value into `#library-notes-filter` and pressing Enter calls the notes scope service's `search_note_tree_placements` (the folder tree pages placements; `search_notes` is only the shared fake's matching rule behind that seam) and narrows the rendered rows to the matches (`test_library_note_keyboard_capability_matrix[filter-terminal_size0]` and `[filter-terminal_size1]` pass)
 - [x] #2 A filter submitted on a wide Database Notes list settles into `_notes_state.filter` and `_notes_state.filter_records`, and survives the note editor Back round trip (`test_library_note_editor_back_restores_exact_wide_browse_context` passes)
 - [x] #3 Continue from the Library landing restores the Database Notes filter that was active before admission (`test_library_landing_continue_reapplies_database_notes_scope_after_admission` passes)
 <!-- AC:END -->
@@ -105,6 +106,10 @@ Sibling filter tests re-run green in the same pass
 Not changed, deliberately: `_run_library_notes_filter`'s `callable(...)` guard
 still returns silently when a service lacks the seam. In production the facade
 always has it; making that a hard failure is a separate call.
+
+Task-8 review (finding 6): the title and AC#1 were reworded to name the real
+seam before closing; the Description above is the filing-time premise, kept
+as history.
 
 Files: `Tests/UI/test_destination_shells.py`, `Tests/UI/test_library_shell.py`.
 <!-- SECTION:NOTES:END -->
