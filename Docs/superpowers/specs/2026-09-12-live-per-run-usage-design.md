@@ -85,6 +85,10 @@ live_usage_sink: Callable[[AgentLiveUsageEvent], None] | None = None
 
 The adapter uses one monotonic sequence allocator for its lifetime (or an equivalently bounded active-scope allocator), never an unpruned dictionary of finished run IDs. It assigns an increasing sequence per attributed run and emits `started` before consuming a model stream, `text` for each actual provider textual delta, `provider_usage` after normalizing observable usage snapshots, and `finished` from `finally`. Structured tool-call objects and locally synthesized fallback copy do not contribute bytes. Reasoning/thinking text received from the provider is output text and contributes when it is represented as a textual delta.
 
+### Gateway emission provenance
+
+The adapter may opt into an optional keyword-only `ConsoleProviderGateway.stream_chat` emission observer receiving the existing per-emission synthetic boolean immediately before each yield. Default callers receive exactly the same item types and behavior. The adapter retains one call-local scalar flag, consumes/resets it for every item before any early continue, and excludes only explicitly synthetic text from live byte counting. It does not infer origin from the string or add provider-specific branches. An observer failure is contained and cannot alter stream, transcript or accounting behavior; any diagnostic is fixed, content-free and bounded to one per stream call. This carries existing producer provenance through the boundary required by ADR-156; it creates no permission or configuration policy.
+
 ## Validation and arbitration
 
 Provider output counts are accepted only from recognized output/completion fields after the existing partial usage normalization, with `type(value) is int and value >= 0`. This deliberately rejects booleans, floats, numeric strings, negatives, missing fields, and aggregate-only totals. Zero is a valid provider observation; malformed later payloads cannot erase a valid provider value.
