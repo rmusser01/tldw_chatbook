@@ -214,7 +214,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 18
+    _CURRENT_SCHEMA_VERSION = 19
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -484,6 +484,7 @@ class AgentRunsDB(BaseDB):
                     tool_allowlist TEXT NOT NULL DEFAULT '[]',
                     model TEXT NOT NULL DEFAULT '',
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    max_wall_seconds REAL,
                     deleted INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -634,6 +635,16 @@ class AgentRunsDB(BaseDB):
                     "REFERENCES automatic_work_chains(id)"
                 )
             conn.executescript(AUTOMATIC_WORK_SCHEMA)
+            definition_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_definitions)"
+                ).fetchall()
+            }
+            if "max_wall_seconds" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN max_wall_seconds REAL"
+                )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -750,6 +761,7 @@ class AgentRunsDB(BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (16)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (17)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (18)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (19)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -1767,6 +1779,9 @@ class AgentRunsDB(BaseDB):
         errors = validate_agent_definition(defn)
         if errors:
             raise ValueError("; ".join(errors))
+        wall_cap = (
+            float(defn.max_wall_seconds) if defn.max_wall_seconds is not None else None
+        )
         definition_id = uuid.uuid4().hex
         now = _now_iso()
         try:
@@ -1774,8 +1789,9 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     """INSERT INTO agent_definitions
                        (id, name, description, instructions, tool_allowlist,
-                        model, enabled, deleted, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                        model, enabled, max_wall_seconds, deleted, created_at,
+                        updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
                     (
                         definition_id,
                         defn.name,
@@ -1784,6 +1800,7 @@ class AgentRunsDB(BaseDB):
                         json.dumps(list(defn.tool_allowlist)),
                         defn.model,
                         1 if defn.enabled else 0,
+                        wall_cap,
                         now,
                         now,
                     ),
@@ -1807,13 +1824,16 @@ class AgentRunsDB(BaseDB):
         errors = validate_agent_definition(defn)
         if errors:
             raise ValueError("; ".join(errors))
+        wall_cap = (
+            float(defn.max_wall_seconds) if defn.max_wall_seconds is not None else None
+        )
         try:
             with self.transaction() as conn:
                 cursor = conn.execute(
                     """UPDATE agent_definitions
                        SET name = ?, description = ?, instructions = ?,
                            tool_allowlist = ?, model = ?, enabled = ?,
-                           updated_at = ?
+                           max_wall_seconds = ?, updated_at = ?
                        WHERE id = ? AND deleted = 0""",
                     (
                         defn.name,
@@ -1822,6 +1842,7 @@ class AgentRunsDB(BaseDB):
                         json.dumps(list(defn.tool_allowlist)),
                         defn.model,
                         1 if defn.enabled else 0,
+                        wall_cap,
                         _now_iso(),
                         definition_id,
                     ),

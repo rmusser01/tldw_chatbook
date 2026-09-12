@@ -702,6 +702,7 @@ class AgentDefinition:
     tool_allowlist: tuple[str, ...] = ()
     model: str = ""
     enabled: bool = True
+    max_wall_seconds: float | None = None
 
 
 def validate_agent_definition(defn: AgentDefinition) -> list[str]:
@@ -729,23 +730,33 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
         errors.append(
             f"instructions exceed {AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS} chars"
         )
+    cap = defn.max_wall_seconds
+    if cap is not None:
+        valid_cap = isinstance(cap, (int, float)) and not isinstance(cap, bool)
+        if valid_cap:
+            try:
+                valid_cap = math.isfinite(cap) and cap > 0
+            except (OverflowError, TypeError, ValueError):
+                valid_cap = False
+        if not valid_cap:
+            errors.append("max_wall_seconds must be a finite positive number")
     return errors
 
 
 def definition_fingerprint(defn: AgentDefinition) -> str:
     """16-hex-char content hash of the fields that shape a child run.
 
-    Covers instructions/tool_allowlist/model ONLY — the audit identity of
-    what actually ran (spec §4). description/enabled are presentation.
+    Covers instructions, tool allow-list, model, and an optional wall cap —
+    the audit identity of what actually ran. Description/enabled are presentation.
     """
-    payload = json.dumps(
-        {
-            "instructions": defn.instructions,
-            "tool_allowlist": sorted(defn.tool_allowlist),
-            "model": defn.model,
-        },
-        sort_keys=True,
-    )
+    identity = {
+        "instructions": defn.instructions,
+        "tool_allowlist": sorted(defn.tool_allowlist),
+        "model": defn.model,
+    }
+    if defn.max_wall_seconds is not None:
+        identity["max_wall_seconds"] = float(defn.max_wall_seconds)
+    payload = json.dumps(identity, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -759,6 +770,7 @@ def definition_from_row(row: dict) -> AgentDefinition:
         tool_allowlist=tuple(row["tool_allowlist"]),
         model=row["model"],
         enabled=bool(row["enabled"]),
+        max_wall_seconds=row.get("max_wall_seconds"),
     )
 
 
