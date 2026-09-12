@@ -5,7 +5,7 @@ outside ``api_settings``, so provider-key iteration surfaces never see
 registry plumbing. This module owns load/validate/mutate helpers only:
 writes go through ``save_settings_to_cli_config`` (fed the mapping returned
 by :func:`build_entry_mutation`) and removals through
-``delete_settings_from_cli_config("custom_endpoints.<slug>", [...])`` --
+``delete_settings_from_cli_config("custom_endpoints", [slug])`` --
 both invoked by callers off-thread, never here.
 """
 
@@ -134,6 +134,28 @@ def split_custom_endpoint_id(provider: str | None) -> str | None:
     return None
 
 
+def _custom_endpoints_section(
+    app_config: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Return the ``custom_endpoints`` table from either config shape.
+
+    Raw CLI config carries the table at the top level; the app's normalized
+    ``load_settings()`` shape preserves it only nested under
+    ``COMPREHENSIVE_CONFIG_RAW`` (the same projection gap the gateway's
+    ``[caching]`` reader documents, PR #1239). A top-level table wins when
+    both are present.
+    """
+    top_level = app_config.get("custom_endpoints")
+    if isinstance(top_level, Mapping):
+        return top_level
+    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+    if isinstance(raw, Mapping):
+        nested = raw.get("custom_endpoints")
+        if isinstance(nested, Mapping):
+            return nested
+    return {}
+
+
 def load_custom_endpoints(
     app_config: Mapping[str, object],
 ) -> dict[str, CustomEndpointEntry]:
@@ -144,15 +166,16 @@ def load_custom_endpoints(
     entries are unaffected.
 
     Args:
-        app_config: The full CLI config mapping.
+        app_config: The full CLI config mapping — either the raw CLI shape
+            (``custom_endpoints`` at the top level) or the normalized
+            ``load_settings()`` shape (nested under
+            ``COMPREHENSIVE_CONFIG_RAW``).
 
     Returns:
         Valid :class:`CustomEndpointEntry` values keyed by slug; empty when
         the ``custom_endpoints`` table is absent or malformed.
     """
-    raw_section = app_config.get("custom_endpoints")
-    if not isinstance(raw_section, Mapping):
-        raw_section = {}
+    raw_section = _custom_endpoints_section(app_config)
     entries: dict[str, CustomEndpointEntry] = {}
     for slug, raw_entry in raw_section.items():
         if not isinstance(raw_entry, Mapping):
@@ -259,7 +282,7 @@ def build_entry_mutation(
     """Build the config mutation section for persisting ``entry``.
 
     Feed the result to ``save_settings_to_cli_config``; delete an entry with
-    ``delete_settings_from_cli_config("custom_endpoints.<slug>", ...)``.
+    ``delete_settings_from_cli_config("custom_endpoints", [slug])``.
 
     Args:
         entry: The entry to persist.

@@ -885,6 +885,27 @@ def validate_username(username: str, min_length: int = 3, max_length: int = 50) 
     return result
 
 
+def validate_env_var_reference(name: str) -> bool:
+    """Validate an environment-variable reference name (credential lookup key).
+
+    Covers user-entered ``api_key_env``-style references: a portable
+    environment-variable name (POSIX ``[A-Za-z_][A-Za-z0-9_]*``) of at most
+    128 characters. The value is only ever used as an ``os.environ`` lookup
+    key, so shape validation exists to catch typos and stray punctuation,
+    not to defuse an injection surface.
+
+    Args:
+        name: Candidate variable name (already stripped by the caller).
+
+    Returns:
+        ``True`` when ``name`` is a well-formed environment-variable name;
+        ``False`` otherwise (never raises).
+    """
+    if not name or len(name) > 128:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
+
+
 def validate_ip_address(ip: str) -> bool:
     """Validate IP address (IPv4 or IPv6)."""
     start_time = time.time()
