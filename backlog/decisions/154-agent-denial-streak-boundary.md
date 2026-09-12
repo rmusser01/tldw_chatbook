@@ -42,7 +42,7 @@ The denial streak remains ephemeral. New/manual/resumed runtime invocations star
 
 Targeted tests must cover legacy string/structured review compatibility, authoritative explicit versus unanswered denials, permission-Off versus no_callback with shared copy, approved execution failures, successful denial-looking output, default3/explicit0/invalid values, child budget/intersection propagation, call-id granularity, mixed/all-denied batches, both native and fence paths, continuation/restore/cancellation precedence, complete retained replies, no additional model call, actual Console System row/partial preservation/retry, real run-log identity/count, and sibling/supervisor isolation.
 
-Deterministic runtime tests do not alone establish Console or persistence behavior. Use the real controller/store, service/local JSONL and SQLite boundaries for those claims. No full sweep or live-provider validation is implied by this decision.
+Deterministic runtime tests do not alone establish Console or persistence behavior. Use the real controller/store, service/local segmented-log and SQLite boundaries for those claims. No full sweep or live-provider validation is implied by this decision.
 
 ## Links
 

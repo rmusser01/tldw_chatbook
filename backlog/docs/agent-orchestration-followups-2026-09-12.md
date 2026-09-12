@@ -11,10 +11,15 @@ supersedes its pending-integration and remaining-work labels.
 - **Done and independently reviewed:** TASK-13154.4 approval verification,
   TASK-18601 bounded segment-log paging, and TASK-31511 bounded reusable webhook
   delivery. Their task notes contain scoped test results and limitations.
-- **In progress:** TASK-18929 denial breaker; TASK-31210/31211 confirmed worktree
-  actions and prior-turn recovery; TASK-18923 live per-run usage; TASK-13154.5/.6/.7
-  Settings ownership/tool-filter feedback, starter presets and definition wall
-  caps; parent TASK-13154 reconciliation.
+- **Active implementation:** TASK-18929 denial breaker. Shared types and
+  authoritative approval metadata across builtin/local/MCP/virtual/raw providers
+  are independently reviewed (`49b5569676`, `762941cec0`, `e85c7d16c3`). The
+  configurable runtime counter is also reviewed (`a56f534fd4`); Console terminal messaging,
+  persistence and fleet-isolation evidence remain afterward.
+- **Next, with accepted plans:** TASK-31210/31211 confirmed worktree actions and
+  prior-turn recovery; TASK-18923 live per-run usage; TASK-13154.5/.6/.7 Settings
+  resource ownership/tool-filter feedback, starter presets and definition wall
+  caps; parent TASK-13154 reconciliation. Their implementation is not complete.
 - Three of the eight requested outcome areas are complete. The parent stays open
   until the remaining implementation and combined branch review finish. No new
   PR, push or merge has been performed for this continuation.
