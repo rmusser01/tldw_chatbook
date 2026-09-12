@@ -1281,18 +1281,7 @@ async def _show_production_approval_batch(
     calls: list[dict],
 ) -> ChatApprovalCard:
     """Render an approval batch through the mounted production Console."""
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        screen = app.screen
-        if (
-            isinstance(screen, ChatScreen)
-            and screen.is_mounted
-            and screen.query("#console-task-surface")
-        ):
-            break
-        await pilot.pause(0.05)
-    else:
-        raise AssertionError("Production Console did not finish mounting")
+    screen = await _wait_for_production_console_ready(app, pilot)
 
     screen.set_task_resume_state(
         TaskResumeState(
@@ -1313,6 +1302,33 @@ async def _show_production_approval_batch(
                 return card
         await pilot.pause(0.05)
     raise AssertionError("Production approval batch did not finish rendering")
+
+
+async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
+    """Wait through startup projections until the Console is the active screen."""
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if (
+            isinstance(screen, ChatScreen)
+            and screen.is_mounted
+            and screen.query("#console-task-surface")
+            and screen._console_visible_draft_session_id is not None
+            and screen._console_chat_controller is not None
+            and not screen._console_sync_in_progress
+            and not screen._console_sync_requested
+        ):
+            # Startup schedules a later resume-state projection. Let it run,
+            # then require the same ready Console to remain the active screen.
+            await pilot.pause(0.25)
+            if (
+                app.screen is screen
+                and not screen._console_sync_in_progress
+                and not screen._console_sync_requested
+            ):
+                return screen
+        await pilot.pause(0.05)
+    raise AssertionError("Production Console did not become ready")
 
 
 class _ControllerCardsHarness(ConsolidatedCSSApp):
@@ -1773,42 +1789,35 @@ def test_definitive_tool_terminal_falls_back_to_name_for_empty_call_id():
 @pytest.mark.asyncio
 async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
     """Finishing is status, not a pending decision or disabled focus target."""
-    app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(200, 40)) as pilot:
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                screen = app.screen
-                if isinstance(screen, ChatScreen) and screen.is_mounted:
-                    break
-                await pilot.pause(0.05)
-            else:
-                raise AssertionError("Production Console did not finish mounting")
+    app = _build_test_app(
+        configured_default="chat",
+        config_overrides={"splash_screen": {"enabled": False}},
+    )
+    async with app.run_test(size=(200, 40)) as pilot:
+        screen = await _wait_for_production_console_ready(app, pilot)
 
-            screen.set_task_resume_state(
-                TaskResumeState(
-                    pending_approval={
-                        "calls": _single_call(),
-                        "timeout_seconds": 0.0,
-                        "round_id": "round-finishing-focus",
-                        "phase": "finishing",
-                    }
-                )
+        screen.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "calls": _single_call(),
+                    "timeout_seconds": 0.0,
+                    "round_id": "round-finishing-focus",
+                    "phase": "finishing",
+                }
             )
-            await pilot.pause()
-            card = screen.query_one(ChatApprovalCard)
+        )
+        await pilot.pause()
+        card = screen.query_one(ChatApprovalCard)
 
-            assert card.display is True
-            assert screen._console_pending_approval_count() == 0
-            assert all(select.disabled for select in card.query(Select))
+        assert card.display is True
+        assert screen._console_pending_approval_count() == 0
+        assert all(select.disabled for select in card.query(Select))
 
-            card.focus_first_decision()
-            await pilot.pause()
+        card.focus_first_decision()
+        await pilot.pause()
 
-            assert card.can_focus is True
-            assert app.focused is card
+        assert card.can_focus is True
+        assert app.focused is card
 
 
 # ---------------------------------------------------------------------------
@@ -1839,36 +1848,29 @@ async def test_alt_a_focuses_the_pending_approval_decision_select():
     """With a batch pending, Alt+A lands focus on the row's decision
     Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
     contract)."""
-    app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(200, 40)) as pilot:
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                screen = app.screen
-                if isinstance(screen, ChatScreen) and screen.is_mounted:
-                    break
-                await pilot.pause(0.05)
-            else:
-                raise AssertionError("Production Console did not finish mounting")
+    app = _build_test_app(
+        configured_default="chat",
+        config_overrides={"splash_screen": {"enabled": False}},
+    )
+    async with app.run_test(size=(200, 40)) as pilot:
+        screen = await _wait_for_production_console_ready(app, pilot)
 
-            screen.set_task_resume_state(
-                TaskResumeState(
-                    pending_approval={
-                        "calls": _single_call(),
-                        "timeout_seconds": 45.0,
-                        "round_id": "round-alt-a-focus",
-                    }
-                )
+        screen.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "calls": _single_call(),
+                    "timeout_seconds": 45.0,
+                    "round_id": "round-alt-a-focus",
+                }
             )
-            await pilot.pause()
+        )
+        await pilot.pause()
 
-            await pilot.press("alt+a")
-            await pilot.pause()
+        await pilot.press("alt+a")
+        await pilot.pause()
 
-            assert isinstance(app.focused, Select)
-            assert "approval-row-decision" in app.focused.classes
+        assert isinstance(app.focused, Select)
+        assert "approval-row-decision" in app.focused.classes
 
 
 @pytest.mark.asyncio
@@ -1876,70 +1878,56 @@ async def test_alt_a_notifies_when_nothing_is_pending():
     """With nothing pending, Alt+A notifies rather than focusing anything --
     same fallback message as the inspector's Review approval button
     (`CONSOLE_INSPECTOR_NO_APPROVAL_REASON`)."""
-    app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(200, 40)) as pilot:
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                screen = app.screen
-                if isinstance(screen, ChatScreen) and screen.is_mounted:
-                    break
-                await pilot.pause(0.05)
-            else:
-                raise AssertionError("Production Console did not finish mounting")
+    app = _build_test_app(
+        configured_default="chat",
+        config_overrides={"splash_screen": {"enabled": False}},
+    )
+    async with app.run_test(size=(200, 40)) as pilot:
+        await _wait_for_production_console_ready(app, pilot)
 
-            notifications: list[tuple[str, str | None]] = []
-            app.notify = lambda message, **kwargs: notifications.append(
-                (str(message), kwargs.get("severity"))
-            )
+        notifications: list[tuple[str, str | None]] = []
+        app.notify = lambda message, **kwargs: notifications.append(
+            (str(message), kwargs.get("severity"))
+        )
 
-            await pilot.press("alt+a")
-            await pilot.pause()
+        await pilot.press("alt+a")
+        await pilot.pause()
 
-            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
+        assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") in notifications
 
 
 @pytest.mark.asyncio
 async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
     """AC#3: the route works at 80 columns with the inspector closed."""
-    app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(80, 24)) as pilot:
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                screen = app.screen
-                if isinstance(screen, ChatScreen) and screen.is_mounted:
-                    break
-                await pilot.pause(0.05)
-            else:
-                raise AssertionError("Production Console did not finish mounting")
+    app = _build_test_app(
+        configured_default="chat",
+        config_overrides={"splash_screen": {"enabled": False}},
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _wait_for_production_console_ready(app, pilot)
 
-            # TASK-24604's own docstring: the Inspect rail ships CLOSED.
-            # Same accessor `action_toggle_console_inspector_rail` itself
-            # checks -- a hidden ancestor doesn't necessarily flip a
-            # descendant's own `.display` attribute.
-            assert not screen._is_console_widget_displayed("console-right-rail")
+        # TASK-24604's own docstring: the Inspect rail ships CLOSED.
+        # Same accessor `action_toggle_console_inspector_rail` itself
+        # checks -- a hidden ancestor doesn't necessarily flip a
+        # descendant's own `.display` attribute.
+        assert not screen._is_console_widget_displayed("console-right-rail")
 
-            screen.set_task_resume_state(
-                TaskResumeState(
-                    pending_approval={
-                        "calls": _single_call(),
-                        "timeout_seconds": 45.0,
-                        "round_id": "round-alt-a-80col",
-                    }
-                )
+        screen.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "calls": _single_call(),
+                    "timeout_seconds": 45.0,
+                    "round_id": "round-alt-a-80col",
+                }
             )
-            await pilot.pause()
+        )
+        await pilot.pause()
 
-            await pilot.press("alt+a")
-            await pilot.pause()
+        await pilot.press("alt+a")
+        await pilot.pause()
 
-            assert isinstance(app.focused, Select)
-            assert "approval-row-decision" in app.focused.classes
+        assert isinstance(app.focused, Select)
+        assert "approval-row-decision" in app.focused.classes
 
 
 @pytest.mark.asyncio
@@ -1960,117 +1948,117 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     `#approval-batch-actions` bar sits close after the rows (region.y within
     a few rows of the last row's bottom), matching the audit-mode geometry
     tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
-    app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(200, 40)) as pilot:
-            card = await _show_production_approval_batch(app, pilot, _sample_calls())
+    app = _build_test_app(
+        configured_default="chat",
+        config_overrides={"splash_screen": {"enabled": False}},
+    )
+    async with app.run_test(size=(200, 40)) as pilot:
+        card = await _show_production_approval_batch(app, pilot, _sample_calls())
 
-            rows = list(card.query(".approval-row"))
-            assert len(rows) == 2
-            for row in rows:
-                header = row.query_one(".approval-row-header", Static)
-                args = row.query_one(".approval-row-args", Static)
-                select = row.query_one(".approval-row-decision", Select)
+        rows = list(card.query(".approval-row"))
+        assert len(rows) == 2
+        for row in rows:
+            header = row.query_one(".approval-row-header", Static)
+            args = row.query_one(".approval-row-args", Static)
+            select = row.query_one(".approval-row-decision", Select)
 
-                assert header.size.width > 0 and header.size.height > 0, (
-                    "approval row header collapsed to zero size under bundled CSS"
-                )
-                assert args.size.width > 0 and args.size.height > 0, (
-                    "approval row args summary collapsed to zero size under bundled CSS"
-                )
-                assert select.size.width > 0 and select.size.height > 0, (
-                    "approval row decision Select collapsed to zero size under bundled CSS"
-                )
-                # The decision Select must not claim the row's FULL width (the
-                # actual bug this CSS fixes) -- it gets a definite, bounded
-                # share instead.
-                assert select.size.width < row.size.width, (
-                    f"decision Select width {select.size.width} claimed the "
-                    f"entire row width {row.size.width} under bundled CSS"
-                )
-                # task-32278: 27 = the 19-cell longest label ("Always · these
-                # args") + 8 cells of Textual Select chrome. The closed Select
-                # does not ellipsize -- it WRAPS and grows -- so this number
-                # and `_DECISION_OPTIONS` move together.
-                assert select.size.width == 27, (
-                    f"decision Select width {select.size.width} != pinned 27"
-                )
-                # TASK-1846: the row is three stacked lines now -- header,
-                # arguments, then `.approval-row-controls` -- so neither text
-                # widget shares a line with a fixed-width control. The
-                # left-to-right ordering this used to assert (`args.x >=
-                # header.right`) no longer describes the layout, so the
-                # guarantee it was protecting -- nothing overlaps anything --
-                # is asserted directly instead.
-                assert select.region.right <= row.region.right
-                assert args.region.y >= header.region.bottom, (
-                    "the arguments did not drop below the header"
-                )
-                assert select.region.y >= args.region.bottom, (
-                    "the controls did not drop below the arguments"
-                )
-                # The whole point of the split: arguments get the row, not a
-                # leftover share of it after 54 cells of fixed-width controls.
-                assert args.region.width >= row.region.width - 2, (
-                    f"arguments got {args.region.width} of {row.region.width} "
-                    "cells -- the controls are still eating the row"
-                )
-                for a, b in ((header, args), (select, args), (header, select)):
-                    assert not (
-                        a.region.x < b.region.right
-                        and b.region.x < a.region.right
-                        and a.region.y < b.region.bottom
-                        and b.region.y < a.region.bottom
-                    ), f"{a.classes} overlaps {b.classes}: {a.region} vs {b.region}"
+            assert header.size.width > 0 and header.size.height > 0, (
+                "approval row header collapsed to zero size under bundled CSS"
+            )
+            assert args.size.width > 0 and args.size.height > 0, (
+                "approval row args summary collapsed to zero size under bundled CSS"
+            )
+            assert select.size.width > 0 and select.size.height > 0, (
+                "approval row decision Select collapsed to zero size under bundled CSS"
+            )
+            # The decision Select must not claim the row's FULL width (the
+            # actual bug this CSS fixes) -- it gets a definite, bounded
+            # share instead.
+            assert select.size.width < row.size.width, (
+                f"decision Select width {select.size.width} claimed the "
+                f"entire row width {row.size.width} under bundled CSS"
+            )
+            # task-32278: 27 = the 19-cell longest label ("Always · these
+            # args") + 8 cells of Textual Select chrome. The closed Select
+            # does not ellipsize -- it WRAPS and grows -- so this number
+            # and `_DECISION_OPTIONS` move together.
+            assert select.size.width == 27, (
+                f"decision Select width {select.size.width} != pinned 27"
+            )
+            # TASK-1846: the row is three stacked lines now -- header,
+            # arguments, then `.approval-row-controls` -- so neither text
+            # widget shares a line with a fixed-width control. The
+            # left-to-right ordering this used to assert (`args.x >=
+            # header.right`) no longer describes the layout, so the
+            # guarantee it was protecting -- nothing overlaps anything --
+            # is asserted directly instead.
+            assert select.region.right <= row.region.right
+            assert args.region.y >= header.region.bottom, (
+                "the arguments did not drop below the header"
+            )
+            assert select.region.y >= args.region.bottom, (
+                "the controls did not drop below the arguments"
+            )
+            # The whole point of the split: arguments get the row, not a
+            # leftover share of it after 54 cells of fixed-width controls.
+            assert args.region.width >= row.region.width - 2, (
+                f"arguments got {args.region.width} of {row.region.width} "
+                "cells -- the controls are still eating the row"
+            )
+            for a, b in ((header, args), (select, args), (header, select)):
+                assert not (
+                    a.region.x < b.region.right
+                    and b.region.x < a.region.right
+                    and a.region.y < b.region.bottom
+                    and b.region.y < a.region.bottom
+                ), f"{a.classes} overlaps {b.classes}: {a.region} vs {b.region}"
 
-                # T9: height bounds -- each row must stay compact (height: auto;
-                # min-height: 1) instead of ballooning to 1fr (which would balloon
-                # to fill the card height and push the actions bar far down).
-                # Empirically measured before this fix: rows ballooning to height 9-10.
-                # TASK-1846: 4 -> 6. The row gained a line when the
-                # arguments moved to their own, and a collapsed `xN` row may
-                # legitimately render several argument sets. A row that has
-                # lost `height: auto` balloons to 15, so this still catches it.
-                # task-32278: 6 -> 8. Every row gained the scope line under
-                # its controls, and the `config_changed` row in
-                # `_sample_calls` gained the reason line that used to be a
-                # header tooltip.
-                assert row.size.height <= 8, (
-                    f"approval row ballooned to height {row.size.height} under "
-                    "bundled CSS -- height: auto; min-height: 1; is not winning"
-                )
-
-            # T9: container height bound -- the Vertical wrapping all rows must
-            # also stay compact (height: auto; min-height: 0) instead of balloning
-            # to 1fr and claiming the full card height, which would push the
-            # #approval-batch-actions bar far down. Empirically measured before
-            # this fix: container ballooning to height 19, actions pushed to y=20.
-            batch_rows = card.query_one("#approval-batch-rows")
-            # task-32278: this was a per-row CONSTANT (3, then 6), which had
-            # to be re-bumped every time a row gained a line -- and each bump
-            # loosened it. Bounded by the rows' ACTUAL heights instead: the
-            # bug it guards is the container claiming space its rows do not
-            # need, which this states directly and needs no future bumping.
-            assert batch_rows.size.height <= sum(r.size.height for r in rows) + 2, (
-                f"approval-batch-rows container ballooned to height "
-                f"{batch_rows.size.height} over {len(rows)} rows totalling "
-                f"{sum(r.size.height for r in rows)} under bundled CSS "
-                "-- height: auto; min-height: 0; is not winning"
+            # T9: height bounds -- each row must stay compact (height: auto;
+            # min-height: 1) instead of ballooning to 1fr (which would balloon
+            # to fill the card height and push the actions bar far down).
+            # Empirically measured before this fix: rows ballooning to height 9-10.
+            # TASK-1846: 4 -> 6. The row gained a line when the
+            # arguments moved to their own, and a collapsed `xN` row may
+            # legitimately render several argument sets. A row that has
+            # lost `height: auto` balloons to 15, so this still catches it.
+            # task-32278: 6 -> 8. Every row gained the scope line under
+            # its controls, and the `config_changed` row in
+            # `_sample_calls` gained the reason line that used to be a
+            # header tooltip.
+            assert row.size.height <= 8, (
+                f"approval row ballooned to height {row.size.height} under "
+                "bundled CSS -- height: auto; min-height: 1; is not winning"
             )
 
-            # T9: action bar positioning -- must sit close after the rows,
-            # not far below due to container ballooning. Within a few rows'
-            # worth of lines from the last row's bottom edge.
-            batch_actions = card.query_one("#approval-batch-actions")
-            last_row = rows[-1]
-            max_y_gap = 3  # generous slack: a few rows worth of lines
-            assert batch_actions.region.y <= last_row.region.bottom + max_y_gap, (
-                f"approval-batch-actions bar at y={batch_actions.region.y} is too far "
-                f"below last row's bottom ({last_row.region.bottom}) -- should be "
-                f"within {max_y_gap} lines"
-            )
+        # T9: container height bound -- the Vertical wrapping all rows must
+        # also stay compact (height: auto; min-height: 0) instead of balloning
+        # to 1fr and claiming the full card height, which would push the
+        # #approval-batch-actions bar far down. Empirically measured before
+        # this fix: container ballooning to height 19, actions pushed to y=20.
+        batch_rows = card.query_one("#approval-batch-rows")
+        # task-32278: this was a per-row CONSTANT (3, then 6), which had
+        # to be re-bumped every time a row gained a line -- and each bump
+        # loosened it. Bounded by the rows' ACTUAL heights instead: the
+        # bug it guards is the container claiming space its rows do not
+        # need, which this states directly and needs no future bumping.
+        assert batch_rows.size.height <= sum(r.size.height for r in rows) + 2, (
+            f"approval-batch-rows container ballooned to height "
+            f"{batch_rows.size.height} over {len(rows)} rows totalling "
+            f"{sum(r.size.height for r in rows)} under bundled CSS "
+            "-- height: auto; min-height: 0; is not winning"
+        )
+
+        # T9: action bar positioning -- must sit close after the rows,
+        # not far below due to container ballooning. Within a few rows'
+        # worth of lines from the last row's bottom edge.
+        batch_actions = card.query_one("#approval-batch-actions")
+        last_row = rows[-1]
+        max_y_gap = 3  # generous slack: a few rows worth of lines
+        assert batch_actions.region.y <= last_row.region.bottom + max_y_gap, (
+            f"approval-batch-actions bar at y={batch_actions.region.y} is too far "
+            f"below last row's bottom ({last_row.region.bottom}) -- should be "
+            f"within {max_y_gap} lines"
+        )
 
 
 @pytest.mark.asyncio
@@ -2087,48 +2075,47 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
 
     The production Console is allowed to mount and settle before the pending
     approval state is delivered, matching the real worker-to-UI round trip."""
-    app = _build_test_app()
-    with patch(
-        "tldw_chatbook.app.get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(200, 40)) as pilot:
-            card = await _show_production_approval_batch(app, pilot, _single_call())
+    app = _build_test_app(
+        configured_default="chat",
+        config_overrides={"splash_screen": {"enabled": False}},
+    )
+    async with app.run_test(size=(200, 40)) as pilot:
+        card = await _show_production_approval_batch(app, pilot, _single_call())
 
-            rows = list(card.query(".approval-row"))
-            assert len(rows) == 1
-            row = rows[0]
-            select = row.query_one(".approval-row-decision", Select)
-            fast_approve = row.query_one(".approval-row-fast-approve", Button)
-            fast_deny = row.query_one(".approval-row-fast-deny", Button)
+        rows = list(card.query(".approval-row"))
+        assert len(rows) == 1
+        row = rows[0]
+        select = row.query_one(".approval-row-decision", Select)
+        fast_approve = row.query_one(".approval-row-fast-approve", Button)
+        fast_deny = row.query_one(".approval-row-fast-deny", Button)
 
-            for widget, label in (
-                (fast_approve, "fast-approve"),
-                (fast_deny, "fast-deny"),
-            ):
-                assert widget.size.width > 0 and widget.size.height > 0, (
-                    f"approval row {label} button collapsed to zero size under "
-                    "bundled CSS"
-                )
-                assert widget.size.width == 14, (
-                    f"{label} button width {widget.size.width} != pinned 14"
-                )
-
-            # Left-to-right order, no overlap: Select, then fast-approve, then
-            # fast-deny, each starting no earlier than the previous widget's
-            # right edge, and both fast buttons stay inside the row.
-            assert fast_approve.region.x >= select.region.right
-            assert fast_deny.region.x >= fast_approve.region.right
-            assert fast_approve.region.right <= row.region.right
-            assert fast_deny.region.right <= row.region.right
-
-            # Compact row (same discipline as the sibling test). TASK-1846
-            # made it two lines -- headline + full-width arguments -- so the
-            # bound moves 4 -> 6; task-32278's scope line makes it 7. A row
-            # that lost `height: auto` is 15.
-            assert row.size.height <= 7, (
-                f"single-row approval row ballooned to height {row.size.height} "
-                "under bundled CSS"
+        for widget, label in (
+            (fast_approve, "fast-approve"),
+            (fast_deny, "fast-deny"),
+        ):
+            assert widget.size.width > 0 and widget.size.height > 0, (
+                f"approval row {label} button collapsed to zero size under bundled CSS"
             )
+            assert widget.size.width == 14, (
+                f"{label} button width {widget.size.width} != pinned 14"
+            )
+
+        # Left-to-right order, no overlap: Select, then fast-approve, then
+        # fast-deny, each starting no earlier than the previous widget's
+        # right edge, and both fast buttons stay inside the row.
+        assert fast_approve.region.x >= select.region.right
+        assert fast_deny.region.x >= fast_approve.region.right
+        assert fast_approve.region.right <= row.region.right
+        assert fast_deny.region.right <= row.region.right
+
+        # Compact row (same discipline as the sibling test). TASK-1846
+        # made it two lines -- headline + full-width arguments -- so the
+        # bound moves 4 -> 6; task-32278's scope line makes it 7. A row
+        # that lost `height: auto` is 15.
+        assert row.size.height <= 7, (
+            f"single-row approval row ballooned to height {row.size.height} "
+            "under bundled CSS"
+        )
 
 
 def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
