@@ -24,6 +24,8 @@ Files: Agents/agent_models.py; DB/AgentRuns_DB.py; new DB/migrations/agent_runs_
 
 Add appended optional max_wall_seconds with None default; shared validation rejects bool/invalid/nonfinite/nonpositive values. definition_from_row tolerates missing optional key. Fingerprint conditionally adds normalized float only for present cap, proving pre-field byte compatibility for None. Fresh schema, guarded upgrade, version constant/table and parameterized create/update store nullable REAL. Existing SELECT * row conversion needs no special cast.
 
+Verification prerequisite: the schema18 baseline has one inherited failure in `test_runtime_tool_names`; its exact expected set omits the already-merged `report_to_supervisor` and `read_agent_messages` entries. Reconcile those two expectations without changing production catalog names or weakening exact-set coverage. Record the110-pass/1-fail baseline separately from feature RED/GREEN.
+
 Tests first: exact old fingerprint, valid fractional value, int/float fingerprint equivalence, invalid input no-write, file-backed v18->v19/reopen/idempotency and standalone SQL (using real preceding schema). Preserve existing definitions and all existing schema18 data; recovery ownership records are not implemented yet. Update current-version assertions in older migration tests, retaining their structural/data checks. Run only model + AgentRunsDB modules and formatter/linter on changed Python.
 
 ### Task 2: Frozen spawn restriction and retained continuation
