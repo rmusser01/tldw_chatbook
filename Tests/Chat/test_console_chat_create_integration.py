@@ -356,3 +356,33 @@ def test_execute_fork_read_failure_maps_to_execution_failed(
     assert not outcome["ok"]
     assert outcome["kind"] == "execution_failed"
     assert "db read exploded" in outcome["error"]
+
+
+@pytest.mark.asyncio
+async def test_chat_create_callbacks_reach_bridge_when_ui_sinks_wired(tmp_path):
+    """Live-UAT regression probe: with both UI sinks wired, the controller
+    must forward confirm+execute to the bridge (the closures -- and the
+    advertised schemas -- depend on them)."""
+    from Tests.Chat.test_console_skill_script_confirm import _bridged_controller
+
+    controller, captured = _bridged_controller(tmp_path)
+    assert controller.set_pending_chat_create is None
+    controller.set_pending_chat_create = lambda payload: None
+    controller.complete_agent_chat_create = lambda **kw: None
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True, result
+    assert captured[0]["request_chat_create_confirm"] is not None
+    assert captured[0]["execute_agent_chat_create"] is not None
+
+
+@pytest.mark.asyncio
+async def test_chat_create_callbacks_absent_without_ui_sinks(tmp_path):
+    from Tests.Chat.test_console_skill_script_confirm import _bridged_controller
+
+    controller, captured = _bridged_controller(tmp_path)
+    result = await controller.submit_draft("hi")
+    assert result.accepted is True, result
+    assert captured[0]["request_chat_create_confirm"] is None
+    assert captured[0]["execute_agent_chat_create"] is None

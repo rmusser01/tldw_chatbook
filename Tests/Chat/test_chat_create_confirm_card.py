@@ -308,3 +308,14 @@ def test_chat_screen_chat_create_decided_handler_tolerates_no_controller(
 
     event = ChatCreateConfirmCard.ChatCreateDecided(True, False, "round-7")
     screen.handle_console_chat_create_decided(event)  # must not raise
+
+
+def test_console_view_hooks_exposes_chat_create_sinks(mock_chat_host):
+    """Live-UAT regression probe: the hooks dict the runtime attaches must
+    carry both chat-create sinks (set_pending via the skill module's setter,
+    complete via the screen's completion method)."""
+    screen = ChatScreen(mock_chat_host)
+    hooks = screen.console_view_hooks()
+    assert "set_pending_chat_create" in hooks
+    assert "complete_agent_chat_create" in hooks
+    assert callable(hooks["complete_agent_chat_create"])

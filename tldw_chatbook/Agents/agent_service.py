@@ -7716,6 +7716,18 @@ class AgentService:
                 if self._post_tool_call is not None
                 else None
             ),
+            fork_chat=(
+                self._fork_chat_tool
+                if agent_kind == AGENT_KIND_PRIMARY
+                and self._fork_chat_tool is not None
+                else None
+            ),
+            new_chat=(
+                self._new_chat_tool
+                if agent_kind == AGENT_KIND_PRIMARY
+                and self._new_chat_tool is not None
+                else None
+            ),
             search_run_log=(
                 search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
             ),
