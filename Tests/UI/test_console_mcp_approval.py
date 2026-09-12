@@ -25,7 +25,7 @@ from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.app import ComposeResult
 from textual.widgets import Button, Select, Static, TextArea
 
@@ -1318,7 +1318,7 @@ async def _show_production_approval_batch(
 class _ControllerCardsHarness(ConsolidatedCSSApp):
     """Production task-card hierarchy with the real consolidated stylesheet."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self) -> None:
         super().__init__()
