@@ -11865,3 +11865,74 @@ async def test_custom_endpoint_llama_family_declared_key_flows_to_resolution() -
     assert resolved.ready is True
     assert resolved.execution_key == "llama_cpp"
     assert resolved.api_key == "llama-secret"
+
+
+# ADR-146 entry-URL authority: when a custom-ep provider resolves, the
+# entry's base_url wins over any session/selection-carried URL -- an edited
+# entry re-resolves on the next send, so a stale session-pinned URL must
+# never outrank it. Non-custom-ep providers keep selection.base_url
+# precedence exactly as before (covered by the endpoint-guard suite above).
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_session_url() -> None:
+    """An edited openai_compatible entry re-resolves on send: the session's
+    stale pinned URL is not used."""
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "paid": {
+                    "display_name": "Paid",
+                    "family": "openai_compatible",
+                    "base_url": "https://new.example.com/v1",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:paid",
+            explicit_model="m",
+            base_url="https://old.example.com/v1",
+        )
+    )
+
+    assert resolved.ready is True
+    assert "new.example.com/v1" in resolved.base_url
+    assert "old.example.com" not in resolved.base_url
+
+
+@pytest.mark.asyncio
+async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url() -> None:
+    """An edited llama_cpp entry re-resolves on send: the session's stale
+    pinned URL is not used."""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "server-model"}]})
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        config_provider=lambda: {
+            "custom_endpoints": {
+                "gpu": {
+                    "display_name": "GPU llama",
+                    "family": "llama_cpp",
+                    "base_url": "http://192.168.1.9:9090",
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="custom-ep:gpu",
+            explicit_model="m",
+            base_url="http://192.168.1.5:8080",
+        )
+    )
+
+    assert resolved.ready is True
+    assert resolved.execution_key == "llama_cpp"
+    assert resolved.base_url == "http://192.168.1.9:9090"
