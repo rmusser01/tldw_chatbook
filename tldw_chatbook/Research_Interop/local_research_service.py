@@ -1047,9 +1047,14 @@ class LocalResearchService:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         if self._uses_external_db:
             try:
-                return self._as_local_run(self.db.get_run(run_id))
+                record = self.db.get_run(run_id)
             except KeyError:
                 return None
+            # TASK-18811: the injected db's documented missing-run behavior
+            # is a None return (FakeExternalResearchDB and the server db
+            # alike); passing it to _as_local_run would raise dict(None)
+            # TypeError out of a lookup API promising dict-or-None.
+            return self._as_local_run(record) if record is not None else None
         row = self._fetch_one("research_runs", run_id)
         return self._normalize_run(row) if row else None
 
