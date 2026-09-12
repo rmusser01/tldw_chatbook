@@ -684,7 +684,9 @@ class _HooksApp:
 
 
 def _pre_tool_use_hook() -> dict:
-    return {"event": "PreToolUse", "command": ["/bin/true"]}
+    import sys
+
+    return {"event": "PreToolUse", "command": [sys.executable, "-c", "pass"]}
 
 
 def test_ensure_run_hooks_is_none_without_config_until_hooks_appear():
@@ -759,28 +761,66 @@ def test_ensure_run_hooks_builds_one_engine_when_hooks_are_configured():
 
 
 def test_the_engine_reads_the_app_config_live_on_every_fire():
-    """The engine's config provider reads the CURRENT app config.
+    """The same running guard sees hook removal on a settings reload."""
+    import sys
+    from tldw_chatbook.Agents.agent_models import ToolCall
 
-    Pinned by consequence on a public API: ``wrap_review`` wraps only
-    while a PreToolUse hook is configured, and it consults the config
-    provider at wrap time -- so a config reloaded mid-session must flip
-    the answer on the SAME engine instance. A RunHooksConfig snapshot
-    taken at construction would keep the stale answer until a restart.
-    """
-    app = _HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    app = _HooksApp({"hook": [{
+        "event": "PreToolUse", "command": [sys.executable, "-c", "raise SystemExit(2)"],
+    }]})
     runtime = ConsoleRuntime(app=app)
     engine = runtime.ensure_run_hooks()
     assert engine is not None
+    wrapped = engine.wrap_review(lambda calls, run_id: {}, session_id="s")
+    call = ToolCall("calculator", {}, "c1")
+    assert wrapped([call], "run")["c1"].startswith("hook: ")
+    app.app_config = {}
+    assert wrapped([call], "run") == {}
+    engine.close()
 
-    def _inner(calls, run_id):
-        return {}
 
-    assert engine.wrap_review(_inner, session_id="s") is not _inner, (
-        "a configured PreToolUse hook did not wrap the review chain"
-    )
+def test_concurrent_first_hook_access_shares_one_engine(monkeypatch):
+    """Worker and event-loop startup must not publish two executor owners."""
+    from concurrent.futures import ThreadPoolExecutor
+    from tldw_chatbook.Agents import run_hooks
 
-    app.app_config = {}  # settings reloaded with [hooks] removed
-    assert engine.wrap_review(_inner, session_id="s") is _inner, (
-        "the engine kept consulting the config it was BUILT with instead "
-        "of the app's current config -- hook removals would need a restart"
-    )
+    real_engine = run_hooks.RunHooksEngine
+    entered = threading.Event()
+    release = threading.Event()
+    engines = []
+
+    def slow_constructor(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        engine = real_engine(*args, **kwargs)
+        engines.append(engine)
+        return engine
+
+    monkeypatch.setattr(run_hooks, "RunHooksEngine", slow_constructor)
+    runtime = ConsoleRuntime(app=_HooksApp({"hook": [_pre_tool_use_hook()]}))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(runtime.ensure_run_hooks)
+        assert entered.wait(3)
+        second_started = threading.Event()
+
+        def second_access():
+            second_started.set()
+            return runtime.ensure_run_hooks()
+
+        second = pool.submit(second_access)
+        assert second_started.wait(3)
+        release.set()
+        assert first.result() is second.result()
+
+
+@pytest.mark.asyncio
+async def test_dispose_closes_previously_built_hooks():
+    """An existing engine must stop accepting commands when its app exits."""
+    runtime = ConsoleRuntime(app=_HooksApp({"hook": [_pre_tool_use_hook()]}))
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None
+    assert not (await engine.fire_async("PreToolUse", session_id="s")).blocked
+    await runtime.dispose()
+    assert runtime.ensure_run_hooks() is None
+    # Existing per-run closures can retain the engine after runtime disposal.
+    assert (await engine.fire_async("PreToolUse", session_id="s")).blocked

@@ -1020,6 +1020,7 @@ class ConsoleRuntime:
         #: per-call `None` answer that `ensure_run_hooks` re-decides
         #: while unconfigured (Ruling R17), hence the sentinel.
         self._run_hooks_engine: Any = _UNSET
+        self._run_hooks_lock = Lock()
         #: The view (a `ChatScreen`) currently attached, or `None` while the
         #: runtime is VIEWLESS -- which is now a real, supported state, not
         #: a transient. Written only by `attach_view`/`detach_view`.
@@ -3544,46 +3545,47 @@ class ConsoleRuntime:
             The runtime's `RunHooksEngine`, or `None` when no ``[hooks]``
             are configured (re-checked on the next call).
         """
-        if self._run_hooks_engine is not _UNSET:
-            return self._run_hooks_engine
-        if self._disposed:
-            # Same contract as every ensure_* here: dispose latches and
-            # builds nothing new. `None` (not the sentinel) so a quit-time
-            # caller still gets a fire-site-skippable answer.
+        with self._run_hooks_lock:
+            if self._disposed:
+                # Same contract as every ensure_* here: dispose latches and
+                # builds nothing new. `None` (not the sentinel) so a quit-time
+                # caller still gets a fire-site-skippable answer.
+                return None
+            if self._run_hooks_engine is not _UNSET:
+                return self._run_hooks_engine
+            from tldw_chatbook.Agents.run_hooks import RunHooksEngine, load_hooks_config
+
+            def current_app_config() -> Any:
+                # Fetched per call, never captured: the app reassigns
+                # `app_config` when settings reload, and the engine must see
+                # the new mapping on its next fire.
+                return getattr(self._app, "app_config", None) or {}
+
+            def config_provider():
+                return load_hooks_config(current_app_config())
+
+            def cwd_provider() -> str:
+                # Mirrors the send path's `[console] workspace_root` reading
+                # (empty = app cwd): the confinement-root concept local tools
+                # already use, not a new one. Session/workspace binding roots
+                # are resolved per turn by the send path, which is the only
+                # place a session id exists to resolve them with -- and fire
+                # sites pass theirs through the engine's per-fire `cwd`
+                # override (Ruling R18) when they have one.
+                console = current_app_config().get("console")
+                root = (
+                    str(console.get("workspace_root", "") or "").strip()
+                    if isinstance(console, dict)
+                    else ""
+                )
+                return root or os.getcwd()
+
+            if load_hooks_config(current_app_config()).hooks:
+                self._run_hooks_engine = RunHooksEngine(config_provider, cwd_provider)
+                return self._run_hooks_engine
+            # Unconfigured stays _UNSET on purpose: `None` is a per-call
+            # answer, not a stored one, so the next call re-decides (R17).
             return None
-        from tldw_chatbook.Agents.run_hooks import RunHooksEngine, load_hooks_config
-
-        def current_app_config() -> Any:
-            # Fetched per call, never captured: the app reassigns
-            # `app_config` when settings reload, and the engine must see
-            # the new mapping on its next fire.
-            return getattr(self._app, "app_config", None) or {}
-
-        def config_provider():
-            return load_hooks_config(current_app_config())
-
-        def cwd_provider() -> str:
-            # Mirrors the send path's `[console] workspace_root` reading
-            # (empty = app cwd): the confinement-root concept local tools
-            # already use, not a new one. Session/workspace binding roots
-            # are resolved per turn by the send path, which is the only
-            # place a session id exists to resolve them with -- and fire
-            # sites pass theirs through the engine's per-fire `cwd`
-            # override (Ruling R18) when they have one.
-            console = current_app_config().get("console")
-            root = (
-                str(console.get("workspace_root", "") or "").strip()
-                if isinstance(console, dict)
-                else ""
-            )
-            return root or os.getcwd()
-
-        if load_hooks_config(current_app_config()).hooks:
-            self._run_hooks_engine = RunHooksEngine(config_provider, cwd_provider)
-            return self._run_hooks_engine
-        # Unconfigured stays _UNSET on purpose: `None` is a per-call
-        # answer, not a stored one, so the next call re-decides (R17).
-        return None
 
     # -- the view seam -----------------------------------------------------
 
@@ -4229,6 +4231,10 @@ class ConsoleRuntime:
         with self._execution_capacity_lock:
             with self._canvas_native_lock:
                 self._disposed = True
+        with self._run_hooks_lock:
+            engine = self.run_hooks_engine
+            if engine is not None:
+                engine.close()
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         self._admission_fenced_sessions.update(session_ids)
@@ -4281,6 +4287,10 @@ class ConsoleRuntime:
             with self._canvas_native_lock:
                 self._disposed = True
                 self._canvas_native_view_binding = None
+        with self._run_hooks_lock:
+            engine = self.run_hooks_engine
+            if engine is not None:
+                engine.close()
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         for turn_id in tuple(self._turn_recoveries):

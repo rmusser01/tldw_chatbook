@@ -1926,6 +1926,7 @@ class AgentService:
         skill_file_bindings: SkillFileBindings | None = None,
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
+        guard_tool_calls: Callable[[list[ToolCall], str], dict[str, str]] | None = None,
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
@@ -2048,6 +2049,7 @@ class AgentService:
         # and this is where a run's identity reaches the review hook that
         # writes them.
         self.review_tool_calls = review_tool_calls
+        self.guard_tool_calls = guard_tool_calls
         #: TASK-26010: observational post-completion seam -- (call, result,
         #: duration_seconds, run_id) after EVERY tool call completes, whatever
         #: the outcome. Strictly observational: a raising hook costs nothing
@@ -7616,6 +7618,10 @@ class AgentService:
                 if self.review_tool_calls is not None
                 else None,
                 run_id,
+            ),
+            guard_tool_calls=(
+                (lambda calls: self.guard_tool_calls(calls, run_id))
+                if self.guard_tool_calls is not None else None
             ),
             is_tool_call_preauthorized=(
                 lambda call: self.registry.is_canvas_reversible_conversation_local_mutation(

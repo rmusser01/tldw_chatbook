@@ -1,5 +1,5 @@
 ---
-id: TASK-32479
+id: TASK-32506
 title: 'Preset fallback_models: user-configured fallback chains for routed sub-agents'
 status: To Do
 assignee: []
@@ -23,3 +23,7 @@ Follow-up to TASK-32477 (agent provider routing, ADR-147). Let an AgentDefinitio
 - [ ] #2 Fallback triggers only on retryable pre-tool-activity provider failures
 - [ ] #3 Budget/continuation/snapshot interactions specified and tested
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-32479 during PR #2645 rebase on 2026-09-12 because the older task on dev retains that ID. New ID checked across remote refs and registered worktrees.

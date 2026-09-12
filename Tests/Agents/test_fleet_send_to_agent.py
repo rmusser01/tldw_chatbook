@@ -1025,7 +1025,8 @@ def test_a_foreign_live_survivor_is_steerable(db):
 # -- SubagentStop at the settle seam (console run hooks Task 8) ---------------
 
 
-def test_subagent_stop_fires_on_child_settle(tmp_path):
+@pytest.mark.parametrize("notify_raises", [False, True])
+def test_subagent_stop_fires_on_child_settle(tmp_path, notify_raises):
     """A fleet child settling through a real bridge turn fires SubagentStop
     exactly once -- ``run_id`` naming the CHILD run, ``data`` carrying
     ``child_run_id`` and the child's terminal status -- and the wrapped
@@ -1051,6 +1052,11 @@ def test_subagent_stop_fires_on_child_settle(tmp_path):
 
         def notify(self, event, **kwargs):
             notifications.append((event, kwargs))
+            if notify_raises:
+                raise RuntimeError("observer failed")
+
+        def wrap_review(self, inner, **kwargs):
+            return inner
 
         def post_tool_dep(self, *, session_id):
             return lambda *args, **kwargs: None

@@ -440,6 +440,8 @@ class LoopDeps:
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Restriction-only guard runs before approval exemptions; exceptions deny.
+    guard_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
     # Optional owner-authenticated exception to the review batch. A True
     # result omits only that exact call from review and approval Trace rows;
     # exceptions fail closed by keeping the call on the ordinary review path.
@@ -2251,6 +2253,23 @@ def run_agent_loop(
                 else call
             )
 
+        guard_refusals: dict[str, str] = {}
+        if deps.guard_tool_calls is not None:
+            try:
+                guarded = deps.guard_tool_calls(review_calls)
+                for call in review_calls:
+                    verdict = _effective_review_verdict(call, guarded)
+                    if not isinstance(verdict, str):
+                        raise ValueError("invalid guard verdict")
+                    if verdict != "proceed":
+                        guard_refusals[call.call_id] = verdict
+            except Exception:  # noqa: BLE001 -- a broken restriction must deny
+                logger.warning("tool guard failed; refusing batch")
+                guard_refusals = {
+                    call.call_id: "hook: tool guard failed; failing closed"
+                    for call in review_calls
+                }
+
         preauthorized_call_ids: set[int] = set()
         if deps.is_tool_call_preauthorized is not None:
             for call in calls:
@@ -2265,13 +2284,14 @@ def run_agent_loop(
             review_call
             for call, review_call in zip(calls, review_calls)
             if id(call) not in preauthorized_call_ids
+            and review_call.call_id not in guard_refusals
         ]
 
         verdicts: dict[str, str] = {}
         review_hook_failed = False
         if deps.review_tool_calls is not None and review_required_calls:
             for call in calls:
-                if id(call) in preauthorized_call_ids:
+                if id(call) in preauthorized_call_ids or str(call_trace[id(call)]["correlation"]) in guard_refusals:
                     continue
                 trace_state = call_trace[id(call)]
                 proposal_step = trace_state["proposal"]
@@ -2305,7 +2325,7 @@ def run_agent_loop(
 
             if not (review_hook_failed and continuation_checkpoint is not None):
                 for call in calls:
-                    if id(call) in preauthorized_call_ids:
+                    if id(call) in preauthorized_call_ids or str(call_trace[id(call)]["correlation"]) in guard_refusals:
                         continue
                     trace_state = call_trace[id(call)]
                     proposal_step = trace_state["proposal"]
@@ -2336,6 +2356,8 @@ def run_agent_loop(
                         source_step_index=proposal_step.index,
                     )
                     trace_state["decision"] = decision_step
+
+        verdicts.update(guard_refusals)
 
         if review_hook_failed and continuation_checkpoint is not None:
             return continuation_error()
@@ -2931,6 +2953,7 @@ def run_agent_loop(
                 record_status = "ok" if result.ok else "error"
             else:
                 record_status = "refused"
+            full_content = content
             if continuation_checkpoint is not None:
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)

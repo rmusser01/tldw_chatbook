@@ -5,7 +5,7 @@ Date: 2026-09-11
 Related Task: [TASK-32477](../tasks/task-32477%20-%20Agent-provider-routing-preset-routing-gated-spawn-overrides.md)
 Related Spec: [Agent provider routing design](../../Docs/superpowers/specs/2026-09-11-agent-provider-routing-design.md)
 Amends: [ADR-146](146-console-custom-endpoint-registry.md) (registry entries gain an optional `params` table)
-Follow-up: TASK-32479 (preset `fallback_models` chains — deferred)
+Follow-up: TASK-32506 (preset `fallback_models` chains — deferred)
 
 ## Context
 
@@ -24,7 +24,7 @@ A Console agent run resolves one provider+model at send time and everything it s
 
 - **Named route registry** (a separate route entity presets reference) was rejected: it duplicates `api_settings`/registry knowledge and adds a config surface the scenario doesn't need.
 - **Policy-file rules engine** was rejected as speculative; the allowlist expresses the one rule users asked for and can grow into policy later.
-- **Preset `fallback_models` chains** (pi-subagents-style retryable-failure fallback, pre-tool-activity only) were deferred to TASK-32479, not rejected: the chain is user-authored so it does not violate the no-silent-fallback rule, but its interactions with budgeting, continuation, and admission are a design surface of their own.
+- **Preset `fallback_models` chains** (pi-subagents-style retryable-failure fallback, pre-tool-activity only) were deferred to TASK-32506, not rejected: the chain is user-authored so it does not violate the no-silent-fallback rule, but its interactions with budgeting, continuation, and admission are a design surface of their own.
 - **A thinking-level ceiling** (`subagent_max_thinking`, pi-subagents `maxThinking`) was rejected: params here are all user-authored, so there is little to guard against.
 - **Provider-scoped role override matrices** (pi-subagents `agentOverridesByProvider`) were rejected: preset + default layers express the same intent without a matrix.
 - **Inheriting parent params for same-provider children only** was rejected in favor of the uniform rule: a split rule is harder to reason about, and the runtime never delivered session params to runs anyway.

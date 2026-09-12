@@ -2138,3 +2138,20 @@ def test_mixed_native_refusals_stop_on_reader_boundary_without_another_model_cal
         for row in outcome.final_messages
         if row.get("role") == "tool"
     ] == ["call-1", "call-2", "call-3"]
+
+
+def test_continuation_post_tool_hook_receives_uncapped_dispatched_result():
+    """Continuation capture must retain the result before history truncation."""
+    call = ToolCall("calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}')
+    checkpoint = _checkpoint(_pending_call())
+    raw_result = "result" * 4000
+    fired = []
+    deps = _deps(
+        [_native_turn((call,), checkpoint), ModelTurn(text="done")],
+        order=[], persist=lambda event: None,
+        invoke=lambda c: ToolResult(ok=True, content=raw_result),
+    )
+    deps.post_tool_call = lambda *args: fired.append(args)
+    outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
+    assert fired, outcome.steps
+    assert fired == [("calculator", "call-1", {"expression": "2+2"}, raw_result, True)]

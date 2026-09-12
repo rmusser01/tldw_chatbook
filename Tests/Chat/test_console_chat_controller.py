@@ -11636,15 +11636,10 @@ class TestUserPromptSubmitHooks:
         assert result.should_clear_draft is False
         assert result.visible_copy == "Blocked by hook: after hours"
         messages = store.messages_for_session(store.active_session_id)
-        assert [message.role for message in messages] == [
-            ConsoleMessageRole.USER,
-            ConsoleMessageRole.SYSTEM,
-        ]
-        # The echoed row was failed by the refusal cleanup and left with no
-        # durable record (TASK-485): it never reached a provider.
-        assert messages[0].status == "failed"
-        assert messages[0].persisted_message_id is None
-        block_row = messages[1]
+        assert [message.role for message in messages] == [ConsoleMessageRole.SYSTEM]
+        # Releasing a preaccept preparation removes its optimistic echo.
+        assert not controller._prepared_send_continuations
+        block_row = messages[0]
         assert block_row.content == "Send blocked by hook: after hours"
         assert block_row.metadata is not None
         assert block_row.metadata.origin == MESSAGE_ORIGIN_HOOK
@@ -11667,15 +11662,14 @@ class TestUserPromptSubmitHooks:
 
         assert result.accepted is True
         messages = store.messages_for_session(store.active_session_id)
-        # The injected row lands AFTER the confirmed user echo and BEFORE
-        # the assistant row, as its own SYSTEM row -- never merged into the
-        # user's message.
+        # Durable owner publication hydrates both committed message owners
+        # before publishing the separate audit record.
         assert [message.role for message in messages] == [
             ConsoleMessageRole.USER,
-            ConsoleMessageRole.SYSTEM,
             ConsoleMessageRole.ASSISTANT,
+            ConsoleMessageRole.SYSTEM,
         ]
-        injected = messages[1]
+        injected = messages[2]
         assert injected.content == "hook-supplied ctx"
         assert injected.metadata is not None
         assert injected.metadata.origin == MESSAGE_ORIGIN_HOOK
@@ -11710,13 +11704,10 @@ class TestUserPromptSubmitHooks:
         assert result.should_clear_draft is False
         assert result.visible_copy == "Blocked by hook: blocked by hook"
         messages = store.messages_for_session(store.active_session_id)
-        assert [message.role for message in messages] == [
-            ConsoleMessageRole.USER,
-            ConsoleMessageRole.SYSTEM,
-        ]
-        assert messages[1].content == "Send blocked by hook: blocked by hook"
-        assert messages[1].metadata is not None
-        assert messages[1].metadata.origin == MESSAGE_ORIGIN_HOOK
+        assert [message.role for message in messages] == [ConsoleMessageRole.SYSTEM]
+        assert messages[0].content == "Send blocked by hook: blocked by hook"
+        assert messages[0].metadata is not None
+        assert messages[0].metadata.origin == MESSAGE_ORIGIN_HOOK
         assert gateway.messages_seen is None
 
     @pytest.mark.asyncio
@@ -11744,12 +11735,17 @@ class TestUserPromptSubmitHooks:
         session = store.ensure_session()
         wake = controller.fleet_wake
         token = console_fleet_wake.AgentWakeAuthorization(
-            wake, session.id, _key=console_fleet_wake._WAKE_AUTHORIZATION_KEY
+            wake, session.id, _key=console_fleet_wake._WAKE_AUTHORIZATION_KEY,
+            conversation_id="conv-1", owner_id=wake._owner_id,
         )
-        # The token is live only while a delivery is in flight; hold the
-        # coordinator in that state across the submit, as `_attempt` does.
-        wake._delivering = "conv-1"
-        wake._delivering_session = session.id
+        # Register the exact live owner. Durable budget admission is covered
+        # by the fleet-wake integration suite; this test isolates hook routing.
+        wake._active["conv-1"] = console_fleet_wake._WakeDelivery(session.id, token)
+        async def accept(authorization, session_id):
+            assert wake.authorizes(authorization, session_id)
+            authorization.acceptance_started = True
+            return True
+        wake.accept = accept
         try:
             result = await controller.submit_draft(
                 "Sub-agent finished its run.",
@@ -11758,8 +11754,7 @@ class TestUserPromptSubmitHooks:
                 wake_authorization=token,
             )
         finally:
-            wake._delivering = None
-            wake._delivering_session = None
+            wake._active.pop("conv-1", None)
 
         assert result.accepted is True
         # Task 8 (run hooks): the wake EXEMPTION is UserPromptSubmit-only.

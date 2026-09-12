@@ -3061,6 +3061,7 @@ class _DurablePostcommitContinuation:
     #: publish site passed a hard-coded None -- so no durable Console turn
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
+    hook_context: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3784,6 +3785,7 @@ class ConsoleChatController:
         self._pending_round_kinds: dict[str, dict[str, str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         self._ordinary_outcome_ids: dict[str, str] = {}
+        self._run_hooks_stop_pending: set[str] = set()
         self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
         #: F2b fix (Qodo wave): guards every mutation of `_pending_
         #: approvals`, `_parked_approval_payloads`, and `_pending_
@@ -9572,56 +9574,58 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
-        # Run hooks (spec 2026-09-11, Task 7): UserPromptSubmit fires for
-        # user-authored sends only -- a wake notice is machine text and
-        # never consults hooks (the same rule `_record_prompt_history`
-        # below documents). The fire sits BEFORE the acceptance boundary
-        # (`_notify_submission_accepted` next) deliberately: that call
-        # commits queue ownership and fires the screen's accepted hook,
-        # which CONSUMES the composer's inflight draft stash -- a refusal
-        # after it could not hand the blocked draft back (the Qodo finding
-        # 3 refusal contract), and the echoed USER row must still be
-        # optimistic/unpersisted here so the block's
-        # `mark_message_send_blocked` cleanup leaves no durable record of a
-        # never-sent message (TASK-485). `fire_async` always: this method
-        # runs on the event loop and a blocking subprocess would freeze the
-        # TUI. Fail-open: an engine-side crash already degrades to a
-        # no-opinion outcome, so only an explicit block refuses the send.
+        # This await remains before acceptance. A refusal or cancellation must
+        # release the exact optimistic echo and preparation, preserving custody.
         hook_context = ""
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
-            hooks_engine = self._run_hooks_engine()
-            if hooks_engine is not None:
-                outcome = await hooks_engine.fire_async(
-                    "UserPromptSubmit",
-                    session_id=session.id,
-                    data={"prompt": truncate_hook_text(clean_draft)},
-                )
-                if outcome.blocked:
-                    # Same refusal shape as the queued-cancellation block
-                    # above: fail the echoed row (skipped by the next
-                    # send's provider context), record the reason as its
-                    # own hook-origin SYSTEM row, keep the draft.
-                    if echoed_user is not None:
-                        self.store.mark_message_send_blocked(echoed_user.id)
-                    self._set_run_state(
-                        ConsoleRunState.blocked(
-                            f"Blocked by hook: {outcome.reason}"
-                        ),
+        if origin is ConsoleSubmissionOrigin.MANUAL:
+            try:
+                hooks_engine = self._run_hooks_engine()
+                outcome = (
+                    await hooks_engine.fire_async(
+                        "UserPromptSubmit",
                         session_id=session.id,
+                        data={"prompt": truncate_hook_text(clean_draft)},
                     )
-                    self.store.append_message(
-                        session.id,
-                        role=ConsoleMessageRole.SYSTEM,
-                        content=f"Send blocked by hook: {outcome.reason}",
-                        persist=self.store.persistence is not None,
-                        metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
-                    )
-                    return ConsoleSubmitResult(
-                        accepted=False,
-                        should_clear_draft=False,
-                        visible_copy=f"Blocked by hook: {outcome.reason}",
-                    )
-                hook_context = outcome.context
+                    if hooks_engine is not None else None
+                )
+            except BaseException:
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                self._set_run_state(
+                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."),
+                    session_id=session.id,
+                )
+                raise
+            if outcome is not None and outcome.blocked:
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
+                self._set_run_state(
+                    ConsoleRunState.blocked(f"Blocked by hook: {outcome.reason}"),
+                    session_id=session.id,
+                )
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=f"Send blocked by hook: {outcome.reason}",
+                    persist=self.store.persistence is not None,
+                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                )
+                return ConsoleSubmitResult(
+                    False, False, f"Blocked by hook: {outcome.reason}",
+                    session_id=session.id, origin=origin, queue_entry_id=queue_entry_id,
+                )
+            hook_context = outcome.context if outcome is not None else ""
+        if hook_context:
+            # Freeze the model-visible half before either acceptance path seals
+            # its request. The SYSTEM audit row is excluded from future history.
+            provider_messages = [
+                *provider_messages,
+                {"role": ConsoleMessageRole.USER.value, "content": hook_context},
+            ]
         if preparation is not None:
             current_preparation = self._preparation_by_id(preparation.preparation_id)
             if current_preparation is None or (
@@ -9665,6 +9669,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 committed_context_epoch=committed_context_epoch,
                 custody_acceptance_hook=custody_acceptance_hook,
+                hook_context=hook_context,
             )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
@@ -9736,23 +9741,6 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
-                # R22 (fix round 1): the SYSTEM row is the AUDITABLE record
-                # only -- `_provider_messages_for_session` drops SYSTEM
-                # rows from every payload, and THIS turn's payload was
-                # assembled before the hook fired, so the model-visible
-                # half rides the wake notice's delivery shape instead: a
-                # PAYLOAD-ONLY trailing user-role entry, never written to
-                # the store and gone on the next history rebuild
-                # (turn-scoped, spec 2026-09-11 §5 -- see the fleet-wake
-                # delivery-path decision record cited above for why
-                # neither the system fold nor a turn bundle can carry it).
-                provider_messages = [
-                    *provider_messages,
-                    {
-                        "role": ConsoleMessageRole.USER.value,
-                        "content": hook_context,
-                    },
-                ]
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -10641,6 +10629,7 @@ class ConsoleChatController:
         queue_entry_id: str | None,
         committed_context_epoch: int,
         custody_acceptance_hook: Callable[[], None] | None,
+        hook_context: str = "",
     ) -> ConsoleSubmitResult:
         """Commit one durable owner, then enter its idempotent effect chain."""
 
@@ -10703,7 +10692,7 @@ class ConsoleChatController:
             resolved_destination=turn_context.resolved_destination,
             reconstructability=ConsoleDispatchReconstructability(
                 attachments_reconstructable=True,
-                evidence_reconstructable=not bool(
+                evidence_reconstructable=not hook_context and not bool(
                     prepared_continuation is not None
                     and (
                         prepared_continuation.staged_evidence_frozen
@@ -10750,6 +10739,9 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 preparation_id=preparation.preparation_id,
             )
+        # The durable turn now exists even if later publication needs recovery.
+        # Arm once here; replaying postcommit effects must not rearm a settled turn.
+        self._arm_run_hooks_stop(session.id)
         if custody_acceptance_hook is not None:
             custody_acceptance_hook()
         record_send_stage("durable_commit", "succeeded")
@@ -10804,6 +10796,7 @@ class ConsoleChatController:
                 ),
             ),
             terminal_citation_finalizer=terminal_citation_finalizer,
+            hook_context=hook_context,
         )
         with self.store.durable_preparation_lock:
             self.store.validate_durable_acceptance_fingerprint(fingerprint)
@@ -11003,6 +10996,20 @@ class ConsoleChatController:
                 ),
             )
             assistant_holder["assistant"] = assistant
+            if continuation.hook_context:
+                # Keep publication idempotent even when persistence fails after
+                # inserting the live row and this postcommit effect is retried.
+                audit_id = f"hook:{preparation_id}"
+                try:
+                    self.store.get_message(audit_id)
+                except KeyError:
+                    self.store.append_message(
+                        session_id, role=ConsoleMessageRole.SYSTEM,
+                        content=continuation.hook_context,
+                        metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                        message_id=audit_id,
+                    )
+                self.store.persist_message_if_needed(audit_id)
 
         def clear_staged_input() -> None:
             self._release_prepared_evidence(continuation.prepared)
@@ -15932,6 +15939,7 @@ class ConsoleChatController:
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
@@ -15954,6 +15962,7 @@ class ConsoleChatController:
             "timeout_seconds": timeout_seconds,
             "request_id": request_id,
             "session_id": owning_session_id,
+            "run_id": owning_run_id,
             "deadline_monotonic": deadline,
         }
         is_parked = session_id is not None and session_id != (
@@ -21280,6 +21289,7 @@ class ConsoleChatController:
             preparation_id=preparation_id,
             defer_queued_settlement=defer_queued_settlement,
         )
+        self._arm_run_hooks_stop(session_id)
         if preparation_id:
             self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
             self._ordinary_outcome_assistant_ids[session_id] = assistant_message_id
@@ -21334,6 +21344,54 @@ class ConsoleChatController:
             configuration=request.configuration,
             accepted_attachments=(),
             staged_evidence_launch=request.staged_evidence_launch,
+        )
+
+    def _notify_run_hook_approval(
+        self, kind: str, payload: dict[str, Any], state: dict[str, Any]
+    ) -> None:
+        """Publish one successfully admitted permission round, including headless runs."""
+        engine = self._run_hooks_engine()
+        if engine is None:
+            return
+        session_id = payload.get("session_id") or state.get("session_id")
+        if kind == "approval":
+            calls = [
+                {
+                    "name": row.get("llm_name") or row.get("tool_name") or "",
+                    "args_summary": truncate_hook_text(
+                        json.dumps(row.get("arguments") or {}, default=str)
+                    ),
+                }
+                for row in payload.get("calls", ())
+            ]
+        else:
+            arguments = (
+                {"url": payload.get("url", "")}
+                if kind == "skill_install"
+                else {
+                    key: payload[key]
+                    for key in ("skill_name", "script_path", "mechanism", "args")
+                    if key in payload
+                }
+            )
+            calls = [{
+                "name": "install_skill" if kind == "skill_install" else "run_skill_script",
+                "args_summary": truncate_hook_text(json.dumps(arguments, default=str)),
+            }]
+        engine.notify(
+            "ApprovalRequested", session_id=session_id,
+            run_id=payload.get("run_id") or state.get("run_id"),
+            data={
+                "calls": calls,
+                "session_active": bool(
+                    session_id == self.store.active_session_id
+                    and self._interrupt_host.view_visible is not False
+                    and (
+                        self.set_pending_decision is not None
+                        or self._interrupt_host._setter(kind) is not None
+                    )
+                ),
+            },
         )
 
     def _run_hooks_engine(self):
@@ -27154,6 +27212,10 @@ class ConsoleChatController:
                 )
         return stopped
 
+    def _arm_run_hooks_stop(self, session_id: str) -> None:
+        """Register one accepted turn for a single terminal hook notification."""
+        self._run_hooks_stop_pending.add(session_id)
+
     def _set_run_state(
         self, run_state: ConsoleRunState, *, session_id: str | None = None
     ) -> None:
@@ -27280,54 +27342,29 @@ class ConsoleChatController:
             wake = getattr(self, "_fleet_wake", None)
             if wake is not None:
                 wake.retry_soon()
-        # run-hooks (Task 8): Stop fires ONCE per run reaching a terminal
-        # outcome -- the same once-guard (previous status was NOT already
-        # terminal) and the same `terminal_notification_eligible` gate the
-        # toast branches just below use, but for the ACTIVE session's
-        # COMPLETED transitions too (those grow no toast by design -- the
-        # viewed transcript IS the signal -- yet Stop reports run
-        # outcomes, and spec §3 pins "active and non-active sessions").
-        # The eligibility gate is also what keeps queue-chained runs
-        # exactly-once: a chained entry's terminal stamp is suppressed
-        # here while its chain still owns the generation, and the
-        # chain-end publication (`_publish_queue_chain_terminal`) fires
-        # that transition's Stop instead -- the mutual exclusion the
-        # toast slots already rely on. STOPPED maps to the spec's
-        # "cancelled"; BLOCKED (a refused send, never a run) fires
-        # nothing. `run_id` is genuinely not in scope at this seam: the
-        # per-session run-state map carries no run identity and the plain
-        # streaming path has no run row at all.
+        # Hook lifecycle belongs to an accepted turn, independently of the
+        # queue's coalesced notification policy. Pop before invoking callbacks.
         if (
-            run_state.status
-            in {
-                ConsoleRunStatus.COMPLETED,
-                ConsoleRunStatus.FAILED,
+            target in self._run_hooks_stop_pending
+            and run_state.status in {
+                ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED,
                 ConsoleRunStatus.STOPPED,
             }
-            and previous_status
-            not in {
-                ConsoleRunStatus.BLOCKED,
-                ConsoleRunStatus.COMPLETED,
-                ConsoleRunStatus.FAILED,
-                ConsoleRunStatus.STOPPED,
-            }
-            and terminal_notification_eligible
         ):
-            _hooks_engine = self._run_hooks_engine()
-            if _hooks_engine is not None:
-                _hooks_engine.notify(
-                    "Stop",
-                    session_id=target,
-                    data={
-                        "status": (
-                            "error"
-                            if run_state.status is ConsoleRunStatus.FAILED
-                            else "cancelled"
-                            if run_state.status is ConsoleRunStatus.STOPPED
-                            else "completed"
-                        )
-                    },
-                )
+            self._run_hooks_stop_pending.discard(target)
+            try:
+                engine = self._run_hooks_engine()
+                if engine is not None:
+                    engine.notify(
+                        "Stop", session_id=target,
+                        data={"status": {
+                            ConsoleRunStatus.COMPLETED: "completed",
+                            ConsoleRunStatus.FAILED: "error",
+                            ConsoleRunStatus.STOPPED: "cancelled",
+                        }[run_state.status]},
+                    )
+            except Exception:  # noqa: BLE001 -- observers cannot break settlement
+                logger.warning("Stop observer failed; continuing terminal publication")
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible
@@ -27441,27 +27478,6 @@ class ConsoleChatController:
             return
         if not self.activity_for(session_id).terminal_notification_eligible:
             return
-        # run-hooks (Task 8): the queue-chain twin of `_set_run_state`'s
-        # Stop fire. A chained entry's terminal stamp was suppressed there
-        # by its chain's live generation (eligibility), so THIS deferred
-        # publication is where that transition's Stop fires -- same
-        # mutual exclusion the toast slots below already rely on, exactly
-        # one Stop per terminal transition across the two sites. Covers
-        # the active session's COMPLETED chain end too, for the same
-        # reason as `_set_run_state`'s fire.
-        _hooks_engine = self._run_hooks_engine()
-        if _hooks_engine is not None:
-            _hooks_engine.notify(
-                "Stop",
-                session_id=session_id,
-                data={
-                    "status": (
-                        "error"
-                        if status is ConsoleRunStatus.FAILED
-                        else "completed"
-                    )
-                },
-            )
         active_id = self.store.active_session_id or ""
         if (
             session_id != active_id or self._interrupt_host.view_visible is False

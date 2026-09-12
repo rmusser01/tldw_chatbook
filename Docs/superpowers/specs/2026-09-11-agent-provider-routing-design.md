@@ -60,7 +60,7 @@ ollama, or a `custom-ep:` registry entry from ADR-146 / PR #2617).
 - **Preset `fallback_models` chains** — user-configured ordered fallbacks for
   retryable pre-tool-activity provider failures (pi-subagents
   `fallbackModels` semantics). Valuable but a large surface (budgeting,
-  continuation, admission); deferred to follow-up TASK-32479.
+  continuation, admission); deferred to follow-up TASK-32506.
 - **A thinking-level ceiling** (`subagent_max_thinking`): weak need here —
   params are all user-authored, so there is little to guard against.
 - Provider-scoped role overrides (`agentOverridesByProvider`-style matrices):
@@ -384,7 +384,7 @@ gains an optional `params` section for the same known sampling keys.
 ## Rollout
 
 1. ADR-147 and Backlog TASK-32477 created and linked both ways; fallback
-   chains filed as follow-up TASK-32479.
+   chains filed as follow-up TASK-32506.
 2. Implement per this plan (pure resolver + params stack first, then DB
    migration, then spawn integration, then UI).
 3. Update `Docs/User_Guide/console/agent-runs-and-tools.md` with the new

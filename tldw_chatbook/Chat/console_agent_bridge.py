@@ -6373,6 +6373,13 @@ class ConsoleAgentBridge:
                     boundary_failed = True
                     break
 
+            if boundary_failed:
+                change_handle = None
+                successor_claim = None
+                logger.warning(
+                    "change_review: prior survivor close did not finish "
+                    "successfully; successor turn untracked"
+                )
         # run-hooks (Task 5): resolve the app-owned engine ONCE per turn (its
         # presence answer re-runs while unconfigured -- the runtime's R17
         # rule -- so a first-ever [hooks] entry takes effect on the next
@@ -6382,31 +6389,13 @@ class ConsoleAgentBridge:
         run_hooks_engine = (
             self._ensure_run_hooks() if self._ensure_run_hooks is not None else None
         )
-        # run-hooks (Task 6): layer the PreToolUse deny-only wrapper OUTSIDE
-        # this turn's whole review chain (the change-review baseline gate
-        # above, then the caller's permission-store round) -- spec §5: a
-        # hook deny short-circuits before the permission store, and a
-        # denied call never reaches the approval round. wrap_review consults
-        # config at wrap time and passes the callable through unchanged when
-        # no PreToolUse hooks exist, so wrapping per-turn keeps a live
-        # [hooks] edit effective on the next run (R17) while the
-        # unconfigured path stays byte-identical. Every run this service
-        # owns is covered: `_run_one` binds this same callable around both
-        # the primary run and each fleet child (with the FIRING run's id),
-        # so children's tool batches pass the hooks too. `None` review (a
-        # caller with no review chain) passes through unwrapped, exactly as
-        # before -- wrap_review has no None-inner contract.
-        if run_hooks_engine is not None and review_tool_calls is not None:
-            review_tool_calls = run_hooks_engine.wrap_review(
-                review_tool_calls, session_id=session_id
-            )
-            if boundary_failed:
-                change_handle = None
-                successor_claim = None
-                logger.warning(
-                    "change_review: prior survivor close did not finish "
-                    "successfully; successor turn untracked"
-                )
+        # A restriction-only guard sees every call, including Canvas tools
+        # that intentionally skip interactive approval. The permission chain
+        # remains independent and cannot override a hook refusal.
+        guard_tool_calls = (
+            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)
+            if run_hooks_engine is not None else None
+        )
         baseline_gate = change_reservation or change_handle
         before_tool_dispatch = None
         alias_by_root: dict[str, str] = {}
@@ -6486,12 +6475,15 @@ class ConsoleAgentBridge:
             )
 
         def on_child_settled(run_id: str | None, status: str) -> None:
-            engine = self._ensure_run_hooks() if self._ensure_run_hooks else None
-            if engine is not None:
-                engine.notify(
-                    "SubagentStop", session_id=session_id, run_id=run_id,
-                    data={"child_run_id": run_id, "status": status},
-                )
+            try:
+                engine = self._ensure_run_hooks() if self._ensure_run_hooks else None
+                if engine is not None:
+                    engine.notify(
+                        "SubagentStop", session_id=session_id, run_id=run_id,
+                        data={"child_run_id": run_id, "status": status},
+                    )
+            except Exception:  # noqa: BLE001 -- observation cannot prevent settlement
+                logger.warning("SubagentStop observer failed; continuing settlement")
             try:
                 if not service.live_subagent_handles():
                     with self._change_window_lock:
@@ -6560,6 +6552,7 @@ class ConsoleAgentBridge:
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
+            guard_tool_calls=guard_tool_calls,
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,

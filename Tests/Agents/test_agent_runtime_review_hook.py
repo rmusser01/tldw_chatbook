@@ -692,6 +692,16 @@ def test_agent_service_threads_post_tool_call_into_loop_deps(db):
     hook's run id, so the engine's PostToolUse envelope can attribute a
     fleet child's tool use to the child's own run.
     """
+    from tldw_chatbook.Agents.agent_service import FirstRequestSchemaPlan
+
+    class PermitCalculator:
+        def check(self, tool, run_id):
+            assert tool.name == "calculator"
+            assert run_id
+            return None
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider(gate=PermitCalculator()))
     fired = []
     chat = ScriptedChat(
         [
@@ -704,7 +714,7 @@ def test_agent_service_threads_post_tool_call_into_loop_deps(db):
     )
     service = AgentService(
         db=db,
-        registry=_registry(),
+        registry=registry,
         chat_call=chat,
         post_tool_call=lambda *payload: fired.append(payload),
     )
@@ -714,6 +724,15 @@ def test_agent_service_threads_post_tool_call_into_loop_deps(db):
         config=SVC_CFG,
         api_endpoint="openai",
         should_cancel=lambda: False,
+        # This test owns disclosure as well as permission: an unknown
+        # scripted model otherwise receives discovery-only schemas.
+        first_request_schema_plan=FirstRequestSchemaPlan(
+            active_schemas=(registry.load_schema("builtin:calculator"),),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt=SVC_CFG.system_prompt,
+        ),
     )
 
     assert outcome.status == RUN_DONE
@@ -723,5 +742,89 @@ def test_agent_service_threads_post_tool_call_into_loop_deps(db):
     assert call_id == "a"
     assert args == {"expression": "2+2"}
     assert ok is True
-    assert content  # the builtin's real result text (copy not pinned)
+    assert json.loads(content)["result"] == 4
     assert fired_run_id == run_id  # R20: the firing run's id, not None
+
+
+@pytest.mark.parametrize("preauthorized", [False, True])
+def test_deny_guard_covers_calls_without_permission_review(preauthorized):
+    """Restrictions run even for calls exempt from interactive approvals."""
+    call = ToolCall(name="calculator", args={}, call_id="c1")
+    invoked = []
+    reviewed = []
+    deps = make_deps(
+        [_native_turn([call]), ModelTurn(text="done")],
+        invoke=lambda c: invoked.append(c) or ToolResult(ok=True),
+        review=lambda calls: reviewed.extend(calls) or {},
+    )
+    deps.is_tool_call_preauthorized = lambda c: preauthorized
+    deps.guard_tool_calls = lambda calls: {calls[0].call_id: "hook: denied"}
+    result = run_agent_loop(CFG, [], [CALC], deps)
+    assert result.status == RUN_DONE
+    assert invoked == []
+    assert reviewed == []
+    assert any(s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)
+
+
+def test_deny_guard_failure_cannot_allow_tool_dispatch():
+    deps = make_deps([_native_turn([ToolCall("calculator", {}, "c1")]), ModelTurn(text="done")])
+    invoked = []
+    deps.invoke_tool = lambda c: invoked.append(c) or ToolResult(ok=True)
+
+    def failed_guard(calls):
+        raise RuntimeError("guard failed")
+
+    deps.guard_tool_calls = failed_guard
+    run_agent_loop(CFG, [], [CALC], deps)
+    assert invoked == []
+
+
+def test_guard_cannot_override_permission_denial():
+    invoked = []
+    deps = make_deps(
+        [_native_turn([ToolCall("calculator", {}, "c1")]), ModelTurn(text="done")],
+        invoke=lambda c: invoked.append(c) or ToolResult(ok=True),
+        review=lambda calls: {"c1": "permission denied"},
+    )
+    deps.guard_tool_calls = lambda calls: {"c1": "proceed"}
+    result = run_agent_loop(CFG, [], [CALC], deps)
+    assert invoked == []
+    assert any(s.result == "permission denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)
+
+
+def test_service_binds_deny_guard_to_firing_run(db):
+    guarded = []
+    chat = ScriptedChat([
+        {"content": None, "tool_calls": [native_call("calculator", {"expression": "2+2"}, "a")]},
+        "done",
+    ])
+
+    def guard(calls, run_id):
+        guarded.append(run_id)
+        return {calls[0].call_id: "hook: service denial"}
+
+    service = AgentService(db=db, registry=_registry(), chat_call=chat, guard_tool_calls=guard)
+    run_id, outcome = service.run_turn(
+        conversation_id="c", messages=[{"role": "user", "content": "go"}],
+        config=SVC_CFG, api_endpoint="openai", should_cancel=lambda: False,
+    )
+    assert guarded == [run_id]
+    assert any(s.result == "hook: service denial" for s in outcome.steps if s.kind == STEP_TOOL_RESULT)
+
+
+def test_guard_refusal_survives_permission_review_exception_for_sibling():
+    calls = [ToolCall("calculator", {"v": 1}, "a"), ToolCall("calculator", {"v": 2}, "b")]
+    invoked = []
+
+    def review(survivors):
+        assert [call.call_id for call in survivors] == ["b"]
+        raise RuntimeError("review unavailable")
+
+    deps = make_deps(
+        [_native_turn(calls), ModelTurn(text="done")], review=review,
+        invoke=lambda c: invoked.append(c.call_id) or ToolResult(ok=True),
+    )
+    deps.guard_tool_calls = lambda batch: {"a": "hook: denied"}
+    result = run_agent_loop(CFG, [], [CALC], deps)
+    assert "a" not in invoked
+    assert any(s.result == "hook: denied" for s in result.steps if s.kind == STEP_TOOL_RESULT)

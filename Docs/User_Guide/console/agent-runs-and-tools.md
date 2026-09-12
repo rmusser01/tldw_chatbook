@@ -409,7 +409,7 @@ disable that one hook with a logged warning — never a silent no-op. Hook
 config is re-validated from the app's loaded configuration on every fire:
 edits land when settings are reloaded/saved (F9 Settings) or the app
 restarts, and flipping `enabled = false` and reloading stops every hook on
-the next fire. Matching: `matcher` is a glob against the tool name
+the next fire. Non-boolean `enabled` values disable hooks. Matching: `matcher` is a glob against the tool name
 (`fs_*`, `mcp__github__*`); no matcher means the hook fires for every
 call. It is only valid on `PreToolUse` / `PostToolUse` — the other events
 have no tool name to match, and configuring one there is a validation
@@ -454,20 +454,28 @@ context itself, not a decision, so it is never treated as one.
   directly; no shell string is ever parsed, so the hook line itself has no
   injection surface.
 - **Per-hook timeout with process-group kill.** `timeout_s` (default 10 s)
-  bounds each hook; on timeout the hook *and any children it spawned* are
-  killed as one process group (`taskkill /T` on Windows), so a spawning
-  script cannot outlive its own deadline.
+  bounds each hook; on timeout its process group is killed (`taskkill /T`
+  on Windows). A descendant that deliberately detaches from that group may
+  survive, but cannot hold the hook worker open through inherited pipes.
 - **Truncated payloads.** Prompts, tool results, and hook
   stdout/stderr/reasons are all capped by one shared budget (4,000 chars)
   before the child process or the logs see them. Tool args are the
   exception: they pass through **verbatim** — they are the model's own
   tool-call JSON, and a guard hook needs the real body (an `fs_write`
   content check against a truncated argument string would check nothing).
-  Payloads carry session/run ids and tool facts only — never environment
-  variables, config values, or API keys.
+  Environment variables and configuration values are not explicitly added to
+  the JSON envelope. Prompt/tool content can contain private data; configured
+  commands run with your user privileges and inherited process environment.
 - **Every execution is logged.** Each firing records the event, session
-  and run ids, the hook's exit status, timing, and its captured
-  (truncated) stdout/stderr as structured log records.
+  and run ids, exit status, and timing in application logs. Non-blocking events
+  also log bounded stdout/stderr. Blocking output is disclosed through its
+  refusal or hook-origin context row. These application-log records are not
+  available through `search_run_log`.
+
+Notification admission is bounded to 64 events and 1 MiB of serialized payload
+per event. Excess or oversized notifications are dropped whole with a log entry;
+blocking guards always receive exact tool arguments. Runtime shutdown cancels
+pending hooks and terminates active hook processes.
 
 v1 limits, deliberate: hooks can deny but never rewrite tool inputs; there
 is no project-scoped hook file; and only the two blocking events can

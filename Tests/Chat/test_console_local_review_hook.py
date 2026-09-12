@@ -1724,11 +1724,19 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
+    dispatched = []
+
+    def execute(operation, arguments, *, intent):
+        dispatched.append(operation)
+        return "clean working tree"
+
     local = LocalToolProvider(
         workspace_root=tmp_path,
         specs=[
             spec
-            for spec in _default_specs(tmp_path)
+            for spec in _default_specs(
+                tmp_path, workspace_executor=SimpleNamespace(execute=execute)
+            )
             if spec.name in {"fs_read", "git_status"}
         ],
         resolve_state=lambda _hub: ASK,
@@ -1771,6 +1779,7 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
     }
     assert results["fs_read"].startswith("hook: ")
     assert "git_status" in results  # ran the normal chain and dispatched
+    assert dispatched == ["git_status"]
 
 
 # -- ApprovalRequested at the approval-round registration (run hooks Task 8) --

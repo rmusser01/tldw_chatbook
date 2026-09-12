@@ -44,9 +44,9 @@ v1 serves three purposes:
 | Event | Fires | Seam (existing code) | Blocking? |
 |---|---|---|---|
 | `UserPromptSubmit` | after submit gates, before turn compose; **manual-origin sends only** | controller submit path, beside the `prompt_history` slot write | yes (exit 2 rejects the send) |
-| `PreToolUse` | per tool-call batch, before permission review | wrapper around `build_tool_review_hook` verdict chain (`Chat/console_chat_controller.py`) | yes (exit 2 denies the batch) |
+| `PreToolUse` | per matching tool call, before permission exemptions and review | restriction-only `guard_tool_calls` runtime dependency | yes (exit 2 denies that call) |
 | `PostToolUse` | after dispatch, at the run-log capture point where the full result exists; **only for calls that actually dispatched** (verdict `proceed` — refusals fire nothing) | new optional `post_tool_call` dep on the runtime deps (same shape as `run_skill_script`), fired from `Agents/agent_runtime.py`'s dispatch loop; the step stream stays out of it — `AgentStep` results are capped to 2 000 chars and carry no args | no |
-| `ApprovalRequested` | when an approval round is armed | `set_pending_approval` / `park_pending_approval` bridge sites | no |
+| `ApprovalRequested` | when an approval round is armed | shared interrupt-host registration, including skill installation and scripts | no |
 | `Stop` | a session turn's run reaching terminal state | bridge run terminal-state path (active and non-active sessions) | no |
 | `SubagentStop` | a fleet child run settling | the `on_child_settled` wiring in `Chat/console_agent_bridge.py` | no |
 
@@ -61,7 +61,7 @@ run outcomes, not user input.
   validation, payload assembly, subprocess execution, redaction/truncation,
   logging. No UI imports; headless-testable.
 - **Process**: argv list, **no shell**. The engine offers two entries over one
-  implementation: `fire()` (synchronous `subprocess`, for thread contexts —
+  implementation: `fire()` (synchronous caller interface, for thread contexts —
   the run/review chain executes in threads) and `fire_async()`
   (`asyncio.to_thread` around `fire()`, for event-loop contexts).
   **`UserPromptSubmit` must use `fire_async()`**: `submit_draft` is `async`
@@ -69,17 +69,17 @@ run outcomes, not user input.
   deep inside submit_draft"), so a blocking subprocess there would freeze
   the TUI.
 - **Concurrency**: matching hooks for one firing run **concurrently** on a
-  bounded pool — worst-case wall time is the slowest hook, not the sum.
+  bounded four-worker pool. Up to four hooks overlap; larger sets run in waves.
   For blocking events the first deny wins and remaining results are
   discarded. Non-blocking events are scheduled on a single-worker executor
   and never delay the turn; a full queue drops the firing with a log line
   (hooks must not stall chat).
 - **Timeout kill**: per-hook `timeout_s`, default 10 s. Hooks are started
   with `start_new_session=True` and killed as a **process group**
-  (`os.killpg`) so the script's own children cannot survive the timeout;
-  Windows falls back to `taskkill /T`.
-- **cwd**: the session's workspace root when one is bound, else the app cwd
-  (mirrors `[console] workspace_root` fallback semantics).
+  (`os.killpg`); Windows falls back to `taskkill /T`. Descendants that deliberately
+  escape that process group are outside this cleanup guarantee.
+- **cwd**: the configured global `[console] workspace_root`, else the app cwd,
+  validated as an absolute existing directory (Ruling R30).
 - **stdin**: one JSON document — common envelope + event-specific `data`:
 
 ```json
@@ -102,23 +102,26 @@ Event-specific `data` fields:
 - `Stop`: `{"status": "completed|error|cancelled"}`
 - `SubagentStop`: `{"child_run_id": …, "status": …}`
 
-A single shared budget constant (default 4 000 chars) governs every truncation
-site: payload fields, hook stdout, and hook stderr.
+A shared budget constant (4 000 chars) governs prompt/result summaries and
+logged output. Tool arguments remain exact (Ruling R28). Notification payloads
+have a separate whole-event size/structure admission limit described in §13.
 
 `PreToolUse` matching is **per tool call**: the engine fans a review batch out
 per call whose name matches the hook's glob, runs each matching hook once per
 call, and merges results into the existing per-call verdict dict. Calls a hook
 does not match are untouched.
 - **stdout/stderr**: captured (truncated to the shared budget) and written to
-  the run log (`search_run_log` surfaces it).
+  application logs for non-blocking events. Blocking events log execution metadata;
+  injected context is recorded in the transcript. `search_run_log` does not expose
+  application logs.
 
 ## 5. Verdict semantics
 
 | Event | clean pass | explicit deny | anything else |
 |---|---|---|---|
 | `UserPromptSubmit` | exit 0, no JSON: stdout (≤ budget) is prepended as turn context | exit 2 or JSON `{"decision":"block"}`: send rejected; reason surfaced to the user as a refusal | other non-zero / crash / timeout: **warning logged, send proceeds** — a broken hook must not brick the composer |
-| `PreToolUse` | exit 0, no JSON: no opinion; normal permission flow continues | exit 2 or JSON `{"decision":"deny","reason":"…"}`: deny; reason becomes the tool result the model sees | **deny — fail-closed**, reason "hook `<name>` failed (exit/timeout)"; the failure is visible to model and run log, never silent |
-| all others | stdout logged to run log | n/a (no verdict semantics) | logged, ignored |
+| `PreToolUse` | exit 0, no JSON: no opinion; normal permission flow continues | exit 2 or JSON `{"decision":"deny","reason":"…"}`: deny; reason becomes the tool result the model sees | **deny — fail-closed**; the model receives the refusal and application logs record the execution failure |
+| all others | stdout logged to application logs | n/a (no verdict semantics) | logged, ignored |
 
 Precedence rules for blocking events: stdout that parses as a JSON object with
 a `decision` key wins over the exit code (exit 2 is shorthand for the event's
@@ -127,9 +130,9 @@ unparseable stdout with exit 0 is a clean pass with a warning;
 `{"decision":"allow"}` on `PreToolUse` is parsed, ignored, and logged — the
 deny-only stance is enforced in the engine, not by hook authors.
 
-Injected `UserPromptSubmit` context is model-visible text, so it is recorded
-in the run log as its own entry (source hook named) — auditable after the
-fact, never silently merged into the prompt.
+Injected `UserPromptSubmit` context is model-visible text. A hook-origin SYSTEM
+transcript row records the accepted aggregate context, including durable sends
+and recovery. It is not a separate `search_run_log` execution record.
 
 Matching: optional `matcher` is a glob against the tool name
 (`fs_*`, `mcp__github__*`). No matcher = fires for every call. `matcher` is
@@ -163,11 +166,11 @@ file's mtime changes (checked per fire, cached between), and the master
 
 - No secrets: payloads are built from session/run ids, tool names, args and
   results only — never env, config values, or API keys.
-- Tool args and results are truncated to the payload budget before the child
+- Tool results are truncated to the payload budget before the child
   sees them.
 - Hook processes inherit the user's privileges by design (that is what a hook
   is); the spec's mitigations are scope (user-config only), deny-only verdicts,
-  timeouts, and full logging of every execution to the run log.
+  timeouts, and execution metadata in application logs.
 
 ## 8. Wiring (what changes where)
 
@@ -218,7 +221,7 @@ Unit (`Tests/Agents/test_run_hooks.py`):
   precedence over exit code, stdout capture, timeout kill (process group —
   the stub spawns a surviving child that must die), truncation, redaction
 - deny-only enforcement (`allow` decision ignored)
-- concurrent hooks: first-deny-wins, wall time ≈ slowest hook
+- concurrent hooks: first-deny-wins, overlapping execution within worker capacity
 - executor drop semantics for non-blocking events
 - `fire_async` keeps a running event loop responsive while a hook sleeps
 
@@ -248,8 +251,8 @@ Recorded at implementation close-out (2026-09-12):
 
 - **Execution logging (Ruling R13).** The spec's §4 "written to the run
   log" phrasing is implemented as structured loguru records: every firing
-  logs the event, session/run ids, exit status, timing, and captured
-  (truncated) stdout/stderr at INFO. For events fired outside an active
+  logs the event, session/run ids, exit status, and timing; non-blocking
+  events additionally log bounded stdout/stderr at INFO. For events fired outside an active
   run this is the observability surface — there is no run-log row to
   write.
 - **`Stop` carries `run_id` null in v1 (Ruling R24).** The run-state seam
@@ -283,3 +286,26 @@ Recorded at implementation close-out (2026-09-12):
   global `[console] workspace_root`-or-app-cwd answer. The `cwd=`
   parameter remains a forward contract for the follow-up settings
   sub-screen PR (§11).
+
+
+## 13. PR #2645 review corrections
+
+ADR-148's review amendment supersedes older implementation-plan rulings where
+these conflict: restrictions use a dedicated `guard_tool_calls` runtime dep
+before approval exemptions; current durable sends retain accepted context;
+all shared interrupt kinds emit ApprovalRequested once at admission; each
+accepted queued turn emits Stop independently of ambient notifications.
+
+Output capture is bounded during reads and subprocess cleanup owns pipe closure
+and parent reaping. The engine seals admission and cancels pending work when its
+runtime is disposed. Non-blocking admission is limited to 64 events and 1 MiB
+serialized payload per event; oversized events are dropped whole. A preflight
+also caps traversal at 16,384 nodes and depth 64 before encoding, so large scalar
+values cannot allocate an unbounded JSON string before the byte limit is checked.
+Matching hooks
+use a dedicated pool so one firing's hooks can run concurrently without delaying
+blocking guards. Blocking guard arguments remain verbatim per R28.
+
+Malformed `enabled` values disable hooks. Working directories are validated as
+absolute existing directories before process launch; invalid paths follow the
+same fail-closed PreToolUse / fail-open prompt policy as launch failures.
