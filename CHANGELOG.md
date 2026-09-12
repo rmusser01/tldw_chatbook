@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Some kind of Versioning
     
+## [0.2.1] - 2026-09-12
+
+Includes the newer committed development changes from `dev` and supersedes
+the unpublished PyPI 0.2.0 release candidate.
+
+### Added
+- Console conversation archive recovery and retained local reasoning history.
+- Expanded Persona Buddy management and Petdex import support.
+- Custom endpoint registry, a chat tokenization sheet, and artifact web export.
+
+### Changed
+- Python 3.12 or newer is now required.
+- Library keeps its canvas resident while switching views, with revised media
+  and Notes layouts, navigation, import feedback, and recovery controls.
+
+### Fixed
+- Library Notes editing, file pickers, imports, backlinks, Trash, and setup
+  handoffs, plus media list sizing and selected-item export.
+- Local TTS lifecycle recovery, language routing, and provider defaults.
+- Console environment polling during teardown and shared search integration.
+- Console approval and agent orchestration handling, Linux voice playback,
+  MCP Hub controls, and speech settings.
+
 ## [0.2.0] - 2026-09-06
 
 First minor release cut from eight weeks of dev work since 0.1.8.x. Highlights:

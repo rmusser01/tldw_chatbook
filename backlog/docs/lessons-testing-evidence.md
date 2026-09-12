@@ -13257,6 +13257,22 @@ correcting the mock contract then made that assertion pass. Batch tests must
 assert the specific item's persisted outcome or write payload, not only an
 aggregate count that unrelated items can satisfy.
 
+
+## Render helpers must distinguish widget content, borders, and layout slots
+
+**Incident (TASK-32506, 2026-09-10).** Release verification found five Library
+assertion failures, all reproduced on pristine pre-release dev. The focus helper
+required underline on the newly added solid border; a width helper measured the
+32-cell canvas while its test expected the 36-cell padded pane; and a grid test
+treated the intentional two-cell danger-action margin as column drift.
+
+Inspect the exact geometry a helper measures before changing the application.
+Keep underline assertions on painted content, distinguish canvas and pane widths,
+and compare grid origins with independently pinned expected margins. Subtracting
+whatever margin is currently present would hide the accidental indentation the
+original regression was intended to catch. The repaired five cases and four
+shared focus-helper caller cases passed without changing application behavior.
+
 ### Rebased cold-session fixtures must cross activation boundaries (2026-09-10)
 
 PR #2504's final integration initially failed 31 closed-history cases before the
