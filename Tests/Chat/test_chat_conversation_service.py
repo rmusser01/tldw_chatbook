@@ -2003,3 +2003,51 @@ def test_copy_active_path_atomic_rollback(service_with_db, monkeypatch):
         service.copy_conversation_active_path(src, dst)
     monkeypatch.undo()
     assert db.get_messages_for_conversation(dst) == []  # nothing created
+
+
+def test_copy_active_path_skips_in_flight_placeholder(service_with_db):
+    """Live-UAT defect: the submit path echoes an EMPTY assistant row onto
+    the active path before the first token; the copy must skip it (the DB
+    refuses re-inserting contentless rows) instead of failing the fork."""
+    db, service = service_with_db  # adapt to the file's fixture names
+    src = service.create_conversation(title="Src")
+    user_msg = db.add_message(
+        {"conversation_id": src, "sender": "user", "content": "hello"}
+    )
+    placeholder = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "",
+            "metadata_json": '{"placeholder": true}',
+            "parent_message_id": user_msg,
+        }
+    )
+    db.set_conversation_active_leaf(src, str(placeholder))
+    dst = service.create_conversation(title="Dst")
+
+    outcome = service.copy_conversation_active_path(src, dst)
+
+    assert outcome["copied"] == 1
+    copied = db.get_messages_for_conversation(dst)
+    assert [m["content"] for m in copied] == ["hello"]
+    assert db.get_conversation_active_leaf(dst) == copied[0]["id"]
+
+
+def test_copy_active_path_all_placeholders_is_empty_history(service_with_db):
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    only = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "",
+            "metadata_json": '{"placeholder": true}',
+        }
+    )
+    db.set_conversation_active_leaf(src, str(only))
+    dst = service.create_conversation(title="Dst")
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="empty_history"):
+        service.copy_conversation_active_path(src, dst)

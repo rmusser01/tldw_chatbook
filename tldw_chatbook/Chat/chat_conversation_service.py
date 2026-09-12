@@ -1275,31 +1275,52 @@ class ChatConversationService:
         path.reverse()
 
         id_map: dict[str, str] = {}
+        copied = 0
+        last_new_id: str | None = None
         with self.db.transaction():
             for node in path:
+                content = node.get("content") or ""
+                image = node.get("image_data")
+                continuation = node.get("provider_continuation_json")
+                if not content and not image and not continuation:
+                    # Live-UAT defect (TASK-32482): the in-flight assistant
+                    # PLACEHOLDER (an empty content row the submit path
+                    # echoes before the first token) sits on the source's
+                    # active path at tool time. add_message refuses to
+                    # re-insert a contentless row, so the copy failed and
+                    # the orphan guard soft-deleted the whole fork. A
+                    # contentless scaffold carries nothing to fork -- skip
+                    # it rather than fail the copy.
+                    continue
                 old_id = str(node["id"])
                 new_id = self.db.add_message(
                     {
                         "conversation_id": target_conversation_id,
                         "sender": node.get("sender") or node.get("role") or "user",
-                        "content": node.get("content") or "",
+                        "content": content,
                         "role": node.get("role"),
                         "parent_message_id": id_map.get(str(node.get("parent_message_id"))),
-                        "image_data": node.get("image_data"),
+                        "image_data": image,
                         "image_mime_type": node.get("image_mime_type"),
                         "timestamp": node.get("timestamp"),
                         "usage_json": node.get("usage_json"),
                         "metadata_json": node.get("metadata_json"),
-                        "provider_continuation_json": node.get("provider_continuation_json"),
+                        "provider_continuation_json": continuation,
                     }
                 )
                 if new_id is None:
                     raise RuntimeError("copy_active_path: message insert failed")
                 id_map[old_id] = str(new_id)
+                last_new_id = str(new_id)
+                copied += 1
+        if copied == 0:
+            raise ValueError("empty_history")
 
-        new_leaf = id_map.get(str(leaf_id))
+        # The source leaf may itself be the skipped placeholder; point the
+        # fork's leaf at the last COPIED message instead.
+        new_leaf = id_map.get(str(leaf_id)) or last_new_id
         self.db.set_conversation_active_leaf(target_conversation_id, new_leaf)
-        return {"copied": len(path), "leaf_message_id": new_leaf}
+        return {"copied": copied, "leaf_message_id": new_leaf}
 
     def record_message_rag_context(
         self,
