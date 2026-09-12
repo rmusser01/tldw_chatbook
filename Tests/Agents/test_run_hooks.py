@@ -9,6 +9,7 @@ import time
 import pytest
 from loguru import logger as _loguru_logger
 
+from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.run_hooks import (
     HOOK_DEFAULT_TIMEOUT_S,
     HOOK_EVENTS,
@@ -356,3 +357,46 @@ class TestPoolIsolation:
         elapsed = time.monotonic() - start
         assert out.blocked is False
         assert elapsed < 0.6, f"blocking fire queued behind notify hooks: {elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: review-hook integration (wrap_review)
+# ---------------------------------------------------------------------------
+
+
+class TestWrapReview:
+    def _engine_with(self, spec):
+        cfg = RunHooksConfig(enabled=True, hooks=(spec,))
+        return RunHooksEngine(lambda: cfg, lambda: os.getcwd())
+
+    def test_deny_short_circuits_before_inner(self):
+        eng = self._engine_with(HookSpec("PreToolUse", (sys.executable, "-c", "sys.exit(2)"),
+                                         matcher="fs_*"))
+        called = []
+
+        def inner(calls, run_id):
+            called.append([c.name for c in calls])
+            return {c.name: "proceed" for c in calls}
+
+        wrapped = eng.wrap_review(inner, session_id="s")
+        verdicts = wrapped([ToolCall(name="fs_write", args={"path": "x"}),
+                            ToolCall(name="calculator", args={})], "run-1")
+        assert verdicts["fs_write"] not in ("proceed",)  # refusal string per protocol
+        assert called == [["calculator"]]  # denied call never reaches the permission store
+
+    def test_clean_pass_delegates_to_inner(self):
+        eng = self._engine_with(HookSpec("PreToolUse", (sys.executable, "-c", "pass")))
+
+        def inner(calls, run_id):
+            return {c.name: "proceed" for c in calls}
+
+        wrapped = eng.wrap_review(inner, session_id="s")
+        assert wrapped([ToolCall(name="fs_write", args={})], "run-1") == {"fs_write": "proceed"}
+
+    def test_no_hooks_configured_is_identity(self):
+        eng = _engine()
+
+        def inner(calls, run_id):
+            return {c.name: "proceed" for c in calls}
+
+        assert eng.wrap_review(inner, session_id="s") is inner

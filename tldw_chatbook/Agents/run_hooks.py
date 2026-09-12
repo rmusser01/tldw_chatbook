@@ -25,6 +25,8 @@ from typing import Any, Callable, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import ToolCall
+
 HOOK_EVENTS: frozenset[str] = frozenset(
     {"UserPromptSubmit", "PreToolUse", "PostToolUse", "ApprovalRequested", "Stop", "SubagentStop"}
 )
@@ -430,3 +432,32 @@ class RunHooksEngine:
             self._notify_worker.submit(_run)
         except Exception as exc:  # noqa: BLE001 - executor unavailable — drop, never stall chat
             logger.warning("run-hooks: notify dropped for {}: {}", event, exc)
+
+    def wrap_review(self, inner: Callable[[list[ToolCall], str], dict[str, str]], *,
+                    session_id: str) -> Callable[[list[ToolCall], str], dict[str, str]]:
+        """Wrap a review_tool_calls callable so PreToolUse hooks deny first.
+
+        Denied names are EXCLUDED from the inner review (no approval card for
+        a call a hook already refused) and merged back as refusal strings.
+        Hooks can never produce "proceed" — deny-only, enforced here.
+        """
+        if not any(h.event == "PreToolUse" for h in self._config_provider().hooks):
+            return inner
+
+        def review(calls: list[ToolCall], run_id: str) -> dict[str, str]:
+            refusals: dict[str, str] = {}
+            surviving: list[ToolCall] = []
+            for call in calls:
+                outcome = self.fire(
+                    "PreToolUse", session_id=session_id, run_id=run_id,
+                    data={"tool_name": call.name, "tool_args": call.args},
+                )
+                if outcome.blocked:
+                    refusals[call.name] = outcome.reason
+                else:
+                    surviving.append(call)
+            verdicts = dict(inner(surviving, run_id)) if surviving else {}
+            verdicts.update(refusals)
+            return verdicts
+
+        return review
