@@ -95,7 +95,7 @@ selections): console batch 1 3=3, batch 2 5=5, batch 3 11 branch / 16 dev (the
 five above), batch 4 11 branch / 0 dev -- of which 10 are
 `test_schedules_workbench.py`, since shown to be broadly unstable on dev too
 (4 -> 9 failures across two clean dev runs, with only one name in common), filed
-as task-32453, and 1 is `test_library_core_loop_modes_are_actionable_without_
+as task-32502, and 1 is `test_library_core_loop_modes_are_actionable_without_
 leaving_library`, which fails identically on dev when run alone.
 
 Fix round 1 (task-8 review finding 3). The guard had two holes, both closed:
@@ -146,4 +146,13 @@ names the class (and its same-module bases) references in code, minus the
 (`land-guard-mutation-c-old.txt`, `1 passed`) and fails the new one naming
 the harness and `screen_agentic_library.tcss` (`land-guard-mutation-c.txt`,
 `1 failed`); reverted, `6 passed` (`land-guard-green.txt`).
+
+At the dev merge, dev had repaired `Tests/UI/test_settings_speech_tts_panel.py`
+itself (4a02cab885: `_StyledPanelHarness` pins `[_BUNDLE, _SETTINGS_SHEET]` and
+`test_production_bundle_applies_speech_disclosure_styles` reads the settings
+sheet's own text); dev's spelling was kept over this branch's
+`APP_STYLESHEETS` / `app_css_text()` version -- the harness loads the owning
+sheet either way and the guard accepts both. Riders 32452/32453/32454 were
+renumbered to 32501/32502/32503 at landing: dev already carried those ids
+(MCP Hub UX waves A/B/C, merged and Done).
 <!-- SECTION:NOTES:END -->

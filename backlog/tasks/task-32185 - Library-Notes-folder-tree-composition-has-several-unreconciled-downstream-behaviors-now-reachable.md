@@ -123,7 +123,7 @@ had fallen behind the folder tree.
   the full fake.
 
 NOT DONE, handed off:
-- AC#3 (a saved note's row keeps its stale age) -> task-32454. Cause proven:
+- AC#3 (a saved note's row keeps its stale age) -> task-32503. Cause proven:
   `_patch_library_note_list_from_session` patches with
   `baseline.modified_at`, and the save path does not advance that stamp, so
   the age label re-renders unchanged. The row label and the projection age

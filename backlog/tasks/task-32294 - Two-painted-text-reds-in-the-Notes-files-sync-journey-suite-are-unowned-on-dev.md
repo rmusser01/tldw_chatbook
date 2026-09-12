@@ -85,7 +85,7 @@ really shows (navigator painted, authority composited, Session Git mounted but
 not composited, the grip on screen) and that the ROUTE still opens and takes
 focus.
 
-AC#3 -- the product half is filed as task-32452 rather than fixed here: making
+AC#3 -- the product half is filed as task-32501 rather than fixed here: making
 the Folder files work pane claim the screen at the narrow floor is a stage/
 priority design change for that surface, not a test-health repair. The
 assertion was corrected WITH the measurement and the pointer to that task, not
