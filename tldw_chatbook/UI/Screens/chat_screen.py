@@ -23024,7 +23024,11 @@ class ChatScreen(BaseAppScreen):
         # dead and the consent would be silently discarded (switch snaps
         # back OFF). A consent modal keeps the console semi-visible; the
         # disposition gating still refuses speech for hidden turns.
-        if not self._console_auto_speak.modal_open:
+        # PR #2656 Qodo #1: guard on a PENDING modal result, not bare modal
+        # visibility -- after dismissal the async finish work runs with the
+        # callback consumed, and a suspend in that window must quiesce the
+        # coordinator or the hidden screen stays subscribed forever.
+        if not self._console_auto_speak.modal_result_pending:
             self._console_auto_speak.unmount()
         self._stop_console_transcript_sync_timer()
         self._fleet._stop_console_fleet_survivor_tick()

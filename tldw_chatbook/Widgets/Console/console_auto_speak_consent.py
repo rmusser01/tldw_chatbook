@@ -233,16 +233,29 @@ class ConsoleAutoSpeakCoordinator:
         self._modal_callback_consumed = True
 
     @property
-    def modal_open(self) -> bool:
-        """Whether the destination-consent modal is currently open.
+    def modal_result_pending(self) -> bool:
+        """Whether a destination-consent modal is awaiting the user's choice.
 
         TASK-32509: pushing that modal SUSPENDS the ChatScreen underneath,
         and `on_screen_suspend` quiesces this coordinator -- whose unmount
         tombstones the pending modal callback, so the user's Enable press
         arrives dead and consent is silently discarded. The suspend path
         consults this property to leave a mid-consent coordinator mounted.
+
+        PR #2656 Qodo #1: True only while the modal is open AND its
+        dismiss callback has NOT fired. Once Enable/Cancel dismisses the
+        modal, the async finish work runs with the callback already
+        consumed -- a suspend in that window (e.g. the user navigates
+        away during the awaited destination re-resolution in `finish`)
+        must quiesce the coordinator like any other, or the hidden
+        screen's coordinator stays subscribed forever.
+
+        Returns:
+            True while the consent modal is up and its result callback is
+            still live; False otherwise (including the post-dismissal
+            async-finish window).
         """
-        return self._modal_open
+        return self._modal_open and not self._modal_callback_consumed
 
     def _schedule_work(
         self,
