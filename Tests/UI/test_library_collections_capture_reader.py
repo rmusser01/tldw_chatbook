@@ -7,6 +7,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -1001,3 +1002,53 @@ async def test_quick_capture_hostile_fields_are_rejected_and_valid_still_saves()
         assert detail is not None
         assert detail.capture.title == "Saved from the reader"
         assert detail.capture.tags == ("later", "research")
+
+
+# ===================================================================
+# PR #2634 review: unit-level coverage for the quick-capture field rules,
+# independent of the mounted integration test above.
+# ===================================================================
+
+
+class TestQuickCaptureFieldValidationUnit:
+    def _validated(self, title="", tags=(), note=""):
+        from tldw_chatbook.UI.Library_Modules.library_collections_controller import (
+            _validated_quick_capture_fields,
+        )
+
+        return _validated_quick_capture_fields(title, tuple(tags), note)
+
+    @pytest.mark.parametrize(
+        "title", ["  padded  ", "<script>alert(1)</script>", "x" * 301]
+    )
+    def test_hostile_titles_raise(self, title):
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError):
+            self._validated(title=title, tags=("ok",), note="n")
+
+    @pytest.mark.parametrize("tag", ["  padded", "x" * 65, "tab\tchar"])
+    def test_hostile_tags_raise(self, tag):
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError):
+            self._validated(title="T", tags=("ok", tag), note="n")
+
+    @pytest.mark.parametrize(
+        "note", ["See javascript:void(0)", "<script>no()</script>", "n" * 4001]
+    )
+    def test_hostile_notes_raise(self, note):
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError):
+            self._validated(title="T", tags=("ok",), note=note)
+
+    def test_valid_fields_pass_through_unchanged(self):
+        assert self._validated(
+            title="Saved from the reader", tags=("research", "later"), note="plain"
+        ) == ("Saved from the reader", ("research", "later"), "plain")
+
+    def test_ordinary_markup_shaped_prose_stays_acceptable(self):
+        assert self._validated(
+            title="Notes <draft>", tags=("a<b",), note="see <br> and 3 < 5"
+        ) == ("Notes <draft>", ("a<b",), "see <br> and 3 < 5")

@@ -1192,3 +1192,64 @@ class TestNullJsonColumnTolerance:
         assert all(r["config_overrides"] == {} for r in runs)
         fetched = in_memory_db.get_run(runs[0]["id"])
         assert fetched is not None and fetched["config_overrides"] == {}
+
+
+class TestCorruptJsonColumnSurfaces:
+    """PR #2634 review: NULL parses to the default, but MALFORMED stored
+    JSON must raise a contextual EvalsDBError -- silently substituting {}
+    let corrupt rows fabricate empty config into grid reconstruction."""
+
+    def _seed_corrupt_run(self, db):
+        import uuid as _uuid
+
+        conn = db._get_connection()
+        with conn:
+            task_id = str(_uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO eval_tasks (id, name, description, task_type,
+                                        config_format, config_data, client_id)
+                VALUES (?, 'Corrupt task', 'seeded', 'question_answer',
+                        'custom', '{}', 'test_client')
+                """,
+                (task_id,),
+            )
+            model_id = str(_uuid.uuid4())
+            conn.execute(
+                """
+                INSERT INTO eval_models (id, name, provider, model_id,
+                                         config, client_id)
+                VALUES (?, 'Corrupt Model', 'openai', 'gpt-x',
+                        '{"broken": tru', 'test_client')
+                """,
+                (model_id,),
+            )
+            conn.execute(
+                """
+                INSERT INTO eval_runs (id, name, task_id, model_id,
+                                       config_overrides, client_id)
+                VALUES (?, 'Corrupt run', ?, ?, '{"also": [broken', 'test_client')
+                """,
+                (str(_uuid.uuid4()), task_id, model_id),
+            )
+        return model_id
+
+    def test_malformed_model_config_raises_evalsdberror(self, in_memory_db):
+        import pytest as _pytest
+
+        from tldw_chatbook.DB.Evals_DB import EvalsDBError
+
+        model_id = self._seed_corrupt_run(in_memory_db)
+        with _pytest.raises(EvalsDBError, match="eval_models.config"):
+            in_memory_db.get_model(model_id)
+        with _pytest.raises(EvalsDBError, match="eval_models.config"):
+            in_memory_db.list_models()
+
+    def test_malformed_run_overrides_raise_evalsdberror(self, in_memory_db):
+        import pytest as _pytest
+
+        from tldw_chatbook.DB.Evals_DB import EvalsDBError
+
+        self._seed_corrupt_run(in_memory_db)
+        with _pytest.raises(EvalsDBError, match="eval_runs.config_overrides"):
+            in_memory_db.list_runs()

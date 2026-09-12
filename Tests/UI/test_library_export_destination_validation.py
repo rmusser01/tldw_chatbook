@@ -73,15 +73,29 @@ def test_rejecting_the_normalized_path_leaves_the_form_untouched():
 
 
 def test_hostile_raw_pick_is_rejected_with_a_reason():
-    """The pre-existing first gate: a hostile raw pick never reaches the form."""
+    """The pre-existing first gate: a hostile raw pick never reaches the form.
+
+    PR #2634 review: drives the REAL shared validator (no stub), so the
+    traversal-shaped input exercises path_validation.py's actual checks.
+    """
     form: dict = {}
     controller, notifications = _controller(form)
 
-    def _validate(path, **kwargs):
-        raise ValueError("Path contains traversal pattern")
-
-    with patch.object(lec, "validate_path_simple", side_effect=_validate):
-        controller._apply_library_export_destination(Path("/tmp/../../..evil.txt"))
+    controller._apply_library_export_destination(Path("/tmp/../../..evil.txt"))
 
     assert form == {}
     assert notifications and notifications[0][1] == "warning"
+    assert "Rejected export destination" in notifications[0][0]
+
+
+def test_uppercase_zip_pick_normalizes_to_the_writers_path(tmp_path):
+    """PR #2634 review: a ``foo.ZIP`` pick must store the lowercase
+    ``foo.zip`` the writer actually replaces, so the overwrite line names
+    the real file."""
+    form: dict = {}
+    controller, _notifications = _controller(form)
+
+    with patch.object(lec, "validate_path_simple", side_effect=lambda p, **kw: p):
+        controller._apply_library_export_destination(tmp_path / "notes.ZIP")
+
+    assert form["destination"] == str(tmp_path / "notes.zip")

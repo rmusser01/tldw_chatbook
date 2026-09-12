@@ -194,6 +194,34 @@ from ...Utils.input_validation import (
 _QUICK_CAPTURE_TITLE_MAX_LENGTH = 300
 _QUICK_CAPTURE_TAG_MAX_LENGTH = 64
 _QUICK_CAPTURE_NOTE_MAX_LENGTH = 4000
+
+
+def _validated_quick_capture_fields(
+    title: str, tags: tuple[str, ...], note: str
+) -> tuple[str, tuple[str, ...], str]:
+    """Validate quick-capture title/tags/note through the shared seams.
+
+    Single-line fields use ``validate_navigation_context_text`` (rejects
+    blank/padded/non-printable/dangerous/oversized); the freeform note uses
+    ``validate_text_input``'s dangerous-pattern check only, so ordinary
+    prose with angle brackets stays acceptable. Raises ``ValueError`` with
+    a field label on rejection; returns the validated values otherwise.
+    (Extracted to module level for direct unit coverage -- PR #2634
+    review.)
+    """
+    if title:
+        title = validate_navigation_context_text(
+            title, name="Title", max_length=_QUICK_CAPTURE_TITLE_MAX_LENGTH
+        )
+    for tag in tags:
+        validate_navigation_context_text(
+            tag, name="Tag", max_length=_QUICK_CAPTURE_TAG_MAX_LENGTH
+        )
+    if note and not validate_text_input(
+        note, max_length=_QUICK_CAPTURE_NOTE_MAX_LENGTH, allow_html=False
+    ):
+        raise ValueError("Note is invalid")
+    return title, tags, note
 from ...Utils.path_validation import validate_path_simple
 from ...Widgets.Library import (
     CollectionsCaptureReaderPresentation,
@@ -884,25 +912,8 @@ class LibraryCollectionsController:
         note = self._library_collections_quick_capture_note
         # TASK-31205: the URL was the only field through the shared
         # validation seam; title/tags/note went to CaptureSaveRequest raw.
-        # Single-line fields use validate_navigation_context_text (rejects
-        # blank/padded/non-printable/dangerous/oversized); the freeform
-        # note uses validate_text_input's dangerous-pattern check only, so
-        # ordinary prose with angle brackets stays acceptable.
         try:
-            if title:
-                title = validate_navigation_context_text(
-                    title,
-                    name="Title",
-                    max_length=_QUICK_CAPTURE_TITLE_MAX_LENGTH,
-                )
-            for tag in tags:
-                validate_navigation_context_text(
-                    tag, name="Tag", max_length=_QUICK_CAPTURE_TAG_MAX_LENGTH
-                )
-            if note and not validate_text_input(
-                note, max_length=_QUICK_CAPTURE_NOTE_MAX_LENGTH, allow_html=False
-            ):
-                raise ValueError("Note is invalid")
+            title, tags, note = _validated_quick_capture_fields(title, tags, note)
         except ValueError:
             self._library_collections_action_status = (
                 "Capture was not saved: check the Title, Tags, and Note fields."
