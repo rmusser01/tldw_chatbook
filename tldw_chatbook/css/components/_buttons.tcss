@@ -12,9 +12,9 @@ Button {
 
 /* Shared hover state with readable, non-obscuring cues */
 Button:hover {
-    background: $surface-lighten-1;
-    color: $text;
-    text-style: bold;
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+    text-style: $ds-text-strong;
 }
 
 /* Enhanced focus state with visible, non-obscuring cues */
@@ -43,21 +43,21 @@ Button.-style-flat:disabled {
     opacity: 100%;
     text-opacity: 100%;
     text-style: none;
-    background: $surface-darken-1;
+    background: $ds-disabled-bg;
     color: $ds-text-disabled-readable;
 }
 
 Button:disabled:hover {
-    background: $surface-darken-1;
+    background: $ds-disabled-bg;
     text-style: none;
 }
 
 .sidebar-toggle {
     width: 1fr;              /* Equal flexible width */
-    height: 3;
+    height: $ds-control-height;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;
-    background: $surface-darken-1;
-    color: $text;
+    background: $ds-disabled-bg;
+    color: $ds-text-primary;
 }
-.sidebar-toggle:hover { background: $surface; }
+.sidebar-toggle:hover { background: $ds-surface-raised; }

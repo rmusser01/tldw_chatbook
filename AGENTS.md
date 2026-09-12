@@ -230,6 +230,32 @@ Critical files for common tasks:
 - Security: `path_validation.py`, `input_validation.py`
 - UI: `form_components.py`, reactive patterns in any widget
 
+## Design Language (UI Tokens) — ADR-150
+
+All UI work is governed by a design-token system. **Read
+`backlog/docs/design-language.md` before creating or modifying any screen,
+widget, or stylesheet.**
+
+Hard rules:
+
+- Every consistent visual value is a `$ds-*` token in
+  `tldw_chatbook/css/core/_variables.tcss` — spacing (`$ds-space-*`),
+  sizing (`$ds-control-*`), motion (`$ds-duration-*`), opacity, typography
+  emphasis, colors, status, and component states. Do not invent literals or
+  ad-hoc tokens in feature sheets; the governance test
+  (`Tests/UI/test_design_token_governance.py`) fails on undefined `$ds-*`
+  references and on new hex literals outside the token file.
+- Describe new UI by composing tokens, component patterns, layout laws, and
+  interaction rules from the constitution — never "make it look modern".
+- Adding a value the language can't express? Add the token to
+  `_variables.tcss` first, then use it.
+- Never edit `tldw_chatbook/css/tldw_cli_modular.tcss` directly; edit source
+  modules and rebuild with `python tldw_chatbook/css/build_css.py`.
+- Python code assigns token-backed CSS classes instead of ad-hoc
+  `styles.*` literals for token-covered values.
+- Changing an existing token's value is a visual-breaking change; verify
+  live per `backlog/docs/lessons-live-verification.md`.
+
 ## Code Style
 
 - Type hints for public APIs

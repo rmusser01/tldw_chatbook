@@ -133,3 +133,81 @@ $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
 $ds-library-source-browser-width: 31;
+
+/* ========================================
+ * SPACING SCALE (ADR-150)
+ * ========================================
+ * The only legal whitespace values in new UI. Cells (horizontal) and rows
+ * (vertical) are the TUI's physical units; the scale is deliberately tiny.
+ * Raw numeric padding/margin in new stylesheets must come from this scale.
+ * ======================================== */
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+/* Semantic aliases — use these in components so intent is visible:
+ *   inline:  gap between siblings in a horizontal row (buttons, chips)
+ *   stack:   gap between vertically stacked fields/rows in a form
+ *   section: gap separating major sections or a section title from content
+ *   inset:   padding inside a panel, card, or bordered box */
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+/* ========================================
+ * CONTROL SIZING (ADR-150)
+ * ======================================== */
+/* Standard action control height (buttons). Compact strips (tab bars,
+ * status lines, chip rows) use the compact height. */
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+/* Default/minimum height for multi-line text inputs. */
+$ds-textarea-min-height: 5;
+
+/* ========================================
+ * MOTION (ADR-150)
+ * ========================================
+ * Transition durations. fast: hover/affordance feedback; medium: panel and
+ * visibility changes; slow: large layout shifts only. No duration outside
+ * this scale in new UI. */
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+/* ========================================
+ * OPACITY (ADR-150)
+ * ========================================
+ * Legacy de-emphasis only. The disabled state of action controls is NOT
+ * opacity: TASK-25822 measured opacity-on-dim-text compositing to 1.34:1
+ * (reads as absent, not unavailable) — disabled uses $ds-disabled-bg +
+ * $ds-text-disabled-readable with full opacity. */
+$ds-opacity-dim: 70%;
+
+/* ========================================
+ * TYPOGRAPHY EMPHASIS (ADR-150)
+ * ========================================
+ * TUI typography is weight/style, not size — one cell is one glyph.
+ * Scalar keywords only (Textual substitutes variables per token). */
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+/* ========================================
+ * COMPONENT STATE SURFACES (ADR-150)
+ * ========================================
+ * The resting/hover/disabled surface vocabulary for action controls.
+ * Focus is governed separately by the non-obscuring focus contract above
+ * ($ds-focus-bg/$ds-focus-fg) — hover must NOT reuse the focus surface. */
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+
+/* ========================================
+ * LAYOUT LAWS (ADR-150)
+ * ========================================
+ * App-shell geometry shared by every screen using the standard sidebar
+ * shell. Feature-specific geometry stays in its feature sheet until a
+ * second consumer appears, then it promotes here. */
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
