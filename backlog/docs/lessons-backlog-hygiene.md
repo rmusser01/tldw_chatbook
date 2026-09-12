@@ -595,6 +595,17 @@ load-bearing side keeps; references are attributed per side by their context,
 never rewritten wholesale — the same integer means different tasks in
 different files).
 
+**2026-09-11, TASK-13158 re-triage.** A local-worktree duplicate scan found
+nine colliding IDs, but dev had ZERO: seven pairs were pre-renumber ghosts
+resolved by dev commit `2b8dd094d5` (the branch predated it — rebase, don't
+renumber), and the remaining two were **untracked local-only task files**
+holding IDs dev uses for different tasks (TASK-18908, TASK-2511). Those are
+not ghosts — no twin exists — and they are the one case where renumbering
+locally IS the fix: renumber past the all-remote swept max (32470 at the
+time), filename and frontmatter both. So the triage order for any duplicate
+report on a branch: (1) is it already fixed on dev? (2) is one side an
+untracked local claimant? Only then consider renumbering a tracked file.
+
 ---
 
 ## Do not assign zsh's special lowercase `path` variable
