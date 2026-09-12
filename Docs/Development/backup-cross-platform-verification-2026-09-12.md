@@ -92,11 +92,33 @@ complete backup/recovery.
   seconds and records a thread dump at 55 seconds. The pytest observer permits
   the existing replacement/later-rollback child deadlines to run in sequence.
 - Windows [34711217652](https://github.com/rmusser01/tldw_chatbook/actions/runs/34711217652)
-  at `b3843f718054ccbe88e7d1661fe9c8079b452baa` is pending. It adds actual directory
-  stream checks and all three F9 archive modes. The Windows UI wrapper creates a
-  native console and verifies console handles before running the existing UI flow;
-  terminal suspension and restored-profile opening remain real operations.
-  macOS plaintext UI regression passed 34.45 seconds after this wrapper change.
+  at `b3843f718054ccbe88e7d1661fe9c8079b452baa`: all 40 native cases passed,
+  including actual directory stream checks. Product cases: 16 passed, six failed,
+  no skips; all 21 artifact hashes verified. Mounted F9 backup creation and archive
+  verification passed. Plaintext and encrypted archives were created through the
+  real console UI, but isolated restore failed with a permission error. All three
+  console preflights passed; terminal suspension remains a real operation.
+  The credential case exposed a test path-separator mismatch, and the two-profile
+  seed completed before its log reader failed on Windows text encoding. Replacement
+  seed observers expired before the later recovery operations could run.
+  Test corrections use POSIX archive paths, native ACL mode observations, explicit
+  UTF-8 child output and longer Windows seed observer bounds. Application deadlines
+  are unchanged. macOS plaintext UI, encrypted credential UI and two-profile
+  regressions passed in 34.45, 44.08 and 50.99 seconds respectively.
+- Windows [34712601107](https://github.com/rmusser01/tldw_chatbook/actions/runs/34712601107)
+  at `3180c688bf8354087b55a7461987483c045be334` passed all 40 native cases and
+  failed its one selected plaintext F9 restore case. All 13 artifact hashes matched.
+  This was a focused diagnostic, not full product qualification. Its bounded error
+  metadata identifies `PermissionError`, errno 13, Windows error 5, in
+  `journal.observe_artifact` through `WindowsOS.open` and `NtCreateFile`.
+  Read-only opens incorrectly required a regular file, preventing journal inspection
+  of directories. The correction permits an existing file or directory for a
+  read-only open while preserving required-directory and mutating-file constraints.
+  A native nested-tree publication and metadata test covers this operation sequence.
+  Restored-directory metadata now uses the directory persistence barrier; its
+  failure-propagation regression failed before the correction. No exception
+  messages, local variables or source contents enter the diagnostic receipt.
+  Full Windows product verification remains required.
 
 ## Regression and retained failures
 
@@ -135,7 +157,7 @@ is inferred from these process-level and product tests.
 The necessary RAG generation dependency writer now keeps POSIX directory locking
 and uses a stable private regular lock file on Windows. Six focused real-filesystem
 and process-contention cases plus the existing independent-indexer case pass locally;
-native Windows verification is pending. The same six focused cases and independent
+five selected native Windows product lock cases now pass. The same six focused cases and independent
 indexer case passed on the actual Linux host at `065c5344e` (7 passed, 8.89 seconds),
 after installing their existing optional NumPy and ChromaDB test dependencies in
 the disposable virtual environment. No generation record format changes.

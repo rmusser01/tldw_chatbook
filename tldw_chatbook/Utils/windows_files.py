@@ -505,7 +505,9 @@ class _Native:
         options = 0x20 | _WRITE_THROUGH | 0x200000  # synchronous, no reparse following
         if directory:
             options |= 1
-        elif not metadata:
+        elif not metadata and (flags & 3 or flags & (_os.O_CREAT | _os.O_TRUNC)):
+            # A read-only open may select a file or directory; callers inspect
+            # the pinned handle. Mutating opens must still select regular files.
             options |= 0x40
         raw = name.encode("utf-16-le")
         if len(raw) > 65532:

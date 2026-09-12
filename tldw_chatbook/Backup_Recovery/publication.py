@@ -1709,7 +1709,10 @@ def _installed_metadata(
                 raise ValueError("installed_kind_changed")
             os.fchmod(fd, metadata["mode"])
             os.utime(fd, ns=(before.st_atime_ns, metadata["mtime_ns"]))
-            flush_file(fd)
+            if stat.S_ISDIR(before.st_mode):
+                flush_directory(fd)
+            else:
+                flush_file(fd)
             named = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
             if (named.st_dev, named.st_ino) != expected:
                 raise ValueError("installed_identity_changed")

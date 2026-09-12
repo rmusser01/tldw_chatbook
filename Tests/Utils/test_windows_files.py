@@ -394,3 +394,72 @@ def test_native_directory_stream_enumeration_detects_named_data(tmp_path, popula
         assert win.listxattr(descriptor) == [":hidden:$DATA"]
     finally:
         win.close(descriptor)
+
+
+def test_readonly_open_does_not_require_regular_file():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Utils import windows_files
+
+    native_api = object.__new__(windows_files._Native)
+
+    def nt_create(
+        handle,
+        access,
+        attributes,
+        status,
+        allocation,
+        attributes_bits,
+        share,
+        disposition,
+        options,
+        ea,
+        ea_length,
+    ):
+        if options & 0x40:  # NTFS rejects directories with FILE_NON_DIRECTORY_FILE.
+            raise PermissionError(13, "synthetic directory type rejection")
+        windows_files.C.cast(handle, windows_files.C.POINTER(windows_files._HANDLE))[
+            0
+        ] = 123
+        return 0
+
+    native_api.nt = SimpleNamespace(NtCreateFile=nt_create)
+    native_api.ntcheck = lambda result: None
+    native_api.info = lambda handle: SimpleNamespace(attributes=0x10)
+    native_api.ntfs = lambda handle: None
+    assert native_api.open_handle("nested", parent=42, flags=os.O_RDONLY) == 123
+
+
+@native
+def test_nested_directory_publication_and_installed_metadata(tmp_path):
+    from tldw_chatbook.Backup_Recovery.native_files import publish_new
+    from tldw_chatbook.Backup_Recovery.publication import _installed_metadata
+
+    win = WindowsOS()
+    staged = tmp_path / "staged-tree"
+    destination = tmp_path / "published-tree"
+    win.mkdir(staged, 0o700)
+    win.mkdir(staged / "nested", 0o700)
+    (staged / "nested" / "content.txt").write_bytes(b"nested private payload")
+    before = win.stat(staged / "nested")
+    publish_new(staged, destination)
+    selected = destination / "nested"
+    assert not staged.exists()
+    assert (selected / "content.txt").read_bytes() == b"nested private payload"
+    timestamp = 1_700_000_000_000_000_000
+    _installed_metadata(
+        selected,
+        (before.st_dev, before.st_ino),
+        {"mode": 0o700, "mtime_ns": timestamp},
+    )
+    after = win.stat(selected)
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+    assert stat.S_IMODE(after.st_mode) == 0o700
+    assert after.st_mtime_ns == timestamp
+    descriptor = win.open(selected, win.O_RDONLY | win.O_NOFOLLOW | win.O_NONBLOCK)
+    try:
+        assert win.listdir(descriptor) == ["content.txt"]
+    finally:
+        win.close(descriptor)
+    with pytest.raises(OSError):
+        win.open(selected, win.O_WRONLY | win.O_NOFOLLOW)

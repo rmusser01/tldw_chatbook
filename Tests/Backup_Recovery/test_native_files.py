@@ -19,6 +19,41 @@ from tldw_chatbook.Backup_Recovery.native_files import (
 from tldw_chatbook.Backup_Recovery.qualification import native_identity, qualified_for
 
 
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_installed_object_metadata_barrier_failure_propagates(
+    tmp_path, monkeypatch, kind
+):
+    from tldw_chatbook.Backup_Recovery import publication
+
+    target = tmp_path / "installed"
+    if kind == "directory":
+        target.mkdir(mode=0o700)
+    else:
+        target.write_bytes(b"installed content")
+        target.chmod(0o600)
+    before = publication.os.stat(target)
+    expected = before.st_dev, before.st_ino
+    barrier_name = "flush_directory" if kind == "directory" else "flush_file"
+    original_barrier = getattr(publication, barrier_name)
+
+    def fail_installed_barrier(fd):
+        info = publication.os.fstat(fd)
+        if (info.st_dev, info.st_ino) == expected:
+            raise OSError("installed_metadata_barrier_failed")
+        original_barrier(fd)
+
+    monkeypatch.setattr(publication, barrier_name, fail_installed_barrier)
+    with pytest.raises(OSError, match="installed_metadata_barrier_failed"):
+        publication._installed_metadata(
+            target,
+            expected,
+            {
+                "mode": 0o700 if kind == "directory" else 0o600,
+                "mtime_ns": before.st_mtime_ns,
+            },
+        )
+
+
 @pytest.mark.parametrize("kind", ["file", "empty_directory", "populated_directory"])
 def test_raw_native_no_replace_and_directory_flush(tmp_path, kind):
     source, target = tmp_path / "source", tmp_path / "target"
