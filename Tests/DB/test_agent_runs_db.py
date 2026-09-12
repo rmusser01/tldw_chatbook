@@ -1342,6 +1342,56 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
             [(deleted_id, None), (disabled_id, None), (live_id, None)]
         )
         assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION == 19
+        capped_id = first.create_agent_definition(
+            _defn(
+                name="migrated-capped",
+                description="Created after v18 migration.",
+                instructions="Work within the migrated cap.",
+                tool_allowlist=("calculator",),
+                model="migrated-model",
+                enabled=False,
+                max_wall_seconds=0.25,
+            )
+        )
+        uncapped_id = first.create_agent_definition(
+            _defn(
+                name="migrated-uncapped",
+                description="Created after v18 migration without a cap.",
+                instructions="Use inherited timing policy.",
+                tool_allowlist=(),
+                model="",
+                enabled=True,
+                max_wall_seconds=None,
+            )
+        )
+        expected_capped = first.get_agent_definition(capped_id)
+        expected_uncapped = first.get_agent_definition(uncapped_id)
+        assert expected_capped is not None
+        assert expected_uncapped is not None
+        assert expected_capped == {
+            "id": capped_id,
+            "name": "migrated-capped",
+            "description": "Created after v18 migration.",
+            "instructions": "Work within the migrated cap.",
+            "tool_allowlist": ["calculator"],
+            "model": "migrated-model",
+            "enabled": 0,
+            "max_wall_seconds": 0.25,
+            "created_at": expected_capped["created_at"],
+            "updated_at": expected_capped["created_at"],
+        }
+        assert expected_uncapped == {
+            "id": uncapped_id,
+            "name": "migrated-uncapped",
+            "description": "Created after v18 migration without a cap.",
+            "instructions": "Use inherited timing policy.",
+            "tool_allowlist": [],
+            "model": "",
+            "enabled": 1,
+            "max_wall_seconds": None,
+            "created_at": expected_uncapped["created_at"],
+            "updated_at": expected_uncapped["created_at"],
+        }
     finally:
         first.close()
 
@@ -1349,6 +1399,8 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
         reopened = AgentRunsDB(path, client_id=client_id)
         try:
             assert reopened.get_agent_definition(live_id)["max_wall_seconds"] is None
+            assert reopened.get_agent_definition(capped_id) == expected_capped
+            assert reopened.get_agent_definition(uncapped_id) == expected_uncapped
         finally:
             reopened.close()
 
