@@ -120,3 +120,70 @@ Before publication, remote dev advanced to 78ef9928bdfcf103d815990865135824611cf
 picker test. Integrate this bounded delta after running tests reach termination,
 then verify its complete affected regression files. Existing Qodo size-ceiling
 thread remains open; no ceiling changes or completion claims are authorized.
+
+### Verified integration follow-ups
+
+The 259-case upstream cohort finished 254 passed / 5 failed in 301.95s.
+Every failure is in the complete Prompts dirty/busy-footer file: new upstream
+footer code calls the Screen helper removed by the PR's existing extraction.
+Plan: route that one call through `_prompts_controller`, as three existing
+Screen callers already do; preserve dirty/busy policy, state, and assertions.
+Run the complete failing file plus Prompts wiring and retained focus tests.
+Independent reviewer confirmed the cause and corrected their earlier static
+no-findings conclusion. ADR required: no; this repairs an existing owner route.
+
+The four-file early-conflict cohort finished 257 passed / 2 failed in 294.09s.
+Both failures are explicit modal launch/inventory census mismatches for new dev
+modal classes. Plan: verify each against source, add only truthful declarations
+using the existing contract/inventory-only distinction, retain exact comparisons,
+then run the complete modal file. No runtime change or skipped assertion.
+
+The second rebase onto 78ef9928bd is complete. Its only conflicts were an
+append-only lessons section and the old inline Notes owner-ID expression;
+the new shared `_console_notes_owner_id()` and explanatory provenance were kept.
+The prior 14 size-ratchet failures remain separate. Future pytest runs use
+explicit fresh basetemp directories, avoiding pytest's unrelated shared-temp
+garbage cleanup warnings seen during these two runs.
+
+The footer repair exposed two new test calls to the removed mutation-presentation
+Screen wrapper. Route those three invocations through the existing Prompts owner;
+retain every dirty/busy assertion. Complete footer/wiring/live-focus cohort passes
+33 cases in 15.98s after the test correction.
+
+The new-dev action tests exposed a separate upstream merge regression: TASK-32279
+AC2 and commit 47a613e375 require refusal details to say `Sent to the model`.
+The tests survived, but that commit's action-label production hunks did not survive
+in 78ef9928bd. All four refusal states reproduce `Full output` instead. Plan:
+restore precisely those accepted import/constant/predicate/selection hunks, without
+changing refusal classification or successful/diff-only output. Verify complete
+message-actions tests, including the existing success/diff controls.
+ADR required: no; restoration of already accepted UX copy, no new policy.
+
+The note-span summary fake also lacks the established keyword-only `route=None`
+argument: complete file reproduced 1 failure/16 passes, and an observation-only
+process adapter proved 17 passes without changing assertions/production. Add only
+that signature parameter and re-run the owning file.
+
+### Reviewed publication checkpoint
+
+Second rebase head is 4c2656c0f284d1acd78b5d461e0e21293226f5aa. Remote dev
+is still 78ef9928bd and PR head still 763a3c7ef7 at the pre-publication check.
+Both changed production call/copy slices and modal registrations have independent
+review approval. Final complete repair cohorts: Prompts/footer/wiring/live-focus
+33 passed (15.98s), modal dismissal 119 passed (39.35s), message actions/note spans
+143 passed (13.58s). Scoped fatal Ruff and whitespace pass. Diagnostic inventory
+and task-ID check pass after the second rebase; all incoming second-delta source
+and test numstats match exactly before the separately documented repairs.
+
+An eight-file native integration run collected 592 cases and remains in progress
+at publication preparation. It began before the final test-double and refusal
+label repairs, so its known two stale footer calls, four upstream label failures
+and one route-double failure are diagnostic baseline evidence, not final failures
+after the repairs. Do not claim its remaining tests or resource endpoint passed
+before terminal output. Reports:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-78ef-final.hmScPWAZa6`.
+
+The existing heartbeat was refreshed to use this plan and current TASK-31932
+instead of stale dev934 instructions; its existing weekly schedule was preserved.
+It must not merge automatically. The unresolved Qodo size finding, separate
+resource/preload/CSS gates, and final-head review remain open.
