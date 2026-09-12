@@ -101,7 +101,7 @@ async def test_model_policy_change_rebuilds_only_defaults_and_inspector():
         await _settle(pilot)
 
         assert _identities(panel, untouched) == untouched
-        assert panel.query_one("#settings-speech-model-value", Input).disabled is True
+        assert panel.query_one("#settings-speech-model-value", Select).disabled is True
         assert getattr(host.focused, "id", None) == "settings-speech-model-policy"
 
 

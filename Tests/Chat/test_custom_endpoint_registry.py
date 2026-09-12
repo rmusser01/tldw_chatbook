@@ -1,4 +1,6 @@
 """Pure custom endpoint registry tests."""
+import logging
+
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,  # noqa: F401  (import-surface check)
     CustomEndpointEntry,
@@ -28,9 +30,13 @@ def test_load_returns_valid_entries_and_drops_invalid_with_warning(caplog):
     cfg = _config_with("ok")
     cfg["custom_endpoints"]["bad-family"] = {
         "display_name": "X", "family": "groq", "base_url": "http://h:1"}
-    entries = load_custom_endpoints(cfg)
+    with caplog.at_level(logging.WARNING):
+        entries = load_custom_endpoints(cfg)
     assert set(entries) == {"ok"}
     assert entries["ok"].family == "llama_cpp"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "bad-family" in warnings[0].getMessage()
 
 def test_llama_family_normalizes_v1_suffix():
     entries = load_custom_endpoints(_config_with(
