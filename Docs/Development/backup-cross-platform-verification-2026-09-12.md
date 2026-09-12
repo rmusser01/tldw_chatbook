@@ -4,6 +4,36 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Windows matrix [34721454240](https://github.com/rmusser01/tldw_chatbook/actions/runs/34721454240)
+at `35dfcab316edf945be3add4db1525d2725a462d3` passed installed-wheel two-profile
+restore/open, support36, and all native42 suites. Other five product jobs failed.
+The retained-gate waiter is sleeping as intended, but final root validation still
+took 61.734 seconds and exceeded maintenance's unchanged deadline. Lifetime native
+call totals cannot attribute that cost; the next test observer records bounded
+per-group native counts and wall/thread/process CPU times to distinguish excess
+work from waiting. No new production admission change is made from those totals.
+
+Restored child stacks identify the UI stall precisely: Settings' internal-prompt
+count repeatedly re-entered the guarded configuration source while composing.
+The count now holds one existing configuration operation across its unchanged
+resolver reads. Every nested source check remains active; the scope retires on
+errors, and the next count admits again. Two regressions failed before the fix;
+32 configuration/admission tests pass (14.99 seconds), independent review found
+no issues, and actual installed-wheel macOS plaintext F9 roundtrip passes (35.16
+seconds). Production Bandit has zero findings. Seven existing authoring fixture
+errors reproduced with the unchanged module before test bodies; its existing
+Ruff import warning is also unchanged. The credential F9 test additionally waits
+for mounted, settled checkbox focus before sending exactly one space event; its
+actual macOS credential-inclusive flow passes (50.78 seconds).
+
+Linux `35dfcab31` passed 54 reader/admission checks (14.80 seconds), three F9 modes
+(124.41 seconds), and installed-wheel two-profile (75.36 seconds). Combined
+replacement reached successful replacement and later explicit credential review,
+then timed out waiting 65 seconds for the final rollback operation. Its same-
+revision fresh-fixture reproduction is running; this revision is not counted as
+a full Linux pass. Public source SHA256:
+`01f48698290d8f3b3e9b58ce2e2d648c040e5138afafda82cea049e316db3204`.
+
 Windows matrix [34720655217](https://github.com/rmusser01/tldw_chatbook/actions/runs/34720655217)
 at `bbc83d6c56155eac13cef174b6bb9633a322b203` passed the installed-wheel
 two-profile restore/open case, encrypted F9 flow, all 33 support checks and

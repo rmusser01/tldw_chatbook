@@ -64,6 +64,8 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_provider_recovery_native_files.py",
     "Tests/Backup_Recovery/test_admission_closed_gate.py",
     "Tests/Backup_Recovery/test_runtime_native_poll.py",
+    "Tests/Backup_Recovery/test_prompt_count_admission.py",
+    "Tests/Backup_Recovery/test_admission_diagnostics.py",
 )
 _RESTORE_DIAGNOSTIC_TESTS = (
     (

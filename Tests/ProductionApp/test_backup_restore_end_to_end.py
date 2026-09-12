@@ -229,10 +229,13 @@ async def main():
    assert set(rejection['review_issues'])==reviewed
    assert not destination.exists() and selector.read_bytes()==original_config
    await ready(lambda:len(screen.query('.backup-acknowledge-credential'))==17)
+   await pilot.pause()
    boxes=list(screen.query('.backup-acknowledge-credential'))
    assert {box.name for box in boxes}==reviewed and all(not box.value for box in boxes)
    for box in boxes:
-    box.scroll_visible(immediate=True);box.focus();await pilot.press('space')
+    box.scroll_visible(immediate=True);box.focus();await pilot.pause()
+    assert box.is_mounted and app.focused is box
+    await pilot.press('space');await pilot.pause()
     assert box.value
    screen.query_one('#backup-password',Input).value=password.decode()
    screen.query_one('#backup-password-confirm',Input).value=password.decode()

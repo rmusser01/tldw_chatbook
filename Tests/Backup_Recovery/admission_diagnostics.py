@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -34,6 +35,7 @@ def _observe(
     if interval <= 0:
         raise ValueError("positive_diagnostic_interval_required")
     lock, stopping = threading.Lock(), threading.Event()
+    local = threading.local()
     metrics, groups, originals, failures = {}, [], [], []
 
     def instrument(owner, name):
@@ -75,12 +77,47 @@ def _observe(
                     }
                 except (AttributeError, KeyError, TypeError):
                     detail = {"metadata_unavailable": 1}
+                frame = sys._getframe(1)
+                detail.update(
+                    caller={
+                        "file": Path(frame.f_code.co_filename).name[:128],
+                        "function": frame.f_code.co_name[:128],
+                        "line": frame.f_lineno,
+                    },
+                    completed=0,
+                    errors=0,
+                    wall_ns=0,
+                    thread_cpu_ns=0,
+                    process_cpu_ns=0,
+                    calls={},
+                )
+                del frame
             started = time.perf_counter_ns()
+            previous = getattr(local, "group", None)
+            if detail is not None:
+                thread_started, process_started = (
+                    time.thread_time_ns(),
+                    time.process_time_ns(),
+                )
+                detail["started_wall_ns"] = started
+                local.group = detail
+            active = getattr(local, "group", None)
             with lock:
                 row["started"] += 1
                 if detail is not None:
                     groups.append(detail)
                     del groups[:-16]
+                elif active is not None:
+                    scoped = active["calls"].setdefault(
+                        name,
+                        {
+                            "started": 0,
+                            "completed": 0,
+                            "errors": 0,
+                            "wall_ns": 0,
+                        },
+                    )
+                    scoped["started"] += 1
             failed = 0
             try:
                 return original(*args, **kwargs)
@@ -89,11 +126,27 @@ def _observe(
                 raise
             finally:
                 elapsed = time.perf_counter_ns() - started
+                if detail is not None:
+                    thread_elapsed = time.thread_time_ns() - thread_started
+                    process_elapsed = time.process_time_ns() - process_started
+                    local.group = previous
                 with lock:
                     row["completed"] += 1
                     row["errors"] += failed
                     row["wall_ns"] += elapsed
                     row["max_ns"] = max(row["max_ns"], elapsed)
+                    if detail is not None:
+                        detail.update(
+                            completed=1,
+                            errors=failed,
+                            wall_ns=elapsed,
+                            thread_cpu_ns=thread_elapsed,
+                            process_cpu_ns=process_elapsed,
+                        )
+                    elif active is not None:
+                        scoped["completed"] += 1
+                        scoped["errors"] += failed
+                        scoped["wall_ns"] += elapsed
 
         setattr(owner, name, measured)
 
@@ -102,6 +155,9 @@ def _observe(
             snapshot = copy.deepcopy(
                 {"inclusive_wall_times": 1, "calls": metrics, "groups": groups}
             )
+        for group in snapshot["groups"]:
+            if not group["completed"]:
+                group["wall_ns"] = time.perf_counter_ns() - group["started_wall_ns"]
         _write(path, snapshot)
 
     def sample():
