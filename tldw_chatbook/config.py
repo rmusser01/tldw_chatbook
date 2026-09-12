@@ -3853,6 +3853,22 @@ openai_cache_key = false
 # every completion (toast, badge, durable mark); the wake turn just never
 # fires.
 # autowake_enabled = true
+#
+# --- Sub-agent routing (ADR-147) ---
+# Default provider/model for spawned sub-agents when neither the spawn call
+# nor the named agent preset routes them. Empty = inherit the parent's.
+# subagent_default_provider = ""
+# subagent_default_model = ""
+#
+# Let the supervisor model pass ad-hoc provider/model args to
+# spawn_subagent. Off by default: routing then comes only from presets and
+# the default above. Ad-hoc args never carry URLs or sampling params.
+# spawn_override_enabled = false
+#
+# Ad-hoc targets the supervisor may pick. One entry per list item: a
+# provider id ("llama_cpp", "custom-ep:qwen-local") or "provider/model-glob"
+# ("llama_cpp/qwen3.8-*"). Presets are user-authored and never gated.
+# spawn_override_allowlist = []
 
 [splash_screen]
 # Splash screen configuration for startup animations

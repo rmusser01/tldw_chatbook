@@ -467,7 +467,6 @@ is no project-scoped hook file; and only the two blocking events can
 change what happens — the other four are observe-and-notify, with their
 output logged and dropped.
 
->>>>>>> 31da72f8a5 (feat: agent chat fork & spawn tools (fork_chat / new_chat) — rebased onto dev)
 ### Interrupted provider tool runs — Resume, Take over, or Discard
 
 For a provider integration that has opted into exact tool continuation, Console
@@ -1246,7 +1245,6 @@ in a conversation you were not watching, that session's tab shows the
 finished-and-unvisited `✓` instead. Both mean "there is something here
 you haven't seen"; viewing the conversation clears either.
 
-<<<<<<< HEAD
 ### Local file authority
 
 Every live Console Chat owns an independent private temporary scratch space.
@@ -1452,7 +1450,131 @@ is currently unavailable and fails closed—Chatbook ships no `pywinpty`, legacy
 winpty, or ordinary-pipe fallback. A future Windows implementation requires a
 new or superseding ADR and passing native qualification.
 
-=======
+### Routing sub-agents to other providers/models
+
+By default a sub-agent runs on the same provider and model as the reply
+that spawned it. Routing lets a child run somewhere else — the classic
+split is a strong cloud model supervising while cheap local children do
+the legwork, e.g. the supervisor on the Kimi API spawning implementation
+children onto a local `qwen3.8-27b` served by llama.cpp. Four places can
+steer a spawn, each filling only the blanks the levels above left:
+
+1. **Ad-hoc spawn args** — `provider` / `model` passed by the supervisor
+   model on the `spawn_subagent` call. Honored only when
+   `[agents] spawn_override_enabled = true`; while the flag is off (the
+   default) the args aren't in the tool schema at all, so the model
+   cannot attempt them. A `provider` arg must match the allowlist
+   (below); a model-only arg swaps the model on whatever provider the
+   lower levels resolve, with a final guard — when any ad-hoc arg is
+   present, the resolved provider/model must match the allowlist or the
+   provider must be the parent's own, otherwise the spawn is refused
+   (`provider_not_allowlisted`).
+2. **Preset routing fields** — the spawned [named agent
+   definition](#named-agents)'s `provider` and `model`, set per
+   definition in **Settings ▸ Agents**. A definition's `model` set
+   *without* `provider` keeps the pre-routing behavior exactly (same
+   endpoint, different model), so existing definitions are unaffected.
+3. **The sub-agent default** — `[agents] subagent_default_provider` /
+   `subagent_default_model` in `config.toml`; empty means unset.
+4. **Inherit the parent** — the parent's provider and model (never its
+   sampling params; see below).
+
+A provider is named by its built-in id (`llama_cpp`, `moonshot`, …) or by
+a [custom endpoint](../settings.md#custom-endpoints) id
+(`custom-ep:<slug>`); the endpoint's URL and credentials come from its
+registry entry, never from the preset or from spawn args.
+
+**The `[agents]` keys.** All four ship commented-out in the config
+template — the defaults live in code, so uncomment to override:
+
+- `subagent_default_provider` / `subagent_default_model` — where a child
+  runs when neither the spawn call nor a preset routes it; empty inherits
+  the parent's.
+- `spawn_override_enabled` (default `false`) — whether the supervisor
+  model may pass ad-hoc provider/model args at all.
+- `spawn_override_allowlist` (default empty) — the ad-hoc targets the
+  supervisor may pick, one entry per list item: a bare provider id
+  (`llama_cpp`, `custom-ep:qwen-local`) matches any model on that
+  provider; a `provider/model-glob` entry (`llama_cpp/qwen3.8-*`) matches
+  the model case-insensitively via glob. Presets are user-authored and
+  never gated by the allowlist. Ad-hoc args can carry no URLs and no
+  sampling params, so a prompt-injected supervisor can neither point a
+  child at an arbitrary endpoint nor crank a paid provider's reasoning
+  budget.
+
+**Params are rebuilt, never inherited.** A child gets none of the
+parent's sampling/API params (temperature, top_p, max_tokens, seed,
+reasoning knobs, …). Its params are built fresh for its resolved
+provider+model through the same layering a brand-new Console session to
+that provider would get, highest precedence first:
+
+1. the preset's `params` (only when the spawn names a preset that sets
+   them),
+2. the per-model profile
+   `[api_settings.<provider>].model_defaults.<model>`,
+3. Console's saved per-provider defaults
+   `[console.provider_defaults.<provider>]`,
+4. the endpoint entry's `[custom_endpoints.<slug>.params]`
+   (custom-endpoint targets only),
+5. the global `[chat_defaults]`,
+6. raw `[api_settings.<provider>]` scalars, then the built-in fallbacks.
+
+Provider-specific knobs (e.g. a Kimi `reasoning_effort`) apply only to
+models that support them, same as a direct send. **Behavior change for
+plain spawns:** before routing shipped, a plain same-provider spawn sent
+no sampling params at all and the provider call silently fell back to its
+own config resolution; now every child's params are resolved explicitly
+through the six layers above, logged, and snapshotted — so even a plain
+spawn gets fresh provider-default params rather than the parent's
+session-tweaked values.
+
+**Route by task shape.** Match the child's tier to the work:
+
+- **Fast workhorse** — a cheap local model (the qwen above) for recon,
+  wide file sweeps, and mechanical edits: high volume, low blast radius.
+- **Mid-tier** for routine delegation — summarizing, drafting,
+  straightforward refactors against a clear spec.
+- **Deep reasoning** only for hard, well-scoped tasks where the child
+  itself must plan; the budget burn is real, so scope the task tightly.
+- **Intent-strong** models for ambiguous judgment work, where the task
+  will be loosely worded and the child must read intent rather than
+  follow steps.
+
+In the running example the Kimi parent plans and reviews, and only the
+implementation children drop to `custom-ep:qwen-local` / `qwen3.8-27b`.
+
+**Resume pins the target.** The resolved provider, model, base URL, and
+merged params are frozen onto the child's run row at spawn time, and
+[continuing a finished sub-agent](#continuing-a-finished-sub-agent)
+reuses that snapshot — editing the preset, the endpoint entry, or the
+config defaults afterwards retargets *new* spawns only, never a resumed
+child (the snapshot is not re-validated, so an edit to something invalid
+cannot break a continuation). The one boundary: children spawned before
+this feature shipped carry no snapshot, so their continuations keep the
+old behavior — the parent's provider with the preset's *live* model — and
+never acquire a snapshot. Only fresh spawns and snapshotted continuations
+honor routing.
+
+**Headless boundary.** Routing to a `custom-ep:` target requires Console
+— the headless `chat_api_call` path raises on `custom-ep:` ids. Routing
+to built-in providers works everywhere.
+
+**Check it before you rely on it.** The **Test routing** button in
+**Settings ▸ Agents** dry-runs the resolver over every enabled preset and
+the configured default and reports each one's resolved provider/model
+and readiness — it catches config rot (deleted endpoint slugs, missing
+credentials) before a run does. It reads the *saved* configuration, not
+unsaved form edits — save first, then test. At spawn time a refusal is
+loud: the supervisor model gets a tool error of the form `[code]
+message`, no fleet slot is consumed, and there is no automatic fallback
+to another provider. The codes: `override_disabled` (ad-hoc args while
+the flag is off), `provider_not_allowlisted`, `unknown_endpoint_slug` (a
+deleted `custom-ep:` slug), `unknown_provider`, `no_model_resolved`
+(routed to a provider with no model anywhere in the chain), and
+`provider_not_ready` (missing credential or incomplete provider config).
+The Agent rail's per-child line shows each live child's resolved target
+(e.g. `qwen-local · qwen3.8-27b`).
+
 ### Project instructions before tools run
 
 When project instructions are enabled for a session, Chatbook treats the
