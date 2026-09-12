@@ -639,7 +639,7 @@ def test_first_request_plan_contains_exact_named_agent_and_fleet_schemas(monkeyp
     )
 
 
-def test_first_request_plan_adds_worktree_merge_schemas_only_when_enabled(
+def test_first_request_plan_omits_worktree_mutation_schemas_even_when_confirm_exists(
     monkeypatch,
 ):
     """TASK-28238 phase 2 Task 7 ruling: merge/discard for a
@@ -653,8 +653,6 @@ def test_first_request_plan_adds_worktree_merge_schemas_only_when_enabled(
         "wait_agents",
         "check_agents",
         "send_to_agent",
-        "merge_agent_worktree",
-        "discard_agent_worktree",
     ]
 
 

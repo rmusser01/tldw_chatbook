@@ -741,6 +741,17 @@ file the list shows as changed, or colour-code it into unreadability.
 
 ### Parallel sub-agents (the fleet)
 
+Agent worktree isolation is temporarily unavailable while its safe execution
+boundary is being completed. A request for `isolation="worktree"` is refused
+before the child runs; Console does not silently run that child in the shared
+workspace. Automatic merge, discard, and stale-worktree cleanup are also
+disabled. Existing checkout contents, branches, and records are retained for
+manual review and are not reported as merged, discarded, or recovered.
+
+Ordinary non-isolated sub-agents remain available. Users may still operate Git
+directly when they explicitly choose to do so; Console does not instruct an
+agent to perform those operations as a workaround.
+
 Sub-agents the supervisor spawns within a **single reply** no longer run one
 at a time — up to a configured number can be live together, each working its
 own task concurrently. The Agent rail shows this directly: several

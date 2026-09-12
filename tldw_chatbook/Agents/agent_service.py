@@ -174,10 +174,8 @@ from .project_instruction_runtime import (
 )
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
-    DISCARD_AGENT_WORKTREE_SCHEMA,
     build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
-    MERGE_AGENT_WORKTREE_SCHEMA,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
     RUN_LOG_SLICE_TOOL_SCHEMA,
@@ -705,10 +703,9 @@ def build_first_request_schema_plan(
         run_log_active: Whether run-log tools may be enabled for this run.
         agent_definitions: Named sub-agent definitions available to spawning.
         fleet_active: Whether the primary may coordinate a live agent fleet.
-        worktree_merge_enabled: Whether a run-entry confirm surface exists to
-            approve merge_agent_worktree/discard_agent_worktree -- like
-            run_skill_script_enabled, this disclosure is additionally gated
-            beyond fleet_active alone.
+        worktree_merge_enabled: Retained for caller compatibility. Automatic
+            merge/discard schemas remain unavailable while the execution
+            boundary is unsupported.
         fleet_max_live: Maximum live agents recorded in the frozen plan.
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
@@ -743,18 +740,6 @@ def build_first_request_schema_plan(
             runtime.extend(
                 (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
             )
-            if worktree_merge_enabled:
-                # TASK-28238 phase 2 Task 7 ruling: merge/discard for a
-                # worktree-isolated child is no longer disclosed under the
-                # identical predicate as the three fleet schemas above --
-                # it is additionally gated on the run-entry confirm surface
-                # being wired (see worktree_merge_enabled). Without it,
-                # both tools always fail closed at their call sites, so a
-                # session with no confirm surface was advertising two
-                # tools that could only ever refuse, at real token cost.
-                runtime.extend(
-                    (MERGE_AGENT_WORKTREE_SCHEMA, DISCARD_AGENT_WORKTREE_SCHEMA)
-                )
         if progress_available and agent_kind == AGENT_KIND_PRIMARY:
             from .fleet_message_tools import READ_AGENT_MESSAGES_SCHEMA, READ_INSTRUCTIONS
 
@@ -4143,90 +4128,22 @@ class AgentService:
         return False
 
     def _admit_agent_worktree(self, handle: "FleetHandle", child_run_id: str) -> str | None:
-        """Create + admit an isolated git worktree for `child_run_id`.
+        """Refuse automatic worktree admission before filesystem access."""
+        del handle, child_run_id
+        from tldw_chatbook.Agents.agent_worktree import unsupported_execution_boundary
 
-        TASK-28238 P2 T4. On success, records the worktree in
-        `self._agent_worktrees` keyed by `handle.handle_id` (read by the
-        merge/discard tools) and returns None. On any failure, returns an
-        honest error string naming the reason -- no worktree or provider
-        admission survives a refusal, so the caller unwinds the reserved
-        handle/slot exactly like its other refusal paths and never falls
-        back to sharing the tree silently.
-        """
-        from tldw_chatbook.Agents import agent_worktree
-        from tldw_chatbook.Agents.local_tool_provider import (
-            LocalToolProvider,
-            RunAdmittedWorkspaceRoot,
-        )
-
-        owner = self.registry.resolve_owner_for_name("fs_read")
-        provider = owner[1] if owner is not None else None
-        if not isinstance(provider, LocalToolProvider):
-            return (
-                "worktree isolation refused [no_local_provider]: no local "
-                "filesystem provider is reachable for this run"
-            )
-        created = agent_worktree.create_agent_worktree(
-            provider.workspace_root, child_run_id
-        )
-        if isinstance(created, agent_worktree.WorktreeRefusal):
-            return (
-                f"worktree isolation refused [{created.reason_code}]: "
-                f"{created.message}"
-            )
-        try:
-            import hashlib
-
-            from tldw_chatbook.Tools.workspace_tool_executor import (
-                WorkspaceToolExecutionError,
-                WorkspaceToolExecutor,
-            )
-
-            alias = f"agent-{child_run_id}"
-            authority = RunAdmittedWorkspaceRoot(
-                workspace_id="agent-worktree",
-                binding_id=alias,
-                alias=alias,
-                root=created.worktree_path,
-                locator_fingerprint=hashlib.sha256(
-                    str(created.worktree_path).encode("utf-8")
-                ).hexdigest(),
-                root_identity=agent_worktree._worktree_root_identity(
-                    created.worktree_path
-                ),
-                allow_write=True,
-                guard=lambda write: created.worktree_path.is_dir(),
-                workspace_executor=WorkspaceToolExecutor(created.worktree_path),
-            )
-            provider.admit_run_workspace_root(child_run_id, authority)
-        except (WorkspaceToolExecutionError, ValueError, OSError) as exc:
-            # M2 (TASK-28238 P2 T7 final fix wave): `_worktree_root_identity`
-            # does a raw `os.lstat` walk -- a transient OS-level failure
-            # there must land here too, so the refusal path (including
-            # the worktree cleanup below) runs instead of an unhandled
-            # exception escaping the tool call.
-            agent_worktree.discard_agent_worktree(provider.workspace_root, created)
-            return f"worktree isolation refused [admit_failed]: {exc}"
-        self._agent_worktrees[handle.handle_id] = created
-        return None
+        refusal = unsupported_execution_boundary()
+        return f"worktree isolation refused [{refusal.reason_code}]: {refusal.message}"
 
     def _retire_agent_worktree(
         self, run_id: str, handle_id: str, *, discard: bool = False
     ) -> None:
-        """Un-admit `run_id`'s worktree root; a no-op when `handle_id` never
-        got one.
+        """Un-admit provider routing while retaining all worktree state.
 
-        On the normal terminal-retire path (`discard=False`, the default:
-        the child ran and finished), only the provider's dispatch ROUTING
-        for `run_id` is torn down -- the `AgentWorktree` record stays in
-        `self._agent_worktrees` and the worktree directory itself
-        SURVIVES, so Task 5's merge/discard tools can still find and act
-        on it after the run is terminal. `discard=True` (thread-start-
-        failure teardown: a never-ran child has nothing worth keeping)
-        additionally removes the tracking entry AND the worktree itself.
-
-        Callers wrap this in try/except -- teardown must never mask a
-        child's real terminal outcome.
+        ``discard`` remains in the private signature for existing callers,
+        but automatic retirement never removes a record, checkout, branch,
+        or bytes. This applies to failed-start teardown as well as normal
+        terminal retirement.
         """
         from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
@@ -4242,71 +4159,13 @@ class AgentService:
         # already a no-op when `run_id` was never admitted.
         if isinstance(provider, LocalToolProvider):
             provider.retire_run_workspace_root(run_id)
-        wt = self._agent_worktrees.get(handle_id)
-        if wt is None:
-            return
-        if discard:
-            del self._agent_worktrees[handle_id]
-            if isinstance(provider, LocalToolProvider):
-                from tldw_chatbook.Agents import agent_worktree
-
-                agent_worktree.discard_agent_worktree(provider.workspace_root, wt)
+        # Automatic retirement never deletes the retained record, checkout,
+        # branch, or bytes, including failed-start teardown.
+        del handle_id, discard
 
     def _sweep_stale_agent_worktrees(self) -> None:
-        """End-of-turn GC: remove agent worktrees no longer live in the DB
-        -- force=False, so git itself refuses to touch a dirty one (see
-        `discard_agent_worktree`'s own docstring).
-
-        I3 (TASK-28238 P2 T7 final fix wave). `prune_stale_agent_worktrees`
-        has existed since Task 4 but nothing ever called it: every
-        isolated child's worktree accumulated on disk forever once its
-        turn ended without an explicit merge/discard. Called from
-        `run_turn`'s teardown, after `_settle_fleet`.
-
-        `live_run_ids` reads `AgentRunsDB.list_running_run_ids()` --
-        process-wide, crash-safe truth -- NOT any in-memory,
-        coordinator-scoped source (an earlier version used
-        `live_subagent_handles()`, which filters on THIS instance's own
-        `self._fleet_cancels`; production constructs a fresh `AgentService`
-        per turn sharing only the `FleetCoordinator`, so that view made a
-        later turn's sweep see an EARLIER turn's still-`RUN_RUNNING`
-        `subagents_outlive_turn` survivor as "not mine" and reap its clean
-        worktree out from under its own running thread -- a real,
-        reproduced HIGH). The DB is correct regardless of which service
-        instance or even which CONVERSATION spawned the run (a different
-        conversation's live child sharing this workspace root is invisible
-        to any coordinator-scoped source). Ordering guarantees this can
-        never race a run's own start: `create_run` always fires before
-        `_admit_agent_worktree`, so a worktree can never exist before its
-        run row does. `reconcile_orphaned_runs` terminalizing a crashed
-        run at process start is what makes ITS worktree GC-able on a
-        later sweep, rather than leaking it forever.
-
-        Fails safe: if reading liveness raises ANYTHING, the whole sweep
-        is aborted without pruning -- over-retention is acceptable,
-        deleting live work is not. The outer containment below still
-        applies on top of that (GC must never break a turn regardless of
-        cause), and this deliberately adds no new logging either way -- a
-        missed sweep is invisible by design, not a signal an operator
-        needs paged on.
-        """
-        try:
-            from tldw_chatbook.Agents import agent_worktree
-            from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
-
-            owner = self.registry.resolve_owner_for_name("fs_read")
-            provider = owner[1] if owner is not None else None
-            if not isinstance(provider, LocalToolProvider):
-                return
-            try:
-                live_run_ids = self.db.list_running_run_ids()
-            except Exception:  # noqa: BLE001 — never prune on unknown liveness
-                return
-            agent_worktree.prune_stale_agent_worktrees(
-                provider.workspace_root, live_run_ids
-            )
-        except Exception:  # noqa: BLE001 — GC must never break a turn
-            pass
+        """Retain every existing checkout; automatic pathname GC is disabled."""
+        return
 
     def _service_error_step(self, run_id: str, summary: str) -> AgentStep:
         """Allocate a causal error after this run's durable observations."""
@@ -6089,134 +5948,26 @@ class AgentService:
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines) + progress_note)
 
-        # TASK-28238 phase 2 Task 5: merge_agent_worktree/
-        # discard_agent_worktree, the headless half of landing/discarding
-        # a worktree-isolated child's work (Task 4's spawn_subagent
-        # isolation="worktree"). Both fail closed: unknown handle, a
-        # still-running child, or no confirm surface all refuse before
-        # touching anything; a user denial refuses too. Resolved ONCE
-        # here (mirroring `_admit_agent_worktree`'s own resolution) rather
-        # than per call -- the local provider's workspace root does not
-        # change mid-run.
-        from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
-
-        _worktree_owner = self.registry.resolve_owner_for_name("fs_read")
-        _worktree_provider = _worktree_owner[1] if _worktree_owner is not None else None
-        worktree_repo_root = (
-            _worktree_provider.workspace_root
-            if isinstance(_worktree_provider, LocalToolProvider)
-            else None
-        )
-
-        def _worktree_handle_terminal(handle_id: str) -> bool:
-            handle = fleet.get(handle_id) if fleet is not None else None
-            return handle is not None and handle.status in TERMINAL_RUN_STATUSES
-
         def merge_agent_worktree_tool(handle_id: str, mode: str = "apply") -> ToolResult:
-            wt = self._agent_worktrees.get(str(handle_id))
-            if wt is None:
-                return ToolResult(
-                    ok=False, error=f"no agent worktree for handle {handle_id!r}"
-                )
-            if not _worktree_handle_terminal(str(handle_id)):
-                return ToolResult(
-                    ok=False,
-                    error="child is still running; wait for it to finish before merging",
-                )
-            if request_worktree_merge_confirm is None:
-                return ToolResult(
-                    ok=False,
-                    error=(
-                        "merge requires user confirmation, and no approval "
-                        "surface is available in this session"
-                    ),
-                )
-            if worktree_repo_root is None:
-                return ToolResult(
-                    ok=False,
-                    error="no local filesystem provider is reachable for this run",
-                )
-            # Preview only -- never mutate before the user consents.
             from tldw_chatbook.Agents.agent_worktree import (
-                preview_agent_worktree_diffstat,
+                unsupported_execution_boundary,
             )
 
-            decision = request_worktree_merge_confirm(
-                {
-                    "handle_id": handle_id,
-                    "mode": mode,
-                    "branch": wt.branch,
-                    "worktree": str(wt.worktree_path),
-                    "diffstat": preview_agent_worktree_diffstat(worktree_repo_root, wt),
-                }
-            )
-            if not decision.get("allow", False):
-                return ToolResult(ok=False, error="The user declined the worktree merge.")
-            from tldw_chatbook.Agents.agent_worktree import merge_agent_worktree_changes
-
-            outcome = merge_agent_worktree_changes(worktree_repo_root, wt, mode=mode)
-            if hasattr(outcome, "reason_code"):
-                return ToolResult(ok=False, error=f"[{outcome.reason_code}] {outcome.message}")
-            landed = (
-                "as UNCOMMITTED changes (review and commit them)"
-                if outcome.commit_sha is None
-                else f"as merge commit {outcome.commit_sha[:9]}"
-            )
+            del handle_id, mode
+            refusal = unsupported_execution_boundary()
             return ToolResult(
-                ok=True, content=f"Merged agent worktree {landed}.\n{outcome.diffstat}"
+                ok=False, error=f"[{refusal.reason_code}] {refusal.message}"
             )
 
         def discard_agent_worktree_tool(handle_id: str) -> ToolResult:
-            wt = self._agent_worktrees.get(str(handle_id))
-            if wt is None:
-                return ToolResult(
-                    ok=False, error=f"no agent worktree for handle {handle_id!r}"
-                )
-            if not _worktree_handle_terminal(str(handle_id)):
-                return ToolResult(
-                    ok=False,
-                    error="child is still running; wait for it to finish before discarding",
-                )
-            # Discard destroys the child's work -- same confirm gate as
-            # merge, never optional.
-            if request_worktree_merge_confirm is None:
-                return ToolResult(
-                    ok=False,
-                    error=(
-                        "discard requires user confirmation, and no approval "
-                        "surface is available in this session"
-                    ),
-                )
-            if worktree_repo_root is None:
-                return ToolResult(
-                    ok=False,
-                    error="no local filesystem provider is reachable for this run",
-                )
             from tldw_chatbook.Agents.agent_worktree import (
-                preview_agent_worktree_diffstat,
+                unsupported_execution_boundary,
             )
 
-            decision = request_worktree_merge_confirm(
-                {
-                    "handle_id": handle_id,
-                    "action": "discard",
-                    "branch": wt.branch,
-                    "worktree": str(wt.worktree_path),
-                    "diffstat": preview_agent_worktree_diffstat(worktree_repo_root, wt),
-                }
-            )
-            if not decision.get("allow", False):
-                return ToolResult(
-                    ok=False, error="The user declined discarding the worktree."
-                )
-            from tldw_chatbook.Agents import agent_worktree as _agent_worktree_mod
-
-            refusal = _agent_worktree_mod.discard_agent_worktree(worktree_repo_root, wt)
-            if refusal is not None:
-                return ToolResult(ok=False, error=f"[{refusal.reason_code}] {refusal.message}")
-            del self._agent_worktrees[str(handle_id)]
+            del handle_id
+            refusal = unsupported_execution_boundary()
             return ToolResult(
-                ok=True, content=f"Discarded agent worktree on branch {wt.branch}."
+                ok=False, error=f"[{refusal.reason_code}] {refusal.message}"
             )
 
         def _resume_retained_child(

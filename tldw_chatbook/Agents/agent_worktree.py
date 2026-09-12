@@ -30,6 +30,11 @@ _BRANCH_PREFIX = "agent/"
 # messages, and log-friendly identifiers.
 _MAX_GIT_ERROR_CHARS = 200
 _RUN_ID_ABBREV_CHARS = 8
+UNSUPPORTED_EXECUTION_BOUNDARY = "unsupported_execution_boundary"
+UNSUPPORTED_EXECUTION_MESSAGE = (
+    "Safe agent worktree execution is unavailable. Existing work is retained "
+    "for manual review; it was not merged, discarded, or automatically recovered."
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,14 @@ class WorktreeRefusal:
 
     reason_code: str
     message: str
+
+
+def unsupported_execution_boundary() -> WorktreeRefusal:
+    """Return the uniform refusal for automatic agent worktree operations."""
+    return WorktreeRefusal(
+        reason_code=UNSUPPORTED_EXECUTION_BOUNDARY,
+        message=UNSUPPORTED_EXECUTION_MESSAGE,
+    )
 
 
 def _worktrees_base() -> Path:
