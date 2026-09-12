@@ -3210,7 +3210,10 @@ class _StreamingModelAdapter:
         ``self._resolution`` itself -- which is never mutated, since the
         adapter is shared across concurrent children. An unknown/unready
         per-call provider raises through the same channel as a stream
-        failure, never a silent fallback to the parent.
+        failure, never a silent fallback to the parent. A routed call on a
+        continuation-pinned turn raises the typed ``ContinuationConflictError``
+        from request preparation (the restore target pins the parent's
+        provider/model/base_url) -- loud, through that same channel.
         """
         sampling_overlays = {
             field: per_call_kwargs.pop(kwarg)
@@ -4830,6 +4833,7 @@ class ConsoleAgentBridge:
         # default, and every pre-existing construction site -- i.e. all test
         # harnesses) means this bridge never wires a hooks engine at all.
         ensure_run_hooks: Callable[[], Any] | None = None,
+        app_config: Mapping[str, Any] | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
@@ -4855,6 +4859,12 @@ class ConsoleAgentBridge:
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
         self._ensure_run_hooks = ensure_run_hooks
+        # ADR-147: forwarded to every AgentService this bridge builds; None
+        # (every production site) leaves the service on its live
+        # ``load_settings()`` fallback. Tests inject a fake-key mapping so
+        # the spawn resolver's readiness gate does not depend on host
+        # credentials.
+        self._app_config = app_config
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -6726,6 +6736,7 @@ class ConsoleAgentBridge:
             work_origin=work_origin,
             work_chain_id=work_chain_id,
             clock=self._clock,
+            app_config=self._app_config,
             on_step=on_step,
             # TASK-25903: hands the controller a steer(text) bound to THIS
             # run once its mailbox registers -- run ids are minted inside
