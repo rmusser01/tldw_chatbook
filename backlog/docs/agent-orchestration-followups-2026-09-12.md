@@ -1,5 +1,25 @@
 # Agent orchestration remaining work — 2026-09-12
 
+## Current continuation status
+
+PR #2641 merged the five earlier reliability/verification follow-ups at
+`d66908a69ef03066fed77a92edf77a326f44bd89`. Work now continues locally on
+`codex/agent-orchestration-remaining` in the isolated orchestration worktree.
+The earlier investigation below is retained as historical evidence; this status
+supersedes its pending-integration and remaining-work labels.
+
+- **Done and independently reviewed:** TASK-13154.4 approval verification,
+  TASK-18601 bounded segment-log paging, and TASK-31511 bounded reusable webhook
+  delivery. Their task notes contain scoped test results and limitations.
+- **In progress:** TASK-18929 denial breaker; TASK-31210/31211 confirmed worktree
+  actions and prior-turn recovery; TASK-18923 live per-run usage; TASK-13154.5/.6/.7
+  Settings ownership/tool-filter feedback, starter presets and definition wall
+  caps; parent TASK-13154 reconciliation.
+- Three of the eight requested outcome areas are complete. The parent stays open
+  until the remaining implementation and combined branch review finish. No new
+  PR, push or merge has been performed for this continuation.
+
+
 Baseline: `origin/dev` at `8ab21ecaf372ad0b5cc8bca98dd12c427f4aef87`.
 [PR #2631](https://github.com/rmusser01/tldw_chatbook/pull/2631) merged the
 25-item audit scope. The supervisor and its managed sub-agents remain one
