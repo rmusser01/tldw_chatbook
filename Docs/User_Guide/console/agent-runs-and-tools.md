@@ -87,6 +87,15 @@ turn continues, unlike **Stop**, which ends the run. A tool that must
 finish once started (a Watchlists mutation, for example) cannot be
 abandoned and shows no link.
 
+While a model call is generating or thinking, this line may also show its
+current output count. `17 provider output tok` means the provider supplied an
+explicit count. `~17 local output tok` is Chatbook's local estimate from the
+text received so far. The count belongs only to the current model call: it
+resets for the next call and disappears while a tool or approval is waiting and
+when the call finishes. Missing usage and an explicit provider count of zero
+show no segment. Live counts do not include a price estimate and are separate
+from the completed run's budget-token accounting.
+
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
 
@@ -857,9 +866,12 @@ rail; close it and it stays closed for the rest of that busy window.
      historical rows omit the span. Stuck rows use the warning color;
      cancelled rows use a muted color as well as their distinct glyphs.
    - Secondary line: the child's last step, result, or error text, dimmed,
-     with the child's budget-token count appended once it finishes — see
-     *Budget tokens and billing*, below. Historical rows restore their own
-     saved result or last useful step and their saved budget count.
+     with the current call's `N provider output tok` or `~N local output tok`
+     appended while that child is active. Missing usage and explicit provider
+     zero add nothing. Once the child finishes, the live count clears and its
+     budget-token count is appended instead — see *Budget tokens and billing*,
+     below. Historical rows restore their own saved result or last useful step
+     and their saved budget count.
 3. **Drilled in** — click a specific row: the **left rail's** Agent section
    switches to that child's view (`Sub-agent · <status> (Back)`, step lines,
    and saved budget count). The Agents section in the Inspect rail hides

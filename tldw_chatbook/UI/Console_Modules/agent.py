@@ -553,10 +553,20 @@ def console_turn_activity_text(
         fleet = _fleet_turn_activity(children, now=now)
         if fleet:
             return fleet
+    usage = getattr(snapshot, "turn_usage", None)
+    usage_label = _live_usage_label(usage)
     if step is None:
-        # Pre-first-token: the model has not come back once yet, so there is
-        # no step to name and no honest base to time from.
-        return CONSOLE_GENERATING_PLACEHOLDER
+        label = CONSOLE_GENERATING_PLACEHOLDER
+        started_at = getattr(usage, "started_at", None)
+        elapsed = (
+            _format_fleet_elapsed(max(0.0, now - started_at))
+            if started_at is not None
+            else ""
+        )
+        segments = (label, elapsed, usage_label)
+        return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
+            segment for segment in segments if segment
+        )
     if step.kind == STEP_TOOL_CALL:
         # `AgentLiveStep.text` for a tool-call step IS the tool name:
         # `agent_runtime` adds every STEP_TOOL_CALL with `tool_name=` and
@@ -571,10 +581,30 @@ def console_turn_activity_text(
         if started_at is not None
         else ""
     )
-    return f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else label
+    segments = (label, elapsed, usage_label if step.kind != STEP_TOOL_CALL else "")
+    return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
+        segment for segment in segments if segment
+    )
 
 
-def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSectionRow:
+def _live_usage_label(usage: Any) -> str:
+    """Format one published current-call scalar with explicit provenance."""
+    if usage is None:
+        return ""
+    output_tokens = getattr(usage, "output_tokens", None)
+    source = getattr(usage, "source", None)
+    if type(output_tokens) is not int or output_tokens <= 0:
+        return ""
+    if source == "provider":
+        return f"{output_tokens} provider output tok"
+    if source == "local":
+        return f"~{output_tokens} local output tok"
+    return ""
+
+
+def _fleet_row_from_handle(
+    handle: "FleetHandle", *, now: float, live_snapshot: Any = None
+) -> InspectorSectionRow:
     """Build one fleet row from a LIVE ``FleetCoordinator`` handle.
 
     ``row_id`` is the handle's own ``handle_id`` -- stable across the
@@ -610,6 +640,11 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
         if elapsed:
             primary = f"{primary} · {elapsed}"
     secondary = (handle.error or handle.result or handle.task or "").strip()
+    usage_segment = ""
+    if status not in TERMINAL_RUN_STATUSES:
+        usage_segment = _live_usage_label(getattr(live_snapshot, "turn_usage", None))
+        if usage_segment:
+            secondary = f"{secondary} · {usage_segment}" if secondary else usage_segment
     if handle.total_tokens:
         token_segment = _budget_token_label(handle.total_tokens)
         secondary = f"{secondary} · {token_segment}" if secondary else token_segment
@@ -643,7 +678,9 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
         row_id=handle.handle_id,
         primary_text=primary,
         secondary_text=secondary,
-        wrap_secondary=bool(unread and status in TERMINAL_RUN_STATUSES),
+        wrap_secondary=bool(
+            usage_segment or (unread and status in TERMINAL_RUN_STATUSES)
+        ),
         status=status,
         clickable=bool(handle.run_id),
         cancellable=status not in TERMINAL_RUN_STATUSES,
@@ -1688,7 +1725,19 @@ class ConsoleAgentController:
         handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
         if handles:
             now = time.monotonic()
-            return tuple(_fleet_row_from_handle(handle, now=now) for handle in handles)
+            live_run_snapshot = getattr(bridge, "live_run_snapshot", None)
+            return tuple(
+                _fleet_row_from_handle(
+                    handle,
+                    now=now,
+                    live_snapshot=(
+                        live_run_snapshot(conversation_id, handle.run_id)
+                        if live_run_snapshot is not None and handle.run_id
+                        else None
+                    ),
+                )
+                for handle in handles
+            )
         historical_snapshot = getattr(bridge, "historical_snapshot", None)
         if historical_snapshot is not None:
             return tuple(

@@ -37,7 +37,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
-from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot
+from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot, AgentLiveTurnUsage
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
@@ -47,18 +47,36 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 @pytest.fixture(autouse=True)
 def _real_fleet_recovery_database(monkeypatch, tmp_path, request):
     """Mount with the real recovery owner; a DB-less mount correctly pauses."""
+    from Tests.conftest import _close_database_instance
     from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
     from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 
     build = request.module._build_test_app
+    owned_resources = []
 
     def build_with_db(*args, **kwargs):
         app = build(*args, **kwargs)
         _attach_real_dbs(app, tmp_path)
         _configure_native_ready_console(app)
+        owned_resources.append(
+            (
+                app.chachanotes_db,
+                app.local_library_collections_db,
+                app.evaluation_orchestrator.db,
+                app.local_workspace_db,
+                app.subscriptions_db,
+                app._instance_lock_status.handle,
+            )
+        )
         return app
 
     monkeypatch.setattr(request.module, "_build_test_app", build_with_db)
+    yield
+    for chacha, collections, evals, workspaces, subscriptions, lock in owned_resources:
+        for database in (chacha, collections, evals, workspaces, subscriptions):
+            _close_database_instance(database)
+        if lock is not None:
+            lock.close()
 
 
 _AGENT_SECTION_SIZE = (180, 48)
@@ -87,11 +105,15 @@ class _FleetBridge:
     fleet_snapshot` (PR2b Task 1)."""
 
     def __init__(
-        self, handles: tuple[FleetHandle, ...], conversation_id: str = "conv-A"
+        self,
+        handles: tuple[FleetHandle, ...],
+        conversation_id: str = "conv-A",
+        live_by_run_id: dict[str, AgentLiveSnapshot] | None = None,
     ) -> None:
         self._handles = list(handles)
         self._by_run_id = {h.run_id: h for h in handles if h.run_id}
         self._conversation_id = conversation_id
+        self._live_by_run_id = live_by_run_id or {}
         #: PR2b Task 5: every `cancel_subagent(conversation_id, handle_id)`
         #: call this fake received, in order -- the seam the per-row-cancel
         #: wiring tests assert against.
@@ -113,6 +135,13 @@ class _FleetBridge:
         if conversation_id != self._conversation_id:
             return AgentLiveSnapshot()
         return AgentLiveSnapshot(status="running", step=1)
+
+    def live_run_snapshot(
+        self, conversation_id: str, run_id: str
+    ) -> AgentLiveSnapshot | None:
+        if conversation_id != self._conversation_id:
+            return None
+        return self._live_by_run_id.get(run_id)
 
     def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
         if not self._handles or self._conversation_id not in conversation_ids:
@@ -553,6 +582,179 @@ async def test_clicking_the_first_row_drills_into_that_child_directly():
 
 
 # -- PR2b Task 5: per-child token spend + per-row cancel -------------------
+
+
+@pytest.mark.asyncio
+async def test_live_usage_is_attributed_per_child_without_replacing_task_or_order():
+    """Looking up one shared snapshot would put the same token count on every child."""
+    handles = (
+        FleetHandle(
+            handle_id="h1",
+            run_id="run-1",
+            agent="researcher",
+            task="compare provider pricing across regions",
+            status="running",
+            started_at=1000.0,
+        ),
+        FleetHandle(
+            handle_id="h2",
+            run_id="run-2",
+            agent="writer",
+            task="draft the decision memo with citations",
+            status="running",
+            started_at=1000.0,
+        ),
+        FleetHandle(
+            handle_id="h3",
+            run_id="run-3",
+            agent="reviewer",
+            task="check the recommendation",
+            status="running",
+            started_at=1000.0,
+        ),
+    )
+    bridge = _FleetBridge(
+        handles,
+        live_by_run_id={
+            "run-1": AgentLiveSnapshot(
+                status="running",
+                turn_usage=AgentLiveTurnUsage(12, "provider", 1001.0, 1),
+            ),
+            "run-2": AgentLiveSnapshot(
+                status="running",
+                turn_usage=AgentLiveTurnUsage(7, "local", 1002.0, 1),
+            ),
+        },
+    )
+    app = _ready_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        section.set_open(True)
+        await pilot.pause()
+
+        assert [row.row_id for row in section.rows] == ["h1", "h2", "h3"]
+        assert section.rows[0].secondary_text == (
+            "compare provider pricing across regions · 12 provider output tok"
+        )
+        assert section.rows[1].secondary_text == (
+            "draft the decision memo with citations · ~7 local output tok"
+        )
+        assert section.rows[2].secondary_text == "check the recommendation"
+
+
+@pytest.mark.asyncio
+async def test_terminal_budget_tokens_do_not_retain_live_usage():
+    """A settled child must keep final budget accounting distinct from live usage."""
+    handle = FleetHandle(
+        handle_id="h1",
+        run_id="run-1",
+        agent="writer",
+        task="draft summary",
+        status="done",
+        result="drafted",
+        started_at=1000.0,
+        finished_at=1002.0,
+        total_tokens=1234,
+    )
+    bridge = _FleetBridge(
+        (handle,),
+        live_by_run_id={
+            "run-1": AgentLiveSnapshot(
+                status="done",
+                turn_usage=AgentLiveTurnUsage(99, "provider", 1001.0, 1),
+            )
+        },
+    )
+    app = _ready_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        assert section.rows[0].secondary_text == "drafted · 1.2k budget tok"
+        assert "output tok" not in section.rows[0].secondary_text
+
+
+@pytest.mark.asyncio
+async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
+    """Responsive rail paint must leave realistic task context and usage visible."""
+    import time as _time
+    from xml.etree import ElementTree
+
+    def painted_cells(svg: str) -> list[tuple[str, str]]:
+        root = ElementTree.fromstring(svg)
+        return [
+            (
+                element.attrib.get("x", ""),
+                "".join(element.itertext()).replace("\xa0", " "),
+            )
+            for element in root.iter()
+            if element.tag.endswith("}text") or element.tag == "text"
+        ]
+
+    def assert_usage_cells_are_painted(svg: str) -> None:
+        cells = painted_cells(svg)
+        task_x = next(x for x, text in cells if "compare regional provider" in text)
+        assert any(x == task_x and "128" in text for x, text in cells)
+        assert any(x == task_x and "provider output tok" in text for x, text in cells)
+
+    started_at = _time.monotonic() - 12.0
+    handle = FleetHandle(
+        handle_id="h1",
+        run_id="run-1",
+        agent="researcher",
+        task="compare regional provider pricing and summarize material differences",
+        status="running",
+        started_at=started_at,
+    )
+    bridge = _FleetBridge(
+        (handle,),
+        live_by_run_id={
+            "run-1": AgentLiveSnapshot(
+                status="running",
+                turn_usage=AgentLiveTurnUsage(128, "provider", started_at, 1),
+            )
+        },
+    )
+    app = _ready_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        section = console.query_one(
+            "#console-agent-section-subagents", ConsoleInspectorSection
+        )
+        section.set_open(True)
+        await pilot.pause()
+        await _scroll_into_view(
+            pilot, console, "#console-inspector-section-agent-fleet-row-0"
+        )
+        host.save_screenshot(
+            filename="live-usage-wide-180x48.svg",
+            path=".superpowers/sdd/2026-09-12-live-per-run-usage/task-2-evidence",
+        )
+        assert_usage_cells_are_painted(host.export_screenshot(simplify=True))
+
+        await pilot.resize_terminal(100, 32)
+        await _scroll_into_view(
+            pilot, console, "#console-inspector-section-agent-fleet-row-0"
+        )
+        host.save_screenshot(
+            filename="live-usage-narrow-100x32.svg",
+            path=".superpowers/sdd/2026-09-12-live-per-run-usage/task-2-evidence",
+        )
+        assert_usage_cells_are_painted(host.export_screenshot(simplify=True))
+        secondary = console.query_one(
+            "#console-inspector-section-agent-fleet-row-0-secondary", Static
+        )
+        _assert_widget_and_ancestors_displayed(secondary)
+        _assert_painted_at_own_region(host, secondary)
+        assert "regional provider pricing" in str(secondary.renderable)
+        assert "128 provider output tok" in str(secondary.renderable)
 
 
 @pytest.mark.asyncio
