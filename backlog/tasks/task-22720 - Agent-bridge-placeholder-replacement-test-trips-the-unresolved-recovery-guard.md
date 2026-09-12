@@ -105,7 +105,11 @@ remains the root-cause record: its old double had raised `RuntimeError:
 Unresolved temporary dispatch recovery cannot be replaced.` while attempting
 an invalid restore. No production code changed.
 
-Verification used `.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python
--m pytest -q Tests/Chat/test_console_local_citation_boundary.py -k
-citation_repair_agent`: 7 passed, 96 deselected. ADR required: no; this removes
-stale expected-failure metadata from an existing recovery regression.
+Verification used the isolated worktree interpreter:
+
+```sh
+.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python -m pytest -q Tests/Chat/test_console_local_citation_boundary.py -k citation_repair_agent
+```
+
+Result: 7 passed, 96 deselected. ADR required: no; this removes stale
+expected-failure metadata from an existing recovery regression.

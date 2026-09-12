@@ -2,9 +2,9 @@
 
 > **For agentic workers:** Use subagent-driven-development to implement this plan task by task.
 
-**Goal:** Make navigation's busy-session read observational and record the remaining orchestration work against merged dev.
+**Goal:** Make fleet reads observational, prevent revoked runs from arming new prompts, serialize approval verdicts, and reconcile older orchestration test tickets against merged dev.
 
-**Architecture:** Keep the conversation-owned coordinator and retained AgentService ownership. Remove retained-owner cleanup from the read-only fleet snapshot; the existing rail, cancellation, and lifecycle paths keep their cleanup behavior. Terminal coordinator handles remain pruned at turn start.
+**Architecture:** Keep the conversation-owned coordinator and retained AgentService ownership. Fleet snapshots become observational while existing cleanup paths retain their timing. The interrupt host remembers revoked run IDs per kind and serializes registration with revocation; the controller snapshots complete verdicts under the same lock. Older dictionary/citation harnesses are aligned with existing durable acceptance and recovery behavior.
 
 **Tech Stack:** Python, Textual controller, threading, SQLite, pytest.
 
@@ -80,12 +80,12 @@ Reason: clarify the existing per-run cancellation contract, including its physic
 - Keep tombstones for the host lifetime. No TTL, size eviction, session-close clearing, or logical-run completion can forget revocation: an abandoned provider daemon may still reach its fallback. Document memory proportional to distinct revoked runs; safe reclamation needs proof every physical invocation drained and is outside this fix.
 - Serialize the entire MCP verdict snapshot with revocation using the existing lock. Either a completed approval snapshot precedes revocation or revocation precedes an all-deny snapshot; never produce a mixed batch. Revocation cannot retract a previously completed approval or tool side effect.
 
-- [ ] Read the investigation report and preserve its distinction between real late-arm/mixed-snapshot gaps and the obsolete cross-lock/session-keyed payload diagnosis. Review the current host and controller paths before choosing the smallest implementation.
-- [ ] Add a deterministic regression that calls `revoke_approval_rounds_for_run(run_id)` before invoking an actual local `fs_write` approval fallback under `use_run_id(run_id)`. A mounted callback that would approve must never be called; the target file must not exist. Add corresponding late-arm MCP and skill-script assertions with empty registries/badges/payloads afterwards and a nonrevoked sibling still answerable.
-- [ ] Add a warning assertion for a revocable arm outside any run context, without changing legacy unowned-call approval behavior. Add sibling retained-payload and switch/remount assertions for tool approval and skill-script revoke/teardown. Prove a destructive same-session payload removal mutation fails those assertions.
-- [ ] Add controlled snapshot/revocation ordering coverage: revocation before final snapshot yields all unresolved deny; a competing revocation cannot alter individual verdicts partway through the snapshot. Use Events/barriers and bounded joins, not arbitrary sleeps or an assertion about source text.
-- [ ] Run each new regression on unchanged production code and record the intended failures. Update the existing test which currently treats revocation of a not-yet-armed owner as permission to arm later; retain its zero-round count and unrelated-owner checks.
-- [ ] Implement host-owned tombstones and registration checks under the existing lock. The intended mechanism is a per-kind set of run IDs, updated by the same sweep lock:
+- [x] Read the investigation report and preserve its distinction between real late-arm/mixed-snapshot gaps and the obsolete cross-lock/session-keyed payload diagnosis. Review the current host and controller paths before choosing the smallest implementation.
+- [x] Add a deterministic regression that calls `revoke_approval_rounds_for_run(run_id)` before invoking an actual local `fs_write` approval fallback under `use_run_id(run_id)`. A mounted callback that would approve must never be called; the target file must not exist. Add corresponding late-arm MCP and skill-script assertions with empty registries/badges/payloads afterwards and a nonrevoked sibling still answerable.
+- [x] Add a warning assertion for a revocable arm outside any run context, without changing legacy unowned-call approval behavior. Add sibling retained-payload and switch/remount assertions for tool approval and skill-script revoke/teardown. Prove a destructive same-session payload removal mutation fails those assertions.
+- [x] Add controlled snapshot/revocation ordering coverage: revocation before final snapshot yields all unresolved deny; a competing revocation cannot alter individual verdicts partway through the snapshot. Use Events/barriers and bounded joins, not arbitrary sleeps or an assertion about source text.
+- [x] Run each new regression on unchanged production code and record the intended failures. Update the existing test which currently treats revocation of a not-yet-armed owner as permission to arm later; retain its zero-round count and unrelated-owner checks.
+- [x] Implement host-owned tombstones and registration checks under the existing lock. The intended mechanism is a per-kind set of run IDs, updated by the same sweep lock:
 
 ```python
 with self.lock:
@@ -95,9 +95,9 @@ with self.lock:
 ```
 
   During registration, combine the tombstone and state stamp checks. Remove a rejected preregistered entry by identity, stamp it revoked, and return the normal revoked outcome outside the lock. Do not resurrect a swept object or publish a dead card.
-- [ ] Take the complete controller approval result snapshot under `_approval_state_lock`, including a fresh revoked check. Keep audit logging and UI callbacks outside the lock; do not hold the non-reentrant host lock across arbitrary hooks. Preserve unresolved-denial provenance. Existing exact-round sibling cleanup should need tests/documentation, not a redundant locking layer.
-- [ ] Run focused revocation, host wiring, local approval, and human-wait tests named by the report. Run changed-line lint, formatting checks, and `git diff --check`; compare pre-existing whole-file debt without reformatting unrelated code. Add an ADR-067 clarification and task notes with exact evidence and the lifetime tradeoff.
-- [ ] Commit task-scoped changes and report red/green/mutation evidence. Root performs independent task and final branch reviews before marking Done.
+- [x] Take the complete controller approval result snapshot under `_approval_state_lock`, including a fresh revoked check. Keep audit logging and UI callbacks outside the lock; do not hold the non-reentrant host lock across arbitrary hooks. Preserve unresolved-denial provenance. Existing exact-round sibling cleanup should need tests/documentation, not a redundant locking layer.
+- [x] Run focused revocation, host wiring, local approval, and human-wait tests named by the report. Run changed-line lint, formatting checks, and `git diff --check`; compare pre-existing whole-file debt without reformatting unrelated code. Add an ADR-067 clarification and task notes with exact evidence and the lifetime tradeoff.
+- [x] Commit task-scoped changes and report red/green/mutation evidence. Root performs independent task and final branch reviews before marking Done.
 
 ### Task 3: Reconcile the remaining old harness failures (TASK-2155, TASK-22720, TASK-19642.8.3)
 
@@ -118,8 +118,8 @@ Reason: align old harnesses and records with already-shipped durable acceptance 
 - Keep the provider/agent payload substitution assertions and verify the stored user text stays raw.
 - The citation replacement test already passes all its assertions on merged dev. Remove only its stale expected-failure marker; do not weaken recovery guards or delete assertions.
 
-- [ ] Read root's `stale-harness-probes.log`, `dictionary-durable-probe.log`, `dictionary-hydration-probe.log`, and `dictionary-policy-probe.log` in the plan workspace. The exact exception is `RuntimeError: Durable Console Library policy no longer matches acceptance.` Hydration alone still failed because the policy row did not exist. Inserting the policy and hydrating made the agent dictionary test pass; no production source was changed in those probes.
-- [ ] Update both dictionary test setups using the existing real repository seam after binding their conversation, before submitting:
+- [x] Read root's `stale-harness-probes.log`, `dictionary-durable-probe.log`, `dictionary-hydration-probe.log`, and `dictionary-policy-probe.log` in the plan workspace. The exact exception is `RuntimeError: Durable Console Library policy no longer matches acceptance.` Hydration alone still failed because the policy row did not exist. Inserting the policy and hydrating made the agent dictionary test pass; no production source was changed in those probes.
+- [x] Update both dictionary test setups using the existing real repository seam after binding their conversation, before submitting:
 
 ```python
 store = screen._ensure_console_chat_store()
@@ -133,12 +133,12 @@ await store.hydrate_session_library_policy(session.id)
 ```
 
   A small helper within this test module may share this setup. Do not import from the world-info test, which already imports this module. Keep production gateway/controller behavior intact; if another harness defect surfaces, identify its cause before fixing it and record the evidence.
-- [ ] Run the dictionary module before and after its harness edit. Extend the agent path with the same raw stored user-text assertion already present in the provider test, so fixing dispatch cannot accidentally endorse substituting persisted text.
-- [ ] Remove the `pytest.mark.xfail` attached to `test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair`. Run that exact test and nearby `citation_repair_agent` cases normally. The expected replacement content/status/visible-output assertions remain unchanged.
-- [ ] Address the approved Task 2 review's minor precision finding: in `test_revoked_arm_is_refused_before_configuration_read`, replace `assert all(not registry for registry in observed)` with `assert observed == []`. Run both parametrized cases. This pins the already-implemented early return before any configuration callback, not merely an empty registry inside it.
-- [ ] Reconcile TASK-19642.8.3 using the four exact nodes from root's passing baseline and inspect the assertions in the two wake modules. Same manual authority gates and frozen run budget still apply; automatic-chain budgets add restrictions under ADR-134. Correct the old headless test docstring only if necessary for accuracy; no production changes or new budget behavior.
-- [ ] Run the targeted dictionary module, the citation agent selection, and the four named wake nodes. Do not add the entire Chat/UI suites. Run changed-line lint/format checks and whitespace checks, recording any pre-existing debt precisely.
-- [ ] Update all three task implementation notes with current root causes, unchanged production contracts, verification commands/results, and ADR decisions. Do not mark Done until independent review. Commit the batch's scoped files and write `task-3-report.md` with exact evidence.
+- [x] Run the dictionary module before and after its harness edit. Extend the agent path with the same raw stored user-text assertion already present in the provider test, so fixing dispatch cannot accidentally endorse substituting persisted text.
+- [x] Remove the `pytest.mark.xfail` attached to `test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair`. Run that exact test and nearby `citation_repair_agent` cases normally. The expected replacement content/status/visible-output assertions remain unchanged.
+- [x] Address the approved Task 2 review's minor precision finding: in `test_revoked_arm_is_refused_before_configuration_read`, replace `assert all(not registry for registry in observed)` with `assert observed == []`. Run both parametrized cases. This pins the already-implemented early return before any configuration callback, not merely an empty registry inside it.
+- [x] Reconcile TASK-19642.8.3 using the four exact nodes from root's passing baseline and inspect the assertions in the two wake modules. Same manual authority gates and frozen run budget still apply; automatic-chain budgets add restrictions under ADR-134. Correct the old headless test docstring only if necessary for accuracy; no production changes or new budget behavior.
+- [x] Run the targeted dictionary module, the citation agent selection, and the four named wake nodes. Do not add the entire Chat/UI suites. Run changed-line lint/format checks and whitespace checks, recording any pre-existing debt precisely.
+- [x] Update all three task implementation notes with current root causes, unchanged production contracts, verification commands/results, and ADR decisions. Do not mark Done until independent review. Commit the batch's scoped files and write `task-3-report.md` with exact evidence.
 
 ## Revalidation and durable inventory
 
