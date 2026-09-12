@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
@@ -169,6 +170,12 @@ class InternalPromptsPanel(Vertical):
         elif action == "reset":
             ok = await self._persist(prompt_id, "", reset=True)
         else:
+            # Unreachable under the modal's current dismiss contract; a
+            # future modal change must not fail silently (TASK-468).
+            logger.debug(
+                "Internal prompt editor returned unknown action "
+                f"{action!r} for {prompt_id}; ignoring"
+            )
             return
         if ok:
             self._refresh_row(prompt_id)

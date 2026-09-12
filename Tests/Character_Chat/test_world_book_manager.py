@@ -4,9 +4,9 @@ Tests for World Book Manager functionality.
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.Character_Chat.world_info_processor import WorldInfoProcessor
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError, InputError
 
 
 @pytest.fixture
@@ -619,14 +619,74 @@ def test_attach_world_book_to_character_round_trip(wb_manager):
     assert got[0]["entry_count"] == 1 and got[0]["enabled"] is True
 
     # Idempotent by name.
-    assert wb_manager.attach_world_book_to_character(book_id, char_id)["attached"] is False
+    assert (
+        wb_manager.attach_world_book_to_character(book_id, char_id)["attached"] is False
+    )
     assert len(wb_manager.get_world_books_for_character(char_id)) == 1
 
     # Detach.
-    assert wb_manager.detach_world_book_from_character(char_id, "Lore")["detached"] is True
+    assert (
+        wb_manager.detach_world_book_from_character(char_id, "Lore")["detached"] is True
+    )
     assert wb_manager.get_world_books_for_character(char_id) == []
     # Detach again = harmless no-op.
-    assert wb_manager.detach_world_book_from_character(char_id, "Lore")["detached"] is False
+    assert (
+        wb_manager.detach_world_book_from_character(char_id, "Lore")["detached"]
+        is False
+    )
+
+
+def test_attach_detach_preserves_other_extension_keys(wb_manager):
+    """TASK-410: the extensions read-modify-write must not drop sibling keys.
+
+    attach/detach rewrite the whole ``extensions`` dict via
+    ``_write_character_world_books``; a regression there would silently drop
+    a character's native ``character_book`` or embedded ``chat_dictionaries``
+    on a world-book attach. Both keys (and values) must survive unchanged
+    through attach AND detach.
+    """
+    import json as _json
+
+    db = wb_manager.db
+    native_book = {"entries": [{"keys": ["native"], "content": "native lore"}]}
+    chat_dicts = ["daily-rituals", "court-slang"]
+    char_id = db.add_character_card(
+        {
+            "name": "Loaded",
+            "extensions": {
+                "character_book": native_book,
+                "chat_dictionaries": chat_dicts,
+            },
+        }
+    )
+    book_id = wb_manager.create_world_book("Extra")
+    wb_manager.create_world_book_entry(book_id, keys=["k"], content="c")
+
+    def _ext() -> dict:
+        record = db.get_character_card_by_id(char_id)
+        ext = record["extensions"]
+        return _json.loads(ext) if isinstance(ext, str) else ext
+
+    # Attach: world book visible, both sibling keys intact.
+    assert (
+        wb_manager.attach_world_book_to_character(book_id, char_id)["attached"] is True
+    )
+    assert [g["name"] for g in wb_manager.get_world_books_for_character(char_id)] == [
+        "Extra"
+    ]
+    ext = _ext()
+    assert ext["character_book"] == native_book
+    assert ext["chat_dictionaries"] == chat_dicts
+
+    # Detach: attachments empty, both sibling keys STILL intact.
+    assert (
+        wb_manager.detach_world_book_from_character(char_id, "Extra")["detached"]
+        is True
+    )
+    assert wb_manager.get_world_books_for_character(char_id) == []
+    ext = _ext()
+    assert ext["character_book"] == native_book
+    assert ext["chat_dictionaries"] == chat_dicts
 
 
 def test_attach_snapshot_carries_matcher_fields_and_enabled(wb_manager):
@@ -634,8 +694,13 @@ def test_attach_snapshot_carries_matcher_fields_and_enabled(wb_manager):
     char_id = _make_character(db, "Mage")
     book_id = wb_manager.create_world_book("Regexy", enabled=False)
     wb_manager.create_world_book_entry(
-        book_id, keys=["k"], content="c", regex=True,
-        secondary_keys=["s"], priority=7, selective=True,
+        book_id,
+        keys=["k"],
+        content="c",
+        regex=True,
+        secondary_keys=["s"],
+        priority=7,
+        selective=True,
     )
     wb_manager.attach_world_book_to_character(book_id, char_id)
     record = db.get_character_card_by_id(char_id)
@@ -649,7 +714,11 @@ def test_attach_snapshot_carries_matcher_fields_and_enabled(wb_manager):
 def test_get_world_books_for_character_dedups_hostile_duplicate_names(wb_manager):
     db = wb_manager.db
     char_id = _make_character(db, "Rogue")
-    dup = {"name": "Dupe", "entries": [{"keys": ["a"], "content": "x"}], "enabled": True}
+    dup = {
+        "name": "Dupe",
+        "entries": [{"keys": ["a"], "content": "x"}],
+        "enabled": True,
+    }
     db.update_character_card(
         char_id,
         {"extensions": {"character_world_books": [dup, dup]}},

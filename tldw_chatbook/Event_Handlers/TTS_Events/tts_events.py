@@ -666,6 +666,10 @@ class TTSEventHandler:
         self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
         self._last_cooldown_cleanup = 0.0  # Track last cleanup time
+        # TASK-32494: latches the playback-capability remedy toast to once
+        # per app run (the handler is an app-lifetime singleton), matching
+        # the once-per-run pattern of the dictation override notices.
+        self._playback_remedy_notified = False
 
     async def initialize_tts(self) -> None:
         """Initialize TTS service"""
@@ -1810,6 +1814,7 @@ class TTSEventHandler:
                 and resolution.source in ("assigned", "default_profile")
                 else None
             )
+            candidate_format: str | None = None
             if exact_request is not None:
                 provider_id = exact_request.provider_id
             else:
@@ -1829,8 +1834,45 @@ class TTSEventHandler:
                         and candidate_speed > 0
                     ):
                         effective_speed = float(candidate_speed)
+                    raw_format = getattr(preferences, "response_format", None)
+                    if isinstance(raw_format, str) and raw_format:
+                        candidate_format = raw_format
                 except Exception:
                     logger.debug("TTS metric provider snapshot is unavailable")
+
+            # TASK-32494 adaptive playback: a CONSOLE speech request (the
+            # hands-free utterance path via `on_finished`, or an automatic
+            # Speak-replies request via `playback_lifecycle`) whose resolved
+            # format this machine provably cannot play (no streaming sink
+            # coverage and no format-capable player binary -- e.g. MP3 on a
+            # stock Fedora Workstation) is re-issued as WAV, which the sink
+            # plays in-process. Scoped to Console speech on purpose: every
+            # other caller (character chat, ad-hoc explicit requests, exact
+            # profile selections) keeps today's byte-identical behavior, and
+            # profile-driven formats surface through the playback-failure
+            # remedy instead of being silently rewritten.
+            response_format_override: str | None = None
+            if (
+                exact_request is None
+                and candidate_format is not None
+                and (on_finished is not None or playback_lifecycle is not None)
+            ):
+                # Function-local (PR #2638 CI): playback_capability pulls
+                # the streaming-sink and audio-player modules, which must
+                # stay off the UI-ready module census ratchet.
+                from tldw_chatbook.TTS.playback_capability import (
+                    adapt_console_speech_format,
+                )
+
+                adapted = adapt_console_speech_format(candidate_format)
+                if adapted != candidate_format:
+                    response_format_override = adapted
+                    logger.info(
+                        "Console speech: response format '{}' is not playable "
+                        "on this machine; requesting '{}' instead",
+                        candidate_format,
+                        adapted,
+                    )
 
             await self._post_tts_message(
                 TTSProgressEvent(
@@ -1945,6 +1987,7 @@ class TTSEventHandler:
                     response = await service.synthesize_default(
                         text=text,
                         voice_override=voice,
+                        response_format_override=response_format_override,
                         progress_sink=progress_sink,
                         **authorization_kwargs,
                     )
@@ -2790,7 +2833,30 @@ class TTSEventHandler:
                 the clip could still be playing. `1.0` (unchanged bound)
                 when the caller could not determine it.
         """
-        from tldw_chatbook.TTS.audio_player import get_audio_player
+        from tldw_chatbook.TTS.audio_player import (
+            find_player_for_format,
+            get_audio_player,
+        )
+        from tldw_chatbook.TTS.playback_capability import (
+            format_playable_locally,
+            playback_remedy,
+        )
+
+        # TASK-32494 playback-capability pre-check: when this machine
+        # provably cannot play the artifact's format (no sink coverage and
+        # no player binary that decodes it -- e.g. an MP3 on a stock
+        # Fedora Workstation), do not even try: report the failure, surface
+        # the remedy ONCE per app run, clean the artifact up, and let the
+        # loop keep moving. Previously this spawned a player that could
+        # never decode the format (or found none at all) and the failure
+        # was indistinguishable from silence -- an entire reply could be
+        # mute with zero user-visible signal.
+        artifact_format = audio_file.suffix.lstrip(".").lower() or None
+        if not format_playable_locally(artifact_format):
+            await self._post_playback_remedy_once(artifact_format, message_id)
+            self._schedule_legacy_playback_cleanup(message_id)
+            on_finished(False)
+            return
 
         stop_live_sink()
         stop_requested = threading.Event()
@@ -2841,7 +2907,43 @@ class TTSEventHandler:
             self._legacy_handoff_stop_events.discard(stop_requested)
 
         self._schedule_legacy_playback_cleanup(message_id)
+        # PR #2638 Qodo #2: the pre-check's "playable" verdict can be a
+        # FALSE POSITIVE when the streaming sink was the deciding vote --
+        # `sink_available()` only proves the sounddevice package is
+        # discoverable, not that PortAudio can open an output stream. In
+        # that world (sink find_spec True, open fails, and no player
+        # binary exists for the format either) the attempt just made
+        # failed STRUCTURALLY, not because of a barge-in, and must reach
+        # the same one-time remedy the pre-check would have posted.
+        if (
+            not ok
+            and not stop_requested.is_set()
+            and find_player_for_format(artifact_format) is None
+        ):
+            await self._post_playback_remedy_once(artifact_format, message_id)
         on_finished(bool(ok))
+
+    async def _post_playback_remedy_once(
+        self, audio_format: str | None, message_id: str
+    ) -> None:
+        """Post the playback-capability remedy toast, once per app run.
+
+        Shared by the pre-flight refusal (format provably unplayable) and
+        the post-attempt structural failure above; `_playback_remedy_
+        notified` is the once-per-app-run latch (the handler is an
+        app-lifetime singleton).
+        """
+        if self._playback_remedy_notified:
+            return
+        self._playback_remedy_notified = True
+        from tldw_chatbook.TTS.playback_capability import playback_remedy
+
+        await self._post_tts_message(
+            TTSCompleteEvent(
+                message_id=message_id,
+                error=playback_remedy(audio_format),
+            )
+        )
 
     def _schedule_legacy_playback_cleanup(self, message_id: str) -> None:
         """Schedule the delayed artifact cleanup `_play_utterance_legacy_

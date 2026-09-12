@@ -94,8 +94,12 @@ async def _seed_console(app, pilot, gateway):
 
 
 def _terminal_survivor_run(runs_db, conversation_id, *, result="child answer"):
+    from uuid import uuid4
+    chain_id = runs_db.automatic_work.create_chain(
+        conversation_id, root_submission_id=uuid4().hex
+    )
     parent_id = runs_db.create_run(
-        conversation_id=conversation_id, agent_kind="primary"
+        conversation_id=conversation_id, agent_kind="primary", work_chain_id=chain_id
     )
     runs_db.set_status(parent_id, "done", "turn final")
     run_id = runs_db.create_run(
@@ -189,7 +193,7 @@ async def test_probe_p2_post_unmount_fanout(tmp_path):
             f"{len(gateway.payloads) - 1}"  # minus the seeding send
         )
         findings.append(
-            f"P2(delivery) delivering_conversation_id={wake.delivering_conversation_id()}"
+            f"P2(delivery) delivering_conversation_ids={wake.delivering_conversation_ids()}"
         )
         ledger = (runs_db.get_run(run_id) or {}).get("wake_delivered_at")
         findings.append(f"P2(ledger) wake_delivered_at={ledger}")

@@ -98,7 +98,7 @@ FLEET_CONTROLLER_CALLBACKS = frozenset(
         "seed_wake_from_marks",
         "retry_wake_soon",
         "wake_has_pending",
-        "wake_delivering_conversation_id",
+        "wake_delivering_session_ids",
         "displayed_composer_draft_accessor",
         "screen_displayed_accessor",
         "screen_mounted_accessor",

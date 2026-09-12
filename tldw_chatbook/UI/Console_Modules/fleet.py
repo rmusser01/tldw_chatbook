@@ -43,7 +43,7 @@ class ConsoleFleetLifecycleController:
         seed_wake_from_marks: Callable[[], bool],
         retry_wake_soon: Callable[[], None],
         wake_has_pending: Callable[[str], bool],
-        wake_delivering_conversation_id: Callable[[], str | None],
+        wake_delivering_session_ids: Callable[[], frozenset[str]],
         displayed_composer_draft_accessor: Callable[[], str | None],
         screen_displayed_accessor: Callable[[], bool],
         screen_mounted_accessor: Callable[[], bool],
@@ -77,7 +77,7 @@ class ConsoleFleetLifecycleController:
         self._seed_wake_from_marks = seed_wake_from_marks
         self._retry_wake_soon = retry_wake_soon
         self._wake_has_pending = wake_has_pending
-        self._wake_delivering_conversation_id = wake_delivering_conversation_id
+        self._wake_delivering_session_ids = wake_delivering_session_ids
         self._displayed_composer_draft_accessor = displayed_composer_draft_accessor
         self._screen_displayed_accessor = screen_displayed_accessor
         self._screen_mounted_accessor = screen_mounted_accessor
@@ -151,9 +151,6 @@ class ConsoleFleetLifecycleController:
     def _claim_console_fleet_wake_marks(self) -> None:
         """Synchronously seed staged wakes from an uncached durable read."""
         try:
-            marked = self._read_fleet_unseen_ids()
-            if not marked:
-                return
             if self._ensure_agent_bridge() is None:
                 return
             if not self._wire_wake_coordinator():
@@ -207,16 +204,7 @@ class ConsoleFleetLifecycleController:
         """Return whether a wake is delivering into ``session_id``."""
         if not session_id:
             return False
-        delivering = self._wake_delivering_conversation_id()
-        if delivering is None:
-            return False
-        session = next(
-            (item for item in self._chat_sessions_accessor() if item.id == session_id),
-            None,
-        )
-        if session is None:
-            return False
-        return delivering in (session.persisted_conversation_id, session.id)
+        return session_id in (self._wake_delivering_session_ids() or frozenset())
 
     async def _record_console_fleet_teardown(self) -> None:
         """Snapshot fleet fates, leave the runtime, then stage notices."""
@@ -323,14 +311,17 @@ class ConsoleFleetLifecycleController:
             self._console_fleet_survivor_timer = None
 
     async def _console_fleet_survivor_tick(self) -> None:
-        """Repaint unsettled survivors or stop before the final settle paint."""
+        """Repaint survivors before stopping the timer that owns this coroutine."""
         if self._transcript_sync_timer_active():
             return
         if not self._chat_controller_available():
             self._stop_console_fleet_survivor_tick()
             return
         if not self._console_fleet_survivors_live():
-            self._stop_console_fleet_survivor_tick()
-            await self._sync_native_console_ui()
+            try:
+                await self._sync_native_console_ui()
+            finally:
+                # Textual stop cancels this timer task at its next await.
+                self._stop_console_fleet_survivor_tick()
             return
         await self._sync_native_console_ui()

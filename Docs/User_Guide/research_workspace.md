@@ -6,8 +6,8 @@ Runs operator.
 
 ## Open Research
 
-- Press **F10** from anywhere to open Research Workspace.
-- Choose **F10 Research** in the top navigation bar.
+- Press **F5** from anywhere to open Research Workspace.
+- Choose **F5 Research** in the top navigation bar.
 - Open **Ctrl+P** and choose **Tab Navigation: Switch to Research**.
 
 Research has two real screen modes:

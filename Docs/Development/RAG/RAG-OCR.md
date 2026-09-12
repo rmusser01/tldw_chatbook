@@ -821,7 +821,7 @@ import logging
 logging.getLogger("tldw_chatbook.Local_Ingestion").setLevel(logging.DEBUG)
 ```
 
-Read the output in the **Logs** screen (`F8`); the rotating log file is
+Read the output in the **Logs** screen (`F3`); the rotating log file is
 metadata-only by design (ADR-029) and does not carry this detail.
 
 > **What `DEBUG` exposes.** It widens the in-app log well past the default:

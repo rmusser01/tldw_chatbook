@@ -118,7 +118,7 @@ async def test_stray_navigation_does_not_dismiss_first_run_wizard(
             if trigger == "posted_navigate":
                 app.post_message(NavigateToScreen("settings"))
             else:
-                # Exactly what a leaked F9 keypress runs.
+                # Exactly what a leaked F4 keypress runs.
                 app.action_shell_destination("settings")
 
             # Give any navigation worker ample time to run.

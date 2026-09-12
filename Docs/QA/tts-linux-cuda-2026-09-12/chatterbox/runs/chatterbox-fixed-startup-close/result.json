@@ -1,0 +1,9 @@
+{
+  "scope": "Real installed backend queued initialization then close; intentionally no synthesis or playback",
+  "started_at": 125741.731330825,
+  "initialize_returned_at": 125741.731349681,
+  "close_returned_at": 125741.731431635,
+  "status": "startup_close_passed",
+  "pending_tasks": [],
+  "finished_at": 125741.731454629
+}

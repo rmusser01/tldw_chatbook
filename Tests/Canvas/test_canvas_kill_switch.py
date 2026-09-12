@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -177,3 +178,31 @@ async def test_native_runtime_observes_disable_before_any_preview_exists() -> No
     assert runtime.canvas_enabled() is False
     assert runtime.ensure_canvas_gateway(authority=object()) is None
     await runtime.dispose()
+
+
+@pytest.mark.parametrize("enabled_at_start", [True, False])
+def test_canvas_guide_disable_reenable_latches_discovery_and_dispatch(enabled_at_start):
+    enabled = [enabled_at_start]
+    coordinator = _Coordinator()
+    provider = CanvasToolProvider(
+        coordinator, scope=SCOPE, enabled_reader=lambda: enabled[0]
+    )
+    registry = ToolCatalogRegistry()
+    registered = registry.register_canvas_provider(
+        provider, provider.issue_registration_authority()
+    )
+    assert registered is enabled_at_start
+    if enabled_at_start:
+        assert registry.resolve_name("canvas_guide") == "canvas:canvas_guide"
+        with use_run_id(SCOPE.run_id), use_tool_call_id("guide-call"):
+            assert registry.invoke_by_name("canvas_guide", {"topic": "controls"}).ok
+    enabled[0] = False
+    for live in (False, True):
+        enabled[0] = live
+        assert "canvas_guide" not in {entry.name for entry in registry.list_catalog()}
+        with use_run_id(SCOPE.run_id), use_tool_call_id("guide-call"):
+            direct = provider.invoke("canvas:canvas_guide", {"topic": "controls"})
+            cached = registry.invoke_by_name("canvas_guide", {"topic": "controls"})
+        assert not direct.ok and not cached.ok
+        assert json.loads(direct.error)["code"] == "canvas_disabled"
+    assert coordinator.calls == []

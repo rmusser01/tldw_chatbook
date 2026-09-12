@@ -4,6 +4,10 @@
 - **Status:** Approved
 - **ADR required:** yes
 - **ADR path:** `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- **Status:** Strict-zero-egress design, pending final document review
+- **ADR required:** yes
+- **ADR path:** `backlog/decisions/081-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+- **ADR path:** `backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md`
 - **Reason:** Canvas introduces durable schema, branch-aware artifact ownership,
   browser sandbox and authentication boundaries, a parent/child process
   protocol, export/import changes, and future capability constraints.
@@ -814,6 +818,8 @@ Canvas data may remain 2.0 so older Chatbook releases can consume them.
 
 Each Canvas-bearing Chatbook archive includes inert Canvas manifests plus one
 `.html.txt` file per revision. Manifests record stable IDs, parent graph, revisioned title,
+Each conversation package includes inert Canvas manifests plus one `.html`
+file per revision. Manifests record stable IDs, parent graph, revisioned title,
 origin message/turn, actor, sequence, digest, byte size, runtime profile, and
 deletion metadata. The root manifest identifies the Canvas extension/version
 and aggregate uncompressed size.
@@ -828,6 +834,9 @@ It never renders or parses with a browser engine.
   message/Canvas graph and source under the write lock. Exact identity,
   metadata, lineage, ordering, and source equality are idempotent; any conflict
   fails atomically without overwrite. A matching digest alone is insufficient.
+- **Restore same identity:** identical digest is idempotent; a conflicting
+  identity/digest requires an explicit conflict outcome and cannot overwrite
+  silently.
 - **Import as new:** remap conversation, message, Canvas, revision, parent,
   origin, and reopen-hint IDs together, preserving both message and Canvas
   graphs.
@@ -1047,6 +1056,8 @@ References:
 ## 21. Final Design Decisions
 
 - **ADR required:** yes; ADR-121 records the storage, runtime, security,
+- **ADR required:** yes; ADR-081 records the storage, runtime, security,
+- **ADR required:** yes; ADR-115 records the storage, runtime, security,
   process, authentication, and portability boundaries.
 - **Chosen architecture:** authoritative Canvas domain service in the Chatbook
   app process plus a same-origin browser gateway/session broker; private

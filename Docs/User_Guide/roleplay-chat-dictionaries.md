@@ -19,7 +19,7 @@ The details live on three child pages:
 
 ## Getting there
 
-- Press **Ctrl+5** from anywhere, or click **⌃5 Roleplay** in the nav bar.
+- Press **Ctrl+4** from anywhere, or click **⌃4 Roleplay** in the nav bar.
 - **Ctrl+P** → "Tab Navigation: Switch to Roleplay & Chat Dictionaries".
   Four more palette
   entries land here too: "Character/Persona Management: Create New
@@ -193,18 +193,17 @@ in a row — discard first, then the delete confirmation.
 
 ## Keyboard & commands
 
-> **On this screen, Ctrl+1 – Ctrl+4 switch *modes*, not screens.** While
-> Roleplay & Chat Dictionaries has focus those four chords select
-> Characters / Personas / Dictionaries / Lore and do **not** navigate to
-> Home, Console, Library, or Artifacts. **Ctrl+5 … Ctrl+0 still navigate
-> normally**, as do the nav bar and **Ctrl+P**. (Verified by headless
-> probe.)
+> **Mode keys are the single letters c / p / d / l, not Ctrl+digits.**
+> Ctrl+1 … Ctrl+0 always change *screens* now (they belong to the global
+> nav layer), so on this screen the four modes use plain letters — which a
+> focused text box will type instead, so press **Escape** first if a field
+> has focus. The nav bar and **Ctrl+P** work here as everywhere.
 
 Screen-level keys only — global keys live in the [guide index](index.md).
 
 | Key | Action |
 |---|---|
-| Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 | Switch to Characters / Personas / Dictionaries / Lore |
+| c / p / d / l | Switch to Characters / Personas / Dictionaries / Lore — **only when focus is not in a text box** (in a text box they type the letter) |
 | [ / ] | Previous / next mode — **only when focus is not in a text box** (in a text box they type the bracket) |
 | Ctrl+N | New item in the current mode |
 | Ctrl+F | Focus the **Search...** box |
@@ -229,12 +228,13 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 ## Quirks & troubleshooting
 
-- **Pressing [ or ] typed a bracket instead of changing mode.** Those are
-  plain characters, so any focused text box takes them first — including
-  the name field of an item you just created. Click a mode chip or use
-  **Ctrl+1 – Ctrl+4** instead.
-- **Ctrl+2 didn't take me to Console.** That's the mode shadowing
-  described above. Use the nav bar, **Ctrl+P**, or Ctrl+5 … Ctrl+0.
+- **Pressing c / p / d / l (or [ / ]) typed a character instead of changing
+  mode.** Those are plain characters, so any focused text box takes them
+  first — including the name field of an item you just created. Press
+  **Escape** to move focus out of the field, or click a mode chip.
+- **Ctrl+2 takes me to Console now, not Personas mode.** Intended — the
+  Ctrl+digit row is the global screen navigator everywhere (Roleplay's
+  modes moved to **c / p / d / l**).
 - **New / Import / Duplicate / Tag are greyed out in Characters mode.**
   You're on a server runtime, where characters are read-only — the buttons
   give no explanation, and the sort button quietly reads "Sort: Server

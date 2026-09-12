@@ -66,7 +66,7 @@ _NO_PRESET_AUDIO_HINT = (
 )
 _EMPTY_WINDOW_AUDIO_HINT = "Audio skipped — nothing new to read today."
 _PROVIDER_GUIDANCE = (
-    " Check your provider in Settings (F9) → API Keys, then run the demo again."
+    " Check your provider in Settings (F4) → API Keys, then run the demo again."
 )
 
 #: Terminal run statuses `LocalWatchlistsService` records as a failure --

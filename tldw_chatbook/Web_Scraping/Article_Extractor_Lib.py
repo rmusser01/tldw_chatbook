@@ -1861,31 +1861,38 @@ async def recursive_scrape(
                         # If we haven't reached max depth, add child links to to_visit
                         if current_depth < max_depth:
                             page = await context.new_page()
-                            await check_url_or_raise_async(
-                                current_url, trusted_origins=_hop_trust(current_url)
-                            )
-                            nav_response = await page.goto(current_url)
-                            await page.wait_for_load_state("networkidle")
+                            # TASK-588: every awaited step below can raise
+                            # (check_url_or_raise_async rejects e.g. egress-
+                            # blocked URLs); the page must not outlive the
+                            # failed discovery -- the outer handler logs and
+                            # the crawl continues, so a skipped close leaks a
+                            # tab for the rest of the crawl.
+                            try:
+                                await check_url_or_raise_async(
+                                    current_url, trusted_origins=_hop_trust(current_url)
+                                )
+                                nav_response = await page.goto(current_url)
+                                await page.wait_for_load_state("networkidle")
 
-                            await validate_navigation_chain_async(
-                                collect_navigation_chain(nav_response),
-                                trusted_origins=_hop_trust(current_url),
-                            )
+                                await validate_navigation_chain_async(
+                                    collect_navigation_chain(nav_response),
+                                    trusted_origins=_hop_trust(current_url),
+                                )
 
-                            links = await page.eval_on_selector_all(
-                                "a[href]", "(elements) => elements.map(el => el.href)"
-                            )
-                            for link in links:
-                                child_url = urljoin(base_url, link)
-                                if (
-                                    is_valid_url(child_url)
-                                    and child_url.startswith(base_url)
-                                    and child_url not in visited
-                                    and should_scrape_url(child_url)
-                                ):
-                                    to_visit.append((child_url, current_depth + 1))
-
-                            await page.close()
+                                links = await page.eval_on_selector_all(
+                                    "a[href]", "(elements) => elements.map(el => el.href)"
+                                )
+                                for link in links:
+                                    child_url = urljoin(base_url, link)
+                                    if (
+                                        is_valid_url(child_url)
+                                        and child_url.startswith(base_url)
+                                        and child_url not in visited
+                                        and should_scrape_url(child_url)
+                                    ):
+                                        to_visit.append((child_url, current_depth + 1))
+                            finally:
+                                await page.close()
 
                     except Exception as e:
                         logging.error(f"Error scraping {current_url}: {str(e)}")

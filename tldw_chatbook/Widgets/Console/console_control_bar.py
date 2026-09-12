@@ -42,9 +42,10 @@ FALLBACK_ACTIONS = (
         # CN-03 (TASK-2154.13): byte-matches the live action in
         # ``console_workbench_state.py`` -- the composer's own ☰ menu entry
         # is the file picker ("Attach file"), so this rail-opening action
-        # must never read as the same word.
-        label="Attach context",
-        tooltip="Stage Library or workspace context",
+        # must never read as the same word. TASK-32325 renamed both from
+        # "Attach context" (a false affordance) to "Context rail".
+        label="Context rail",
+        tooltip="Open the Console context rail; stage sources from Library",
     ),
     WorkbenchAction(
         id="run-library-rag",

@@ -42,7 +42,6 @@ message rather than matched by id prefix in the screen's
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -339,6 +338,9 @@ class ConsoleLeftRail(Vertical):
         agent_full_log_available: bool,
         agent_steering_state: ConsoleAgentSteeringState | None = None,
         agent_cancel_all_visible: bool = False,
+        open_agent_progress: Callable[[], None] | None = None,
+        agent_progress_state: Callable[[], tuple[int, dict[str, int]]] | None = None,
+        refresh_progress_navigation: Callable[[], None] | None = None,
         show_character_section: bool,
         character_avatar_widget_builder: CharacterAvatarWidgetBuilder | None,
         character_avatar_name: str,
@@ -447,6 +449,11 @@ class ConsoleLeftRail(Vertical):
         self._agent_status_line = agent_status_line
         self._agent_steps_text = agent_steps_text
         self._agent_drilldown_active = agent_drilldown_active
+        self._open_agent_progress = open_agent_progress
+        self._agent_progress_state = agent_progress_state
+        self._refresh_progress_navigation = refresh_progress_navigation
+        self._progress_counts: dict[str, int] = {}
+        self._progress_timer = None
         self._agent_full_log_available = agent_full_log_available
         self._agent_steering_state = agent_steering_state
         self._agent_cancel_all_visible = agent_cancel_all_visible
@@ -620,6 +627,9 @@ class ConsoleLeftRail(Vertical):
         )
         self.request_allocation_reconcile()
         self.call_after_refresh(self._request_initial_workspace_tree_pages)
+        if self._open_agent_progress is not None:
+            self._sync_progress_count()
+            self._progress_timer = self.set_interval(0.5, self._sync_progress_count)
 
     @staticmethod
     def _default_recovery_copy(state: ConsoleDefaultDurabilityState) -> str:
@@ -1072,8 +1082,48 @@ class ConsoleLeftRail(Vertical):
             return
         collapse.styles.text_style = "underline" if outer_active else "none"
 
+    def on_focus(self) -> None:
+        """TASK-32322: announce the rail's exit keys when focus arrives.
+
+        Tab is region-locked on purpose (TASK-2154.11 AC-02), so F6 and Esc
+        are the exits -- and nothing else surfaces them at the point of
+        need. Focusing the rail asks the screen to refresh its footer
+        hints, which then carry the escape line while focus stays here.
+        """
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
+
+    def on_blur(self) -> None:
+        """Defer exit-hint removal until replacement focus is committed."""
+        self.call_after_refresh(self._refresh_footer_if_rail_not_focused)
+
+    def _refresh_footer_if_rail_not_focused(self) -> None:
+        focused = self.app.focused
+        if focused is self or (
+            isinstance(focused, Widget) and self in focused.ancestors
+        ):
+            return
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Activate owned keyboard targets and paint the current scroll owner."""
+
+        # TASK-32322: descendant focus is the rail's common entry (Alt+C,
+        # F6 land on a content control, not the rail root), so the footer
+        # escape-hint refresh rides here too. A second on_descendant_focus
+        # would be shadowed by this one — a live-smoke catch.
+        refresh_footer = getattr(
+            self.screen, "_register_console_footer_shortcuts", None
+        )
+        if callable(refresh_footer):
+            refresh_footer()
 
         target = event.widget
         section_id = self._section_for_owned_target(target)
@@ -1137,7 +1187,11 @@ class ConsoleLeftRail(Vertical):
     def on_descendant_blur(self, _event: DescendantBlur) -> None:
         """Clear transient underlines when keyboard focus leaves this rail."""
 
+        # TASK-32322: same moment, second job — the footer's escape hint
+        # must leave with the focus that brought it (deferred until the
+        # replacement focus is committed, mirroring _clear_focus_owner).
         self.call_after_refresh(self._clear_focus_owner_if_focus_left)
+        self.call_after_refresh(self._refresh_footer_if_rail_not_focused)
 
     def _clear_focus_owner_if_focus_left(self) -> None:
         """Clear cues only after Textual has committed the replacement focus."""
@@ -2221,14 +2275,11 @@ class ConsoleLeftRail(Vertical):
             summary_state = self._settings_summary_state
             # TASK-23196: provider_row/model_row are deliberately NOT read
             # here any more; the status bar owns those two values.
-            temperature_match = re.search(
-                r"T ([\d.]+)", summary_state.sampling_row or ""
-            )
-            temperature_value = temperature_match.group(1) if temperature_match else "—"
-            max_tokens_match = re.search(
-                r"max_tokens (\d+)", summary_state.sampling_row or ""
-            )
-            max_tokens_value = max_tokens_match.group(1) if max_tokens_match else "—"
+            # TASK-32338: structured fields on the summary state replace
+            # regex-parsing of the formatted sampling_row (which rendered a
+            # silent em-dash whenever the copy's wording shifted).
+            temperature_value = summary_state.temperature or "—"
+            max_tokens_value = summary_state.max_tokens or "—"
 
             # TASK-23196: the Provider and Model rows that stood here were
             # the third simultaneous rendering of the same two values -- the
@@ -2448,6 +2499,8 @@ class ConsoleLeftRail(Vertical):
                 steering_bar,
                 back_button,
                 full_log_button,
+                *([Button("Progress: 0 queued", id="console-agent-progress", compact=True)]
+                  if self._open_agent_progress is not None else []),
                 classes="console-agent-section",
             )
             yield _ContextBoundedSection(
@@ -2492,6 +2545,23 @@ class ConsoleLeftRail(Vertical):
         outer_hint.styles.display = "none"
         yield outer_hint
 
+    def on_unmount(self) -> None:
+        if self._progress_timer is not None:
+            self._progress_timer.stop()
+
+    def _sync_progress_count(self) -> None:
+        count, counts = (
+            self._agent_progress_state() if self._agent_progress_state else (0, {})
+        )
+        self.query_one(
+            "#console-agent-progress", Button
+        ).label = f"Progress: {count} queued"
+        if counts != self._progress_counts:
+            if self._refresh_progress_navigation is not None:
+                self._refresh_progress_navigation()
+            self._progress_counts = counts
+
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
 
@@ -2511,6 +2581,10 @@ class ConsoleLeftRail(Vertical):
                 consulted here.
         """
         button_id = event.button.id or ""
+        if button_id == "console-agent-progress" and self._open_agent_progress is not None:
+            event.stop()
+            self._open_agent_progress()
+            return
         self._flush_pointer_activation()
         owned_section_id = self._section_for_owned_target(event.button)
         if owned_section_id is not None:
