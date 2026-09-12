@@ -346,3 +346,23 @@ Three legacy capture-service parameter cases failed at an inventory-preview
 assertion with `dependency_unavailable`, before capture execution. Their baseline
 assessment is recorded with final verification below; these failures are not counted
 as passes or hidden by changing the expected issue list.
+
+## Manual qualification workflow definition
+
+The manually dispatched workflow now defines the original five Step8 modules,
+the five retained-owner cohorts, the Partial regression and the full F9 replacement
+case as twelve serial entries on the existing Darwin/arm64 runner labels. It checks
+the actual platform and helper identity, isolates application imports, retains JUnit
+and logs, and rejects missing or skipped required evidence. It does not change
+installed qualification declarations or create a new runner. YAML, six shell blocks
+and four Python bodies passed static validation; no workflow was dispatched.
+
+Review removed seed JSON from artifact collection because those fixture records can
+embed raw configuration and synthetic credentials. Automatic approval review rejected
+adding bare `capture.json`, `preview.json` and `restored.json` receipts to future
+GitHub uploads; they remain excluded. JUnit, logs, native/helper identity and package
+evidence remain available. This collection limitation is accepted explicitly and does
+not imply those omitted receipts were uploaded. Final definition SHA-256:
+`7511509542b822891bba4eaca3ba385857b3ab41b235f47cd6f07d722fb8f741`.
+Reports: `/private/tmp/task26-manual-workflow-report.md` and
+`/private/tmp/task26-manual-workflow-independent-review.md`.
