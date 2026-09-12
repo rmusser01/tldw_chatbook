@@ -119,7 +119,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-154](154-agent-denial-streak-boundary.md) | Accepted | Count authoritative tool denials per run and stop at a coherent completed-batch boundary. |
 | [ADR-155](155-agent-worktree-recovery.md) | Accepted | Recover recorded agent work through exact consent, pinned operations and durable physical-owner proof; retain baseline checkouts after discard. |
 | [ADR-156](156-live-per-run-stream-usage-attribution.md) | Accepted | Attribute bounded current-call usage to each live run with explicit provider/local provenance and existing UI cadence. |
-| [ADR-157](157-per-definition-child-wall-time-caps.md) | Accepted | Allow definitions to tighten child time limits while preserving uncapped identity and capped continuation ceilings. |
+| [ADR-157](157-per-definition-child-wall-time-caps.md) | Migration sequencing superseded by ADR-158; policy retained | Allow definitions to tighten child time limits while preserving uncapped identity and capped continuation ceilings. |
+| [ADR-158](158-agent-runs-migration-order-after-worktree-qualification.md) | Accepted | Implement definition caps in AgentRuns18→19 independently of unresolved worktree execution; preserve cap policy and qualify recovery before its later migration. |
 
 ## Historical Decision Material
 
