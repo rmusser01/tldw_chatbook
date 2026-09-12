@@ -3,9 +3,13 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.native_package import (
+    native_package as native_package,  # noqa: PLC0414 - installed product fixture
+)
 from Tests.Backup_Recovery.test_f9_replacement_workflow import (
     test_full_f9_replacement_after_explicit_safety_and_credential_review as _earn_replacement,
 )
@@ -19,18 +23,20 @@ import os
 from pathlib import Path
 import sys
 import time
-import keyring
-from keyring.backends.null import Keyring
-keyring.set_keyring(Keyring())
-from textual.widgets import Button, Input, Checkbox, Static
-from tldw_chatbook.Backup_Recovery import crypto
-from tldw_chatbook.Backup_Recovery.launcher import recovery_app
-
 home = Path.home()
 saved = json.loads((home / "probe-mapping.json").read_text())
 previous = json.loads((home / "probe-result.json").read_text())
 operation = previous["result"]["journal_operation_id"]
-crypto._package_resource_root = lambda: Path(saved["helper"])
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+import tldw_chatbook
+installed = Path(os.environ["TLDW_TEST_INSTALLED_PACKAGE"])
+assert installed == Path(saved["package"])
+assert Path(tldw_chatbook.__file__).resolve() == installed / "tldw_chatbook" / "__init__.py"
+from textual.widgets import Button, Input, Checkbox, Static
+from tldw_chatbook.Backup_Recovery.launcher import recovery_app
+
 assert "tldw_chatbook.app" not in sys.modules
 assert "tldw_chatbook.config" not in sys.modules
 
@@ -202,9 +208,10 @@ assert not blocked_attempts(), blocked_attempts()
 
 
 def test_f9_later_rollback_requires_explicit_credential_review(
-    tmp_path, helper_resource_root
+    tmp_path, native_package
 ):
-    _earn_replacement(tmp_path, helper_resource_root)
+    _earn_replacement(tmp_path, native_package)
+    test_root = Path(__file__).resolve().parents[2]
     environment = dict(
         os.environ,
         HOME=str(tmp_path / "home"),
@@ -213,11 +220,15 @@ def test_f9_later_rollback_requires_explicit_credential_review(
         TLDW_CONFIG_PATH=str(tmp_path / "config" / "config.toml"),
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONNOUSERSITE="1",
+        PYTHONPATH=os.pathsep.join((str(native_package), str(test_root))),
+        TLDW_TEST_INSTALLED_PACKAGE=str(native_package),
     )
     log = tmp_path / "later-child.log"
     with log.open("w") as output:
         result = subprocess.run(
             [sys.executable, "-c", _LATER],
+            cwd=tmp_path,
             env=environment,
             stdout=output,
             stderr=output,

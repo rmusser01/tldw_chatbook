@@ -59,7 +59,8 @@ jobs:
               "Tests/Backup_Recovery/test_mcp_retained_history_roundtrip.py",
               "Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py",
               "Tests/Backup_Recovery/test_external_partial_reporting.py",
-              "Tests/Backup_Recovery/test_f9_replacement_workflow.py::test_full_f9_replacement_after_explicit_safety_and_credential_review",
+              # Runs the full replacement test first, then retained-copy rollback.
+              "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
           ]
           workspace = Path(os.environ["GITHUB_WORKSPACE"])
           receipt = Path(os.environ["EVIDENCE_ROOT"]) / "artifacts" / "setup"
@@ -280,7 +281,8 @@ jobs:
               "Tests/Backup_Recovery/test_mcp_retained_history_roundtrip.py",
               "Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py",
               "Tests/Backup_Recovery/test_external_partial_reporting.py",
-              "Tests/Backup_Recovery/test_f9_replacement_workflow.py::test_full_f9_replacement_after_explicit_safety_and_credential_review",
+              # Runs the full replacement test first, then retained-copy rollback.
+              "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
           ]
           root = Path(os.environ["EVIDENCE_ROOT"])
           workspace = Path(os.environ["GITHUB_WORKSPACE"])

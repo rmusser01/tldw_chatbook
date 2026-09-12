@@ -1,7 +1,7 @@
 ---
 id: TASK-32009
 title: Qualify complete backup and replacement release capabilities
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-08 00:03
 labels:
@@ -25,7 +25,7 @@ dependencies:
 - task-32006
 - task-32007
 - task-32008
-updated_date: 2026-09-12 03:24
+updated_date: 2026-09-12 03:40
 ---
 
 ## Description
@@ -36,17 +36,23 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Complete and replacement capability labels are backed by end-to-end owner, archive, native, and product evidence.
-- [ ] #2 Both restore destinations and later rollback preserve expected data under ordinary and interrupted operations.
-- [ ] #3 User/release documentation states qualified platforms, exclusions, credential limits, and recovery actions without overstating guarantees.
+- [x] #1 Complete and replacement capability labels are backed by end-to-end owner, archive, native, and product evidence.
+- [x] #2 Both restore destinations and later rollback preserve expected data under ordinary and interrupted operations.
+- [x] #3 User/release documentation states qualified platforms, exclusions, credential limits, and recovery actions without overstating guarantees.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Execute original Task26 only (Docs/superpowers/plans/2026-09-07-backup-recovery-06-release-evidence.md). Stages: (1) document implemented user flows and current evidence without release claims; (2) finish actual complete/isolated/replacement/later-rollback product qualification and synthetic owner fixture; (3) qualify native protocol/platform capability gates and named crash/adversarial cases; (4) update packaging, CI and user help, run named feature/inventory/lifecycle checks, review and record exact evidence. Dependencies remain unfinished; no acceptance criteria checked.
-<!-- SECTION:PLAN:END -->
+Execute original Task26 only: Docs/superpowers/plans/2026-09-07-backup-recovery-06-release-evidence.md, approved revision4 and ADR-126.
 
+Stage1 — User flows and evidence documentation: Complete.
+Stage2 — Actual multi-profile/owner Complete capture, isolated restore/open, replacement and later rollback: Complete, finite source-native and installed-product evidence distinguished.
+Stage3 — Native protocol/platform gates and named interruption/adversarial cases: Complete for the exact demonstrated host/image cells; other cells remain unavailable.
+Stage4 — User help, packaging/manual CI definition, named feature/inventory/lifecycle guards, final review and evidence: Complete. No CI dispatch or published-build claim.
+
+Acceptance is supported by the final evidence ledger and independent review; historical implementation notes preserve earlier incomplete states.
+<!-- SECTION:PLAN:END -->
 ## Design references
 
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
@@ -215,4 +221,22 @@ P2 committed c9c5a3397 after focused28/3.84, source review and Bandit0. Final in
 Root baseline check: git-archived c86d33595 production and Tests under /private/tmp/task26-preview-baseline.h0Wit4 reproduces all3 legacy capture-service cases at same121 previewassert dependency_unavailable,3fail/3.50s. No blanketexpectedissue changes. Finalrequiredguards16pass/9.28; multi-profilecapture1/22.87, shared-rootplanning1/21.31. Config-lock read-onlypreflight independentlyconfirms exactnativewriterselected.name+'.lock' emptyprivate0600nlink1; minimal original-scope fix will recognize only that installedcoordinationartifact in _first_config_container and retain bothstatechecks. Plannedownedsource replacement.py +focusedregression; no newowner/schema/general*.lock exception. Manualworkflowreview found artifactcollector must omit raw seed/configfixturepayloads and retain safe capture/preview/restored receipts; narrowcorrectionpending.
 Manualworkflowdefinition frozen/reviewacceptable, SHA7511509542b822891bba4eaca3ba385857b3ab41b235f47cd6f07d722fb8f741. Singlemanual12serialentries; YAML/6shell/4Python/invariants/staticpass, nodispatch/nativeCIclaim. SeedJSONexcluded; auto-review twice rejected futureupload barecapture/preview/restoredJSON asnotestablishednonsensitive; safeversionleavesthemexcluded, preservesJUnit/log/native/helper/packageevidence, explicitreviewP2collectionlimitaccepted withoutnewapprovalflow. Finalmulti-profilenativeopen1/56.19s, lifecycleactual2/58.85s, UI20/32.75s passed. Onlycurrentnativeproductblocker firstconfiglock; boundedreplacement.py+focusedtestimplementer releasedprep, rootnative slot nowclear.
 Exactconfiglockfix source/testfrozen, independentreviewapproved: retain only actualselected.name+'.lock' includedregularuid/current0600singlelinkemptyfile infirstconfigparentproof, retainrowandpairedmaintenance recheck; noowner/schema/authorityexpansion. NativefixtureRED2fail6pass0.70 -> GREEN8pass0.61. RootRuff/diffcheck and twohashesverified; productionBandit0/errors0, test2ordinaryassertB101only. Reports /private/tmp/task26-config-lock-fix-report.md and -independent-review.md. Actual fullinstalledF9rerun nowrunning againstfrozenfix; no completionclaim untilreplacement/laterrollback succeeds.
+Final installed replacement afterlockfix passes1/101.99s, wheel296f25d6ee37b39c7efaaafebb96f14346e8dfc7096ca1e2378c6619dca8d797/2034preservedinstalledfiles, actual21uncheckedcredentialomissions ->Abort->freshackreview->restoration_validated. Root sourceverification found earlier handoff/preflight incorrectly treated this node as also laterrollback; actual combinedcase is test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review (e6150b7d3 historical173.86s). Its fixture stillpasseshelper_resource_root to now-native_package seed and accesses saved['helper']; needssame installed-origin/privatecwd adaptation, no productionbehavior. Authorize this directlyaffectedtestfile and replace finalmanualworkflow entry withactualcombinednode (still12entries, no broadercohort). Executecombinedcase afterfix; preservednewreplacementgreen is not falselycountedlaterrollback.
+Final later-rollback fixture is being checked against the installed wheel. Auto-review rejected swapping the workflow's final standalone replacement entry as apparently narrowing coverage. Read-only source verification establishes that the combined test imports that exact old test function as _earn_replacement and executes it unmodified, with the same tmp_path/native_package and original child deadlines, before the added later-rollback child. Requesting independent confirmation before an evidence-backed retry; no artifact allowlist change or CI dispatch.
+Independent review confirmed the combined workflow node is a strict behavioral superset: the exact standalone test executes unmodified before the later child. One evidence-backed retry authorized within the existing Task26 workflow definition; artifact allowlist remains unchanged. Root scoped Ruff, py_compile and diff checks pass for the later fixture; Bandit has five existing test-only LOW findings (3 B101, 1 B404, 1 B603), no scan errors. Preparing final evidence table and completion metadata; Task stays In Progress until actual combined native result and final independent review.
+Final reviewer requested one evidence wording correction: multi-profile/lifecycle product children use source checkout with actual native components, whereas explicitly installed F9/first-binding/publication cases assert installed package origin. Narrowing final table introduction accordingly; no test/production expansion. Evidence-backed workflow retry succeeded after confirming combined node invokes the exact old replacement test first; only two mirrored entries/comments changed, no artifact upload change.
+Final actual installed combined F9 replacement + retained-copy later rollback passed once, outer exit0, 1/228.85s (220.05 call,8.49 setup); original runner230/seed110/replacement150/later180 deadlines unchanged. Log-only receipt /private/tmp/task26-later-installed-fixture-test.log (no JUnit requested). Wheel c8fb58f4a77cc9a912061ae67bcbb1eb47a3f919d599b3154fec8390dd0b4b31,2034 installed files preserved. Root verified wheel bytes/current six changed production module identities and actual stale-preview/8unchecked-omissions/Abort/re-review/success checkpoints. Report /private/tmp/task26-later-installed-fixture-report.md. Final workflow SHA31bcbc9cea499a3fffe4123cd4564325f95cabece38d3f2f1a25bc2f72280995; YAML and four exact embedded Python blocks/mirrored12entries pass, artifact allowlist unchanged. Preparing final independent review and required final commit; not yet marking Done.
+Final independent review approved both original specification compliance and task quality with no remaining concrete findings. Root verified final logs/artifacts/source correspondence and static checks; closing all three Task26 acceptance criteria and recording Done before the required task-owned final commit. Adding the final review disposition to evidence ledger and marking private progress complete. Exact qualified boundaries and historical failed receipts are retained.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed original Task26 under approved revision-4 backup/restore design and ADR-126; dependency tasks are reconciled Done. Complete capture and replacement are independently gated by installed owner/archive/restore/product evidence plus real helper, Admission and native publication checks. Qualified scope is Darwin 25.5.0 / arm64 / Python 3.12.11 / APFS / native protocol 2: Complete on host flags76583040; replacement additionally on flags76583448 with recovery authority on qualified host storage. Image Admission/Complete, other platforms, upgrade pairs and physical detach/power-loss remain unqualified.
+
+Final required Step8 modules passed through serial targeted runs: installed F9 create/inspect/isolated-open3/128.42s; multi-profile capture1/22.87s, plan1/21.31s, restore/open1/56.19s; guards16/9.28s; actual lifecycle2/58.85s; UI20/32.75s; Partial/release gate28/3.84s; config lock8/0.61s. Installed replacement passed1/101.99s; actual combined replacement/later rollback passed1/228.85s with unchanged deadlines, unchecked omissions, stale review refusal, untouched Abort, fresh acknowledgement, validated restoration and verified new encrypted safety copy. Distinct wheel hashes/revisions and exact logs/commands are recorded in backlog/docs/backup-recovery-release-evidence.md; no single-wheel/full-suite claim. Three extra legacy preview cases fail identically on clean pre-change c86d33595, documented as baseline failures rather than passes.
+
+Final fixes distinguish complete inventory coverage from external-content Partial archives and recognize only the exact private native config lock in first replacement's paired proof. Scoped production Bandit has zero findings, new test-only LOW assertion/subprocess findings are disclosed; Ruff/compile/whitespace checks pass. Manual CI definition statically validated, never dispatched; artifact JSON exclusions retained after automatic review. User help and packaging checklist state exact supported configurations, recovery/credential/activation limits and per-distribution qualification obligations. Local branch codex/complete-local-backup-recovery remains in the isolated execution checkout; no push, merge or publication.
+
+Independent final review /private/tmp/task26-final-release-independent-review.md approves original Task26 compliance and quality with no remaining concrete findings; all three acceptance criteria checked. Full prior branch review and final corrections are linked there. Final required local commit follows this verified task transition.
+<!-- SECTION:FINAL_SUMMARY:END -->

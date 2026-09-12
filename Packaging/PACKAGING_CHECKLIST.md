@@ -93,6 +93,12 @@ gate open; skipped checks and the boolean conjunction regression are not product
 qualification. These checklist items remain unchecked until demonstrated against
 the exact release build.
 
+The manual `backup-recovery-qualification.yml` workflow defines the finite host
+checks and retains their logs and artifacts. It does not promote installed evidence
+or qualify another platform automatically. The development evidence ledger records
+each tested revision separately; rerun the applicable checks against the distribution
+being published. Defining the workflow is not evidence that a CI run succeeded.
+
 ### Build and publish
 
 1. Update the version in `pyproject.toml` and

@@ -5,11 +5,11 @@ recovery archive, separate from a Chatbook content export. It covers selected
 Chatbook-owned data; it does not back up a remote tldw server, the operating
 system, or the application installer.
 
-Implementation and release qualification are still in progress. The F9 replacement
-and saved-copy later-rollback workflow has passed on the development host,
-including explicit credential-omission review. This does not qualify every
-platform or every recovery scenario. Follow the operation's actual coverage and
-refusal messages rather than assuming platform support.
+Complete backup and replacement have separate availability checks. They require
+a matching qualified platform, the installed native helper, and supported storage
+locations. F9 shows availability alongside coverage and required space. Follow the
+operation's actual review and refusal messages; platform support alone does not
+establish that a particular selection can be captured or restored.
 
 ## Create a backup
 
@@ -27,6 +27,11 @@ refusal messages rather than assuming platform support.
    unavailable or unsupported credentials are shown for review.
 5. Choose **Review**, inspect coverage and exclusions, then confirm the reviewed
    backup. Acknowledging partial coverage does not make a partial archive complete.
+
+Selected external files have per-file stability checks. Their presence makes the
+archive **Partial**, even when every selected file is included. Review and explicitly
+acknowledge Partial creation. Partial archives support validated isolated recovery
+and file extraction; they cannot replace existing installation data.
 
 Keep the password separately. Chatbook does not retain it, and a lost password
 cannot be recovered. Encryption does not eliminate plaintext working files:
@@ -234,12 +239,19 @@ Unsupported formats may permit selected inert extraction without permitting an
 installation restore. Keep a compatible application release with important archives;
 do not use protocol-unaware older launchers against an interrupted recovery.
 
-Installed native evidence currently covers specific Darwin/arm64/APFS primitive
-operations and cooperative storage admission. It explicitly does not establish
-whole-product restore or replacement qualification. Linux, Windows, other filesystem
-combinations, and upgrade pairs require their own evidence before being advertised
-as supported. Missing helper or native capability must be reported rather than
-silently falling back to plaintext or unqualified replacement.
+The currently enabled platform is macOS Darwin 25.5.0, arm64, Python 3.12.11, with
+native protocol 2 and the qualified APFS configurations recorded in the
+[release evidence](../backlog/docs/backup-recovery-release-evidence.md). Complete
+capture uses the host configuration (filesystem flags 76583040). Replacement also
+supports publication on the tested APFS image configuration (flags 76583448), while
+its recovery authority remains on qualified host storage. The image is not qualified
+for Complete capture or cooperative storage admission.
+
+Linux, Windows, other platform/filesystem combinations, and upgrade pairs remain
+unqualified. Source distributions without the bundled helper cannot create backups,
+including plaintext backups, or start replacement. Missing capabilities produce a
+refusal. The evidence does not establish physical power-loss or device-detachment
+recovery; retain recovery copies and operation records when resolving an interruption.
 
 The controlling contracts are the [approved design](superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
 and [release qualification plan](superpowers/plans/2026-09-07-backup-recovery-06-release-evidence.md).

@@ -5,7 +5,12 @@ title: Backup and recovery release evidence
 
 # Backup and recovery release evidence
 
-Status: incomplete qualification. This ledger tracks original Task26 / TASK-32009. A passing native primitive or individual product regression is not a whole-product release claim. No Complete or replacement release capability is enabled by this document.
+This ledger tracks original Task26 / TASK-32009. The final verification sections
+record completion evidence for the exact qualified macOS/APFS configurations;
+earlier sections retain their historical checkpoints and intermediate limitations.
+A passing native primitive or individual regression alone is not a whole-product
+release claim. Runtime availability is enforced by installed operation evidence,
+not enabled by this document. No published-build or executed-CI claim is made.
 
 ## Declared platform evidence
 
@@ -350,8 +355,9 @@ as passes or hidden by changing the expected issue list.
 ## Manual qualification workflow definition
 
 The manually dispatched workflow now defines the original five Step8 modules,
-the five retained-owner cohorts, the Partial regression and the full F9 replacement
-case as twelve serial entries on the existing Darwin/arm64 runner labels. It checks
+the five retained-owner cohorts, the Partial regression and the combined F9 replacement
+and later-rollback case as twelve serial entries on the existing Darwin/arm64 runner
+labels. It checks
 the actual platform and helper identity, isolates application imports, retains JUnit
 and logs, and rejects missing or skipped required evidence. It does not change
 installed qualification declarations or create a new runner. YAML, six shell blocks
@@ -362,7 +368,7 @@ embed raw configuration and synthetic credentials. Automatic approval review rej
 adding bare `capture.json`, `preview.json` and `restored.json` receipts to future
 GitHub uploads; they remain excluded. JUnit, logs, native/helper identity and package
 evidence remain available. This collection limitation is accepted explicitly and does
-not imply those omitted receipts were uploaded. Final definition SHA-256:
+not imply those omitted receipts were uploaded. Initial definition SHA-256:
 `7511509542b822891bba4eaca3ba385857b3ab41b235f47cd6f07d722fb8f741`.
 Reports: `/private/tmp/task26-manual-workflow-report.md` and
 `/private/tmp/task26-manual-workflow-independent-review.md`.
@@ -385,3 +391,94 @@ source review, scoped Ruff/compile/whitespace checks and production Bandit0 pass
 Reports: `/private/tmp/task26-config-lock-fix-report.md` and
 `/private/tmp/task26-config-lock-independent-review.md`. The actual packaged rerun is
 reported separately below.
+
+## Final targeted verification
+
+The original Step8 modules were exercised in finite serial runs, with no required
+case replaced by a skip. The following final receipts have zero failures, errors
+and skips. They are distinct builds and runs, not one identical wheel or a full-suite
+result. Product children use private application locations, a network guard and
+NullKeyring. The explicitly installed F9, first-binding and publication cases assert
+installed package origin; multi-profile and lifecycle cases exercise actual native
+product behavior from the source checkout. Component evidence is labeled below.
+
+| Check | Passed | Pytest duration | Local log and matching JUnit basename |
+| --- | ---: | ---: | --- |
+| Installed F9 plaintext/encrypted/included-credential create, inspect, isolated restore and open | 3 | 128.42 s | `/private/tmp/task26-final-f9-endtoend` |
+| Multi-profile Complete capture and source/writer preservation | 1 | 22.87 s | `/private/tmp/task26-final-complete-capture` |
+| Shared-root isolated restore planning | 1 | 21.31 s | `/private/tmp/task26-final-complete-plan` |
+| Two restored profiles opened with native content | 1 | 56.19 s | `/private/tmp/task26-final-complete-open` |
+| Owner inventory, lifecycle AST guards, conjunction and source-helper refusals | 16 | 9.28 s | `/private/tmp/task26-final-guards` |
+| Actual composition and scheduler lifecycle | 2 | 58.85 s | `/private/tmp/task26-final-lifecycle` |
+| Recovery UI behavior | 20 | 32.75 s | `/private/tmp/task26-final-ui` |
+| Installed F9 replacement, explicit credential omissions, Abort and successful replacement | 1 | 101.99 s | `/private/tmp/task26-final-f9-replacement-fixed` |
+
+The Partial and release-gate component run passes28 in3.84s; the first-config-lock
+regression passes8 in0.61s. Their reports above retain the exact commands, red/green
+results, source hashes, static checks and scoped Bandit results. Changed production
+scopes have zero Bandit findings; test-only LOW assertion/subprocess findings are
+recorded without blanket suppression.
+
+The isolated F9 wheel SHA-256 is
+`197afc447ebdcebf5fd5b10e7b20b3e6ce75a9f700be292c011f0f6dd2af69de`;
+the corrected replacement wheel SHA-256 is
+`296f25d6ee37b39c7efaaafebb96f14346e8dfc7096ca1e2378c6619dca8d797`.
+Each fixture checked preservation of2034 initially installed files. The isolated
+run includes the Partial correction; the replacement run also includes the native
+config-lock correction at `8da467890`. The standalone replacement result does not
+claim later rollback; that combined result is recorded separately.
+
+Three extra legacy capture-service preview cases fail with `dependency_unavailable`
+before capture execution. A clean archive of pre-Partial checkpoint `c86d33595`
+reproduces all three at the same line121 assertion in3.50s. The baseline receipt is
+`/private/tmp/task26-preview-baseline.log` with matching XML; its private source is
+`/private/tmp/task26-preview-baseline.h0Wit4`. These unchanged failures are outside
+the required Step8 modules and were neither skipped nor hidden by changing expected
+issues. No all-tests-pass, full-suite, CI-run, new-platform or published-build claim
+is made.
+
+## Final installed replacement and retained-copy rollback
+
+The combined node
+`Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review`
+passes once in228.85s, outer exit0 (220.05s call,8.49s setup). It invokes the exact
+standalone replacement test before the later-rollback child; every earlier assertion
+and failure remains effective. The installed wheel, private child cwd, installed-first
+module lookup and exact origin assertions replace the stale checkout/helper fixture.
+The original aggregate230s, seed110s, replacement150s and later180s deadlines remain.
+
+The later flow discards a stale preview, presents eight unchecked credential
+omissions, verifies Abort leaves data untouched, requires fresh acknowledgement and
+confirmation, completes with `restoration_validated`, and verifies the new encrypted
+safety copy while retaining the previous copy. The existing sealed readback and
+rollback credential-policy assertions pass. The receipt is
+`/private/tmp/task26-later-installed-fixture-test.log`; this local run did not emit
+JUnit. Child logs and checkpoints are under
+`/private/tmp/backup-f9-product-final-76b5cw1h/pytest/test_f9_later_rollback_require0`.
+The complete command and artifact record is
+`/private/tmp/task26-later-installed-fixture-report.md`.
+
+Wheel SHA-256:
+`c8fb58f4a77cc9a912061ae67bcbb1eb47a3f919d599b3154fec8390dd0b4b31`.
+All2034 initially installed files are preserved. Root also verified this wheel's
+digest and current installed/source equality for replacement, qualification, capture,
+capture service, recovery service and recovery UI. The product source is checkpoint
+`8da467890`; this final delta changes the fixture, workflow selection and release docs.
+
+The workflow now uses that combined node in both mirrored twelve-entry lists.
+Source review confirmed it executes the entire former replacement gate first;
+an evidence-backed retry resolved the initial automatic review rejection as an
+apparent coverage reduction. The final workflow SHA-256 is
+`31bcbc9cea499a3fffe4123cd4564325f95cabece38d3f2f1a25bc2f72280995`.
+YAML and all four complete embedded Python blocks pass static validation, including
+identical entry-list checks. Artifact selection is unchanged; no dispatch occurred.
+Scoped test Ruff/compile and whitespace checks pass. Bandit reports five LOW
+test-only assertion/subprocess findings, zero errors and no MEDIUM/HIGH findings.
+
+Final independent review approves original Task26 specification compliance and
+quality with no remaining concrete findings. The earlier whole-branch review and
+this final scoped addendum are retained at
+`/private/tmp/task26-whole-branch-review.md` and
+`/private/tmp/task26-final-release-independent-review.md`. TASK-32009 is Done with
+all three acceptance criteria checked; the qualified boundaries and baseline
+failures above remain part of that completion record.
