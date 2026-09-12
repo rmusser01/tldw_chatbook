@@ -591,6 +591,23 @@ already streaming.
   model at spawn time) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
 
+Settings includes four editable starter templates: **bulk-reader** for narrow
+local file reading, **researcher** for evidence-led investigation, **critic**
+for correctness review, and **ingest-runner** for explicitly supplied ingestion
+work. Choosing **Load preset** only fills the editor; the template remains
+unsaved until you choose **Save**, and loading it never installs or silently
+enables a definition. You can edit every field before saving.
+
+The model field starts blank, so a saved template inherits the parent run's
+provider and model. An empty tool list inherits the tools available to the
+parent; the bulk-reader and critic lists request only their four local read
+tools. In every case the parent's tool catalog, workspace boundaries, and
+approval rules still apply: a template can narrow authority but cannot add a
+tool the parent lacks. The [bulk-reader comparison
+pilot](../../Examples/agents/bulk-reader/README.md) explains compatible
+same-provider model selection and the opt-in synthetic evaluation. Presets do
+not enable automatic routing or establish savings by themselves.
+
 ### Change review — reviewing a turn's file changes
 
 When an agent turn edits files, the transcript shows a **turn file card**

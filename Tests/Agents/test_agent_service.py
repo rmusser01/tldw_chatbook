@@ -65,6 +65,7 @@ from tldw_chatbook.Agents.canvas_tool_provider import (
     CanvasToolProvider,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
+from tldw_chatbook.Agents.agent_presets import CRITIC_PRESET, RESEARCHER_PRESET
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     FIND_TOOLS_SCHEMA,
@@ -4168,6 +4169,54 @@ def test_named_spawn_intersects_allowlist_never_grants(db):
     assert "calculator" in child_call
     assert "get_current_datetime" not in child_call  # narrowed away
     assert "forbidden_tool" not in child_call  # never granted
+
+
+@pytest.mark.parametrize(
+    ("preset", "present", "absent"),
+    [
+        (RESEARCHER_PRESET, ("calculator", "fs_read"), ("fs_write",)),
+        (CRITIC_PRESET, ("fs_read", "fs_grep"), ("calculator", "fs_list", "fs_glob")),
+    ],
+    ids=("inherit-parent-tools", "critic-intersection"),
+)
+def test_starter_preset_spawn_respects_parent_tool_authority(
+    db, preset, present, absent
+):
+    _seed_definition(db, preset)
+    chat = FleetChat(
+        [fence(SPAWN_TOOL_NAME, {"task": "t", "agent": preset.name}), "done"],
+        {"t": ["child done"]},
+    )
+    provider = PlanningProvider(0)
+    provider.schemas = (_schema("fs_read"), _schema("fs_grep"), _schema("fs_write"))
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(provider)
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+    config = dataclasses.replace(
+        CFG,
+        native_tools=True,
+        allowed_tools=(
+            "calculator",
+            "get_current_datetime",
+            "fs_read",
+            "fs_grep",
+            SPAWN_TOOL_NAME,
+        ),
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=config,
+        api_endpoint="groq",
+    )
+    join_fleet_children(service)
+
+    child_names = {row["function"]["name"] for row in chat.child_calls["t"][0]["tools"]}
+    for tool_name in present:
+        assert tool_name in child_names
+    for tool_name in absent:
+        assert tool_name not in child_names
 
 
 def test_named_spawn_model_override_same_endpoint(db):
