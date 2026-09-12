@@ -1,11 +1,11 @@
 ---
 id: TASK-18929
 title: 'Agent loop: consecutive-denial circuit breaker'
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-09-12 19:49'
+updated_date: '2026-09-12 23:45'
 labels:
   - agents
   - tools
@@ -30,12 +30,15 @@ Port of hermes-agent's consecutive-denial circuit breaker (2026-08-19 hermes-rel
 - [x] #6 Only authoritative explicit user denial or configured permission Off increments the streak; unanswered, timeout, cancellation, stale authority, legacy refusal text and synthetic restored-pending results do not.
 - [x] #7 Evaluate the trailing streak after a fully settled tool batch, preserve every tool reply, and stop before another model call; an approved tail resets the streak and the terminal message reports the actual observed count.
 - [x] #8 Builtin, local, MCP, virtual CLI and raw-shell authoritative invocation decisions reach the run-local counter even when pending review is bypassed; defaulted unanswered stamps and opaque runtime refusals never fabricate denial authority.
+- [ ] #9 Ordinary non-denial budget and cancellation stops preserve the established coherent continuation boundary; denial-breaker terminal history still includes every settled tool reply, with targeted regression coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/154-agent-denial-streak-boundary.md. Reason: compatible structured provider/review/runtime provenance and coherent stop boundary. Execute Docs/superpowers/plans/2026-09-12-agent-denial-breaker.md: compatible typed review facts; authoritative producers; run-local budget/counter; Console and real persistence/fleet evidence; docs and independent review. Accepted ADR-078 remains unchanged.
+
+Final integration correction: preserve ordinary non-denial budget and cancellation continuation boundaries while retaining every settled reply when the denial breaker itself trips. Use the existing loop-top continuation regression and denial/cancellation neighbors, then independent combined review. ADR required: no new ADR; this is a regression repair within ADR 154 and its existing runtime boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -50,4 +53,6 @@ ADR required: yes. Implemented backlog/decisions/154-agent-denial-streak-boundar
 Targeted evidence (overlapping runs are not summed): 30 shared-type/trace cases; 686 distinct producer cases across qualified runs, then 81 MCP cases and 6 final cases for the absent-stamp fix; initial 130 runtime/budget/continuation cases and expanded final66; final6 Console/store, real SQLite/segmented log, noncancelled restored-pending, gated sibling and actual resumed-history cases. Nearby15 and root33 terminal/log plus2 fleet baseline cases also passed in separate selections. Final Task4 output was captured directly: 6 passed, exit0. Every edited formatting range and new test file passes; per-file lint counts are unchanged (two existing F811 diagnostic messages only shift their referenced import line).
 
 Evidence qualifications: core runtime preimplementation RED was missed; a later exact-BASE 13-failure control proves sensitivity only. Task4 missing-placeholder RED was observed before editing (1failed/1passed), but only an explicitly labelled output summary was retained. Shared RequestsDependencyWarning and foreign pytest cleanup warnings remain unchanged. No full suite, live provider test, shared dependency repair or foreign cleanup was performed. Full reports/reviews and exact commands remain in .superpowers/sdd/2026-09-12-agent-denial-breaker/ in the preserved orchestration worktree; current completion is reflected in backlog/docs/agent-orchestration-followups-2026-09-12.md.
+
+Reopened during final integration on 2026-09-12: test_budget_exhausted_at_loop_top_yields_the_last_boundary fails with an extra completed tool batch. Its test AST is unchanged from merged base d66908a69, while this wave added unconditional coherent_len advancement after every batch in agent_runtime.py. Source/AST classification and current failure evidence are preserved in the orchestration SDD workspace; no pristine-base test execution is claimed. Earlier reviewed delivery remains historical evidence, not current completion. The focused repair and combined review are pending.
 <!-- SECTION:NOTES:END -->

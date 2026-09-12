@@ -10,11 +10,16 @@ supersedes its pending-integration and remaining-work labels.
 
 - **Done and independently reviewed:** TASK-13154.4 approval verification,
   TASK-18601 bounded segment-log paging, TASK-31511 bounded reusable webhook
-  delivery, and TASK-18929 denial breaker. The denial work includes authoritative
-  approval facts, configurable completed-batch enforcement, Console terminal
-  copy, real persistence, sibling isolation and resumed-run verification
-  (`49b5569676`, `762941cec0`, `e85c7d16c3`, `a56f534fd4`, `86f2a79e76`).
-  Their task notes contain scoped test results and evidence qualifications.
+  delivery. Their task notes contain scoped test results and evidence
+  qualifications.
+- **Reopened for integration repair:** TASK-18929 denial breaker. The reviewed
+  delivery includes authoritative approval facts, completed-batch enforcement,
+  terminal copy, persistence and sibling isolation. Final integration found that
+  unconditional advancement of the saved continuation boundary also changes
+  ordinary budget stops. The unchanged loop-top regression currently fails; a
+  focused correction must retain complete denial-terminal history without
+  changing unrelated budget/cancellation boundaries. Earlier completion notes
+  are historical; the task is In Progress until repair and review finish.
 - **Done and independently reviewed:** TASK-18923 live per-run usage, from
   service/adapter/bridge attribution through primary/child Console rendering
   (`16c10faca7`, `2f39215549`, `ca9418b33a`, `c1b2bf984b`, `3580bc6ae0`).
@@ -32,8 +37,13 @@ supersedes its pending-integration and remaining-work labels.
   review approved; actual child tool containment and complete wide/narrow form
   checks passed. The task notes disclose the earlier probe isolation error and
   the final isolated verification.
-- **In progress:** TASK-13154.7 definition wall caps. Parent TASK-13154
-  reconciliation and the combined branch review remain open.
+- **Definition wall caps done:** TASK-13154.7 adds validated nullable schema19
+  storage, frozen spawn minimums, retained continuation ceilings and the canonical
+  Settings field (`b46807d547`, `be709a648f`, `bbfc233aad`, `c0d419d420`).
+  All three slices passed independent review; task notes separate successful
+  targeted gates from the outstanding continuation integration failures and
+  historical test-isolation qualifications. Parent TASK-13154 reconciliation
+  and the combined branch review remain open.
 - **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
   and prior-turn recovery. A real temporary-repository race demonstrated that
   Git running from a pinned linked child can advance a replacement parent
@@ -46,7 +56,8 @@ supersedes its pending-integration and remaining-work labels.
   Ordinary agents remain available; existing work is retained. The final affected
   Console/service selection passed 25 tests with no new skips. Functional
   recovery itself remains incomplete.
-- Five of the eight requested outcome areas are complete. The parent stays open
+- Four of the eight requested outcome areas are complete; denial-breaker
+  integration repair is reopened. The parent stays open
   until the remaining implementation and combined branch review finish. No new
   PR, push or merge has been performed for this continuation.
 

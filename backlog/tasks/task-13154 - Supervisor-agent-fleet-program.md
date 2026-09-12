@@ -4,7 +4,7 @@ title: Supervisor agent fleet program
 status: In Progress
 assignee: []
 created_date: '2026-08-09 13:57'
-updated_date: '2026-09-12 16:56'
+updated_date: '2026-09-12 23:52'
 labels: []
 dependencies: []
 ---
@@ -53,4 +53,16 @@ gitignored and does not survive merge.
 - **Owner taste call** — where the Agents category belongs in Settings
   navigation (Troubleshooting vs. Expert) is a placement judgment call, not
   a defect; left for the owner to decide.
+
+Current reconciliation (2026-09-12): all seven actual TASK13154 children are Done with checked acceptance criteria and implementation notes. This supersedes the historical deferred labels above, while preserving their original review context. The parent remains In Progress, with its acceptance unchecked, because final integration and the broader requested worktree outcomes are unresolved.
+
+Six core deliveries are present in reachable local history: definitions PR1461 f24f8c6921; concurrency PR1477 7625968469; fleet panel PR1498 2ff4c27084; cross-turn lifetime PR1557 d5445a4c10; wake/notification PR1609 b456263894; steering/continuation PR1816 230acdaac0. These are historical ancestry checks recorded at 770a1735d5, not fresh runtime or live-provider tests. PR2631 merged the 25-item audit; PR2641 merged the five subsequent reliability/verification follow-ups at d66908a69. No duplicate historical children were created and wake delivery is counted once.
+
+The seventh polish slice is implemented and independently reviewed locally: approval verification TASK13154.4 (686ca653cc/abf4a0d879), owned Settings DB cleanup and filtered-tool feedback TASK13154.5 (97c3bce2e0/1b9cff9776), researcher/critic/ingest-runner plus retained bulk-reader presets TASK13154.6 (6f05d7399a), and definition caps TASK13154.7 (b46807d547/be709a648f, bbfc233aad, c0d419d420). Named spawn now raises ValueError for agent plus allowed_tools, and the real load-count/no-reread guards are present; the current 122-pass fleet runtime gate covers the explicit disjoint-path and once-per-turn tests. Each child record contains exact scoped evidence and qualifications. Canonical Settings category placement remains unchanged as a product preference.
+
+Current communication is bounded process-local steering and child progress, explicit supervisor collection/relay, explicit finished-child continuation and shared versioned session tasks. This does not claim durable inboxes, arbitrary direct peer routing or progress-triggered wakes. Existing ADR129/131/134/135/136 govern communication, durable accounting, aggregate admission, delivery and scoped progress. Supplemental ADR153 governs best-effort bounded webhook delivery (drops remain possible), ADR154 denial boundaries, ADR156 provider/local live usage, and ADR157/158 capped continuation plus migration order.
+
+Interim worktree safeguards refuse agent create/merge/discard and retain existing checkouts/branches; a qualified execution backend under ADR155 is still missing. TASK31210 and TASK31211 retain unchecked functional criteria. TASK18929 was reopened for this wave's ordinary budget-stop continuation regression; two positive worktree continuation tests and a deferred per-chunk usage extraction observation remain final review obligations. No functional recovery, durable inbox, full-suite run or live-provider certification is claimed. Existing dependency/static warnings, the earlier preset-probe user-config read before sandboxed write failure, and the cap Task 1 automatic foreign pytest-cleanup attempt remain explicitly qualified in child/current-status records.
+
+ADR required: no new ADR for this records-only reconciliation. Existing backlog/decisions/129-fleet-mailbox-and-wake-reliability.md and the exact supplemental decision paths in the linked closeout plan govern delivered behavior. The implementation plan was narrowed to allow honest partial reconciliation without prematurely closing the parent. Independent records review and combined branch review are pending. Work remains local on codex/agent-orchestration-remaining; no new PR, push or merge was performed.
 <!-- SECTION:NOTES:END -->
