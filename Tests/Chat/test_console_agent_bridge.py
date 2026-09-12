@@ -11060,6 +11060,114 @@ def test_live_usage_adapter_requires_explicit_raw_provider_output(usage, expecte
     ] == expected
 
 
+def test_terminal_usage_snapshot_failure_is_observational_and_finishes(
+    monkeypatch,
+):
+    class MetadataGateway(ConsoleProviderGateway):
+        async def stream_chat(self, *_args, **_kwargs):
+            yield ProviderToolCalls((), ProviderTurnMetadata("stop", usage=None))
+
+    def fail_snapshot(_self):
+        raise RuntimeError("private terminal snapshot")
+
+    monkeypatch.setattr(
+        console_agent_bridge.ConsoleProviderCallSignals,
+        "usage_snapshot",
+        fail_snapshot,
+    )
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    warnings = []
+    sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=MetadataGateway(),
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            response = adapter.chat_call(
+                messages_payload=[{"role": "user", "content": "hi"}]
+            )
+    finally:
+        logger.remove(sink_id)
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert response["choices"][0]["message"]["content"] == ""
+    assert "usage" not in response
+    assert [event.kind for event in events] == ["started", "finished"]
+    assert adapter._failed_live_usage_sequences == set()
+    assert (
+        warnings.count(
+            "usage accounting failed after a successful provider turn; "
+            "completing the turn without usage (exception_type=RuntimeError)\n"
+        )
+        == 1
+    )
+
+
+def test_terminal_usage_signal_fallback_preserves_explicit_output(monkeypatch):
+    class MetadataGateway(ConsoleProviderGateway):
+        async def stream_chat(self, *_args, **_kwargs):
+            yield ProviderToolCalls((), ProviderTurnMetadata("stop", usage=None))
+
+    monkeypatch.setattr(
+        console_agent_bridge.ConsoleProviderCallSignals,
+        "usage_snapshot",
+        lambda _self: {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+    )
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    events = []
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=MetadataGateway(),
+        resolution=_test_resolution(),
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+        live_usage_sink=events.append,
+    )
+    try:
+        with adapter.run_scope("run", "primary"):
+            response = adapter.chat_call(
+                messages_payload=[{"role": "user", "content": "hi"}]
+            )
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(2)
+        loop.close()
+
+    assert response["usage"]["completion_tokens"] == 2
+    assert [
+        event.provider_output_tokens
+        for event in events
+        if event.kind == "provider_usage"
+    ] == [2]
+    assert events[-1].kind == "finished"
+
+
 def test_live_usage_two_fleet_streams_publish_pre_step_through_adapter(
     tmp_path,
 ):
