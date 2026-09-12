@@ -65,7 +65,7 @@ def format_record_page(page: RunLogPage) -> str: ...
 
 The two ellipses above designate signatures, not implementation placeholders: implement the byte-framing algorithm below. Bridge `load_run_log_page(self, run_id, *, cursor=None) -> RunLogPage | None` captures ownership and holds a lease for each call. Task 2 consumes this API and the immutable page types. `run_log_available` retains its bool contract but uses streaming metadata rather than all-record allocation.
 
-- [ ] Read the task and spec; run existing affected reader/bridge tests as a baseline before editing their behavior. Add tests over real files encoded with `encode_record` for at least two pages, a segment-number gap, a child after a large unrelated body, and a single multimegabyte UTF-8 body. Pin reconstruction and budgets:
+- [x] Read the task and spec; run existing affected reader/bridge tests as a baseline before editing their behavior. Add tests over real files encoded with `encode_record` for at least two pages, a segment-number gap, a child after a large unrelated body, and a single multimegabyte UTF-8 body. Pin reconstruction and budgets:
 
 ```python
 assert b"".join(part.record.content.encode("utf-8") for part in fragments) == original
@@ -73,12 +73,12 @@ assert all(sum(len(s.record.content.encode("utf-8")) for s in p.slices) <= 256_0
 assert all(len(p.slices) <= 100 for p in pages)
 ```
 
-- [ ] Observe intended failures for the new missing page API before implementation. Add a recording binary-file wrapper that rejects unbounded `read` and records total read size; this must fail if a reader materializes an entire segment or oversized record before slicing.
-- [ ] Implement cursor validation, numeric segment discovery, bounded header reads, framing/terminator checks, seeking over unrelated bodies, fragment continuation and UTF-8 boundary preservation. Count scanning before returning; a budget stop yields an advancing continuation even with no matching slices. Resynchronize malformed/torn headers within the scan allowance and retain an explicit bounded diagnostic code; never log their text.
-- [ ] Share only the codec header parsing needed to avoid two conflicting framing implementations. Keep existing `iter_records` tests green; do not refactor search, writer, or manifest behavior.
-- [ ] Add the authority-scoped bridge page method using `_owning_run_id_for_log` and `_run_log_authority_for` and holding `access_scope()` per call. Add a metadata-only availability scan that retains no bodies, checking lease/cancellation between chunks where available. Task 2 calls potentially long scans only on workers.
-- [ ] Verify absent/revoked authority, revocation between pages, primary versus exact child filtering, large child bodies and skipped sibling reads. Keep the whole-text method temporarily until Task 2 migrates the production viewer and surveys its remaining concrete consumers.
-- [ ] Run the new paging module, existing format/search tests, and affected bridge cap/authority tests; record counts, read-budget evidence, scoped static checks and `git diff --check`. Leave changes unstaged and write report. Root commits and independently reviews before Task 2.
+- [x] Observe intended failures for the new missing page API before implementation. Add a recording binary-file wrapper that rejects unbounded `read` and records total read size; this must fail if a reader materializes an entire segment or oversized record before slicing.
+- [x] Implement cursor validation, numeric segment discovery, bounded header reads, framing/terminator checks, seeking over unrelated bodies, fragment continuation and UTF-8 boundary preservation. Count scanning before returning; a budget stop yields an advancing continuation even with no matching slices. Resynchronize malformed/torn headers within the scan allowance and retain an explicit bounded diagnostic code; never log their text.
+- [x] Share only the codec header parsing needed to avoid two conflicting framing implementations. Keep existing `iter_records` tests green; do not refactor search, writer, or manifest behavior.
+- [x] Add the authority-scoped bridge page method using `_owning_run_id_for_log` and `_run_log_authority_for` and holding `access_scope()` per call. Add a metadata-only availability scan that retains no bodies, checking lease/cancellation between chunks where available. Task 2 calls potentially long scans only on workers.
+- [x] Verify absent/revoked authority, revocation between pages, primary versus exact child filtering, large child bodies and skipped sibling reads. Keep the whole-text method temporarily until Task 2 migrates the production viewer and surveys its remaining concrete consumers.
+- [x] Run the new paging module, existing format/search tests, and affected bridge cap/authority tests; record counts, read-budget evidence, scoped static checks and `git diff --check`. Leave changes unstaged and write report. Root commits and independently reviews before Task 2.
 
 ### Task 2: Page the Console modal and bound availability work
 
