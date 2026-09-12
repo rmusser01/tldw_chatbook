@@ -28,7 +28,9 @@ Goal: independent compatible worker, before changing application transport.
 Success criteria: decrypt fixed prior age archives; produce canonical authenticated
 files; reject malformed input before expensive work; bounded binary stream I/O.
 Tests: new `Tests/Backup_Recovery/test_python_age.py` and fixed age fixtures.
-Status: In Progress.
+Status: Complete. Worker63 tests pass; independent review approved after closed-pipe
+shutdown regression correction. Evidence: /private/tmp/task32495-python-worker-report.md
+and /private/tmp/task32495-python-worker-review.md.
 
 Create `tldw_chatbook/Backup_Recovery/age_worker.py`, a directly executable isolated
 Python file with no application imports. Preserve stdin four-byte big-endian
@@ -47,7 +49,7 @@ Goal: existing public transform uses the Python worker without Go resources.
 Success criteria: original cancellation/backpressure/limits/publication semantics
 pass through the actual Python child; callers use unchanged API shapes.
 Tests: `test_crypto.py`, worker tests and directly affected capability tests.
-Status: Not Started.
+Status: In Progress.
 
 Modify `crypto.py` to execute `[sys.executable, '-I', worker_path, mode]`; replace the
 Go tuple/binary manifest check with fixed Python worker/dependency/protocol checks.
