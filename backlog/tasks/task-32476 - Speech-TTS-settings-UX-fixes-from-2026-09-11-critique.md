@@ -1,5 +1,5 @@
 ---
-id: TASK-32475
+id: TASK-32476
 title: Speech & TTS settings UX fixes from 2026-09-11 critique
 status: Done
 assignee: []

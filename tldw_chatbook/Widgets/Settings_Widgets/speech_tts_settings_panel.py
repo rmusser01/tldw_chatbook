@@ -139,6 +139,8 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     global_speech_tts_provider_configuration_state,
     project_audio_cpp_global_choices,
     required_openai_plaintext_confirmation_fingerprint,
+    MAX_GLOBAL_IDENTIFIER_CHARACTERS,
+    global_identifier_is_valid,
     restore_non_secret_defaults,
     validate_audio_cpp_managed_settings,
 )
@@ -180,7 +182,10 @@ _GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
 _COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
 # Select-option value for "enter an ID the known list does not carry". Never
 # persists: collection skips it and the handler swaps it for the modal flow.
-_CUSTOM_ID_SENTINEL = "__custom__"
+# The leading/trailing spaces make it structurally invalid as an identifier
+# (the shared validator rejects values that change under ``strip()``), so a
+# saved model/voice id can never collide with this UI action.
+_CUSTOM_ID_SENTINEL = " custom "
 _AUDIO_CPP_MANAGED_UI_SUPPORTED = os.name != "nt"
 _AUDIO_CPP_MANAGED_FIELD_IDS = frozenset(
     {
@@ -487,6 +492,12 @@ class _CustomIdModal(ModalScreen[str | None]):
         self.current = current
 
     def compose(self) -> ComposeResult:
+        """Yield the editor: title, guidance, input, and Cancel/Confirm.
+
+        Returns:
+            The modal's widgets; the Input starts pre-filled with the
+            current saved identifier so an edit-in-place is natural.
+        """
         with Vertical(classes="settings-speech-credential-modal"):
             yield Static(
                 f"Set a custom {self.axis_label} ID",
@@ -515,15 +526,28 @@ class _CustomIdModal(ModalScreen[str | None]):
                 )
 
     def action_cancel(self) -> None:
+        """Dismiss with ``None`` (Escape key path; nothing is applied)."""
         self.dismiss(None)
 
     @on(Button.Pressed, "#settings-speech-custom-id-cancel")
     def handle_cancel(self, event: Button.Pressed) -> None:
+        """Dismiss with ``None`` when Cancel is pressed.
+
+        Args:
+            event: The Cancel button press; stopped so the panel never
+                sees it.
+        """
         event.stop()
         self.dismiss(None)
 
     @on(Button.Pressed, "#settings-speech-custom-id-confirm")
     def handle_confirm(self, event: Button.Pressed) -> None:
+        """Dismiss with the input's current text for the panel to validate.
+
+        Args:
+            event: The confirm button press; stopped so the panel never
+                sees it.
+        """
         event.stop()
         self.dismiss(
             self.query_one("#settings-speech-custom-id-value", Input).value
@@ -832,6 +856,10 @@ class SpeechTTSSettingsPanel(Vertical):
         self._leave_save_waiters: dict[int, asyncio.Future[bool]] = {}
         self._managed_lease_hold: AudioCppManagedLeaseHold | None = None
         self._last_focused_control_id: str | None = None
+        # Axes ("model"/"voice") whose confirmed custom ID is written to the
+        # draft but whose Select has not been rebuilt yet. While an axis is
+        # pending, collection must not read the still-mounted stale value.
+        self._custom_id_rebuild_pending: set[str] = set()
         self._audio_cpp_scan_revision = 0
         self._audio_cpp_result_cleanup_pending = audio_cpp_result_cleanup_pending or (
             lambda: False
@@ -3586,6 +3614,10 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             if self.state.defaults.model_mode != "exact":
                 self.state.defaults.model_id = None
+            elif "model" in self._custom_id_rebuild_pending:
+                # A confirmed custom ID is in the draft but not yet on the
+                # mounted Select: keep the confirmed value.
+                pass
             elif isinstance(model_value, str) and model_value != _CUSTOM_ID_SENTINEL:
                 # The sentinel is a transient modal trigger, never a draft
                 # value: while it is mounted the previous id stays put.
@@ -3600,6 +3632,8 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             if self.state.defaults.voice_mode != "exact":
                 self.state.defaults.voice_id = None
+            elif "voice" in self._custom_id_rebuild_pending:
+                pass
             elif isinstance(voice_value, str) and voice_value != _CUSTOM_ID_SENTINEL:
                 self.state.defaults.voice_id = voice_value
             if isinstance(response_format, str):
@@ -5294,41 +5328,70 @@ class SpeechTTSSettingsPanel(Vertical):
         self._announce_draft_state()
 
     def _custom_id_modal_result(self, axis: str, value: str | None) -> None:
-        """Apply one confirmed custom ID, or keep the draft untouched."""
-        cleaned = (value or "").strip()
-        if not cleaned or len(cleaned) > 512:
-            if value is not None:
-                self._set_result(
-                    "Custom ID left unchanged — enter a non-empty identifier "
-                    "of at most 512 characters.",
-                    severity="warning",
-                )
+        """Apply one confirmed custom ID, or keep the draft untouched.
+
+        Acceptance uses ``global_identifier_is_valid`` — the same predicate
+        Save enforces — so a value rejected here could never have persisted.
+        A confirmed value also marks the axis rebuild-pending: until the
+        Select is rebuilt, ``_collect_visible_state`` must not read the
+        still-mounted previous value, or a Save racing the rebuild would
+        overwrite the confirmed ID.
+        """
+        if value is None:
+            return
+        if not global_identifier_is_valid(
+            value, max_characters=MAX_GLOBAL_IDENTIFIER_CHARACTERS
+        ):
+            self._set_result(
+                "Custom ID left unchanged — enter a non-empty identifier "
+                "of at most 512 characters with no leading or trailing "
+                "whitespace.",
+                severity="warning",
+            )
             return
         if axis == "model":
-            self.state.defaults.model_id = cleaned
+            self.state.defaults.model_id = value
         else:
-            self.state.defaults.voice_id = cleaned
+            self.state.defaults.voice_id = value
+        self._custom_id_rebuild_pending.add(axis)
         self.run_worker(
             self._rebuild_after_custom_id(axis), exclusive=True, exit_on_error=False
         )
 
     async def _rebuild_after_custom_id(self, axis: str) -> None:
-        await self._replace_card_bodies(
-            self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
-        )
-        self._announce_draft_state()
-        control_id = (
-            "#settings-speech-model-value"
-            if axis == "model"
-            else "#settings-speech-voice-value"
-        )
+        """Rebuild the defaults card onto the confirmed value, then unfence.
+
+        Args:
+            axis: "model" or "voice"; cleared from the pending set only
+                after the rebuilt Select mounts, in ``finally`` so an
+                exception cannot freeze collection on that axis.
+        """
         try:
-            self.query_one(control_id, Select).focus()
-        except QueryError:
-            pass
+            await self._replace_card_bodies(
+                self._GLOBAL_DEFAULTS_CARD_ID, self._INSPECTOR_CARD_ID
+            )
+            self._announce_draft_state()
+            control_id = (
+                "#settings-speech-model-value"
+                if axis == "model"
+                else "#settings-speech-voice-value"
+            )
+            try:
+                self.query_one(control_id, Select).focus()
+            except QueryError:
+                pass
+        finally:
+            self._custom_id_rebuild_pending.discard(axis)
 
     @on(Button.Pressed, "#settings-speech-browse-voices")
     def handle_browse_voices(self, event: Button.Pressed) -> None:
+        """Open Speech Lab focused on voice selection for this provider.
+
+        The REFRESH_VOICES intent makes the Lab focus its voice selector
+        (TEST would focus the connection-test button instead). Navigation
+        still resolves a dirty draft through the screen's central
+        ``flush_pending_work`` gate, like every other outgoing navigation.
+        """
         event.stop()
         provider_id = self.state.defaults.provider_id
         if provider_id not in BUILT_IN_TTS_PROVIDER_ORDER:
@@ -5337,7 +5400,7 @@ class SpeechTTSSettingsPanel(Vertical):
             self._open_lab(
                 SpeechTTSNavigationTarget(
                     provider_id,
-                    SpeechTTSNavigationIntent.TEST,
+                    SpeechTTSNavigationIntent.REFRESH_VOICES,
                 ),
             ),
             group="settings-speech-open-lab",

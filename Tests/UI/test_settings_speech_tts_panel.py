@@ -4308,7 +4308,7 @@ async def test_custom_entry_modal_sets_voice_id() -> None:
     )
     async with app.run_test(size=(150, 60)) as pilot:
         voice = app.query_one("#settings-speech-voice-value", Select)
-        voice.value = "__custom__"
+        voice.value = speech_tts_settings_panel_module._CUSTOM_ID_SENTINEL
         await pilot.pause()
 
         modal = app.screen
@@ -4328,12 +4328,16 @@ async def test_custom_entry_modal_sets_voice_id() -> None:
             app.query_one("#settings-speech-voice-value", Select).value
             == "af_sky"
         )
+        # A Save racing the rebuild must not clobber the confirmed ID.
+        panel._collect_visible_state()
+        assert panel.state.defaults.voice_id == "af_sky"
 
 
 @pytest.mark.asyncio
 async def test_browse_voices_button_navigates_to_speech_lab() -> None:
     """The Voice value row bridges to Speech Lab with the default provider
-    staged, so a discovered voice no longer has to be retyped from memory."""
+    staged and the voice selector focused (refresh-voices intent), so a
+    discovered voice no longer has to be retyped from memory."""
     app = _PanelHarness(
         state=_kokoro_defaults_state(), configure_provider="kokoro"
     )
@@ -4342,8 +4346,13 @@ async def test_browse_voices_button_navigates_to_speech_lab() -> None:
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert app.navigation, "expected a navigation event"
+        assert len(app.navigation) == 1
         assert app.navigation[0].screen_name == "stts"
+        assert app.navigation[0].screen_context == {
+            "view": "playground",
+            "provider": "kokoro",
+            "intent": "refresh-voices",
+        }
 
 
 @pytest.mark.asyncio
