@@ -310,7 +310,7 @@ def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
         # than writing a number the user never chose.
         vad_threshold=_format_optional_number(_read_realtime_vad_threshold()),
         vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms()),
-        # TASK-32482: same "blank = unset" contract for the send delay --
+        # TASK-32496: same "blank = unset" contract for the send delay --
         # an unset key lets the readers' own default win.
         handsfree_send_delay_seconds=_format_optional_number(
             get_cli_setting("dictation", "handsfree_send_delay_seconds", None)
@@ -4402,7 +4402,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 realtime_section["vad_silence_ms"] = silence
         else:
             removed.extend(("vad_threshold", "vad_silence_ms"))
-        # TASK-32482: the pipeline send delay follows the optional-number
+        # TASK-32496: the pipeline send delay follows the optional-number
         # contract (blank = unset = delete; a deliberate value must be
         # positive); barge-in is an explicit Switch and always written.
         send_delay = self._validated_optional_number(
@@ -4457,7 +4457,7 @@ class SpeechTTSSettingsPanel(Vertical):
         panel uses, so a bad value refuses the WHOLE Save with an inline
         error rather than being silently dropped -- a silently dropped
         threshold reads to the user as "the setting does nothing".
-        `exclusive_low` makes the bound strict (TASK-32482: a zero send
+        `exclusive_low` makes the bound strict (TASK-32496: a zero send
         delay is a footgun the readers would warn-and-fallback on every
         boot, so Settings refuses to write it at all). Non-finite values
         are rejected BEFORE the bounds: `value < low` is False for NaN

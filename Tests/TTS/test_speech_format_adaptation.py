@@ -1,6 +1,6 @@
 """Adaptive response-format plumbing for Console reply speech.
 
-TASK-32480: when the resolved TTS response format cannot be played on
+TASK-32494: when the resolved TTS response format cannot be played on
 this machine (no sink and no format-capable player binary), Console
 speech requests are re-issued as WAV rather than synthesized into
 guaranteed silence. These tests pin the plumbing: the service-level

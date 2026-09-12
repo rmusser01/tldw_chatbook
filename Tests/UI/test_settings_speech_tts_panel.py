@@ -3811,7 +3811,7 @@ async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
                 "idle_timeout_minutes": 8,
                 "turn_detection": "semantic_vad",
             },
-            # TASK-32482: barge-in is always written (explicit Switch);
+            # TASK-32496: barge-in is always written (explicit Switch);
             # the untouched blank send delay deletes its key so the
             # readers' own default keeps winning.
             "dictation": {
@@ -3854,7 +3854,7 @@ async def test_realtime_blank_voice_deletes_key_instead_of_empty_string(
         # Semantic turn detection (the default) also deletes the two
         # server_vad-only knobs: the provider rejects them in that mode,
         # so leaving them in config would arm a future rejection. The
-        # untouched blank send delay deletes its key too (TASK-32482's
+        # untouched blank send delay deletes its key too (TASK-32496's
         # unset contract).
         assert kwargs["delete_keys"] == {
             "realtime": ("voice", "vad_threshold", "vad_silence_ms"),
@@ -4426,7 +4426,7 @@ async def test_local_provider_forms_surface_dependency_and_model_guidance(
 async def test_handsfree_pipeline_tuning_fields_render_and_save(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TASK-32482: the pipeline loop's two tuning knobs (send countdown,
+    """TASK-32496: the pipeline loop's two tuning knobs (send countdown,
     acoustic barge-in) were config.toml-only -- invisible at the point of
     use. They render in the Speech panel's hands-free section and round-trip
     through the same atomic config writer."""

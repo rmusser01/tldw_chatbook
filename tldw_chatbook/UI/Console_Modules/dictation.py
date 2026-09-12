@@ -1103,7 +1103,7 @@ class ConsoleDictationController:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
         self._cancel_console_dictation_elapsed_timer()
-        # TASK-32481: a dictation failure inside the hands-free loop
+        # TASK-32495: a dictation failure inside the hands-free loop
         # (capture start refused -- missing extras, no device -- or a
         # mid-capture failure) strands the loop otherwise: the FSM has no
         # capture-failed input and `listening` has no watchdog, so the

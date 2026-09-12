@@ -666,7 +666,7 @@ class TTSEventHandler:
         self._active_tasks: set[asyncio.Task] = set()  # Track active async tasks
         self._active_tasks_lock = asyncio.Lock()  # Lock for active tasks set
         self._last_cooldown_cleanup = 0.0  # Track last cleanup time
-        # TASK-32480: latches the playback-capability remedy toast to once
+        # TASK-32494: latches the playback-capability remedy toast to once
         # per app run (the handler is an app-lifetime singleton), matching
         # the once-per-run pattern of the dictation override notices.
         self._playback_remedy_notified = False
@@ -1840,7 +1840,7 @@ class TTSEventHandler:
                 except Exception:
                     logger.debug("TTS metric provider snapshot is unavailable")
 
-            # TASK-32480 adaptive playback: a CONSOLE speech request (the
+            # TASK-32494 adaptive playback: a CONSOLE speech request (the
             # hands-free utterance path via `on_finished`, or an automatic
             # Speak-replies request via `playback_lifecycle`) whose resolved
             # format this machine provably cannot play (no streaming sink
@@ -2842,7 +2842,7 @@ class TTSEventHandler:
             playback_remedy,
         )
 
-        # TASK-32480 playback-capability pre-check: when this machine
+        # TASK-32494 playback-capability pre-check: when this machine
         # provably cannot play the artifact's format (no sink coverage and
         # no player binary that decodes it -- e.g. an MP3 on a stock
         # Fedora Workstation), do not even try: report the failure, surface
