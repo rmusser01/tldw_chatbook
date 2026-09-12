@@ -18,6 +18,96 @@ from loguru import logger
 #
 # Simple Audio Player for TUI
 
+#: File formats a player binary can definitely decode. macOS `afplay` and
+#: the Windows COM path play most of what the OS audio stack supports --
+#: but NOT Ogg/Opus (observed on dev: `afplay` can exit successfully
+#: without decoding an Ogg/Opus body, which is worse than a clean
+#: failure, so opus/ogg are excluded from its set and route to ffplay).
+#: The Linux catalogue below is deliberately conservative where a
+#: "maybe" exists: `paplay` and `pw-play` decode through libsndfile,
+#: whose MP3 support only landed in 1.1.0 (2022) and remains a distro
+#: build flag -- relying on it would hand an MP3 to a player that emits
+#: nothing on older builds, which is exactly the silent-failure class
+#: this catalogue exists to prevent.
+_ALL_FILE_FORMATS: frozenset[str] = frozenset(
+    {"mp3", "opus", "ogg", "aac", "flac", "wav"}
+)
+_AFPLAY_FORMATS: frozenset[str] = frozenset({"mp3", "aac", "flac", "wav"})
+
+#: Linux player catalogue, in preference order: (name, base command,
+#: supports native pause, definitely-decodable formats).
+_LINUX_PLAYER_CATALOGUE: tuple[tuple[str, list[str], bool, frozenset[str]], ...] = (
+    (
+        "mpv",
+        [
+            "mpv",
+            "--no-video",
+            "--really-quiet",
+            "--input-ipc-server=/tmp/mpv-socket",
+        ],
+        True,
+        _ALL_FILE_FORMATS,
+    ),
+    ("mplayer", ["mplayer", "-really-quiet", "-slave"], True, _ALL_FILE_FORMATS),
+    (
+        "ffplay",
+        ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error"],
+        False,
+        _ALL_FILE_FORMATS,
+    ),
+    ("pw-play", ["pw-play"], False, frozenset({"wav", "flac"})),
+    ("paplay", ["paplay"], False, frozenset({"wav", "flac"})),
+    ("aplay", ["aplay", "-q"], False, frozenset({"wav"})),
+)
+
+
+def player_supported_formats(player_name: str | None) -> frozenset[str]:
+    """Return the file formats `player_name` can definitely decode.
+
+    macOS `afplay` maps to its OS-decodable subset (no Ogg/Opus); the
+    Windows COM path plays everything the OS supports, so it maps to the
+    full format set. Unknown names (including ``None``) map to no
+    formats -- callers treat that as "cannot serve this format".
+    """
+    if player_name == "afplay":
+        return _AFPLAY_FORMATS
+    if player_name == "windows":
+        return _ALL_FILE_FORMATS
+    for _name, _cmd, _pause, formats in _LINUX_PLAYER_CATALOGUE:
+        if _name == player_name:
+            return formats
+    return frozenset()
+
+
+def find_player_for_format(audio_format: str | None) -> str | None:
+    """Return the name of a locally available player for `audio_format`.
+
+    Platform-aware and side-effect free (probes PATH via `shutil.which`
+    only): macOS resolves afplay-served formats to `afplay` and Ogg/Opus
+    to `ffplay` when installed (afplay cannot decode those containers);
+    Linux resolves to the first catalogue player that both exists on PATH
+    and can decode `audio_format`; Windows resolves to the built-in COM
+    path; unknown platforms resolve to None. An unknown/``None`` format
+    falls back to the first available player regardless of formats,
+    matching the pre-catalogue selection for artifacts with unrecognized
+    extensions.
+    """
+    system = platform.system()
+    if system == "Darwin":
+        if audio_format is not None and audio_format not in _AFPLAY_FORMATS:
+            return "ffplay" if shutil.which("ffplay") else None
+        return "afplay"
+    if system == "Windows":
+        return "windows"
+    if system != "Linux":
+        return None
+    for name, _cmd, _pause, formats in _LINUX_PLAYER_CATALOGUE:
+        if audio_format is not None and audio_format not in formats:
+            continue
+        if shutil.which(name):
+            return name
+    return None
+
 
 class PlaybackState(Enum):
     """Audio playback states"""
@@ -66,40 +156,11 @@ class SimpleAudioPlayer:
             self._player_name = "afplay"
             self._supports_pause = False  # afplay doesn't support pause
         elif self._system == "Linux":
-            # Try to find available player with pause support info
-            for player, cmd, supports_pause in [
-                (
-                    "mpv",
-                    [
-                        "mpv",
-                        "--no-video",
-                        "--really-quiet",
-                        "--input-ipc-server=/tmp/mpv-socket",
-                    ],
-                    True,
-                ),
-                (
-                    "mplayer",
-                    ["mplayer", "-really-quiet", "-slave"],
-                    True,
-                ),  # slave mode supports pause
-                (
-                    "ffplay",
-                    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error"],
-                    False,
-                ),
-                ("aplay", ["aplay", "-q"], False),
-                ("paplay", ["paplay"], False),
-            ]:
-                if shutil.which(player):
-                    self._player_cmd = cmd
-                    self._player_name = player
-                    self._supports_pause = supports_pause
-                    break
-            else:
-                self._player_cmd = None
-                self._player_name = None
-                self._supports_pause = False
+            # Initial (format-agnostic) selection from the shared
+            # catalogue; `play()` re-selects per artifact format before
+            # spawning.
+            self._select_linux_player(lambda _formats: True)
+            if self._player_name is None:
                 logger.warning("No suitable audio player found on Linux")
         elif self._system == "Windows":
             # Windows Media Player supports pause through COM automation
@@ -113,6 +174,71 @@ class SimpleAudioPlayer:
             self._player_name = None
             self._supports_pause = False
             logger.warning(f"Unsupported platform: {self._system}")
+
+    def _select_linux_player(self, formats_accepted) -> None:
+        """Point this player at the first catalogue entry matching the filter.
+
+        `formats_accepted` receives a candidate's decodable-format set and
+        returns whether it may serve the upcoming artifact; entries are
+        visited in the catalogue's preference order and PATH availability
+        is always required. Used both by `_find_player`'s format-agnostic
+        initial probe and by `play()`'s per-artifact format-aware
+        selection.
+        """
+        for name, cmd, supports_pause, formats in _LINUX_PLAYER_CATALOGUE:
+            if not formats_accepted(formats):
+                continue
+            if not shutil.which(name):
+                continue
+            self._player_cmd = list(cmd)
+            self._player_name = name
+            self._supports_pause = supports_pause
+            return
+        self._player_cmd = None
+        self._player_name = None
+        self._supports_pause = False
+
+    def _select_player_for_artifact(self, file_path: Path) -> None:
+        """Re-select the player for `file_path`'s audio format.
+
+        The artifact's extension decides the format; an unrecognized
+        extension keeps whatever player the initial probe selected (the
+        pre-catalogue behavior) rather than refusing a file this module
+        simply doesn't know the extension of. On macOS this owns the
+        Ogg/Opus routing dev observed: `afplay` can exit successfully
+        without decoding an Ogg/Opus body, so those containers go to
+        ffplay when installed and refuse cleanly when not.
+        """
+        audio_format = file_path.suffix.lstrip(".").lower() or None
+        if audio_format not in _ALL_FILE_FORMATS:
+            return
+        if self._system == "Darwin":
+            if audio_format in _AFPLAY_FORMATS:
+                # Reset to afplay even if a previous opus/ogg artifact
+                # left ffplay (or a clean refusal) selected -- same
+                # re-probe dev's inline special case performed.
+                self._player_cmd = ["/usr/bin/afplay"]
+                self._player_name = "afplay"
+                self._supports_pause = False
+                return
+            ffplay = shutil.which("ffplay")
+            if ffplay is None:
+                logger.warning(
+                    "Opus playback requires ffplay; choose WAV output instead"
+                )
+                self._player_cmd = None
+                self._player_name = None
+                self._supports_pause = False
+                return
+            self._player_cmd = [ffplay, "-nodisp", "-autoexit", "-loglevel", "error"]
+            self._player_name = "ffplay"
+            self._supports_pause = False
+            return
+        if self._system != "Linux":
+            return
+        self._select_linux_player(
+            lambda formats: audio_format in formats,
+        )
 
     def play(self, file_path: Path) -> bool:
         """
@@ -142,25 +268,13 @@ class SimpleAudioPlayer:
             logger.error(f"Audio file not found: {file_path}")
             return False
 
-        if self._system == "Darwin":
-            # afplay can exit successfully without decoding Ogg/Opus audio.
-            # ffplay is already a supported player and handles these containers.
-            self._find_player()
-            if file_path.suffix.lower() in {".opus", ".ogg"}:
-                ffplay = shutil.which("ffplay")
-                if ffplay is None:
-                    logger.warning(
-                        "Opus playback requires ffplay; choose WAV output instead"
-                    )
-                    return False
-                self._player_cmd = [
-                    ffplay,
-                    "-nodisp",
-                    "-autoexit",
-                    "-loglevel",
-                    "error",
-                ]
-                self._player_name = "ffplay"
+        # Format-aware player selection: the artifact's extension decides
+        # which player may serve it -- an .mp3 must not be handed to a
+        # WAV-only aplay, a box with no format-capable player must refuse
+        # here rather than spawn garbage, and (dev-observed) Ogg/Opus on
+        # macOS must route to ffplay because afplay exits successfully
+        # without decoding those containers.
+        self._select_player_for_artifact(file_path)
 
         # Check if we have a player
         if not self._player_cmd:

@@ -2240,6 +2240,7 @@ class TTSService:
         *,
         text: str,
         voice_override: str | None = None,
+        response_format_override: str | None = None,
         progress_sink: ProgressSink | None = None,
         admission_authorizer: TTSAdmissionAuthorizer | None = None,
     ) -> TTSAudioResponse:
@@ -2247,6 +2248,7 @@ class TTSService:
         return await self._request_admission.synthesize_default(
             text=text,
             voice_override=voice_override,
+            response_format_override=response_format_override,
             progress_sink=progress_sink,
             admission_authorizer=admission_authorizer,
         )
