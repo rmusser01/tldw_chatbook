@@ -574,6 +574,16 @@ verification per `backlog/docs/lessons-live-verification.md`.
 
 ## 10. Phase → PR map
 
+Delivery reconciliation, 2026-09-12: the six core merge points (definitions,
+concurrency, panel, cross-turn lifetime, wake/notification and steering) are
+reachable in local history. Phase-four presets, Settings ownership/feedback and
+per-definition time caps are implemented and independently reviewed on the local
+remaining-work branch; they have not been published in a new PR.
+[TASK-13154](../../../backlog/tasks/task-13154%20-%20Supervisor-agent-fleet-program.md)
+records the seven actual completed children and scoped evidence. The parent
+remains In Progress for final integration and unresolved worktree authority;
+this paragraph does not convert historical test plans into fresh execution.
+
 | PR | Contents |
 |---|---|
 | **1 — Definitions** | Models + DB (idempotent ALTERs, version row 5) + spawn `agent` param + Settings ▸ Agents editor + user-guide page |

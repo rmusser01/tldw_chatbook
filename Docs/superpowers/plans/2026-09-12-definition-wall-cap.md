@@ -42,6 +42,8 @@ Tests first: actual persisted budgets and gated runtime termination for tighter,
 
 ### Task 3: Canonical Settings and documentation closeout
 
+- [x] Implemented and independently reviewed: c0d419d420; final mounted and painted evidence is recorded in the task report.
+
 Files: Widgets/settings_agents_panel.py; Tests/UI/test_settings_agents_category.py; existing user-facing Agents documentation and governing design/plan references identified with rg.
 
 Add agents-wall-seconds-input; parse blank None/float then existing validation; select renders numeric value, New/every preset clears to None. Preserve sibling DB ownership and omitted-tool feedback fixes. Mounted tests drive Save and read real DB after valid, clear and invalid edits; check form reset on all preset selections and selected definition unchanged until Save. Documentation distinguishes optional tightening from replacement; describes per-run continuation bound and current cooperative/human-wait semantics without promising remote termination.

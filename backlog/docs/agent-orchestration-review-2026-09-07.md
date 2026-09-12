@@ -5,6 +5,10 @@
 > boundaries. Read the [PR integration status](../../Docs/superpowers/reviews/2026-09-11-agent-orchestration-pr-integration.md)
 > for current verification and merge gates. TASK-3070 and the HandsFree ownership
 > follow-up were completed upstream; their older status notes are historical.
+> The later [remaining-work status](agent-orchestration-followups-2026-09-12.md)
+> tracks local Settings/cap delivery, reopened integration defects and the
+> unresolved worktree execution boundary; this original audit ledger does not
+> claim those newer outcomes are complete.
 
 Reviewed working tree based on `bc745f854`, including the in-flight Console
 controller extraction. This is a scoped engineering review, not an exhaustive
