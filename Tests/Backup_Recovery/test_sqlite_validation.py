@@ -460,3 +460,75 @@ def test_observed_schema_version_preserves_historical_layout(tmp_path):
     assert validation.validated_schema_version(owner, path, Event()) == 0
     assert validate_candidate(owner, path, Event(), migrate=True) == ()
     assert validation.validated_schema_version(owner, path, Event()) == 1
+
+
+@pytest.fixture
+def native_rag_indexing_candidate(tmp_path):
+    """Populate the installed tracking writer without a model or vector engine."""
+    from datetime import UTC, datetime
+
+    from tldw_chatbook.Backup_Recovery.rag_indexing import recovery_adapters
+    from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+
+    path = tmp_path / "rag-indexing.db"
+    store = RAGIndexingDB(path)
+    try:
+        store.mark_item_indexed(
+            "retained-note",
+            "note",
+            datetime(2026, 9, 7, tzinfo=UTC),
+            chunk_count=3,
+            metadata={"collection": "retained_notes"},
+        )
+        store.update_collection_state("retained_notes", 1, 1)
+        expected = store.get_indexed_item_info("retained-note", "note")
+    finally:
+        store.close()
+    return recovery_adapters()[0], path, expected
+
+
+@pytest.mark.parametrize("migrate", [False, True])
+def test_native_rag_indexing_schema_zero_survives_restricted_validation(
+    native_rag_indexing_candidate, migrate
+):
+    from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+
+    owner, path, expected = native_rag_indexing_candidate
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+    assert validation.validated_schema_version(owner, path, Event()) == 0
+    store = RAGIndexingDB(path)
+    try:
+        assert store.get_indexed_item_info("retained-note", "note") == expected
+    finally:
+        store.close()
+
+
+def test_native_rag_indexing_uninstalled_schema_is_refused(
+    native_rag_indexing_candidate,
+):
+    owner, path, _ = native_rag_indexing_candidate
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("CREATE TABLE uninstalled_payload(value TEXT)")
+        db.commit()
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "unsupported_schema",
+    )
+
+
+def test_native_rag_indexing_cannot_supply_foreign_policy(
+    native_rag_indexing_candidate,
+):
+    owner, path, _ = native_rag_indexing_candidate
+
+    class ForeignOwner:
+        owner_id = owner.owner_id
+
+        def schema_policy(self):
+            return replace(
+                owner.schema_policy(),
+                migration_steps=((0, 1, ("DELETE FROM indexed_items",)),),
+            )
+
+    assert validate_candidate(ForeignOwner(), path, Event(), migrate=True) == (
+        "unsupported_schema_policy",
+    )

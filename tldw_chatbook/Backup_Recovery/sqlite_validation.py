@@ -36,6 +36,7 @@ def _installed_owner(owner_id):
     from tldw_chatbook.Writing_Interop.recovery import recovery_adapters as writing
 
     from .config_adapter import recovery_adapters as config
+    from .rag_indexing import recovery_adapters as rag_indexing
     from .recovered_media import recovery_adapters as recovered
 
     for factory in (
@@ -53,6 +54,7 @@ def _installed_owner(owner_id):
         tts,
         recovered,
         config,
+        rag_indexing,
     ):
         for owner in factory():
             if owner.owner_id == owner_id:
