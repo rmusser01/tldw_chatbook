@@ -66,8 +66,10 @@ async def test_select_with_bad_typed_path_shows_error_and_stays_open(tmp_path):
         path_input.value = str(tmp_path / "does-not-exist")
         dialog.query_one("#select", Button).press()
         await pilot.pause()
-        assert "Path not found" in (
-            dialog.query_one("Dialog").border_subtitle or ""
+        # task-32251 AC#2: the reason now renders on its own row under
+        # the field, not inside the dialog's bottom border.
+        assert "Path not found" in str(
+            dialog.query_one("#picker-error-line", Static).renderable
         )
 
     assert not app.result_seen

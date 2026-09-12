@@ -97,9 +97,9 @@ from ...Library.collections_capture_models import (
     CapturePageRequest,
 )
 from ...Library.library_browse_location import (
+    browse_start_directory,
     claim_browse_directory,
     remember_browse_directory,
-    validated_browse_directory,
 )
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
@@ -19210,6 +19210,7 @@ class LibraryScreen(BaseAppScreen):
             description=str(form.get("description", "")),
             media_quality=str(form.get("quality", DEFAULT_MEDIA_QUALITY)),
             destination=str(form.get("destination", "")),
+            destination_error=str(form.get("destination_error", "")),
             destination_exists=bool(form.get("destination_exists", False)),
             running=self._export_state.running,
             status_line=self._library_export_status_line(),
@@ -26758,10 +26759,13 @@ class LibraryScreen(BaseAppScreen):
         last-used directory. The stored value is persisted user state, so it
         is validated in ``library_browse_location`` before it is used.
         """
-        remembered = validated_browse_directory(
-            get_cli_setting("library.notes_import", "last_directory", None)
+        # task-32251 AC#5: falls through to `[notes] sync_directory`, then
+        # home (`browse_start_directory`).
+        return str(
+            browse_start_directory(
+                get_cli_setting("library.notes_import", "last_directory", None)
+            )
         )
-        return str(remembered) if remembered is not None else str(Path.home())
 
     def _persist_library_note_import_location(self, selected_path: Path) -> None:
         """Off the event loop: remember the picked Import once directory."""
@@ -27114,46 +27118,52 @@ class LibraryScreen(BaseAppScreen):
                         return str(candidate)
                 except Exception:
                     continue
-        remembered = get_cli_setting("library.ingest", "last_directory", None)
-        if remembered:
-            try:
-                candidate = Path(str(remembered)).expanduser()
-                if candidate.is_dir():
-                    return str(candidate)
-            except OSError:
-                pass
-        return str(Path.home())
-
-    @work(thread=True)
-    def _persist_library_ingest_location(self, selected_path: Path) -> None:
-        """Dispatch ``_remember_library_ingest_location`` off the loop.
-
-        task-15470: ``browse_callback`` used to call
-        ``_remember_library_ingest_location`` (a stat syscall plus a full
-        config.toml read+atomic-rewrite+cache-reload) straight on the event
-        loop, once per file picked via the Browse dialog. Kept as a thin
-        wrapper -- not folded into ``_remember_library_ingest_location``
-        itself -- so that method stays directly unit-testable (it is the
-        one existing tests call, and does not need a running app; its own
-        body is deliberately left without a broad guard on the save call
-        to preserve that). The guard lives here instead: an uncaught
-        exception in a ``@work(thread=True)`` worker is fatal to the app
-        by default (``exit_on_error=True``).
-        """
-        try:
-            self._remember_library_ingest_location(selected_path)
-        except Exception:
-            logger.error("Failed to persist Library ingest browse location")
-
-    def _remember_library_ingest_location(self, selected_path: Path) -> None:
-        """Persist the directory a source was picked from, for next time."""
-        try:
-            directory = (
-                selected_path if selected_path.is_dir() else selected_path.parent
+        # task-32242 AC#1: the remembered value is persisted user state --
+        # a relative or traversing one used to be resolved against the
+        # process working directory and handed straight to the picker.
+        # Same shared validator the three Notes pickers use.
+        return str(
+            browse_start_directory(
+                get_cli_setting("library.ingest", "last_directory", None)
             )
-        except OSError:
-            return
-        save_setting_to_cli_config("library.ingest", "last_directory", str(directory))
+        )
+
+    def _persist_library_ingest_location(self, selected_path: Path) -> None:
+        """Claim this selection's write slot, then dispatch it off the loop.
+
+        task-32242 AC#2: the claim has to happen HERE, on the event loop,
+        in selection order -- the worker below may run in either order.
+        Two picks made inside one config write then resolve latest-wins
+        instead of last-worker-to-finish.
+        """
+        generation = claim_browse_directory("library.ingest", "last_directory")
+        self.run_worker(
+            lambda: self._remember_library_ingest_location(
+                selected_path, generation
+            ),
+            thread=True,
+        )
+
+    def _remember_library_ingest_location(
+        self, selected_path: Path, generation: int | None = None
+    ) -> None:
+        """Persist the directory a source was picked from, for next time.
+
+        Blocking (a stat plus a config.toml rewrite) -- worker thread only.
+
+        Args:
+            selected_path: What the picker returned; a directory is kept as
+                is, a file contributes its parent.
+            generation: The slot ``claim_browse_directory`` reserved for
+                this selection, so a superseded write is dropped
+                (task-32242 AC#2). ``None`` claims one on the spot, for the
+                direct unit-test callers that have no racing peer.
+        """
+        if generation is None:
+            generation = claim_browse_directory("library.ingest", "last_directory")
+        remember_browse_directory(
+            "library.ingest", "last_directory", selected_path, generation
+        )
 
     @on(LibraryIngestCanvas.OptionPanelToggled)
     def sync_library_ingest_type_group_expanded(
