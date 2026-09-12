@@ -660,3 +660,100 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
         assert getattr(targets[slot.target], slot.name) == slot.viewless_default, (
             slot.name
         )
+
+
+# ---------------------------------------------------------------------------
+# Run-hooks engine ownership (spec 2026-09-11, Task 4): one app-owned
+# engine, reachable headless -- nothing below needs a view attached.
+# ---------------------------------------------------------------------------
+
+
+class _HooksApp:
+    """The whole app surface `ensure_run_hooks` reads: the config mapping.
+
+    `TldwCli.app_config` is a plain attribute the app REASSIGNS on a
+    settings reload (it does not mutate the old dict), so a settable
+    attribute is the faithful double: the engine's config provider must
+    see the new mapping, never a dict captured at build time.
+    """
+
+    def __init__(self, hooks_section: dict | None) -> None:
+        self.app_config: dict = {}
+        if hooks_section is not None:
+            self.app_config["hooks"] = hooks_section
+
+
+def _pre_tool_use_hook() -> dict:
+    return {"event": "PreToolUse", "command": ["/bin/true"]}
+
+
+def test_ensure_run_hooks_is_idempotent_and_none_without_config():
+    """No ``[hooks]`` configured -> ``None`` (not an empty engine), latched.
+
+    ``None`` is the contract every later fire site skips on, so it must be
+    the answer both when the app exposes no config at all (``app=None``,
+    the headless double shape) and when the loaded config simply has no
+    ``[hooks]`` table -- and repeat calls must keep returning the same
+    answer rather than re-probing (one engine decision per app lifetime).
+    """
+    runtime = ConsoleRuntime(app=None)
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None
+
+    runtime = ConsoleRuntime(app=_HooksApp(hooks_section=None))
+    assert runtime.ensure_run_hooks() is None
+    assert runtime.ensure_run_hooks() is None
+
+
+def test_ensure_run_hooks_builds_one_engine_when_hooks_are_configured():
+    """A parsable hook configured -> exactly ONE engine, forever.
+
+    Idempotence is identity: the second call returns the first engine
+    even after the config that justified building it is gone (one engine
+    per app lifetime, spec section 4) -- config changes travel through
+    the engine's live config provider (next test), never a rebuild.
+    """
+    from tldw_chatbook.Agents.run_hooks import RunHooksEngine
+
+    app = _HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    runtime = ConsoleRuntime(app=app)
+    assert runtime.run_hooks_engine is None, "the peek must not build an engine"
+
+    engine = runtime.ensure_run_hooks()
+    assert isinstance(engine, RunHooksEngine)
+    assert runtime.ensure_run_hooks() is engine
+    assert runtime.run_hooks_engine is engine
+
+    app.app_config = {}  # a settings reload that drops [hooks]
+    assert runtime.ensure_run_hooks() is engine, (
+        "the engine was rebuilt after a config change -- one engine per "
+        "app lifetime means the existing instance must keep coming back"
+    )
+
+
+def test_the_engine_reads_the_app_config_live_on_every_fire():
+    """The engine's config provider reads the CURRENT app config.
+
+    Pinned by consequence on a public API: ``wrap_review`` wraps only
+    while a PreToolUse hook is configured, and it consults the config
+    provider at wrap time -- so a config reloaded mid-session must flip
+    the answer on the SAME engine instance. A RunHooksConfig snapshot
+    taken at construction would keep the stale answer until a restart.
+    """
+    app = _HooksApp({"enabled": True, "hook": [_pre_tool_use_hook()]})
+    runtime = ConsoleRuntime(app=app)
+    engine = runtime.ensure_run_hooks()
+    assert engine is not None
+
+    def _inner(calls, run_id):
+        return {}
+
+    assert engine.wrap_review(_inner, session_id="s") is not _inner, (
+        "a configured PreToolUse hook did not wrap the review chain"
+    )
+
+    app.app_config = {}  # settings reloaded with [hooks] removed
+    assert engine.wrap_review(_inner, session_id="s") is _inner, (
+        "the engine kept consulting the config it was BUILT with instead "
+        "of the app's current config -- hook removals would need a restart"
+    )

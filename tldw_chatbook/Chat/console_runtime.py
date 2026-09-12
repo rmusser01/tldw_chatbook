@@ -115,6 +115,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import functools
 import threading
 import time
@@ -156,12 +157,19 @@ from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Agents.run_hooks import RunHooksEngine
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 #: The app attribute this module's helpers read and write. Named once so a
 #: test can assert on the protocol rather than on a string literal.
 CONSOLE_RUNTIME_ATTR = "console_runtime"
+
+#: Distinguishes "never asked" from a latched `None` on slots whose `None`
+#: is itself a real answer (`_run_hooks_engine`: "no [hooks] configured").
+#: The other ensure_* slots can use a plain `None` because `None` is their
+#: only "not built" state; the run-hooks engine has two.
+_UNSET = object()
 
 #: Where a runtime hides when the app object cannot hold one (a `None` app,
 #: or a read-only double). Never the production path — `TldwCli.__init__`
@@ -1005,6 +1013,11 @@ class ConsoleRuntime:
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
             getattr(app, "persona_buddy_controller", None)
         )
+        #: The app-owned run-hooks engine, `None` when no `[hooks]` are
+        #: configured, `_UNSET` until first asked (`ensure_run_hooks`).
+        #: `None` is a latched answer here, not a "not built" marker --
+        #: hence the sentinel.
+        self._run_hooks_engine: Any = _UNSET
         #: The view (a `ChatScreen`) currently attached, or `None` while the
         #: runtime is VIEWLESS -- which is now a real, supported state, not
         #: a transient. Written only by `attach_view`/`detach_view`.
@@ -1090,6 +1103,16 @@ class ConsoleRuntime:
         """The built chat controller, or `None`."""
         return self._chat_controller
 
+    @property
+    def run_hooks_engine(self) -> "RunHooksEngine | None":
+        """The built run-hooks engine, or `None`.
+
+        `None` covers both "nothing has asked yet" and "asked, and no
+        `[hooks]` are configured" -- the property is a peek, not the
+        latch; `ensure_run_hooks` is the one that decides.
+        """
+        engine = self._run_hooks_engine
+        return None if engine is _UNSET else engine
     @property
     def activity_receipts(self) -> Any | None:
         """The built app-lifetime receipt coordinator, if available."""
@@ -3479,6 +3502,65 @@ class ConsoleRuntime:
         )
         wake.start_recovery()
         return self._chat_controller
+
+    def ensure_run_hooks(self) -> "RunHooksEngine | None":
+        """Return the app-owned run-hooks engine, building it lazily.
+
+        Spec 2026-09-11 section 4: ONE engine per app lifetime, owned here
+        so headless (viewless) wake runs reach it through the same runtime
+        a mounted Console does -- nothing below reads the view. `None`
+        means NO ``[hooks]`` are configured and is a real, latched answer:
+        every fire site skips entirely on `None` rather than firing an
+        empty-config engine.
+
+        The engine is built only when the CURRENT config parses to at
+        least one hook. Once built (or latched `None`) the decision never
+        revisits: hook edits apply through the engine's live config
+        provider, which re-reads the app's `app_config` attribute on every
+        fire (the app REASSIGNS that attribute on a settings reload, so
+        the provider must fetch it per call, never capture the dict).
+
+        Returns:
+            The runtime's `RunHooksEngine`, or `None` when no ``[hooks]``
+            are configured.
+        """
+        if self._run_hooks_engine is not _UNSET:
+            return self._run_hooks_engine
+        if self._disposed:
+            # Same contract as every ensure_* here: dispose latches and
+            # builds nothing new. `None` (not the sentinel) so a quit-time
+            # caller still gets a fire-site-skippable answer.
+            return None
+        from tldw_chatbook.Agents.run_hooks import RunHooksEngine, load_hooks_config
+
+        def current_app_config() -> Any:
+            # Fetched per call, never captured: the app reassigns
+            # `app_config` when settings reload, and the engine must see
+            # the new mapping on its next fire.
+            return getattr(self._app, "app_config", None) or {}
+
+        def config_provider():
+            return load_hooks_config(current_app_config())
+
+        def cwd_provider() -> str:
+            # Mirrors the send path's `[console] workspace_root` reading
+            # (empty = app cwd): the confinement-root concept local tools
+            # already use, not a new one. Session/workspace binding roots
+            # are resolved per turn by the send path, which is the only
+            # place a session id exists to resolve them with.
+            console = current_app_config().get("console")
+            root = (
+                str(console.get("workspace_root", "") or "").strip()
+                if isinstance(console, dict)
+                else ""
+            )
+            return root or os.getcwd()
+
+        if load_hooks_config(current_app_config()).hooks:
+            self._run_hooks_engine = RunHooksEngine(config_provider, cwd_provider)
+        else:
+            self._run_hooks_engine = None
+        return self._run_hooks_engine
 
     # -- the view seam -----------------------------------------------------
 
