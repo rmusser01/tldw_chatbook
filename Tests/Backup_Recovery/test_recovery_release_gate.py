@@ -499,6 +499,7 @@ async def test_ui_displays_backup_availability_separately_and_disables_create():
         "inventory": SimpleNamespace(
             complete=True, items=(), issues=(), scope_digest="reviewed-scope"
         ),
+        "complete": True,
         "maintenance": "Writers pause during capture.",
         "capacity": (
             {

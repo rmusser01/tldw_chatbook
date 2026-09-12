@@ -111,7 +111,7 @@ class BackupRestoreScreen(Screen):
                 yield Checkbox("Include temporary media", id="backup-temporary")
                 yield Checkbox("Include diagnostic history", id="backup-diagnostics")
                 yield Checkbox(
-                    "Acknowledge partial coverage if sources are unavailable",
+                    "Acknowledge Partial archive for external files or unavailable sources",
                     id="backup-partial",
                 )
                 yield Checkbox(
@@ -1179,6 +1179,9 @@ class BackupRestoreScreen(Screen):
         )
         rows = [
             "Complete coverage" if preview.complete else "Partial coverage",
+            "Archive classification: Complete"
+            if details["complete"]
+            else "Archive classification: Partial — acknowledgement required to Create",
             details["maintenance"],
         ]
         available, reason = self._backup_availability
@@ -1200,7 +1203,7 @@ class BackupRestoreScreen(Screen):
         rows.extend(preview.issues)
         self.query_one("#backup-coverage", Static).update("\n".join(rows))
         self.query_one("#backup-create", Button).disabled = (
-            not (preview.complete or reviewed[2]["allow_partial"])
+            not (details["complete"] or reviewed[2]["allow_partial"])
             or not all(row["sufficient"] for row in details["capacity"])
             or not available
         )

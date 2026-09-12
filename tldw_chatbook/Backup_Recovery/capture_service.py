@@ -147,8 +147,15 @@ def capture(
         != approved_scope
     ):
         raise CaptureReviewRequired(("scope_changed",))
-    if not inventory.complete and not settings["allow_partial"]:
-        raise CaptureReviewRequired(inventory.issues or ("incomplete_inventory",))
+    external = any(
+        item.owner.startswith("external.") and item.status == "included"
+        for item in inventory.items
+    )
+    if (not inventory.complete or external) and not settings["allow_partial"]:
+        raise CaptureReviewRequired(
+            inventory.issues
+            or (("partial_archive",) if external else ("incomplete_inventory",))
+        )
     stage_parent = Path(
         settings.get("staging_parent", Path(tempfile.gettempdir()).resolve())
     )

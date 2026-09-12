@@ -982,6 +982,11 @@ class RecoveryService:
         return MappingProxyType(
             {
                 "inventory": inventory,
+                "complete": inventory.complete
+                and not any(
+                    item.owner.startswith("external.") and item.status == "included"
+                    for item in inventory.items
+                ),
                 "estimated_source_bytes": estimate,
                 "capacity": tuple(capacity),
                 "credential_mode": settings["credential_mode"],
@@ -999,7 +1004,7 @@ class RecoveryService:
         from .capture import _capture_options
         from .profile_paths import lexical_path
 
-        settings, _, _, _ = _capture_options(options)
+        settings, _, limits, _ = _capture_options(options)
         if settings["credential_mode"] == "rollback":
             raise ValueError("invalid_backup_credential_mode")
         if settings["encrypted"] != (password is not None) or password == b"":
@@ -1010,7 +1015,7 @@ class RecoveryService:
             raise ValueError(reason)
 
         def backup(operation, cancel):
-            from . import archive_writer, capture_service
+            from . import archive_reader, archive_writer, capture_service
 
             available, reason = self.backup_capability(destination, options=settings)
             if not available:
@@ -1031,6 +1036,12 @@ class RecoveryService:
                 archive = archive_writer.write_archive(
                     captured, destination, password=password, cancel=cancel
                 )
+                complete = (
+                    archive_reader._manifest(
+                        archive.manifest_bytes, limits, password is not None
+                    ).consistency
+                    == "coherent"
+                )
                 self._update(
                     operation,
                     phase="archive_verified",
@@ -1038,7 +1049,7 @@ class RecoveryService:
                         "path": str(archive.path),
                         "sha256": archive.digest,
                         "archive_verified": True,
-                        "complete": captured.inventory.complete,
+                        "complete": complete,
                     },
                 )
             finally:

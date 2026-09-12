@@ -322,3 +322,27 @@ child deadlines remain unchanged. Scoped Ruff and whitespace checks pass.
 Reports: `/private/tmp/task26-release-fixtures-report.md` and
 `/private/tmp/task26-release-fixtures-independent-review.md`. Final full F9 flows
 remain separate required checks; these representatives do not replace them.
+
+## External-content Partial classification
+
+The final branch review identified a mismatch between healthy inventory coverage
+and external-file archive consistency. Both capture entry points now require the
+existing Partial acknowledgement before capturing selected external files. F9 shows
+archive classification separately from coverage, and the service reports the
+classification from the archive writer's verified canonical manifest. Empty external
+directories retain their existing behavior; Partial replacement remains refused.
+
+The four focused regressions first failed at missing acknowledgement, preview
+classification and UI labeling. The final focused run passes28 in3.84s, including
+the24 release-gate cases; two existing direct capture seam tests also pass.
+The new service tests use real local files/native capture/archive verification with
+isolated discovery and qualification, so they are component evidence. Production
+Bandit reports0 findings/errors; scoped Ruff, compilation and whitespace checks pass.
+Independent source review approved the correction. Reports:
+`/private/tmp/task26-external-partial-fix-report.md` and
+`/private/tmp/task26-external-partial-independent-review.md`.
+
+Three legacy capture-service parameter cases failed at an inventory-preview
+assertion with `dependency_unavailable`, before capture execution. Their baseline
+assessment is recorded with final verification below; these failures are not counted
+as passes or hidden by changing the expected issue list.

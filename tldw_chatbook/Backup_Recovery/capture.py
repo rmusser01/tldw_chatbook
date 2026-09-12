@@ -341,12 +341,19 @@ def _capture_under_maintenance(
         current = discover(config_paths, selections=selections)
     if current.scope_digest != approved_scope:
         raise CaptureReviewRequired(("scope_changed",))
-    if not current.complete and (
+    external = any(
+        item.owner.startswith("external.") and item.status == "included"
+        for item in current.items
+    )
+    if (not current.complete or external) and (
         not options.get("allow_partial", False)
         or set(current.issues)
         - {"unsupported", "unavailable", "missing_required", "unsupported_owner"}
     ):
-        raise CaptureReviewRequired(current.issues or ("incomplete_inventory",))
+        raise CaptureReviewRequired(
+            current.issues
+            or (("partial_archive",) if external else ("incomplete_inventory",))
+        )
     entries = tuple(item for item in current.items if item.status == "included")
     if not entries or any(
         item.path is None or item.owner not in adapters for item in entries
