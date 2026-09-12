@@ -213,6 +213,12 @@ $ds-text-emphasis: italic;
 $ds-hover-bg: $surface-lighten-1;
 $ds-hover-fg: $ds-text-primary;
 $ds-disabled-bg: $surface-darken-1;
+/* Recessed resting surface for ENABLED chrome that sits visually below the
+ * panel (inactive toggles, sunken strips). Not a disabled state — disabled
+ * action controls use $ds-disabled-bg + $ds-text-disabled-readable. Same
+ * hue, different semantics: re-theming disabled states must not drag
+ * enabled chrome with it (Qodo review, PR #2632). */
+$ds-surface-sunken: $surface-darken-1;
 
 /* ========================================
  * LAYOUT LAWS (ADR-150)
@@ -1095,7 +1101,9 @@ Button:disabled:hover {
     height: $ds-control-height;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;
-    background: $ds-disabled-bg;
+    /* Enabled but recessed chrome: sunken resting surface, not the
+       disabled token (PR #2632 review follow-up). */
+    background: $ds-surface-sunken;
     color: $ds-text-primary;
 }
 .sidebar-toggle:hover { background: $ds-surface-raised; }
@@ -6867,6 +6875,12 @@ PersonalContextLinkModal {
  * FEATURES: Chat
  * ======================================== 
  * Chat tab specific styles
+ *
+ * Fully tokenized per ADR-150 / backlog/docs/design-language.md — the
+ * migration reference pattern: spacing from the $ds-space-* scale, control
+ * heights from $ds-control-*, motion from $ds-duration-*, state surfaces
+ * from $ds-hover/-disabled/-focus tokens. Feature-specific geometry (fixed
+ * gutter widths, textarea expansion heights) stays literal by design.
  * ======================================== */
 
 /* --- Chat sidebar toggle buttons --- */
@@ -6877,15 +6891,15 @@ PersonalContextLinkModal {
     max-width: 3;
     border: none;
     background: $background;
-    color: $text-muted;
-    padding: 1 0 0 0;
+    color: $ds-text-muted;
+    padding: $ds-space-1 0 0 0;
     margin: 0;
     content-align: center top;
 }
 
 .chat-sidebar-toggle-button:hover {
-    background: $surface;
-    color: $text;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
 }
 
 .chat-sidebar-toggle-button:focus {
@@ -6906,51 +6920,53 @@ PersonalContextLinkModal {
 
 /* --- Compact Model Bar --- */
 #compact-model-bar {
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
-    padding: 0 1;
-    background: $surface;
-    border-bottom: solid $surface-lighten-1;
+    padding: 0 $ds-space-inline;
+    background: $ds-surface-raised;
+    border-bottom: solid $ds-grid-line;
     align: left middle;
 }
 
 #compact-model-bar Select {
     width: 1fr;
-    margin: 0 1 0 0;
-    height: 3;
+    margin: 0 $ds-space-inline 0 0;
+    height: $ds-control-height;
 }
 
 .compact-bar-label {
     width: auto;
-    padding: 0 1;
-    color: $text-muted;
+    padding: 0 $ds-space-inline;
+    color: $ds-text-muted;
 }
 
 .compact-bar-temp {
     width: 12;
-    margin: 0 1 0 0;
-    height: 3;
+    margin: 0 $ds-space-inline 0 0;
+    height: $ds-control-height;
 }
 
 .compact-bar-toggle {
     width: auto;
     min-width: 5;
-    height: 3;
+    height: $ds-control-height;
     border: none;
-    background: $surface-darken-1;
-    color: $text-muted;
+    /* Enabled but recessed chrome: sunken resting surface, NOT the
+       disabled token (Qodo review, PR #2632). */
+    background: $ds-surface-sunken;
+    color: $ds-text-muted;
 }
 
 .compact-bar-toggle:hover {
-    background: $surface;
-    color: $text;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
 }
 
 /* Send button states */
 .send-button {
     width: 2fr;
-    margin-left: 1;
-    text-style: bold;
+    margin-left: $ds-space-inline;
+    text-style: $ds-text-strong;
 }
 
 .send-button.stop-state {
@@ -6960,13 +6976,13 @@ PersonalContextLinkModal {
 /* Attachment button */
 .attach-button {
     width: auto;
-    margin-left: 1;
+    margin-left: $ds-space-inline;
 }
 
 /* Voice input widget styles */
 .voice-input-widget {
-    padding: 1;
-    background: $surface;
+    padding: $ds-space-inset;
+    background: $ds-surface-raised;
     border: solid $primary;
 }
 
@@ -6993,30 +7009,34 @@ PersonalContextLinkModal {
 /* Loading and error states */
 .loading-indicator {
     text-align: center;
-    padding: 2;
-    color: $text-muted;
+    padding: $ds-space-2;
+    color: $ds-text-muted;
 }
 
 .error-message {
     color: $error;
-    padding: 1;
-    margin: 1;
+    padding: $ds-space-inset;
+    margin: $ds-space-stack;
     border: solid $error;
 }
 /* Send button styling (shared) */
 .send-button { /* Targets Button */
     width: 1fr;      /* Equal flexible width */
-    height: 3;       /* Fixed height for consistency */
+    height: $ds-control-height;
     /* align-self: stretch; REMOVED */
     margin-top: 0;
     padding: 0;      /* No padding for button */
-    transition: background 0.2s, color 0.2s;
+    transition: background $ds-duration-fast, color $ds-duration-fast;
 }
 
-/* Stop button state - when button is in stop mode */
-.send-button:disabled {
-    opacity: 0.7;
-}
+/* Stop button state: the shared Button:disabled contract applies.
+ * This sheet previously stacked `opacity: 0.7` on the global disabled
+ * colors -- the exact TASK-25822 contrast failure (disabled read as
+ * absent). The class+pseudo selector outranks `Button:disabled`, so the
+ * override is removed rather than re-stated; the global rule supplies full
+ * opacity, $ds-disabled-bg, and $ds-text-disabled-readable.
+ * Intentional a11y fix, the one deliberate visual change in this
+ * migration (Qodo review, PR #2632). */
 
 /* Visual feedback for stop state */
 .send-button.stop-state {
@@ -7026,13 +7046,13 @@ PersonalContextLinkModal {
 
 .stop-button {
     width: 1fr;      /* Equal flexible width */
-    height: 3;
+    height: $ds-control-height;
     margin-top: 0;
 }
 
 /* Clone Chat Button in chat-right-sidebar */
 .clone-chat-button {
-    margin-top: 1;   /* Add space above the button */
+    margin-top: $ds-space-stack;   /* Add space above the button */
     width: 100%;     /* Full width like other sidebar buttons */
 }
 
@@ -7040,17 +7060,17 @@ PersonalContextLinkModal {
 #chat-prompts-collapsible Input,
 #chat-prompts-collapsible ListView,
 #chat-prompts-collapsible Button {
-    margin-bottom: 1; /* Consistent spacing */
+    margin-bottom: $ds-space-stack; /* Consistent spacing */
 }
 #chat-prompt-list-view { /* ID for the prompt list in chat sidebar */
     height: 8; /* Adjust as needed */
-    border: round $surface;
-    margin-bottom: 1;
+    border: round $ds-surface-raised;
+    margin-bottom: $ds-space-stack;
 }
 .loaded-prompt-area { /* Container for loaded prompt details in chat sidebar */
-    margin-top: 1;
-    padding: 0 1;        /* Padding for content inside */
-    background: $surface; /* Slightly different background to group elements */
+    margin-top: $ds-space-stack;
+    padding: 0 $ds-space-inline;   /* Padding for content inside */
+    background: $ds-surface-raised; /* Slightly different background to group elements */
     /* To get rounded corners for the area itself, apply a border style */
     border: round $primary-background-lighten-1; /* Example: round border with a light color */
                                                /* Or use 'round $surface' if you want it less distinct */
@@ -7063,28 +7083,28 @@ PersonalContextLinkModal {
 /* Settings mode toggle container */
 .settings-mode-container {
     layout: horizontal;
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
     align: center middle;
-    margin-bottom: 1;
-    padding: 0 1;
+    margin-bottom: $ds-space-stack;
+    padding: 0 $ds-space-inline;
 }
 
 /* Mode labels */
 .mode-label {
-    margin: 0 1;
-    color: $text-muted;
+    margin: 0 $ds-space-inline;
+    color: $ds-text-muted;
 }
 
 /* Settings mode toggle switch */
 .settings-mode-toggle {
-    margin: 0 1;
+    margin: 0 $ds-space-inline;
 }
 
 /* Settings search input */
 .settings-search-input {
     width: 100%;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-section;
     border: round $primary;
 }
 
@@ -7099,22 +7119,22 @@ PersonalContextLinkModal {
 .section-header {
     text-style: bold underline;
     color: $primary;
-    margin-bottom: 1;
-    margin-top: 1;
+    margin-bottom: $ds-space-stack;
+    margin-top: $ds-space-stack;
 }
 
 .subsection-header {
-    text-style: bold;
+    text-style: $ds-text-strong;
     color: $secondary;
-    margin-bottom: 1;
-    margin-top: 1;
+    margin-bottom: $ds-space-stack;
+    margin-top: $ds-space-stack;
 }
 
 /* Info text */
 .info-text {
-    color: $text-muted;
-    text-style: italic;
-    margin-bottom: 1;
+    color: $ds-text-muted;
+    text-style: $ds-text-emphasis;
+    margin-bottom: $ds-space-stack;
 }
 
 /* Hidden class for mode switching */
@@ -7151,21 +7171,21 @@ PersonalContextLinkModal {
     height: 4;  /* Increased height to prevent cutoff */
     width: 100%;
     align: center middle;
-    margin-bottom: 1;
-    padding: 0 0 1 0;  /* Add bottom padding */
+    margin-bottom: $ds-space-stack;
+    padding: 0 0 $ds-space-inset 0;  /* Add bottom padding */
 }
 
 /* Mode labels */
 .mode-label {
-    margin: 0 1;
-    color: $text-muted;
+    margin: 0 $ds-space-inline;
+    color: $ds-text-muted;
 }
 
 /* Settings mode toggle switch */
 .settings-mode-toggle {
-    margin: 0 1;
+    margin: 0 $ds-space-inline;
     /* Custom styling for better visibility */
-    background: $panel;
+    background: $ds-surface-panel;
     border: solid $primary;
 }
 
@@ -7185,12 +7205,12 @@ PersonalContextLinkModal {
 
 /* Advanced Settings checkbox styling */
 .advanced-settings-checkbox {
-    margin-top: 1;
-    margin-bottom: 1;
+    margin-top: $ds-space-stack;
+    margin-bottom: $ds-space-stack;
 }
 
 .advanced-settings-checkbox > Checkbox {
-    color: $text;
+    color: $ds-text-primary;
 }
 
 .advanced-settings-checkbox:hover {
@@ -7200,16 +7220,16 @@ PersonalContextLinkModal {
 /* Settings search input */
 .settings-search-input {
     width: 100%;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-section;
     border: round $primary;
 }
 
 /* RAG Settings Panel - Prominent styling */
 .rag-settings-panel {
-    padding: 1;
-    border: round $surface;  /* Changed to match other panels */
-    background: $panel;      /* Changed to standard panel background */
-    margin-bottom: 1;
+    padding: $ds-space-inset;
+    border: round $ds-surface-raised;  /* Changed to match other panels */
+    background: $ds-surface-panel;     /* Changed to standard panel background */
+    margin-bottom: $ds-space-stack;
 }
 
 /* Remove extra padding from RAG panel content */
@@ -7221,29 +7241,29 @@ PersonalContextLinkModal {
 /* Highlight RAG panel when focused */
 .rag-settings-panel:focus-within {
     border: round $ds-focus-accent;
-    background: $panel;
+    background: $ds-surface-panel;
 }
 
 /* Remove highlight when collapsed */
 .rag-settings-panel.collapsed {
-    border: round $surface !important;
-    background: $panel !important;
+    border: round $ds-surface-raised !important;
+    background: $ds-surface-panel !important;
 }
 
 /* RAG enable toggle */
 .rag-enable-toggle {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 /* RAG preset select */
 .rag-preset-select {
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 /* RAG scope options */
 .rag-scope-options {
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .rag-scope-options Checkbox {
@@ -7284,8 +7304,8 @@ PersonalContextLinkModal {
 /* Primary action buttons (Send, Submit) */
 .btn-primary {
     background: $primary;
-    color: $text;
-    text-style: bold;
+    color: $ds-text-primary;
+    text-style: $ds-text-strong;
     border: none;
 }
 
@@ -7297,13 +7317,13 @@ PersonalContextLinkModal {
 /* Ghost buttons (text-only, minimal) */
 .btn-ghost {
     background: transparent;
-    color: $text-muted;
+    color: $ds-text-muted;
     border: none;
 }
 
 .btn-ghost:hover {
-    background: $surface;
-    color: $text;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
 }
 
 /* --- End Visual Polish ---*/
@@ -7320,26 +7340,26 @@ WatchlistsOperationCard {
     height: auto;
     min-height: 7;
     width: 1fr;
-    margin: 0 0 1 0;
-    padding: 0 1;
+    margin: 0 0 $ds-space-stack 0;
+    padding: 0 $ds-space-inline;
     border: round $ds-grid-line;
     background: $ds-surface-raised;
 }
 
 .watchlists-operation-status {
-    height: 1;
+    height: $ds-control-height-compact;
     color: $ds-status-running;
-    text-style: bold;
+    text-style: $ds-text-strong;
 }
 
 .watchlists-operation-title {
-    height: 1;
+    height: $ds-control-height-compact;
     color: $ds-text-primary;
-    text-style: bold;
+    text-style: $ds-text-strong;
 }
 
 .watchlists-operation-id {
-    height: 1;
+    height: $ds-control-height-compact;
     color: $ds-text-muted;
 }
 
@@ -7351,13 +7371,13 @@ WatchlistsOperationCard {
 
 .watchlists-operation-actions {
     height: auto;
-    min-height: 1;
+    min-height: $ds-control-height-compact;
     width: 1fr;
-    margin: 1 0 0 0;
+    margin: $ds-space-stack 0 0 0;
 }
 
 .watchlists-operation-actions Button {
-    margin: 0 1 0 0;
+    margin: 0 $ds-space-inline 0 0;
 }
 
 /* ===== MODULE: features/_conversations.tcss ===== */
