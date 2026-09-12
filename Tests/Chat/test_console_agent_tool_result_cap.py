@@ -749,3 +749,26 @@ def test_availability_cancellation_stops_before_next_metadata_chunk(
         assert future.result(timeout=3) is False
     assert len(calls) == 1
     assert calls[0].next_cursor is not None
+
+
+def test_paged_log_ownership_never_hydrates_database_steps(
+    paged_authority, monkeypatch
+):
+    bridge, _manager, _snapshot, primary, child, _entries = paged_authority
+    # Real SQLite rows and real scratch leases remain in use; forbid only full hydration.
+    bridge._db.append_steps(
+        primary, [{"type": "tool_result", "result": "large step" * 1000}]
+    )
+
+    def forbid_hydration(*args, **kwargs):
+        pytest.fail("paged ownership hydrated the database step log")
+
+    monkeypatch.setattr(bridge._db, "get_run", forbid_hydration)
+    monkeypatch.setattr(bridge._db, "_batch_hydrate_steps", forbid_hydration)
+    for run_id in (primary, child):
+        first = bridge.load_run_log_page(run_id)
+        assert first is not None and first.slices and first.next_cursor is not None
+        later = bridge.load_run_log_page(run_id, cursor=first.next_cursor)
+        assert later is not None and later.slices
+        assert bridge.run_log_available(run_id)
+    assert all(part.record.run_id == child for part in later.slices)

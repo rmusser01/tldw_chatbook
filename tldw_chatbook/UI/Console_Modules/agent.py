@@ -15,7 +15,7 @@ not in `ChatScreen.__init__`.
 Moved from `ChatScreen`, thirteen methods byte-for-byte plus one split:
 
 - `_ensure_console_agent_bridge`, `_console_agent_section_lines`,
-  `_console_agent_fleet_summary_line`, `_console_agent_full_log_run_id`,
+  `_console_agent_fleet_summary_line`, `_capture_run_log_selection`,
   `_console_agent_full_log_available`, `_open_console_agent_run_log_viewer`,
   `_load_console_agent_run_log`, `_show_console_agent_run_log_modal`,
   `_toggle_console_agent_drilldown_from_subagents_click`,
@@ -813,8 +813,10 @@ class ConsoleAgentController:
         self._console_agent_full_log_cache_run_id: str | None = None
         self._console_agent_full_log_cache_available: bool = False
         self._console_agent_full_log_cache_bridge: Any = None
+        self._console_agent_full_log_cache_selection: tuple | None = None
         self._console_agent_full_log_probe_generation = 0
         self._console_agent_full_log_probe_pending: int | None = None
+        self._console_agent_full_log_probe_worker: Any = None
         self._console_agent_full_log_retry_at = 0.0
         #: The batched `[N Sub-Agents]` badge-count cache and its two
         #: invalidation keys. Also cluster-private.
@@ -1250,76 +1252,62 @@ class ConsoleAgentController:
             return ""
         return f"{running} other agents running, {pending} waiting for approval."
 
-    def _console_agent_full_log_run_id(self) -> str | None:
-        """Return the run id the "View full log" affordance should target.
+    def _attached_run_log_bridge(self) -> Any:
+        """Read only this screen's attached runtime; never initialize or reattach."""
+        runtime = getattr(self._screen, "_console_runtime_ref", None)
+        return runtime.agent_bridge if runtime is not None else None
 
-        TASK-870: mirrors ``_console_agent_section_lines``'s own
-        drill-vs-overview precedence -- the drilled-into sub-agent run
-        (when drilled in and still valid for the active conversation, the
-        same check that method uses), else the conversation's latest
-        primary run, which is what the top-level overview is summarizing.
-
-        Returns:
-            The relevant run id, or ``None`` when there is nothing to
-            target -- no bridge, no active conversation, a stale drill-in
-            left over from a conversation switch, or a conversation that
-            has never run an agent. Callers must still confirm
-            ``ConsoleAgentBridge.run_log_available`` before showing the
-            affordance for whatever id this returns -- a valid run id does
-            not imply a log was ever written for it.
-        """
-        bridge = self._ensure_console_agent_bridge()
-        if bridge is None:
-            return None
+    def _capture_run_log_selection(self, bridge: Any) -> tuple:
+        """Snapshot UI selection and process-local turn identity without I/O."""
         conversation_id = self._current_console_rail_conversation_id() or ""
-        if not conversation_id:
-            return None
-        drill = self._console_agent_drilldown_run_id
-        if drill:
-            record = bridge.subagent_run(drill)
-            if record is not None and record.get("conversation_id") == conversation_id:
-                return drill
-            return None
-        # getattr tolerates a bare test double that only implements the
-        # older bridge surface (subagent_run/subagent_runs/live_snapshot) --
-        # same idiom _console_agent_section_lines already uses for
-        # historical_snapshot, immediately below this method in this file.
-        latest_primary_run_id = getattr(bridge, "latest_primary_run_id", None)
-        if latest_primary_run_id is None:
-            return None
-        return latest_primary_run_id(conversation_id)
+        token_reader = getattr(bridge, "run_log_target_token", None)
+        token = token_reader(conversation_id) if token_reader else (None, None)
+        return (conversation_id, self._console_agent_drilldown_run_id, token)
 
     def _console_agent_full_log_available(self, *, allow_probe: bool = True) -> bool:
-        """Return the cache; dispatch a cache miss without filesystem UI work."""
+        """Return the cache; resolve metadata and scan logs only in a worker."""
         if not allow_probe:
             return self._console_agent_full_log_cache_available
-        run_id = self._console_agent_full_log_run_id()
-        bridge = self._ensure_console_agent_bridge()
+        worker = self._console_agent_full_log_probe_worker
         if (
-            run_id == self._console_agent_full_log_cache_run_id
+            self._console_agent_full_log_probe_pending
+            == self._console_agent_full_log_probe_generation
+            and worker is not None
+            and (worker.is_cancelled or worker.is_finished)
+        ):
+            # A queued worker may be cancelled before its function can settle itself.
+            self._console_agent_full_log_probe_pending = None
+            self._console_agent_full_log_probe_worker = None
+            self._console_agent_full_log_retry_at = 0.0
+        bridge = self._attached_run_log_bridge()
+        if bridge is None:
+            return False
+        selection = self._capture_run_log_selection(bridge)
+        if (
+            selection == self._console_agent_full_log_cache_selection
             and bridge is self._console_agent_full_log_cache_bridge
             and (
-                not run_id
-                or self._console_agent_full_log_cache_available
+                self._console_agent_full_log_cache_available
                 or self._console_agent_full_log_probe_pending
                 == self._console_agent_full_log_probe_generation
                 or _run_log_clock() < self._console_agent_full_log_retry_at
             )
         ):
             return self._console_agent_full_log_cache_available
-        self._console_agent_full_log_cache_run_id = run_id
+        self._console_agent_full_log_cache_selection = selection
+        self._console_agent_full_log_cache_run_id = None
         self._console_agent_full_log_cache_bridge = bridge
         self._console_agent_full_log_cache_available = False
         self._console_agent_full_log_probe_generation += 1
-        if run_id and bridge is not None:
+        if selection[0] and bridge is not None:
             self._console_agent_full_log_probe_pending = (
                 self._console_agent_full_log_probe_generation
             )
-            self.run_worker(
+            self._console_agent_full_log_probe_worker = self.run_worker(
                 partial(
                     self._probe_console_agent_run_log,
                     bridge,
-                    run_id,
+                    selection,
                     self._console_agent_full_log_probe_generation,
                 ),
                 thread=True,
@@ -1328,30 +1316,37 @@ class ConsoleAgentController:
             )
         return False
 
-    def _run_log_target_matches(self, bridge: Any, run_id: str) -> bool:
+    def _run_log_target_matches(self, bridge: Any, selection: tuple) -> bool:
         return (
             self._screen.is_mounted
-            and self._ensure_console_agent_bridge() is bridge
-            and self._console_agent_full_log_run_id() == run_id
+            and self._attached_run_log_bridge() is bridge
+            and self._capture_run_log_selection(bridge) == selection
         )
 
     def _probe_console_agent_run_log(
-        self, bridge: Any, run_id: str, generation: int
+        self, bridge: Any, selection: tuple, generation: int
     ) -> None:
         worker = get_current_worker()
+        run_id = None
         try:
+            run_id = bridge.resolve_run_log_target(selection[0], selection[1])
             available = bool(
-                bridge.run_log_available(run_id, cancelled=lambda: worker.is_cancelled)
+                run_id
+                and not worker.is_cancelled
+                and bridge.run_log_available(
+                    run_id, cancelled=lambda: worker.is_cancelled
+                )
             )
         except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
             logger.error("Run-log availability failed ({})", type(error).__name__)
             available = False
         if worker.is_cancelled:
-            return
+            available = None
         try:
             self._screen.app.call_from_thread(
                 self._publish_console_agent_log_availability,
                 bridge,
+                selection,
                 run_id,
                 generation,
                 available,
@@ -1362,91 +1357,72 @@ class ConsoleAgentController:
     def _publish_console_agent_log_availability(
         self,
         bridge: Any,
-        run_id: str,
+        selection: tuple,
+        run_id: str | None,
         generation: int,
-        available: bool,
+        available: bool | None,
     ) -> None:
-        if (
-            generation != self._console_agent_full_log_probe_generation
-            or not self._run_log_target_matches(bridge, run_id)
-        ):
+        if generation != self._console_agent_full_log_probe_generation:
             return
+        # Always settle this generation, even after selection changed while collapsed.
         self._console_agent_full_log_probe_pending = None
+        self._console_agent_full_log_probe_worker = None
+        self._console_agent_full_log_retry_at = 0.0
+        if available is None or not self._run_log_target_matches(bridge, selection):
+            return
         self._console_agent_full_log_retry_at = _run_log_clock() + 1.0
+        self._console_agent_full_log_cache_run_id = run_id
         self._console_agent_full_log_cache_available = available
         self._screen._sync_console_agent_section()
 
     def _open_console_agent_run_log_viewer(self) -> None:
-        """Kick off loading the full run log for whatever "View full log" targets.
-
-        TASK-870 (AC#6): re-resolves the target run id at press time
-        (rather than trusting a value cached from the last 0.2s sync) so a
-        drill-in change between sync ticks can never open the wrong run's
-        log. No-ops quietly if there is no current target.
-
-        Finding C (review round 2): the actual filesystem read + record
-        parse + formatting now happens off the UI thread (see
-        ``_load_console_agent_run_log``) -- a run's segments can total
-        many megabytes (4MB per segment, no cap on segment count), and
-        doing that synchronously on the Textual event loop could freeze
-        the whole app for the duration of the read.
-        """
-        run_id = self._console_agent_full_log_run_id()
-        if not run_id:
-            return
-        bridge = self._ensure_console_agent_bridge()
+        """Resolve the captured selection and load its first page off-thread."""
+        bridge = self._attached_run_log_bridge()
         if bridge is None:
             return
-        # Was `self._load_console_agent_run_log(bridge, run_id)` while
-        # that method carried `@work(thread=True)`. Same worker, same
-        # group ("default") and name -- see the loader's own docstring.
+        selection = self._capture_run_log_selection(bridge)
+        if not selection[0]:
+            return
         self.run_worker(
-            partial(self._load_console_agent_run_log, bridge, run_id),
+            partial(self._load_console_agent_run_log, bridge, selection),
             thread=True,
             group="default",
             name="_load_console_agent_run_log",
         )
 
-    def _load_console_agent_run_log(self, bridge: Any, run_id: str) -> None:
-        """Load the first bounded page off the UI thread.
-
-        Finding C: the worker half of ``_open_console_agent_run_log_
-        viewer`` -- everything here is filesystem/CPU work (no widget
-        access), so it is safe to run in a real thread. The modal is only
-        ever pushed back on the UI thread, via ``call_from_thread``.
-
-        Wave-4 task 3: this carried ``@work(thread=True)`` before the move.
-        Textual's decorator asserts its target is a ``DOMNode`` and a
-        controller is not one, so the caller now dispatches it through
-        ``run_worker`` with the same thread/group/name ``@work`` supplied.
-
-        Args:
-            bridge: The already-resolved Console agent bridge (resolved on
-                the UI thread by the caller -- lazy bridge construction
-                touches ``self.app_instance``/config and should not run
-                off-thread).
-            run_id: The run id to load, as resolved by the caller at press
-                time.
-        """
+    def _load_console_agent_run_log(self, bridge: Any, selection: tuple) -> None:
+        """Read target metadata and the first bounded page in the same worker."""
+        worker = get_current_worker()
         try:
+            run_id = bridge.resolve_run_log_target(selection[0], selection[1])
+            if not run_id or worker.is_cancelled:
+                return
             page = bridge.load_run_log_page(run_id)
         except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
             logger.error("Run-log initial page unavailable ({})", type(error).__name__)
             return
-        if page is None or (not page.slices and page.next_cursor is None):
+        if (
+            worker.is_cancelled
+            or page is None
+            or (not page.slices and page.next_cursor is None)
+        ):
             return
         try:
             self._screen.app.call_from_thread(
-                self._show_console_agent_run_log_modal, bridge, run_id, page
+                self._show_console_agent_run_log_modal, bridge, selection, run_id, page
             )
         except RuntimeError:
             return
 
     def _show_console_agent_run_log_modal(
-        self, bridge: Any, run_id: str, page: Any
+        self,
+        bridge: Any,
+        selection: tuple,
+        run_id: str,
+        page: Any,
     ) -> None:
-        """Publish only for the captured target, with its exact bridge loader."""
-        if not self._run_log_target_matches(bridge, run_id):
+        """Publish and guard the modal using only the captured UI selection."""
+        if not self._run_log_target_matches(bridge, selection):
             return
         self.push_screen(
             ConsoleRunLogModal(
@@ -1455,7 +1431,9 @@ class ConsoleAgentController:
                 page_loader=lambda cursor: bridge.load_run_log_page(
                     run_id, cursor=cursor
                 ),
-                target_is_current=lambda: self._run_log_target_matches(bridge, run_id),
+                target_is_current=lambda: self._run_log_target_matches(
+                    bridge, selection
+                ),
             )
         )
 
@@ -1690,7 +1668,7 @@ class ConsoleAgentController:
            Task 1-3 and only carry this method.
 
         ``getattr`` guards every optional method the same way
-        ``_console_agent_full_log_run_id`` already does for
+        ``_capture_run_log_selection`` already does for
         ``latest_primary_run_id`` -- a bare test double implementing only
         part of the bridge surface must degrade to "no rows", never raise.
 

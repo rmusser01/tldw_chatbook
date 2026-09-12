@@ -6444,6 +6444,7 @@ class ConsoleAgentBridge:
                 on_bound=functools.partial(
                     self._remember_run_log_authority,
                     session_id=session_id,
+                    conversation_id=conversation_id,
                     access_scope=scratch_lease,
                 ),
             )
@@ -8111,16 +8112,16 @@ class ConsoleAgentBridge:
     # -- rail reads -----------------------------------------------------
 
     def live_primary_run_id(self, conversation_id: str) -> str | None:
-        """task-31386: the primary run last seen stepping in ``conversation_id``.
+        """task-31386: the primary run last bound or stepping in ``conversation_id``.
 
-        In-memory only (memoised by ``on_step``), so a run from a previous
+        In-memory only (memoised at log binding and by ``on_step``), so a run from a previous
         process is unknown here; callers fall back to the durable lookup.
 
         Args:
             conversation_id: The conversation to look up.
 
         Returns:
-            The run id, or None when no primary step has been seen.
+            The run id, or None when no primary binding or step has been seen.
         """
         return self._live_primary_runs.get(conversation_id)
 
@@ -8582,6 +8583,32 @@ class ConsoleAgentBridge:
             )
         return record
 
+    def run_log_target_token(
+        self, conversation_id: str
+    ) -> tuple[str | None, str | None]:
+        """Return process-local turn/run identity; never reads the database."""
+        return (
+            self._live_primary_keys.get(conversation_id),
+            self._live_primary_runs.get(conversation_id),
+        )
+
+    def resolve_run_log_target(
+        self, conversation_id: str, drill_id: str | None
+    ) -> str | None:
+        """Resolve a log selection using metadata only. Call from a worker."""
+        if not conversation_id:
+            return None
+        if drill_id:
+            record = self._db.get_run_metadata(drill_id)
+            if (
+                record is not None
+                and record.get("conversation_id") == conversation_id
+                and record.get("agent_kind") == AGENT_KIND_SUBAGENT
+            ):
+                return drill_id
+            return None
+        return self.latest_primary_run_id(conversation_id)
+
     def latest_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the most recent non-superseded PRIMARY run's id, if any.
 
@@ -8613,6 +8640,7 @@ class ConsoleAgentBridge:
         *,
         session_id: str,
         access_scope: Callable[[], ContextManager[Path]],
+        conversation_id: str | None = None,
     ) -> None:
         """Remember one live Console run-log root without persisting it."""
         authority = _ConsoleRunLogAuthority(
@@ -8622,6 +8650,8 @@ class ConsoleAgentBridge:
         )
         with self._run_log_authority_lock:
             self._run_log_authorities[str(run_id)] = authority
+        if conversation_id is not None:
+            self._live_primary_runs[conversation_id] = str(run_id)
 
     def forget_session_file_authority(self, session_id: str) -> None:
         """Forget every scratch-adjacent run-log locator for a closed Chat."""
@@ -8669,7 +8699,7 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self.subagent_run(run_id)
+        record = self._db.get_run_metadata(run_id)
         parent_run_id = record.get("parent_run_id") if record else None
         return parent_run_id or run_id
 
