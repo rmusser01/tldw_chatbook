@@ -25,7 +25,7 @@ dependencies:
 - task-32006
 - task-32007
 - task-32008
-updated_date: 2026-09-12 14:49
+updated_date: 2026-09-12 14:51
 ---
 
 ## Description
@@ -228,6 +228,7 @@ Final reviewer requested one evidence wording correction: multi-profile/lifecycl
 Final actual installed combined F9 replacement + retained-copy later rollback passed once, outer exit0, 1/228.85s (220.05 call,8.49 setup); original runner230/seed110/replacement150/later180 deadlines unchanged. Log-only receipt /private/tmp/task26-later-installed-fixture-test.log (no JUnit requested). Wheel c8fb58f4a77cc9a912061ae67bcbb1eb47a3f919d599b3154fec8390dd0b4b31,2034 installed files preserved. Root verified wheel bytes/current six changed production module identities and actual stale-preview/8unchecked-omissions/Abort/re-review/success checkpoints. Report /private/tmp/task26-later-installed-fixture-report.md. Final workflow SHA31bcbc9cea499a3fffe4123cd4564325f95cabece38d3f2f1a25bc2f72280995; YAML and four exact embedded Python blocks/mirrored12entries pass, artifact allowlist unchanged. Preparing final independent review and required final commit; not yet marking Done.
 Final independent review approved both original specification compliance and task quality with no remaining concrete findings. Root verified final logs/artifacts/source correspondence and static checks; closing all three Task26 acceptance criteria and recording Done before the required task-owned final commit. Adding the final review disposition to evidence ledger and marking private progress complete. Exact qualified boundaries and historical failed receipts are retained.
 User requested PR against dev, followed by Linux testing over SSH. Original temporary checkout lost old metadata/files overnight; exact completed HEAD77b5fe9404054f8ce3f98b9bfaebe7dc44cfecea and objects survived. Reconstructed a clean isolated checkout at /private/tmp/chatbook-backup-pr-20260912 using surviving objects plus the main repository object database; source commit unchanged. GitHub authentication verified outside sandbox; no existing PR for branch. Current origin/dev8ab21ecaf372ad0b5cc8bca98dd12c427f4aef87. Preparing PR, with Linux qualification still unavailable pending the user's SSH target. No broader qualification change or full suite authorized.
+Created and verified OPEN PR https://github.com/rmusser01/tldw_chatbook/pull/2642 against dev, head codex/complete-local-backup-recovery. GitHub reports CONFLICTING with current dev; no merge performed. PR describes exact macOS qualification, targeted verification, baseline failures and pending Linux SSH tests. Awaiting user SSH host/alias and existing test location before remote inspection. Next testing begins with actual host/runtime/filesystem inventory and existing finite helper/native checks in disposable data locations; no Linux availability is declared from this preparation.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
