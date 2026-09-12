@@ -1,9 +1,6 @@
-"""Pinned private storage and Darwin atomic no-replace publication (ADR-126)."""
+"""Pinned private storage and native no-replace publication (ADR-126)."""
 
 from __future__ import annotations
-
-import ctypes
-import errno
 
 try:
     import fcntl
@@ -15,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from .native_platform import flush_directory, flush_file, rename_noreplace
 from .qualification import _qualified_identity, native_identity, qualified_for
 
 
@@ -48,16 +46,6 @@ def pinned_directory(root: Path) -> Iterator[int]:
         os.close(fd)
 
 
-def flush_directory(fd: int) -> None:
-    """Flush metadata then the native device cache; propagate ambiguous failure.
-
-    This barrier runs after each rename/metadata publication, not just before it.
-    Darwin APFS directory F_FULLFSYNC is directly qualified by native tests.
-    """
-    os.fsync(fd)
-    fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
-
-
 def create_private_directory(destination: Path) -> None:
     """Create one new owner-private directory under a pinned existing parent."""
     with pinned_directory(destination.parent) as parent:
@@ -87,21 +75,7 @@ def _rename_new(
     source_parent: int, source: str, target_parent: int, target: str
 ) -> None:
     """Native primitive, also exercised directly by the qualification suite."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    fn = libc.renameatx_np
-    fn.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
-    fn.restype = ctypes.c_int
-    if fn(source_parent, os.fsencode(source), target_parent, os.fsencode(target), 0x4):
-        code = ctypes.get_errno()
-        if code == errno.EEXIST:
-            raise FileExistsError("destination_exists")
-        raise OSError(code, "native_publication_failed")
+    rename_noreplace(source_parent, source, target_parent, target)
 
 
 def _flush_private_tree(fd: int, device: int) -> None:
@@ -113,8 +87,7 @@ def _flush_private_tree(fd: int, device: int) -> None:
         if info.st_nlink != 1:
             raise OSError("staged_tree_linked")
         os.fchmod(fd, 0o600)
-        os.fsync(fd)
-        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+        flush_file(fd)
         return
     if not stat.S_ISDIR(info.st_mode):
         raise OSError("staged_tree_not_regular")

@@ -305,7 +305,7 @@ diagnostics.close()
 )
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="Native macOS terminal cell")
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="POSIX terminal workflow")
 @pytest.mark.parametrize(
     "encrypted,credentials",
     [(False, False), (True, False), (True, True)],

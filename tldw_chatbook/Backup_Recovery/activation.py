@@ -13,6 +13,7 @@ from . import bootstrap
 from .admission import Admission, fcntl
 from .bootstrap import _read
 from .native_files import create_private_directory, flush_directory, pinned_directory
+from .native_platform import flush_file
 from .profile_paths import lexical_path
 from .qualification import qualified_for
 
@@ -279,8 +280,7 @@ def _flush_existing(parent: int, name: str, expected: BaseModel) -> None:
             info.st_size,
         ):
             raise ValueError("activation_record_changed")
-        os.fsync(fd)
-        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+        flush_file(fd)
         flush_directory(parent)
     finally:
         os.close(fd)

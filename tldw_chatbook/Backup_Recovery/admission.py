@@ -26,6 +26,7 @@ from typing import ContextManager, Iterator
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .native_files import create_private_directory, flush_directory, pinned_directory
+from .native_platform import flush_file
 from .qualification import _qualified_identity, native_identity, qualified_for
 
 
@@ -136,8 +137,7 @@ class Admission:
             dir_fd=parent,
         )
         try:
-            os.fsync(fd)
-            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            flush_file(fd)
         finally:
             os.close(fd)
         flush_directory(parent)
@@ -258,8 +258,7 @@ class Admission:
             view = memoryview(data)
             while view:
                 view = view[os.write(fd, view) :]
-            os.fsync(fd)
-            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            flush_file(fd)
         finally:
             os.close(fd)
 

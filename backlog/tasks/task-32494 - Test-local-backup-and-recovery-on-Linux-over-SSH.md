@@ -1,7 +1,7 @@
 ---
 id: TASK-32494
 title: Test local backup and recovery on Linux over SSH
-status: Done
+status: In Progress
 created_date: 2026-09-12 14:57
 labels:
 - backup-recovery
@@ -10,7 +10,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md
 - backlog/decisions/126-complete-local-backup-and-recovery.md
-updated_date: 2026-09-12 16:30
+updated_date: 2026-09-12 16:36
 ---
 
 ## Description
@@ -45,6 +45,7 @@ Python correction test preparation: SSH reconnected; private venv remains Python
 Prepared remote run-tests-python.py by adapting the existing private driver. It selects worker/crypto/packaging only, removes Go paths/settings, asserts Go is absent from test PATH, uses explicitly installed pytest plugins and the private uv offline cache, records worker/transport hashes, and preserves timestamped artifacts/runs. No test run yet; awaits reviewed/public Python PR source.
 Python firstattempt98b5d0b24 source: worker63/crypto42/packaging11 allSETUPERROR, zero executedassertions/skips; artifacts-python-20260912-091533 retained. Rootprivatepaths guard refusedshared_writable_parent. statproved newlycreatedruns-python andtimestampgroup were0775, whereas case/tmpwere0700 (remoteumask0002 plus pathlibparents defaults). Correcteddrivercreates/chmods onlyownrunsroot0700 andnewtimestampgroup0700 beforecases; olddriverretained asrun-tests-python-before-private-parents.py. No applicationcode/qualificationoverride. Prerequisiteworkerbatch rerun next.
 Final public revision 98b5d0b24c44def024f87ab54af61cb6b01b1511: worker 63, crypto 42, packaging 11 passed, no skips. Linux 6.12.107+deb13-amd64, x86_64, Python 3.12.8, Cryptodome 3.23.0, ext4; Go absent from PATH. Remote receipts artifacts-python-20260912-091812 and -091853 copied to /private/tmp/task32495-linux-success. Original Linux failures and first Python harness setup failure are retained. Only harness-owned parent permissions changed to 0700. PR2642 updated with final evidence and Linux limitations. See Docs/Development/backup-python-verification-2026-09-12.md and the linked baseline; lessons-testing-evidence.md records the private-parent incident.
+Reopened after user correctly rejected component-only Linux completion. User requires actual full backup/restore and verification on Linux, macOS and Windows. Native Linux work and Windows Actions tests are now explicitly authorized. Previous 116-pass result covers only encryption/package components.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

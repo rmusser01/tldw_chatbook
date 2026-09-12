@@ -55,6 +55,14 @@ class _StatFS(ctypes.Structure):
 
 def native_identity(fd: int) -> dict[str, str | int]:
     """Read current native identity from a pinned directory descriptor."""
+    if platform.system() == "Linux":
+        from .native_platform import linux_identity
+
+        return linux_identity(fd)
+    if platform.system() == "Windows":
+        from ..Utils.windows_files import native_identity as windows_identity
+
+        return windows_identity(fd)
     if platform.system() != "Darwin":
         raise OSError("native_platform_unqualified")
     libc = ctypes.CDLL(None, use_errno=True)
@@ -130,6 +138,10 @@ def _source_product_facts(
     operation: str, identity: Mapping[str, str | int]
 ) -> frozenset[ProductFact]:
     """Return only facts declared for one exact identity and current protocol."""
+    if operation not in {"complete_capture", "new_replacement"}:
+        return frozenset()
+    if _platform_contract(identity):
+        return frozenset(_PRODUCT_FACTS)
     if operation == "complete_capture":
         rows = _COMPLETE_CAPTURE_FACTS
     elif operation == "new_replacement":
@@ -191,6 +203,23 @@ class _Evidence(BaseModel):
     evidence: list[_EvidenceRow]
 
 
+def _platform_contract(identity: Mapping[str, str | int]) -> bool:
+    """Support native storage contracts, independent of OS/Python patch numbers.
+
+    Identity acquisition first checks actual native API availability. Operation
+    execution still checks permissions, pinned objects, volume and every barrier.
+    Network/unknown filesystems and read-only POSIX mounts remain unavailable.
+    """
+    try:
+        row = _Identity.model_validate(dict(identity))
+    except ValidationError:
+        return False
+    if row.os == "Linux":
+        return row.filesystem == "ext4" and not row.flags & 1
+    # Windows NTFS is enabled with the native adapter and product verification.
+    return False
+
+
 def _qualified_identity(
     operation: str, identity: dict[str, str | int]
 ) -> tuple[bool, str]:
@@ -212,6 +241,8 @@ def _qualified_identity(
     for row in evidence.evidence:
         if row.identity.model_dump() == identity and operation in row.operations:
             return True, "qualified_native_evidence"
+    if operation in _OPERATIONS and _platform_contract(identity):
+        return True, "supported_native_contract"
     return False, "operation_not_qualified"
 
 

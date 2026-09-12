@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .admission import Admission, fcntl
 from .bootstrap import _read
 from .native_files import create_private_directory, flush_directory, pinned_directory
+from .native_platform import flush_file
 from .qualification import qualified_for
 
 
@@ -129,8 +130,7 @@ class ProfileCatalog:
                             or _read(parent, name) != entry.model_dump()
                         ):
                             raise ValueError("catalog_record_changed")
-                        os.fsync(fd)
-                        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+                        flush_file(fd)
                         after = os.stat(name, dir_fd=parent, follow_symlinks=False)
                         if (after.st_dev, after.st_ino) != (info.st_dev, info.st_ino):
                             raise ValueError("catalog_record_changed")

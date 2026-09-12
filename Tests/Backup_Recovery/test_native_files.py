@@ -1,10 +1,10 @@
-"""Real Darwin/APFS primitive evidence; failures are not skipped."""
+"""Real native publication evidence; failures are not skipped."""
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -56,7 +56,9 @@ with pinned_directory(Path(sys.argv[1])) as parent:
     _rename_new(parent, "stage", parent, "published")
     os._exit(23)
 """
-    child = subprocess.run([sys.executable, "-c", code, str(tmp_path)], timeout=10)
+    child = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path)], timeout=10, check=False
+    )
     assert child.returncode == 23
     assert not (tmp_path / "stage").exists()
     assert (tmp_path / "published").read_bytes() == b"candidate"
@@ -72,7 +74,9 @@ def test_private_creation_and_native_identity(tmp_path):
     assert directory.stat().st_mode & 0o777 == 0o700
     assert (directory / "candidate").stat().st_mode & 0o777 == 0o600
     with pinned_directory(directory) as fd:
-        assert native_identity(fd)["filesystem"] == "apfs"
+        assert native_identity(fd)["filesystem"] == (
+            "apfs" if sys.platform == "darwin" else "ext4"
+        )
     with pytest.raises(FileExistsError):
         create_private_directory(directory)
 
@@ -214,17 +218,14 @@ def test_preexisting_target_of_any_type_is_preserved(tmp_path, target_kind):
 
 def test_native_directory_full_flush_supported(tmp_path):
     """Qualify the actual post-metadata barrier on this native filesystem."""
-    import fcntl
 
     (tmp_path / "entry").write_bytes(b"new")
     with pinned_directory(tmp_path) as parent:
-        os.fsync(parent)
-        assert fcntl.fcntl(parent, fcntl.F_FULLFSYNC) == 0
+        flush_directory(parent)
 
 
 @pytest.mark.parametrize("kind", ["file", "directory"])
 def test_full_flush_occurs_after_publication(tmp_path, monkeypatch, kind):
-    import fcntl
     from tldw_chatbook.Backup_Recovery import native_files
 
     source, destination = tmp_path / "stage", tmp_path / "published"
@@ -234,15 +235,14 @@ def test_full_flush_occurs_after_publication(tmp_path, monkeypatch, kind):
         source.mkdir()
         (source / "content").write_bytes(b"candidate")
     calls = []
-    native_fcntl = fcntl.fcntl
+    native_flush = native_files.flush_directory
 
-    def observe(fd, command, *args):
-        result = native_fcntl(fd, command, *args)
-        if command == fcntl.F_FULLFSYNC:
-            calls.append((os.fstat(fd).st_ino, source.exists(), destination.exists()))
+    def observe(fd):
+        result = native_flush(fd)
+        calls.append((os.fstat(fd).st_ino, source.exists(), destination.exists()))
         return result
 
-    monkeypatch.setattr(native_files.fcntl, "fcntl", observe)
+    monkeypatch.setattr(native_files, "flush_directory", observe)
     publish_new(source, destination)
     parent_inode = tmp_path.stat().st_ino
     assert (parent_inode, False, True) in calls
@@ -252,25 +252,23 @@ def test_failed_post_publication_full_flush_preserves_published_evidence(
     tmp_path, monkeypatch
 ):
     import errno
-    import fcntl
+
     from tldw_chatbook.Backup_Recovery import native_files
 
     source, destination = tmp_path / "stage", tmp_path / "published"
     source.write_bytes(b"candidate")
-    native_fcntl = fcntl.fcntl
+    native_flush = native_files.flush_directory
     parent_inode = tmp_path.stat().st_ino
 
-    def fail_after_native_metadata_flush(fd, command, *args):
-        result = native_fcntl(fd, command, *args)
-        if (
-            command == fcntl.F_FULLFSYNC
-            and os.fstat(fd).st_ino == parent_inode
-            and destination.exists()
-        ):
+    def fail_after_native_metadata_flush(fd):
+        result = native_flush(fd)
+        if os.fstat(fd).st_ino == parent_inode and destination.exists():
             raise OSError(errno.EIO, "injected_post_publication_flush_failure")
         return result
 
-    monkeypatch.setattr(native_files.fcntl, "fcntl", fail_after_native_metadata_flush)
+    monkeypatch.setattr(
+        native_files, "flush_directory", fail_after_native_metadata_flush
+    )
     with pytest.raises(OSError, match="injected_post_publication_flush_failure"):
         publish_new(source, destination)
     assert not source.exists()

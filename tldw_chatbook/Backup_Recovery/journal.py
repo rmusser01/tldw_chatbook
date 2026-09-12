@@ -17,6 +17,7 @@ from .admission import Admission, fcntl
 from .archive_models import Metadata
 from .bootstrap import _read
 from .native_files import create_private_directory, flush_directory, pinned_directory
+from .native_platform import flush_file
 from .qualification import qualified_for
 
 MAX_EVENTS = 100_000
@@ -1575,8 +1576,7 @@ class Journal:
             named = os.stat(name, dir_fd=parent, follow_symlinks=False)
             if identity(named) != identity(before):
                 raise ValueError("durable_record_changed")
-            os.fsync(fd)
-            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            flush_file(fd)
             if identity(os.fstat(fd)) != identity(before) or identity(
                 os.stat(name, dir_fd=parent, follow_symlinks=False)
             ) != identity(before):
@@ -1665,8 +1665,7 @@ class Journal:
                         != archive.manifest_bytes
                     ):
                         raise ValueError("verified_manifest_changed") from None
-                    os.fsync(stream.fileno())
-                    fcntl.fcntl(stream.fileno(), fcntl.F_FULLFSYNC)
+                    flush_file(stream.fileno())
             flush_directory(parent)
             from .plan_records import save_plan
 

@@ -36,6 +36,7 @@ from .native_files import (
     pinned_directory,
     publish_new,
 )
+from .native_platform import flush_file
 from .qualification import _qualified_identity, native_identity
 from .restore_plan import RestorePlan, recheck_targets
 
@@ -553,8 +554,7 @@ def _flush_original(fd, device):
     if info.st_dev != device or info.st_uid != os.geteuid():
         raise ValueError("retirement_identity_changed")
     if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
-        os.fsync(fd)
-        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+        flush_file(fd)
     elif stat.S_ISDIR(info.st_mode):
         for name in os.listdir(fd):
             child = os.open(
@@ -1693,8 +1693,7 @@ def _installed_metadata(
                 raise ValueError("installed_kind_changed")
             os.fchmod(fd, metadata["mode"])
             os.utime(fd, ns=(before.st_atime_ns, metadata["mtime_ns"]))
-            os.fsync(fd)
-            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+            flush_file(fd)
             named = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
             if (named.st_dev, named.st_ino) != expected:
                 raise ValueError("installed_identity_changed")
