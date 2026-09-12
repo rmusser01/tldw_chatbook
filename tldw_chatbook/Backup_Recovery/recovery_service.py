@@ -116,6 +116,7 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         "recovery_action_unavailable",
         "preview_required",
         "archive_plan_mismatch",
+        "release_capability_unavailable",
         "recovery_operation_running",
         "recovered_review_changed",
         "recovered_asset_held",
@@ -304,10 +305,25 @@ class RecoveryService:
 
     def start_rollback(self, operation_id, plan, *, old_password, new_password):
         """Make a new verified safety copy before applying the selected old snapshot."""
+        from .restore_plan import RestorePlan
+
+        if (
+            type(plan) is not RestorePlan
+            or plan.local_snapshot is None
+            or plan.local_snapshot.operation_id != operation_id
+            or plan.local_snapshot.control_root != self.control_root
+        ):
+            raise ValueError("local_snapshot_source_changed")
+        available, reason = self.replacement_capability(plan)
+        if not available:
+            raise ValueError(reason)
 
         def rollback(operation, cancel):
             from .recovery_copies import rollback as rollback_copy
 
+            available, reason = self.replacement_capability(plan)
+            if not available:
+                raise ValueError(reason)
             self._update(operation, phase="replacing")
             try:
                 journal_operation = rollback_copy(
@@ -483,6 +499,9 @@ class RecoveryService:
         if plan.mode == "replace":
             from .replacement import require_rollback_password
 
+            available, reason = self.replacement_capability(plan)
+            if not available:
+                raise ValueError(reason)
             require_rollback_password(rollback_password)
         elif plan.mode != "isolated":
             raise ValueError("invalid_restore_mode")
@@ -504,6 +523,9 @@ class RecoveryService:
                 from .replacement import replace
                 from .staging import stage_restore
 
+                available, reason = self.replacement_capability(plan)
+                if not available:
+                    raise ValueError(reason)
                 self._update(operation, phase="staging")
                 # Candidate and publication evidence outlive the view and worker.
                 with self._lock:
@@ -898,6 +920,26 @@ class RecoveryService:
             config_paths, options=settings, include_known_profiles=include_known_profiles
         )
 
+    def backup_capability(self, destination, *, options):
+        """Return the installed Complete decision for normalized operation inputs."""
+        from .capture import _capture_options
+        from .profile_paths import lexical_path
+        from .qualification import complete_capture_capability
+
+        settings, _, _, _ = _capture_options(options)
+        staging = settings.get("staging_parent", Path(tempfile.gettempdir()).resolve())
+        return complete_capture_capability(
+            staging_parent=staging,
+            destination=lexical_path(destination),
+            control_root=self.control_root,
+        )
+
+    def replacement_capability(self, plan):
+        """Return the installed new-replacement decision for one reviewed plan."""
+        from .qualification import replacement_capability
+
+        return replacement_capability(plan, control_root=self.control_root)
+
     def preview_backup_details(
         self, config_paths, *, options, destination, include_known_profiles=False
     ):
@@ -944,6 +986,7 @@ class RecoveryService:
                 "capacity": tuple(capacity),
                 "credential_mode": settings["credential_mode"],
                 "credential_coverage": "checked_during_capture",
+                "availability": self.backup_capability(destination, options=settings),
                 "maintenance": "Writers pause while data is copied and resume before archive packaging.",
             }
         )
@@ -962,10 +1005,16 @@ class RecoveryService:
         if settings["encrypted"] != (password is not None) or password == b"":
             raise ValueError("encryption_password_required")
         config_paths, destination = tuple(config_paths), lexical_path(destination)
+        available, reason = self.backup_capability(destination, options=settings)
+        if not available:
+            raise ValueError(reason)
 
         def backup(operation, cancel):
             from . import archive_writer, capture_service
 
+            available, reason = self.backup_capability(destination, options=settings)
+            if not available:
+                raise ValueError(reason)
             self._update(operation, phase="capturing")
             captured = capture_service.capture(
                 config_paths,

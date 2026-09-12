@@ -293,6 +293,11 @@ def _restore(service, args) -> int:
         }
     )
     print("Owner review and missing assets remain separate setup requirements.")
+    if args.mode == "replace":
+        available, reason = service.replacement_capability(plan)
+        if not available:
+            print("Replacement unavailable: " + reason)
+            return 1
     if input("Type restore to apply this reviewed plan: ").strip() != "restore":
         return 0
     password = (

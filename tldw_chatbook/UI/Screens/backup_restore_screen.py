@@ -50,12 +50,14 @@ class BackupRestoreScreen(Screen):
         self._revision = 0
         self._preview = None
         self._reviewed = None
+        self._backup_availability = None
         self._poller = None
         self._summary_requested = None
         self._inspection_id = None
         self._dismissed_inspection_id = None
         self._inspection_summary = None
         self._restore_plan = None
+        self._restore_availability = None
         self._extraction_plan = None
         self._delete_copy_id = None
         self._last_terminal = None
@@ -67,6 +69,7 @@ class BackupRestoreScreen(Screen):
         self._safety_scope_seen = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
+        self._rollback_availability = None
         self._requested_rollback_operation = None
         self._rollback_selection = None
         self._later_review_codes_seen = ()
@@ -334,7 +337,8 @@ class BackupRestoreScreen(Screen):
             "backup-safety-confirm",
         ):
             for widget in self.query("#" + field):
-                widget.value = ""
+                with widget.prevent(Input.Changed):
+                    widget.value = ""
 
     def action_back(self):
         self._clear_passwords()
@@ -348,6 +352,8 @@ class BackupRestoreScreen(Screen):
         self._mode = mode
         self._revision += 1
         self._preview = self._reviewed = None
+        self._backup_availability = None
+        self._restore_availability = None
         self._media_review = None
         self.query_one("#backup-media-confirm", Checkbox).value = False
         self.query_one("#backup-media-form").display = mode == "media"
@@ -362,6 +368,7 @@ class BackupRestoreScreen(Screen):
         )
         self.query_one("#backup-later-form").display = False
         self._rollback_copy_id = self._rollback_plan = None
+        self._rollback_availability = None
         self._forget_later_credential_review()
         for identifier, visible in (
             ("backup-review", mode == "create"),
@@ -782,6 +789,7 @@ class BackupRestoreScreen(Screen):
                 target=inventory,
                 acknowledged_credential_issues=acknowledged,
             )
+            availability = self.service.replacement_capability(plan)
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
                 app,
@@ -793,9 +801,20 @@ class BackupRestoreScreen(Screen):
                 error.issues if isinstance(error, CaptureReviewRequired) else (),
             )
         else:
-            self._deliver(app, self._rollback_ready, revision, operation, plan, None)
+            self._deliver(
+                app,
+                self._rollback_ready,
+                revision,
+                operation,
+                plan,
+                None,
+                (),
+                availability,
+            )
 
-    def _rollback_ready(self, revision, operation, plan, issue, review_issues=()):
+    def _rollback_ready(
+        self, revision, operation, plan, issue, review_issues=(), availability=None
+    ):
         if (
             not self.is_mounted
             or self._mode != "copies"
@@ -804,6 +823,7 @@ class BackupRestoreScreen(Screen):
         ):
             return
         self._rollback_plan = plan
+        self._rollback_availability = availability
         if issue:
             message = "Rollback review refused: " + issue
         else:
@@ -811,8 +831,15 @@ class BackupRestoreScreen(Screen):
                 f"Recovery copy: {operation}\nRestore: {plan.restore}\nRetire: {plan.retire}\nPreserve: {plan.preserve}\nIssues: {plan.issues}\n"
                 "Re-enter the old archive password above and choose a new safety-copy password. Review and confirmation do not activate providers or scheduled work."
             )
+            if availability is not None:
+                available, reason = availability
+                message += "\nAvailability: " + (
+                    "available" if available else f"unavailable ({reason})"
+                )
         self.query_one("#backup-later-preview", Static).update(message)
-        self.query_one("#backup-later-start", Button).disabled = plan is None
+        self.query_one("#backup-later-start", Button).disabled = (
+            plan is None or availability is not None and not availability[0]
+        )
         codes = tuple(code for code in review_issues if code.startswith("credential_"))
         if codes:
             self._later_review_codes_seen = codes
@@ -826,6 +853,16 @@ class BackupRestoreScreen(Screen):
 
     @on(Button.Pressed, "#backup-later-start")
     def _start_rollback(self):
+        if self._rollback_availability is None or not self._rollback_availability[0]:
+            reason = (
+                self._rollback_availability[1]
+                if self._rollback_availability is not None
+                else "release_capability_unavailable"
+            )
+            self.query_one("#backup-message", Static).update(
+                "Rollback unavailable: " + reason
+            )
+            return
         old = self._input("backup-copy-password")
         new = self._input("backup-safety-password")
         if (
@@ -840,23 +877,48 @@ class BackupRestoreScreen(Screen):
                 "Confirm the reviewed consequences, re-enter the old password, and enter matching new safety-copy passwords."
             )
             return
+        operation_id, plan = self._rollback_copy_id, self._rollback_plan
+        self._rollback_selection = self._later_selection()
+        self._invalidate()
+        self._clear_passwords()
+        self._start_rollback_operation(
+            self.app,
+            self._revision,
+            operation_id,
+            plan,
+            old.encode(),
+            new.encode(),
+        )
+
+    @work(exclusive=True, thread=True, group="backup-later-start")
+    def _start_rollback_operation(
+        self, app, revision, operation_id, plan, old_password, new_password
+    ):
         try:
-            self._rollback_selection = self._later_selection()
-            self._requested_rollback_operation = self.service.start_rollback(
-                self._rollback_copy_id,
-                self._rollback_plan,
-                old_password=old.encode(),
-                new_password=new.encode(),
+            operation = self.service.start_rollback(
+                operation_id,
+                plan,
+                old_password=old_password,
+                new_password=new_password,
             )
         except (OSError, ValueError, RuntimeError) as error:
-            self.query_one("#backup-message", Static).update(
-                "Rollback refused: " + self.service.issue_code(error)
+            self._deliver(
+                app,
+                self._operation_start_ready,
+                revision,
+                "later_rollback",
+                None,
+                self.service.issue_code(error),
             )
-        finally:
-            self._clear_passwords()
-        self._rollback_plan = None
-        self.query_one("#backup-later-start", Button).disabled = True
-        self._refresh_status()
+        else:
+            self._deliver(
+                app,
+                self._operation_start_ready,
+                revision,
+                "later_rollback",
+                operation,
+                None,
+            )
 
     @on(Button.Pressed, "#backup-delete-copy")
     def _delete_copy(self):
@@ -970,12 +1032,15 @@ class BackupRestoreScreen(Screen):
     def _invalidate(self):
         self._revision += 1
         self._preview = self._reviewed = None
+        self._backup_availability = None
         self.query_one("#backup-create", Button).disabled = True
         self._restore_plan = None
+        self._restore_availability = None
         self._extraction_plan = None
         self.query_one("#backup-start-extraction", Button).disabled = True
         self.query_one("#backup-start-restore", Button).disabled = True
         self._rollback_plan = None
+        self._rollback_availability = None
         self.query_one("#backup-later-start", Button).disabled = True
         self.query_one("#backup-later-confirm", Checkbox).value = False
 
@@ -1103,6 +1168,7 @@ class BackupRestoreScreen(Screen):
         details = preview
         preview = details["inventory"]
         self._preview, self._reviewed = preview, reviewed
+        self._backup_availability = details["availability"]
         self.query_one("#backup-profiles", Static).update(
             "Reviewed profile configurations:\n" + "\n".join(
                 dict.fromkeys(
@@ -1115,6 +1181,10 @@ class BackupRestoreScreen(Screen):
             "Complete coverage" if preview.complete else "Partial coverage",
             details["maintenance"],
         ]
+        available, reason = self._backup_availability
+        rows.append(
+            "Availability: " + ("available" if available else f"unavailable ({reason})")
+        )
         rows.extend(
             f"Volume {row['path']}: {row['required_bytes']} bytes required; {row['available_bytes']} bytes available"
             for row in details["capacity"]
@@ -1129,9 +1199,11 @@ class BackupRestoreScreen(Screen):
         )
         rows.extend(preview.issues)
         self.query_one("#backup-coverage", Static).update("\n".join(rows))
-        self.query_one("#backup-create", Button).disabled = not (
-            preview.complete or reviewed[2]["allow_partial"]
-        ) or not all(row["sufficient"] for row in details["capacity"])
+        self.query_one("#backup-create", Button).disabled = (
+            not (preview.complete or reviewed[2]["allow_partial"])
+            or not all(row["sufficient"] for row in details["capacity"])
+            or not available
+        )
         self.query_one("#backup-message", Static).update(
             "Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging."
         )
@@ -1139,6 +1211,16 @@ class BackupRestoreScreen(Screen):
     @on(Button.Pressed, "#backup-create")
     def _create(self):
         if self._preview is None or self._reviewed is None:
+            return
+        if self._backup_availability is None or not self._backup_availability[0]:
+            reason = (
+                self._backup_availability[1]
+                if self._backup_availability is not None
+                else "release_capability_unavailable"
+            )
+            self.query_one("#backup-message", Static).update(
+                "Backup unavailable: " + reason
+            )
             return
         profiles, destination, options = self._reviewed
         try:
@@ -1148,22 +1230,63 @@ class BackupRestoreScreen(Screen):
                 if options["encrypted"]
                 else None
             )
-            self._requested_backup_operation = self.service.start_backup(
+        except ValueError:
+            self.query_one("#backup-message", Static).update(
+                "Backup could not start. Review the source selection and output path again."
+            )
+            self._clear_passwords()
+            return
+        approved_scope = self._preview.scope_digest
+        self._invalidate()
+        self._clear_passwords()
+        self._start_backup_operation(
+            self.app,
+            self._revision,
+            profiles,
+            approved_scope,
+            destination,
+            options,
+            password,
+        )
+
+    @work(exclusive=True, thread=True, group="backup-create-start")
+    def _start_backup_operation(
+        self,
+        app,
+        revision,
+        profiles,
+        approved_scope,
+        destination,
+        options,
+        password,
+    ):
+        try:
+            operation = self.service.start_backup(
                 profiles,
-                self._preview.scope_digest,
+                approved_scope,
                 destination,
                 options=options,
                 password=password,
                 include_known_profiles=self.include_known_profiles,
             )
-        except (OSError, ValueError, RuntimeError):
-            self.query_one("#backup-message", Static).update(
-                "Backup could not start. Review the source selection and output path again."
+        except (OSError, ValueError, RuntimeError) as error:
+            self._deliver(
+                app,
+                self._operation_start_ready,
+                revision,
+                "backup",
+                None,
+                self.service.issue_code(error),
             )
-        finally:
-            self._clear_passwords()
-        self._invalidate()
-        self._refresh_status()
+        else:
+            self._deliver(
+                app,
+                self._operation_start_ready,
+                revision,
+                "backup",
+                operation,
+                None,
+            )
 
     @on(Button.Pressed, "#backup-inspect")
     def _inspect(self):
@@ -1610,17 +1733,23 @@ class BackupRestoreScreen(Screen):
                 acknowledged_credential_issues=acknowledged,
                 safety_scope=safety_scope,
             )
+            availability = (
+                self.service.replacement_capability(plan)
+                if plan.mode == "replace"
+                else None
+            )
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
                 app, self._restore_ready, revision, None, self.service.issue_code(error)
             )
         else:
-            self._deliver(app, self._restore_ready, revision, plan, None)
+            self._deliver(app, self._restore_ready, revision, plan, None, availability)
 
-    async def _restore_ready(self, revision, plan, issue):
+    async def _restore_ready(self, revision, plan, issue, availability=None):
         if not self.is_mounted or revision != self._revision:
             return
         if plan is None:
+            self._restore_availability = None
             self.query_one("#backup-restore-preview", Static).update(
                 "Restore review refused: " + issue
             )
@@ -1660,6 +1789,7 @@ class BackupRestoreScreen(Screen):
                 )
                 return
         self._restore_plan = plan
+        self._restore_availability = availability
         rows = [
             "Reviewed local restore plan",
             "Restored execution remains inactive until owner review and setup.",
@@ -1679,8 +1809,16 @@ class BackupRestoreScreen(Screen):
         rows.extend(
             f"Metadata: {key}: {old} → {new}" for key, old, new in plan.metadata
         )
+        if availability is not None:
+            available, reason = availability
+            rows.append(
+                "Availability: "
+                + ("available" if available else f"unavailable ({reason})")
+            )
         self.query_one("#backup-restore-preview", Static).update("\n".join(rows))
-        self.query_one("#backup-start-restore", Button).disabled = False
+        self.query_one("#backup-start-restore", Button).disabled = (
+            availability is not None and not availability[0]
+        )
 
     @on(Button.Pressed, "#backup-start-restore")
     def _start_restore(self):
@@ -1688,6 +1826,18 @@ class BackupRestoreScreen(Screen):
             return
         plan = self._restore_plan
         if plan.mode == "replace" and self._requires_recovery_restart():
+            return
+        if plan.mode == "replace" and (
+            self._restore_availability is None or not self._restore_availability[0]
+        ):
+            reason = (
+                self._restore_availability[1]
+                if self._restore_availability is not None
+                else "release_capability_unavailable"
+            )
+            self.query_one("#backup-message", Static).update(
+                "Replacement unavailable: " + reason
+            )
             return
         password = None
         if plan.mode == "replace":
@@ -1698,18 +1848,59 @@ class BackupRestoreScreen(Screen):
                 )
                 return
             password = password.encode()
+        inspection = self._inspection_id
+        self._invalidate()
+        self._clear_passwords()
+        self._start_restore_operation(
+            self.app, self._revision, inspection, plan, password
+        )
+
+    @work(exclusive=True, thread=True, group="backup-restore-start")
+    def _start_restore_operation(
+        self, app, revision, inspection, plan, rollback_password
+    ):
+        kind = "replacement_restore" if plan.mode == "replace" else "restore"
         try:
             operation = self.service.start_restore(
-                self._inspection_id, plan, rollback_password=password
+                inspection, plan, rollback_password=rollback_password
             )
-            self._requested_restore_operation = operation if plan.mode == "replace" else None
         except (OSError, ValueError, RuntimeError) as error:
-            self.query_one("#backup-message", Static).update(
-                "Restore could not start: " + self.service.issue_code(error)
+            self._deliver(
+                app,
+                self._operation_start_ready,
+                revision,
+                kind,
+                None,
+                self.service.issue_code(error),
             )
-        finally:
-            self._clear_passwords()
-        self._invalidate()
+        else:
+            self._deliver(
+                app,
+                self._operation_start_ready,
+                revision,
+                kind,
+                operation,
+                None,
+            )
+
+    def _operation_start_ready(self, revision, kind, operation, issue):
+        if not self.is_mounted or revision != self._revision:
+            return
+        if issue is not None:
+            label = {
+                "backup": "Backup could not start: ",
+                "restore": "Restore could not start: ",
+                "replacement_restore": "Restore could not start: ",
+                "later_rollback": "Rollback refused: ",
+            }[kind]
+            self.query_one("#backup-message", Static).update(label + issue)
+            return
+        if kind == "backup":
+            self._requested_backup_operation = operation
+        elif kind == "later_rollback":
+            self._requested_rollback_operation = operation
+        elif kind == "replacement_restore":
+            self._requested_restore_operation = operation
         self._refresh_status()
 
     def _requires_recovery_restart(self):

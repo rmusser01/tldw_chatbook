@@ -274,3 +274,33 @@ capabilities without a released owner-review path remain inactive; fresh local-H
 projection reuse, physical detach and power-loss qualification remain unavailable.
 Replacement ENOSPC equivalence remains source inference. No additional dependency
 feature or native matrix was inferred from this reconciliation.
+
+## Independent operation availability wiring
+
+The original seven-gate decision is now connected to the service, F9 preview and
+confirmation controls, and replacement CLI. Installed source facts are declared
+independently for Complete capture on Darwin25.5.0/arm64/Python3.12.11/APFS
+flags76583040/protocol2 and new replacement (including later rollback) on that cell
+and flags76583448. The user explicitly approved this local wiring after automatic
+review requested authorization beyond the prior publication-only approval.
+Complete staging/output on the image cell and image Admission remain unavailable.
+
+These four source facts compose with the actual installed helper, Admission at
+bootstrap authority locations, and publication support at participating write
+locations. Source distributions without the helper remain unavailable even for
+plaintext creation. New operations check before worker allocation and again before
+native work; pending Finish/Rollback/Abort retains its existing recovery checks.
+Helper verification runs outside the Textual UI thread. Genuine input edits discard
+stale callbacks; clearing passwords programmatically does not lose operation-bound
+credential-review controls.
+
+The initial missing-check test failed before implementation. The final focused
+module passes24 cases in3.00s; related checks passed16 in1.78s, and actual interrupted
+activation recovery passed1 in4.89s. Independent review found the password-clear
+callback regression, which was reproduced with real populated widgets and corrected.
+Ruff, compilation and whitespace checks pass; production Bandit reports0 findings.
+Test-only Bandit reports59 ordinary pytest assertions. Exact source hashes and
+commands are in `/private/tmp/task26-release-wiring-report.md`; scoped review is
+`/private/tmp/task26-release-wiring-independent-review.md`. These checks establish
+wiring and the stated compatibility case, not final packaged product verification.
+Task26 remains open for the installed-package cohorts and manual workflow definition.
