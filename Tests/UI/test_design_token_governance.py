@@ -33,11 +33,13 @@ _RAW_SPACING_RE = re.compile(
     r"\b(?:padding|margin)(?:-(?:top|right|bottom|left))?\s*:\s*[0-9]"
 )
 
-# Legacy sheets with pre-existing hex literals, pinned at current counts
-# (ratchet: may only decrease). Counts verified 2026-08-05.
+# Legacy sheets with pre-existing hex literals in ACTIVE declarations,
+# pinned at current counts (ratchet: may only decrease). Comments are
+# stripped before counting, so documented measurements never consume
+# allowance and removing one never creates allowance for a real literal.
+# Active counts verified 2026-09-11 (_lists.tcss has comment-only hexes).
 _HEX_GRANDFATHERED: dict[str, int] = {
-    "components/_lists.tcss": 4,
-    "components/_agentic_terminal.tcss": 6,
+    "components/_agentic_terminal.tcss": 1,
 }
 
 # Every sheet that existed when ADR-150 landed (2026-09-11), including the
@@ -155,17 +157,30 @@ def test_documented_design_vocabulary_is_available() -> None:
 
 
 def test_hex_literals_are_ratcheted_outside_token_definitions() -> None:
+    """Raw hex colors may only shrink, never grow, outside token definitions.
+
+    Comments are stripped before counting: only active declarations are
+    governed, so documenting a measured color in a comment can neither fail
+    CI nor free up allowance for a real hardcoded color.
+    """
     for module in _source_modules():
         relative = str(module.relative_to(CSS_ROOT))
         if module == TOKENS_FILE:
             continue
-        count = len(_HEX_RE.findall(module.read_text(encoding="utf-8")))
+        text = _strip_comments(module.read_text(encoding="utf-8"))
+        count = len(_HEX_RE.findall(text))
         allowance = _HEX_GRANDFATHERED.get(relative, 0)
         assert count <= allowance, (
             f"{relative} has {count} hex literals (allowance {allowance}). "
             "Colors belong in core/_variables.tcss tokens (ADR-150). "
             "The grandfathered allowance may only decrease."
         )
+
+
+def test_hex_ratchet_ignores_comments() -> None:
+    """Regression: hex strings inside /* */ comments must not be counted."""
+    css = "/* measured #51677e at 3:1 */\n.card { color: #ff8fa3; }\n"
+    assert _HEX_RE.findall(_strip_comments(css)) == ["#ff8fa3"]
 
 
 def test_new_sheets_must_use_spacing_tokens() -> None:

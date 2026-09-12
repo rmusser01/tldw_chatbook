@@ -43,8 +43,11 @@ def test_generated_bundle_contains_scheduling_module_banner() -> None:
 
 
 def test_scheduling_panes_declare_design_grid_border() -> None:
-    # Post-split (TASK-24459) the pane rules live in the screen-owned sheet;
-    # the source module keeps the canonical definitions.
+    """Pane borders use the $ds-grid-line token in source and screen sheet.
+
+    Post-split (TASK-24459) the pane rules live in the screen-owned sheet;
+    the source module keeps the canonical definitions, so both are checked.
+    """
     for path in (SOURCE_CSS, SCREEN_CSS):
         css = path.read_text(encoding="utf-8")
         for selector in SELECTORS:
