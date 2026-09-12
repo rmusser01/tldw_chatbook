@@ -85,14 +85,19 @@ reproduced on the HEAD baseline without this change --
 `test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_db`
 (the late-backlinks worker race, task-32467).
 
-The review's "3 of 6 sites" was measured before consolidating: the three
+The review's "3 of 6 sites" was measured before consolidating. That the three
 select-mode EXITS reachable from the UI (Escape, filter submit, filter clear)
-were already green with NO product change -- select mode hides the editor
-fields, so no field owns focus and `sync_state` recomposes with the stored
-state -- and the sort choice cannot be pressed from select mode at all (the
-sort control and its strip compose only in browse mode). Pinned anyway so
-the exits cannot regress to the entry's bug:
+do not regress is MECHANISM plus ONE measured route, not a dedicated run:
+select mode hides the editor fields, so at exit the reader either no longer
+owns a field (the recompose paints the stored state) or still does (the choke
+point re-applies); in the RED run (`fix2-ac5-red.txt`, re-apply disabled)
+only `[filter-clear]` passes its exit assertions -- `[escape]` and
+`[filter-submit]` die at the ENTRY assertion there, so their exits were never
+isolated. Under the choke-point design the question is moot: every exit
+reaches the same notes sync, and all three are pinned by
 `test_leaving_select_mode_beside_an_open_note_restores_its_editor[escape|filter-submit|filter-clear]`.
+The sort choice cannot be pressed from select mode at all (the sort control
+and its strip compose only in browse mode).
 Verified live in a tmux app on a scratch profile: with a note open, pressing
 Select repaints the pane as "Read-only preview · Not included in bulk
 selection" over "Read-only — this note cannot be changed; your draft is
