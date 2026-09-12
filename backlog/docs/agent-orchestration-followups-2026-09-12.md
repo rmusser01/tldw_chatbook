@@ -15,10 +15,16 @@ supersedes its pending-integration and remaining-work labels.
   copy, real persistence, sibling isolation and resumed-run verification
   (`49b5569676`, `762941cec0`, `e85c7d16c3`, `a56f534fd4`, `86f2a79e76`).
   Their task notes contain scoped test results and evidence qualifications.
-- **Next, with accepted plans:** TASK-31210/31211 confirmed worktree actions and
-  prior-turn recovery; TASK-18923 live per-run usage; TASK-13154.5/.6/.7 Settings
+- **In progress:** TASK-18923 live per-run usage. TASK-13154.5/.6/.7 Settings
   resource ownership/tool-filter feedback, starter presets and definition wall
-  caps; parent TASK-13154 reconciliation. Their implementation is not complete.
+  caps follow; parent TASK-13154 reconciliation remains open.
+- **Execution design unresolved:** TASK-31210/31211 confirmed worktree actions
+  and prior-turn recovery. A real temporary-repository race demonstrated that
+  Git running from a pinned linked child can advance a replacement parent
+  repository through its administrative links. Nested root pins alone do not
+  meet the accepted authority contract. No new mutation path is enabled. The
+  test-harness prerequisite is fixed and independently reviewed in `32557b80f2`
+  (four affected subprocess tests passed); recovery itself remains incomplete.
 - Four of the eight requested outcome areas are complete. The parent stays open
   until the remaining implementation and combined branch review finish. No new
   PR, push or merge has been performed for this continuation.
