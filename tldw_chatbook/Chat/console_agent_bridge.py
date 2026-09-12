@@ -3743,12 +3743,14 @@ class _StreamingModelAdapter:
         # turn completes with the usage simply missing, and the cause is
         # logged.
         usage: dict[str, Any] | None = None
-        raw_usage_payload: object = (
-            terminal_metadata.usage if terminal_metadata is not None else None
-        )
-        if raw_usage_payload is None and call_signals is not None:
-            raw_usage_payload = call_signals.usage_snapshot()
+        raw_usage_payload: object = None
+        provider_count: int | None = None
         try:
+            raw_usage_payload = (
+                terminal_metadata.usage if terminal_metadata is not None else None
+            )
+            if raw_usage_payload is None and call_signals is not None:
+                raw_usage_payload = call_signals.usage_snapshot()
             usage = _openai_usage_from_provider_call(
                 raw_usage_payload,
                 provider=call_resolution.provider,
@@ -3760,8 +3762,10 @@ class _StreamingModelAdapter:
                     provider=call_resolution.provider,
                     model=call_resolution.model or "",
                 )
+            provider_count = self._provider_output_count(raw_usage_payload)
         except Exception as exc:  # noqa: BLE001 — observability is never fatal
             usage = None
+            provider_count = None
             logger.warning(
                 "usage accounting failed after a successful provider turn; "
                 "completing the turn without usage (exception_type={})",
@@ -3769,19 +3773,17 @@ class _StreamingModelAdapter:
             )
         if usage is not None:
             response["usage"] = usage
-        if attributed is not None:
-            provider_count = self._provider_output_count(raw_usage_payload)
-            if provider_count is not None:
-                self._emit_live_usage(
-                    AgentLiveUsageEvent(
-                        "provider_usage",
-                        usage_run_id,
-                        usage_agent_kind,
-                        usage_sequence,
-                        time.monotonic(),
-                        provider_output_tokens=provider_count,
-                    )
+        if attributed is not None and provider_count is not None:
+            self._emit_live_usage(
+                AgentLiveUsageEvent(
+                    "provider_usage",
+                    usage_run_id,
+                    usage_agent_kind,
+                    usage_sequence,
+                    time.monotonic(),
+                    provider_output_tokens=provider_count,
                 )
+            )
         call_envelope = call_capture.settle(
             "stopped" if stream_cut() else "complete"
         ).envelope
