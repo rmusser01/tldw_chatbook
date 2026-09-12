@@ -3811,10 +3811,17 @@ async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
                 "idle_timeout_minutes": 8,
                 "turn_detection": "semantic_vad",
             },
-            "dictation": {"handsfree_engine": "realtime"},
+            # TASK-32015: barge-in is always written (explicit Switch);
+            # the untouched blank send delay deletes its key so the
+            # readers' own default keeps winning.
+            "dictation": {
+                "handsfree_engine": "realtime",
+                "acoustic_barge_in": False,
+            },
         }
         assert kwargs["delete_keys"] == {
-            "realtime": ("vad_threshold", "vad_silence_ms")
+            "realtime": ("vad_threshold", "vad_silence_ms"),
+            "dictation": ("handsfree_send_delay_seconds",),
         }
         assert "Saved" in str(
             app.query_one("#settings-speech-save-result", Static).renderable
@@ -3833,7 +3840,7 @@ async def test_realtime_blank_voice_deletes_key_instead_of_empty_string(
         lambda *a, **k: (calls.append((a, k)), True)[1],
     )
     app = _PanelHarness(configure_provider="audio_cpp")
-    async with app.run_test(size=(150, 60)) as pilot:
+    async with app.run_test(size=(150, 68)) as pilot:
         await _settle(pilot)
         app.query_one("#settings-speech-realtime-enabled", Switch).value = True
         await pilot.pause()
@@ -3846,9 +3853,12 @@ async def test_realtime_blank_voice_deletes_key_instead_of_empty_string(
         assert "voice" not in section_values["realtime"]
         # Semantic turn detection (the default) also deletes the two
         # server_vad-only knobs: the provider rejects them in that mode,
-        # so leaving them in config would arm a future rejection.
+        # so leaving them in config would arm a future rejection. The
+        # untouched blank send delay deletes its key too (TASK-32015's
+        # unset contract).
         assert kwargs["delete_keys"] == {
-            "realtime": ("voice", "vad_threshold", "vad_silence_ms")
+            "realtime": ("voice", "vad_threshold", "vad_silence_ms"),
+            "dictation": ("handsfree_send_delay_seconds",),
         }
 
 
@@ -4411,3 +4421,84 @@ async def test_local_provider_forms_surface_dependency_and_model_guidance(
             "#settings-speech-kokoro-model-guidance", Static
         )
         assert "kokoro-v0_19.onnx" in str(guidance.renderable)
+
+@pytest.mark.asyncio
+async def test_handsfree_pipeline_tuning_fields_render_and_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-32015: the pipeline loop's two tuning knobs (send countdown,
+    acoustic barge-in) were config.toml-only -- invisible at the point of
+    use. They render in the Speech panel's hands-free section and round-trip
+    through the same atomic config writer."""
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        delay = app.query_one("#settings-speech-handsfree-send-delay", Input)
+        barge_in = app.query_one(
+            "#settings-speech-handsfree-acoustic-barge-in", Switch
+        )
+
+        # Unset renders blank (readers default to 1.5s) and off.
+        assert delay.value == ""
+        assert barge_in.value is False
+
+        delay.value = "2.5"
+        barge_in.value = True
+        await pilot.pause()
+
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        (section_values,), _kwargs = calls[0]
+        assert section_values["dictation"]["handsfree_send_delay_seconds"] == 2.5
+        assert section_values["dictation"]["acoustic_barge_in"] is True
+
+
+@pytest.mark.asyncio
+async def test_handsfree_blank_send_delay_deletes_key_and_invalid_refuses_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blank delay means "unset" (the readers' own default wins, the key is
+    deleted); a non-positive or non-numeric value refuses the entire Save
+    with an inline error, never a partial write."""
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "save_settings_to_cli_config",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _settle(pilot)
+        barge_in = app.query_one(
+            "#settings-speech-handsfree-acoustic-barge-in", Switch
+        )
+        delay = app.query_one("#settings-speech-handsfree-send-delay", Input)
+
+        # Invalid first: refuses the whole Save.
+        delay.value = "0"
+        barge_in.value = True
+        await pilot.pause()
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+        assert calls == [], "an invalid delay must refuse the entire Save"
+        error = app.query_one(
+            "#settings-speech-realtime-handsfree-send-delay-seconds-error", Static
+        )
+        assert "positive" in str(error.renderable)
+
+        # Blank means unset: the key is deleted, the readers' default wins.
+        delay.value = ""
+        await pilot.pause()
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+        (section_values,), kwargs = calls[0]
+        assert "handsfree_send_delay_seconds" not in section_values["dictation"]
+        assert "handsfree_send_delay_seconds" in kwargs["delete_keys"]["dictation"]
+        assert section_values["dictation"]["acoustic_barge_in"] is True
