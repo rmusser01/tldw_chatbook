@@ -16607,6 +16607,13 @@ class ConsoleChatController:
             self.store.active_session_id or ""
         )
         tool = str(payload.get("tool") or "")
+        # PR review #13: the card must display the TRUE owning run id. The
+        # bridge closure rides the originating assistant message id under
+        # `run_id` (the run's own id does not exist when the closure is
+        # built); the round's arm-time stamp knows the real one.
+        true_run_id = current_run_id()
+        if true_run_id:
+            payload = {**payload, "run_id": str(true_run_id)}
         # Session-scoped remember: a standing grant for this (session, tool)
         # pair short-circuits -- no card is armed at all.
         if tool in self._chat_create_session_grants.get(owning_session_id, set()):
@@ -16863,120 +16870,97 @@ class ConsoleChatController:
             ``source_not_persisted``, ``character_conflict``,
             ``empty_history``, ``execution_failed``.
         """
+        from tldw_chatbook.Agents.agent_models import (
+            CHAT_CREATE_PAYLOAD_MAX,
+            CHAT_CREATE_TITLE_MAX,
+        )
         from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+
         tool = str(payload.get("tool") or "")
         session_id = str(payload.get("session_id") or "")
         session = next(
             (s for s in self.store.sessions() if s.id == session_id), None
         )
         if session is None:
-            return {
-                "ok": False,
-                "kind": "session_gone",
-                "error": "source session not found",
-            }
+            return {"ok": False, "kind": "session_gone",
+                    "error": "source session not found"}
         title = str(payload.get("title") or "").strip()
         opening_prompt = str(payload.get("opening_prompt") or "")
         instructions = str(payload.get("instructions") or "")
-        # Mirrors the bridge closures' caps (CHAT_CREATE_PAYLOAD_MAX);
+        # Mirrors the bridge closures' cap (CHAT_CREATE_PAYLOAD_MAX in
+        # agent_models -- the single shared constant, PR review #5);
         # duplicated here so the executor stays safe even if wired to a
         # caller other than the closures.
-        if len(opening_prompt) > 20_000 or len(instructions) > 20_000:
+        if len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX or len(
+            instructions
+        ) > CHAT_CREATE_PAYLOAD_MAX:
             return {
                 "ok": False,
                 "kind": "payload_too_large",
-                "error": "payload exceeds 20000 chars",
+                "error": f"payload exceeds {CHAT_CREATE_PAYLOAD_MAX} chars",
             }
         persistence = self.store.persistence
         db = getattr(persistence, "db", None)
         if persistence is None or db is None:
-            return {
-                "ok": False,
-                "kind": "execution_failed",
-                "error": "persistence unavailable",
-            }
+            return {"ok": False, "kind": "execution_failed",
+                    "error": "persistence unavailable"}
 
         source_conv: str | None = None
         source_row: dict[str, Any] | None = None
-        source_leaf: str | None = None
-        # Final-review fix wave (Finding 3): tracked so a post-create
-        # failure can discard the orphaned row (see the except handlers).
         new_conv: str | None = None
         copied = 0
         if tool == "fork_chat":
             source_conv = session.persisted_conversation_id
             if session.ephemeral or not source_conv:
-                return {
-                    "ok": False,
-                    "kind": "source_not_persisted",
-                    "error": "the current chat is temporary; nothing to fork",
-                }
+                return {"ok": False, "kind": "source_not_persisted",
+                        "error": "the current chat is temporary; nothing to fork"}
         elif not title:
             title = "New Chat"
 
-        handoff_metadata = {
-            "console_agent_handoff": {
+        def _handoff_metadata(source_metadata: str | None) -> dict[str, Any]:
+            """PR review #9: MERGE the handoff key into the source's own
+            metadata (speech/roleplay/canvas prefs ride along) instead of
+            replacing it with a handoff-only mapping."""
+            merged: dict[str, Any] = {}
+            if source_metadata:
+                try:
+                    parsed = json.loads(source_metadata)
+                    if isinstance(parsed, dict):
+                        merged.update(parsed)
+                except ValueError:
+                    logger.debug("chat_create: source metadata unparseable; replaced")
+            merged["console_agent_handoff"] = {
                 "draft": opening_prompt,
                 "created_via": tool,
                 "source_run_id": str(payload.get("run_id") or ""),
             }
-        }
+            return merged
+
         try:
             if tool == "fork_chat":
-                # Fix round 1: the source-tree and active-leaf READS live
-                # inside this try (they used to run before it), so a DB
-                # read failure returns kind `execution_failed` from THIS
-                # method's outcome contract instead of escaping to the
-                # calling closure as an uncaught worker-thread exception.
                 tree = ChatConversationService(db).get_conversation_tree(
                     str(source_conv), root_limit=10_000, depth_cap=10_000
                 )
                 source_row = dict(tree.get("conversation") or {})
-                # The title preference order (final-review fix wave,
-                # Finding 1): an explicitly provided payload title -- which
-                # for a UI-wired call may be the confirm card's enriched
-                # default -- always wins; the executor's own default below
-                # stays the fallback for callers that pass none.
                 if not title:
-                    title = f"Fork of {source_row.get('title') or 'chat'}"[:120]
+                    title = f"Fork of {source_row.get('title') or 'chat'}"[
+                        :CHAT_CREATE_TITLE_MAX
+                    ]
                 if instructions and source_row.get("character_id"):
-                    return {
-                        "ok": False,
-                        "kind": "character_conflict",
-                        "error": (
-                            "character chats keep their persona; fork without "
-                            "instructions"
-                        ),
-                    }
-                # Final-review fix wave (Finding 3a): pre-create emptiness
-                # check. An empty source must return `empty_history` BEFORE
-                # create_conversation runs -- otherwise the created row
-                # survives the failure and surfaces in the workspace listing
-                # unexplained, breaking the spec's "transaction rolled
-                # back; nothing created" contract. (The copy's own
-                # ValueError("empty_history") guard below stays as
-                # defense-in-depth for a race that empties the source
-                # between this read and the copy.)
-                tree_message_nodes: list[Mapping[str, Any]] = []
-
-                def _collect(node: Mapping[str, Any]) -> None:
-                    tree_message_nodes.append(node)
-                    for child in node.get("children") or []:
-                        _collect(child)
-
-                for root in tree.get("root_threads") or []:
-                    _collect(root)
-                if not tree_message_nodes:
-                    return {
-                        "ok": False,
-                        "kind": "empty_history",
-                        "error": "nothing to fork yet; use new_chat",
-                    }
-                # The normalized tree conversation dict carries no
-                # active-leaf pointer; read the durable one directly. Both
-                # lineage kwargs below are FK-enforced -- pass exactly this
-                # value (possibly None), never a synthetic id.
-                source_leaf = db.get_conversation_active_leaf(str(source_conv))
+                    return {"ok": False, "kind": "character_conflict",
+                            "error": "character chats keep their persona; "
+                                     "fork without instructions"}
+                conversation_service = ChatConversationService(db)
+                # PR review #3: resolve the EFFECTIVE leaf (pointer, else
+                # latest -- always a live row) through the same resolver the
+                # copy uses, so the FK-enforced lineage column can never
+                # receive a stale/dangling pointer.
+                source_leaf = conversation_service.effective_active_leaf(
+                    str(source_conv)
+                )
+                if source_leaf is None:
+                    return {"ok": False, "kind": "empty_history",
+                            "error": "nothing to fork yet; use new_chat"}
                 new_conv = persistence.create_conversation(
                     conversation_title=title,
                     scope_type=source_row.get("scope_type") or "global",
@@ -16986,11 +16970,11 @@ class ConsoleChatController:
                     assistant_kind=source_row.get("assistant_kind"),
                     assistant_id=source_row.get("assistant_id"),
                     assistant_authority_id=source_row.get("assistant_authority_id"),
-                    metadata=handoff_metadata,
+                    metadata=_handoff_metadata(source_row.get("metadata")),
                     parent_conversation_id=source_conv,
                     forked_from_message_id=source_leaf,
                 )
-                copy_outcome = ChatConversationService(db).copy_conversation_active_path(
+                copy_outcome = conversation_service.copy_conversation_active_path(
                     str(source_conv), new_conv
                 )
                 copied = int(copy_outcome["copied"])
@@ -17006,32 +16990,74 @@ class ConsoleChatController:
                     scope_type=scope,
                     workspace_id=None if scope == "global" else workspace_id,
                     system_prompt=instructions or None,
-                    metadata=handoff_metadata,
+                    metadata=_handoff_metadata(None),
                 )
         except ValueError as exc:
-            # Final-review fix wave (Finding 3b): a failure after the row
-            # was created discards it best-effort so no orphan surfaces in
-            # the workspace listing; the discard can never mask the
-            # original error kind.
             if new_conv is not None:
                 self._discard_chat_create_orphan(db, new_conv)
             if "empty_history" in str(exc):
-                return {
-                    "ok": False,
-                    "kind": "empty_history",
-                    "error": "nothing to fork yet; use new_chat",
-                }
+                return {"ok": False, "kind": "empty_history",
+                        "error": "nothing to fork yet; use new_chat"}
             return {"ok": False, "kind": "execution_failed", "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             if new_conv is not None:
                 self._discard_chat_create_orphan(db, new_conv)
             return {"ok": False, "kind": "execution_failed", "error": str(exc)}
 
+        # PR reviews #6/#10: hydrate the new session's transcript nodes on
+        # THIS worker thread -- the UI-thread completion must not run the
+        # fork's DB reads (a large fork would freeze the chat UI). A
+        # hydration failure degrades to an empty transcript (the durable
+        # messages are safe); it never strands the created chat.
+        nodes: list[Any] = []
+        new_leaf: str | None = None
+        try:
+            from tldw_chatbook.Chat.console_conversation_hydration import (
+                console_messages_from_conversation_tree,
+            )
+
+            new_tree = ChatConversationService(db).get_conversation_tree(
+                new_conv, root_limit=10_000, depth_cap=10_000
+            )
+            nodes = list(console_messages_from_conversation_tree(new_tree, db=db))
+            new_leaf = db.get_conversation_active_leaf(new_conv)
+        except Exception:  # noqa: BLE001 -- hydration is best-effort here
+            logger.opt(exception=True).warning(
+                "chat_create: new-chat hydration failed; restoring empty transcript"
+            )
+
+        # PR review #8: a globally scoped fork carries workspace_id None;
+        # the session restore path expects the Console's GLOBAL workspace
+        # id, not None (None is replaced by create_session's default).
         completion_workspace_id = (
             (source_row or {}).get("workspace_id")
             if tool == "fork_chat"
             else session.workspace_id
-        )
+        ) or CONSOLE_GLOBAL_WORKSPACE_ID
+        # PR review #1: pass the conversation's identity through so the
+        # restored session keeps the fork's assistant/character identity
+        # instead of generic Console defaults (settings themselves stay
+        # None: the restore path rebuilds provider defaults from the
+        # durable generation snapshot like any reopened conversation).
+        identity = {
+            "assistant_kind": (source_row or {}).get("assistant_kind"),
+            "assistant_id": (source_row or {}).get("assistant_id"),
+            "assistant_authority_id": (source_row or {}).get("assistant_authority_id"),
+            "persona_memory_mode": (source_row or {}).get("persona_memory_mode"),
+            "character_id": (source_row or {}).get("character_id"),
+            "character_name": (source_row or {}).get("character_name"),
+        }
+        if tool != "fork_chat":
+            identity = {
+                "assistant_kind": session.assistant_kind,
+                "assistant_id": session.assistant_id,
+                "assistant_authority_id": session.assistant_authority_id,
+                "persona_memory_mode": None,
+                "character_id": session.local_character_id(),
+                "character_name": session.character_name
+                if session.local_character_id() is not None
+                else None,
+            }
         if self.app is not None and self.complete_agent_chat_create is not None:
             self.app.call_from_thread(
                 self.complete_agent_chat_create,
@@ -17041,6 +17067,9 @@ class ConsoleChatController:
                 tool=tool,
                 opening_prompt=opening_prompt,
                 workspace_id=completion_workspace_id,
+                nodes=nodes,
+                active_leaf_persisted_id=new_leaf,
+                **identity,
             )
         return {
             "ok": True,
@@ -17050,8 +17079,6 @@ class ConsoleChatController:
             "copied_messages": copied,
             "draft_set": bool(opening_prompt),
         }
-
-
 
     def _resolve_ask_user_timeout_seconds(self) -> float:
         """PRD A7: the question deadline -- seam, else env, else config, else 0.

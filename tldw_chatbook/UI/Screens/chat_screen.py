@@ -23895,35 +23895,42 @@ class ChatScreen(BaseAppScreen):
         tool: str,
         opening_prompt: str,
         workspace_id: str | None,
+        nodes: "list[Any] | None" = None,
+        active_leaf_persisted_id: "str | None" = None,
+        assistant_kind: "str | None" = None,
+        assistant_id: "str | None" = None,
+        assistant_authority_id: "str | None" = None,
+        persona_memory_mode: "str | None" = None,
+        character_id: "int | None" = None,
+        character_name: "str | None" = None,
     ) -> None:
         """TASK-32482 Task 7: land a confirmed agent-created chat as a session.
 
         UI-thread completion target for ``ConsoleChatController.
         execute_agent_chat_create`` (marshaled via ``app_instance.
-        call_from_thread``). By the time this runs the CONVERSATION row and
-        -- for a fork -- the copied active path are already durable; this
-        half only places them in the UI: rebuild the session from the
-        persisted tree, pre-fill the composer draft with the agent's
-        opening prompt (the user reviews and sends it -- never the agent),
-        drop the persisted-rows cache so the conversation browser shows the
-        new row immediately, and run one console-sync pass.
-
-        The fork hydration deliberately uses the SYNC
-        ``ChatConversationService`` read (same shape ``copy_conversation_
-        active_path`` itself used moments earlier on the worker thread) --
-        not the async scope-service facade -- so completion never depends
-        on an event loop this UI-thread method does not own.
+        call_from_thread``). By the time this runs the CONVERSATION row,
+        the fork's copied path, AND the session's transcript nodes are
+        already durable/resolved -- the executor hydrates them on the
+        WORKER thread (PR reviews #6/#10) so this UI-thread method never
+        runs a conversation-sized DB read. This half only places them in
+        the UI: restore the session (not-activated; carrying the
+        conversation's identity per PR review #1), pre-fill the composer
+        draft with the agent's opening prompt (the user reviews and sends
+        it -- never the agent), drop the persisted-rows cache so the
+        conversation browser shows the new row immediately, and run one
+        console-sync pass. Every step is guarded (PR review #10): a
+        failure here logs and degrades -- the durable chat is never
+        stranded without a session.
 
         Task 8 final wiring: the session is restored NOT-activated
         (``activate=False``) so a completed create never switches the
-        user's current view (the owning session) away; the store
-        rehydrates the persisted ``console_agent_handoff`` draft into the
-        new session's composer and -- final-review fix wave, Finding 2 --
-        defers clearing the persisted key to that session's FIRST
+        user's current view; the store rehydrates the persisted
+        ``console_agent_handoff`` draft into the new session's composer
+        and defers clearing the persisted key to that session's FIRST
         activation, so an unopened draft survives an app restart. The
         explicit draft fill below is KEPT as an idempotent same-value
-        write: it is also the safety net for a restore whose handoff DB
-        read degraded (the draft would otherwise land empty).
+        write and as the safety net for a degraded restore-side handoff
+        read.
 
         Args:
             session_id: The OWNING (source) session of the confirmed run.
@@ -23932,50 +23939,64 @@ class ChatScreen(BaseAppScreen):
             tool: ``"fork_chat"`` or ``"new_chat"`` (toast wording only).
             opening_prompt: Draft to pre-fill the new session's composer
                 with; empty means no draft was requested.
-            workspace_id: The new conversation's workspace scope (``None``
-                for global).
+            workspace_id: The new conversation's workspace scope; the
+                executor already maps global forks to the Console's GLOBAL
+                workspace id (PR review #8).
+            nodes: Transcript nodes hydrated by the executor (empty list
+                when hydration degraded; None never reaches here).
+            active_leaf_persisted_id: The new conversation's durable
+                active-leaf pointer, resolved worker-side.
+            assistant_kind/assistant_id/assistant_authority_id/
+            persona_memory_mode/character_id/character_name: The new
+                conversation's identity (PR review #1) so the restored
+                session keeps the fork's assistant/character binding
+                instead of generic Console defaults.
         """
         controller = self._console_chat_controller
         if controller is None:
             return
         store = controller.store
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        nodes: list = []
-        leaf = None
-        if tool == "fork_chat" and db is not None:
-            from ...Chat.chat_conversation_service import ChatConversationService
-            from ...Chat.console_conversation_hydration import (
-                console_messages_from_conversation_tree,
+        try:
+            session = store.restore_persisted_session(
+                title=title,
+                workspace_id=workspace_id,
+                persisted_conversation_id=conversation_id,
+                all_nodes=nodes or [],
+                active_leaf_persisted_id=active_leaf_persisted_id,
+                assistant_kind=assistant_kind,
+                assistant_id=assistant_id,
+                assistant_authority_id=assistant_authority_id,
+                persona_memory_mode=persona_memory_mode,
+                character_id=character_id,
+                character_name=character_name,
+                activate=False,
             )
-
-            tree = ChatConversationService(db).get_conversation_tree(
-                conversation_id, root_limit=10_000, depth_cap=10_000
+            if opening_prompt:
+                store.set_session_draft(session.id, opening_prompt)
+            self._workspace._invalidate_console_persisted_rows_cache()
+            self.run_worker(
+                self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
             )
-            nodes = list(
-                console_messages_from_conversation_tree(tree, db=db)
+            verb = "Forked" if tool == "fork_chat" else "New"
+            self.app_instance.notify(f"{verb} chat created: {title}")
+        except Exception:  # noqa: BLE001 -- PR review #10: never strand the chat
+            logger.opt(exception=True).error(
+                "chat_create: UI completion failed after durable create",
+                conversation_id=conversation_id,
             )
-            leaf = db.get_conversation_active_leaf(conversation_id)
-        session = store.restore_persisted_session(
-            title=title,
-            workspace_id=workspace_id,
-            persisted_conversation_id=conversation_id,
-            all_nodes=nodes,
-            active_leaf_persisted_id=leaf,
-            activate=False,
-        )
-        if opening_prompt:
-            # Idempotent same-value write (Finding 2 decision: keep) -- the
-            # restore above already rehydrated this draft from the persisted
-            # handoff key except when its DB read degraded.
-            store.set_session_draft(session.id, opening_prompt)
-        self._workspace._invalidate_console_persisted_rows_cache()
-        self.run_worker(
-            self._sync_native_console_chat_ui(),
-            exclusive=True,
-            group="console-sync",
-        )
-        verb = "Forked" if tool == "fork_chat" else "New"
-        self.app_instance.notify(f"{verb} chat created: {title}")
+            self.app_instance.notify(
+                f"{'Forked' if tool == 'fork_chat' else 'New'} chat created "
+                f"(open it from the chat list): {title}"
+            )
+            try:
+                self._workspace._invalidate_console_persisted_rows_cache()
+                self.run_worker(
+                    self._sync_native_console_chat_ui,
+                    exclusive=True,
+                    group="console-sync",
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     @on(ChatCreateConfirmCard.ChatCreateDecided)
     def handle_console_chat_create_decided(self, event: Any) -> None:

@@ -283,6 +283,12 @@ def normalize_conversation_row(
     }
 
 
+#: One flat page covering any conversation the fork path copies (PR
+#: review #7/#12: replaces the recursive tree read; the ancestry walk is
+#: bounded by this single page, not by a root-window cap).
+FORK_READ_MAX_MESSAGES = 10_000
+
+
 class ChatConversationService:
     def __init__(
         self,
@@ -1227,51 +1233,68 @@ class ChatConversationService:
             "depth_cap": depth_cap,
         }
 
+    def effective_active_leaf(self, conversation_id: str) -> str | None:
+        """Resolve the conversation's EFFECTIVE active-leaf message id.
+
+        The durable pointer when it references a live row; otherwise the
+        most-recent message by timestamp (conversations created outside the
+        Console carry no pointer). Shared by the fork executor (lineage
+        written at create time must reference a real row -- the column is
+        FK-enforced) and ``copy_conversation_active_path`` so both resolve
+        the same leaf.
+        """
+        rows = self.db.get_messages_for_conversation(
+            conversation_id, limit=FORK_READ_MAX_MESSAGES
+        )
+        if not rows:
+            return None
+        live_ids = {str(row["id"]) for row in rows}
+        leaf = self.db.get_conversation_active_leaf(conversation_id)
+        if leaf is not None and leaf in live_ids:
+            return leaf
+        latest = max(rows, key=lambda r: str(r.get("timestamp") or ""))
+        return str(latest["id"])
+
     def copy_conversation_active_path(
         self, source_conversation_id: str, target_conversation_id: str
     ) -> dict[str, Any]:
         """Copy the source conversation's active path into the target, verbatim.
 
-        Walks the active-leaf ancestry (root -> leaf) of ``source_conversation_id``
-        and re-inserts each message into ``target_conversation_id`` with fresh ids
-        and remapped parents, preserving sender/role/content, images, usage,
-        metadata, provider-continuation payloads, and timestamps. Runs inside a
-        single transaction: a mid-copy failure rolls back everything. Sibling
-        branches off the active path are NOT copied (fork = the path the user
-        sees; combine with rewind for mid-conversation forks).
+        Resolves the source's effective leaf (pointer, else latest message),
+        walks its parent ancestry, and re-inserts each message into the
+        target with fresh ids and remapped parents, preserving sender/role/
+        content, images, usage, metadata, provider-continuation payloads,
+        and timestamps. Reads ONE flat page of rows (no recursive tree
+        build, no root-window truncation: the ancestry walk covers any leaf
+        present in the page). Contentless scaffold rows (the in-flight
+        assistant placeholder) are skipped. The whole copy -- inserts AND
+        the target's active-leaf pointer -- commits in ONE transaction: a
+        failure anywhere leaves nothing behind.
 
         Returns:
-            ``{"copied": <int>, "leaf_message_id": <new id of the copied leaf>}``
+            ``{"copied": <int>, "leaf_message_id": <new leaf>,
+            "source_leaf_message_id": <effective source leaf>}``
 
         Raises:
             ValueError: ``empty_history`` when the source has no messages.
         """
-        tree = self.get_conversation_tree(
-            source_conversation_id, root_limit=10_000, depth_cap=10_000
+        rows = self.db.get_messages_for_conversation(
+            source_conversation_id, limit=FORK_READ_MAX_MESSAGES
         )
-        nodes: dict[str, dict[str, Any]] = {}
-
-        def _walk(node: dict[str, Any]) -> None:
-            nodes[str(node["id"])] = node
-            for child in node.get("children") or []:
-                _walk(child)
-
-        for root in tree.get("root_threads") or []:
-            _walk(root)
-        if not nodes:
+        if not rows:
             raise ValueError("empty_history")
-
-        leaf_id = self.db.get_conversation_active_leaf(source_conversation_id)
+        nodes = {str(row["id"]): row for row in rows}
+        leaf_id = self.effective_active_leaf(source_conversation_id)
         if leaf_id is None or leaf_id not in nodes:
-            # Conversations created outside the Console have no leaf pointer;
-            # fall back to the most recent message by timestamp.
-            leaf_id = max(nodes, key=lambda i: str(nodes[i].get("timestamp") or ""))
+            raise ValueError("empty_history")
 
         path: list[dict[str, Any]] = []
         cursor: str | None = leaf_id
         while cursor is not None and cursor in nodes:
             path.append(nodes[cursor])
             cursor = nodes[cursor].get("parent_message_id")
+            if cursor is not None:
+                cursor = str(cursor)
         path.reverse()
 
         id_map: dict[str, str] = {}
@@ -1313,14 +1336,19 @@ class ChatConversationService:
                 id_map[old_id] = str(new_id)
                 last_new_id = str(new_id)
                 copied += 1
-        if copied == 0:
-            raise ValueError("empty_history")
-
-        # The source leaf may itself be the skipped placeholder; point the
-        # fork's leaf at the last COPIED message instead.
-        new_leaf = id_map.get(str(leaf_id)) or last_new_id
-        self.db.set_conversation_active_leaf(target_conversation_id, new_leaf)
-        return {"copied": copied, "leaf_message_id": new_leaf}
+            if copied == 0:
+                raise ValueError("empty_history")
+            # The source leaf may itself be the skipped placeholder; point
+            # the fork's leaf at the last COPIED message. Inside the same
+            # transaction as the inserts: a pointer failure must roll the
+            # whole copy back, not strand message rows with no leaf.
+            new_leaf = id_map.get(str(leaf_id)) or last_new_id
+            self.db.set_conversation_active_leaf(target_conversation_id, new_leaf)
+        return {
+            "copied": copied,
+            "leaf_message_id": new_leaf,
+            "source_leaf_message_id": leaf_id,
+        }
 
     def record_message_rag_context(
         self,

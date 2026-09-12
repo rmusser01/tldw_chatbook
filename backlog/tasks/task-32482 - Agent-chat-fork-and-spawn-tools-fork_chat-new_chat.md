@@ -29,6 +29,28 @@ Let a Console agent prepare parallel-workstream chats for the user: fork_chat co
 <!-- AC:END -->
 
 ## Implementation Notes
+### Qodo review round (2026-09-12) — all 15 findings addressed
+
+Rebased onto dev f6543cc07a; every Qodo finding fixed with tests: (#1)
+completion carries the conversation's assistant/character identity;
+(#3) `effective_active_leaf` shared resolver feeds the FK-enforced lineage
+column (dangling pointers impossible); (#4) the target leaf write joins
+the copy transaction; (#5) `CHAT_CREATE_*` constants live once in
+`Agents/agent_models.py`; (#6/#10) transcript hydration moved to the
+worker thread and the completion is fully guarded (degrades to a
+list-openable toast, never strands the chat); (#7/#12) the copy reads one
+flat page and walks ancestry (no recursive tree build, no root-window
+truncation); (#8) global forks resolve to the Console global workspace
+id; (#9) the fork MERGES source metadata under the handoff key; (#13) the
+card displays the round's true run id (arm-time `current_run_id()`
+overwrites the bridge's assistant-message placeholder); (#14) non-string
+tool args fail with `invalid_args` instead of str() coercion; (#2/#15)
+were stale anchors against the pre-rebase push (the appearance-picker
+files are not in this branch's diff). Suite: 1102 passed / 6 failed —
+five `test_console_runtime_ownership` failures reproduce verbatim on pure
+origin/dev (fleet-wake rename + tombstone-order baseline breaks) and one
+skill-script test flakes only under combined-run load (passes isolated).
+
 
 ### Live verification — PASSED (2026-09-12, post-dev-rebase)
 

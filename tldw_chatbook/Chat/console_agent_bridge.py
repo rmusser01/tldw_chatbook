@@ -80,6 +80,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
     definition_from_row,
 )
+from tldw_chatbook.Agents import agent_models as agent_models_constants
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
@@ -9750,10 +9751,10 @@ class ConsoleAgentBridge:
 # run_reply's closure scope and exporting it keeps the denial/remember
 # mechanics directly testable.
 
-#: Agent-supplied title cap (chars) for a fork_chat/new_chat conversation.
-CHAT_CREATE_TITLE_MAX = 120
-#: Per-field cap (chars) for opening_prompt / instructions payloads.
-CHAT_CREATE_PAYLOAD_MAX = 20_000
+#: Re-exported from Agents.agent_models (the single shared definition --
+#: PR review #5) so existing imports and tests keep working.
+CHAT_CREATE_TITLE_MAX = agent_models_constants.CHAT_CREATE_TITLE_MAX
+CHAT_CREATE_PAYLOAD_MAX = agent_models_constants.CHAT_CREATE_PAYLOAD_MAX
 #: Denials after which a tool goes terminal for the rest of the run.
 _CHAT_CREATE_DENIAL_LIMIT = 2
 
@@ -9803,9 +9804,26 @@ def build_chat_create_tool_closures(
                     "is disabled for the rest of this run. Do not retry."
                 ),
             )
-        title = str(args.get("title") or "").strip()[:CHAT_CREATE_TITLE_MAX]
-        opening_prompt = str(args.get("opening_prompt") or "")
-        instructions = str(args.get("instructions") or "")
+        # PR review #14: strict types -- the model's args are untrusted; a
+        # non-string value is a clear tool error, never a str() coercion
+        # that silently stringifies mappings/collections into payloads.
+        raw_title = args.get("title", "")
+        raw_prompt = args.get("opening_prompt", "")
+        raw_instructions = args.get("instructions", "")
+        for name, value in (
+            ("title", raw_title),
+            ("opening_prompt", raw_prompt),
+            ("instructions", raw_instructions),
+        ):
+            if not isinstance(value, str):
+                return ToolResult(
+                    ok=False,
+                    error=f"invalid_args: {name} must be a string, got "
+                    f"{type(value).__name__}",
+                )
+        title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
+        opening_prompt = raw_prompt
+        instructions = raw_instructions
         if (
             len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX
             or len(instructions) > CHAT_CREATE_PAYLOAD_MAX

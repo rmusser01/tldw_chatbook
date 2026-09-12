@@ -319,13 +319,24 @@ def test_execute_new_chat_creates_conversation_and_completion(real_db_controller
     }
     # The executor marshaled exactly one UI completion with the marshal
     # kwargs (_FakeApp's call_from_thread invokes immediately).
+    # PR reviews #1/#8: the completion now carries the session's identity
+    # fields and a NON-None workspace id (global resolves to the Console's
+    # global workspace id), plus the worker-side hydrated nodes/leaf.
     assert completed == [{
         "session_id": session.id,
         "conversation_id": outcome["conversation_id"],
         "title": "Fresh",
         "tool": "new_chat",
         "opening_prompt": "hello there",
-        "workspace_id": session.workspace_id,
+        "workspace_id": session.workspace_id or "global",
+        "nodes": [],
+        "active_leaf_persisted_id": None,
+        "assistant_kind": session.assistant_kind,
+        "assistant_id": session.assistant_id,
+        "assistant_authority_id": session.assistant_authority_id,
+        "persona_memory_mode": None,
+        "character_id": None,
+        "character_name": None,
     }]
     # The new conversation is NOT wired onto any session yet (Task 8 owns
     # session placement) -- verify no session claims it.
@@ -386,3 +397,104 @@ async def test_chat_create_callbacks_absent_without_ui_sinks(tmp_path):
     assert result.accepted is True, result
     assert captured[0]["request_chat_create_confirm"] is None
     assert captured[0]["execute_agent_chat_create"] is None
+
+
+def test_execute_fork_merges_source_metadata(real_db_controller):
+    """PR review #9: the fork keeps the source's own metadata (speech/
+    roleplay prefs) and overlays the handoff key -- never replaces."""
+    import json as _json
+
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="S")
+    conv = controller.store.persistence.create_conversation(
+        conversation_title="S",
+        metadata={"console_speech": {"voice": "alto"}, "roleplay": {"mood": 1}},
+    )
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "fork_chat", "session_id": session.id, "title": "F",
+         "opening_prompt": "", "instructions": ""}
+    )
+    assert outcome["ok"], outcome
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    meta = _json.loads(row["metadata"])
+    assert meta["console_speech"] == {"voice": "alto"}
+    assert meta["roleplay"] == {"mood": 1}
+    assert meta["console_agent_handoff"]["created_via"] == "fork_chat"
+
+
+def test_execute_fork_global_workspace_resolves(real_db_controller):
+    """PR review #8: a globally scoped fork's completion carries the
+    Console GLOBAL workspace id, never None."""
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="G")
+    conv = controller.store.persistence.create_conversation(
+        conversation_title="G", scope_type="global"
+    )
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "fork_chat", "session_id": session.id, "title": "F",
+         "opening_prompt": "", "instructions": ""}
+    )
+    assert outcome["ok"], outcome
+    assert outcome["workspace_id"] not in (None, "")
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    assert row["scope_type"] == "global"
+
+
+def test_execute_fork_passes_identity_and_hydrated_nodes(real_db_controller):
+    """PR review #1/#6: the completion carries the conversation's identity
+    and transcript nodes hydrated on the worker thread."""
+    controller, db = real_db_controller
+    completed = []
+    controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
+    session = controller.store.create_session(title="I")
+    conv = controller.store.persistence.create_conversation(
+        conversation_title="I", assistant_kind="persona", assistant_id="winter"
+    )
+    session.persisted_conversation_id = conv
+    db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "fork_chat", "session_id": session.id, "title": "F",
+         "opening_prompt": "go", "instructions": ""}
+    )
+    assert outcome["ok"], outcome
+    kw = completed[0]
+    assert kw["assistant_kind"] == "persona"
+    assert kw["assistant_id"] == "winter"
+    assert len(kw["nodes"]) == 1  # worker-side hydration, ready for restore
+    assert kw["active_leaf_persisted_id"] is not None
+
+
+def test_execute_fork_lineage_uses_effective_leaf(real_db_controller):
+    """PR review #3: a dangling durable leaf pointer must never reach the
+    FK-enforced lineage column; the effective (latest) row does."""
+    controller, db = real_db_controller
+    session = controller.store.create_session(title="L")
+    conv = controller.store.persistence.create_conversation(conversation_title="L")
+    session.persisted_conversation_id = conv
+    first = db.add_message({"conversation_id": conv, "sender": "user", "content": "a"})
+    db.set_conversation_active_leaf(conv, "bogus-pointer")
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "fork_chat", "session_id": session.id, "title": "F",
+         "opening_prompt": "", "instructions": ""}
+    )
+    assert outcome["ok"], outcome
+    row = db.get_conversation_by_id(outcome["conversation_id"])
+    assert row["forked_from_message_id"] == str(first)
+
+
+def test_closure_rejects_non_string_args():
+    """PR review #14: a non-string tool arg is a clear error, never a str()
+    coercion that stringifies a mapping into the payload."""
+    from tldw_chatbook.Chat.console_agent_bridge import build_chat_create_tool_closures
+
+    confirm, executor = _FakeConfirm([{"allow": True, "remember": False}]), _FakeExecutor()
+    fork_tool, _ = build_chat_create_tool_closures(
+        confirm=confirm, execute=executor, session_id="s1", run_id="r1"
+    )
+    result = fork_tool({"title": {"nested": "mapping"}})
+    assert not result.ok and "invalid_args" in result.error
+    assert executor.calls == []

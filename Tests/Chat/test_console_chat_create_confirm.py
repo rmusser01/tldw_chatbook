@@ -286,3 +286,27 @@ def test_fork_enrichment_degrades_when_tree_read_fails(real_db_confirm, monkeypa
     assert "fork_message_count" not in card  # no fork line
     assert "fork_source_title" not in card
     assert card["title"] == "Fork of Fallback"  # degraded default from session title
+
+
+def test_confirm_payload_run_id_is_the_true_run(make_controller):
+    """PR review #13: the card displays the round's TRUE run id, not the
+    assistant-message placeholder the bridge closure rode in on."""
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    controller = make_controller()
+    # Arm with the run context INSIDE the worker (the round stamps
+    # current_run_id there); legacy no-session caller so the payload
+    # MOUNTS to the sink instead of parking for a background session.
+    def worker():
+        with use_run_id("run-TRUE-1"):
+            controller.request_chat_create_confirm(_payload())
+
+    t2 = threading.Thread(target=worker)
+    t2.start()
+    _wait_until(lambda: bool(controller.pending_chat_create_payloads))
+    controller.resolve_pending_chat_create(
+        True, False, request_id=controller.pending_chat_create_ids()[0]
+    )
+    t2.join(timeout=5)
+    payload = controller.pending_chat_create_payloads[0]
+    assert payload["run_id"] == "run-TRUE-1"

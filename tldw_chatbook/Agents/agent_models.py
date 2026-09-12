@@ -194,6 +194,13 @@ MESSAGE_TOOL_NAMES = frozenset(
 # background; schemas live in tool_catalog.py beside the other runtime tools.
 FORK_CHAT_TOOL_NAME = "fork_chat"
 NEW_CHAT_TOOL_NAME = "new_chat"
+
+#: Agent-supplied title cap (chars) for a fork_chat/new_chat conversation
+#: (ADR-150). Shared by the bridge closures and the controller executor so
+#: confirmation and execution can never drift apart.
+CHAT_CREATE_TITLE_MAX = 120
+#: Per-field cap (chars) for opening_prompt / instructions payloads.
+CHAT_CREATE_PAYLOAD_MAX = 20_000
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,

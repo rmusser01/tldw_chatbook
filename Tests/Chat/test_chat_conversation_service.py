@@ -2051,3 +2051,36 @@ def test_copy_active_path_all_placeholders_is_empty_history(service_with_db):
 
     with _pytest.raises(ValueError, match="empty_history"):
         service.copy_conversation_active_path(src, dst)
+
+
+def test_copy_active_path_leaf_failure_rolls_back(service_with_db, monkeypatch):
+    """PR review #4: the leaf-pointer write shares the copy transaction; a
+    pointer failure must not strand copied messages without a leaf."""
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    _seed = db.add_message({"conversation_id": src, "sender": "user", "content": "hello"})
+    db.set_conversation_active_leaf(src, str(_seed))
+    dst = service.create_conversation(title="Dst")
+
+    def broken_leaf(conversation_id, message_id):
+        raise RuntimeError("pointer write failed")
+
+    monkeypatch.setattr(db, "set_conversation_active_leaf", broken_leaf)
+    with pytest.raises(RuntimeError, match="pointer write failed"):
+        service.copy_conversation_active_path(src, dst)
+    monkeypatch.undo()
+    assert db.get_messages_for_conversation(dst) == []
+
+
+def test_effective_active_leaf_falls_back_on_dangling_pointer(service_with_db):
+    """PR review #3: a stale/dangling durable pointer must resolve to a real
+    row (the FK-enforced lineage column can never receive it)."""
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    first = db.add_message({"conversation_id": src, "sender": "user", "content": "one"})
+    second = db.add_message(
+        {"conversation_id": src, "sender": "assistant", "content": "two",
+         "parent_message_id": first}
+    )
+    db.set_conversation_active_leaf(src, "not-a-real-message-id")
+    assert service.effective_active_leaf(src) == str(second)
