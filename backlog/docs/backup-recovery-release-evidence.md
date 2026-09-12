@@ -366,3 +366,22 @@ not imply those omitted receipts were uploaded. Final definition SHA-256:
 `7511509542b822891bba4eaca3ba385857b3ab41b235f47cd6f07d722fb8f741`.
 Reports: `/private/tmp/task26-manual-workflow-report.md` and
 `/private/tmp/task26-manual-workflow-independent-review.md`.
+
+## Native configuration lock during first replacement
+
+The final installed F9 replacement run exposed a normal-app integration gap: the
+first configuration-folder proof rejected the retained empty `config.toml.lock`
+created by Chatbook's native config transaction. The failed41.10s run and a fresh
+sanitized diagnostic both stopped before replacement credential review, at
+`replacement_config_container_unverified`. The failed private fixtures remain intact.
+
+The proof now recognizes only the selected config's exact lock path when it is an
+included, regular, owned, mode0600, single-link, zero-byte file. Its identity remains
+in the existing first and maintenance-held second checks. Unknown siblings and unsafe
+lock impersonators remain refused; no lock is created, removed, backed up or restored
+by this correction. Two intended acceptance/state cases failed before the correction;
+the final focused module passes8 in0.61s, including six refusal cases. Independent
+source review, scoped Ruff/compile/whitespace checks and production Bandit0 pass.
+Reports: `/private/tmp/task26-config-lock-fix-report.md` and
+`/private/tmp/task26-config-lock-independent-review.md`. The actual packaged rerun is
+reported separately below.

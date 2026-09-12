@@ -722,20 +722,31 @@ def _first_config_container(
     }
     rows = inventory_tree(parent, owner="config", external=False)
     state = []
+    config_lock = selector.with_name(selector.name + ".lock")
     for item in rows:
+        native_lock = item.status == "included" and item.path == config_lock
         if item.status not in {"included", "included_directory"} or not (
             item.path in declared
             or any(root in item.path.parents for root in directories)
             or item.status == "included_directory"
             and any(item.path in path.parents for path in declared)
+            or native_lock
         ):
             raise ValueError("replacement_config_container_unverified")
         info = item.path.lstat()
-        if not (
-            stat.S_ISDIR(info.st_mode)
-            if item.status == "included_directory"
-            else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
-        ):
+        if native_lock:
+            valid = (
+                stat.S_ISREG(info.st_mode)
+                and info.st_uid == os.geteuid()
+                and stat.S_IMODE(info.st_mode) == 0o600
+                and info.st_nlink == 1
+                and info.st_size == 0
+            )
+        elif item.status == "included_directory":
+            valid = stat.S_ISDIR(info.st_mode)
+        else:
+            valid = stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+        if not valid:
             raise ValueError("replacement_config_container_unverified")
         state.append((item.path, item.metadata, info.st_dev, info.st_ino, info.st_mode))
     return identity, tuple(state)
