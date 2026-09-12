@@ -181,9 +181,10 @@ def _native_identity(private_root: Path) -> dict[str, object]:
 
 def _windows_ancestor_receipt(workspace: Path, private_root: Path) -> dict[str, object]:
     """Classify native owner/DACL data without exporting SIDs or local paths."""
+    entries: list[dict[str, object]] = []
     receipt: dict[str, object] = {
         "schema": 1,
-        "entries": [],
+        "entries": entries,
     }
     if os.name != "nt":
         receipt["unsupported"] = "native_windows_required"
@@ -230,8 +231,6 @@ def _windows_ancestor_receipt(workspace: Path, private_root: Path) -> dict[str, 
             if candidate not in paths:
                 paths.append(candidate)
 
-    entries = receipt["entries"]
-    assert isinstance(entries, list)
     for path in paths:
         roles = {}
         for name, root in roots.items():
@@ -560,9 +559,9 @@ def run(workspace: Path, evidence_root: Path) -> int:
     effective_failure = not installed
     for phase in phases.values():
         phase_junit = phase["junit"]
-        assert isinstance(phase_junit, dict)
         phase_tests = phase["tests"]
-        assert isinstance(phase_tests, list)
+        if not isinstance(phase_junit, dict) or not isinstance(phase_tests, list):
+            raise TypeError("invalid_internal_phase_receipt")
         effective_failure |= bool(
             phase["pytest_returncode"]
             or phase_junit["parse_error"]
