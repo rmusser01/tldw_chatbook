@@ -1,6 +1,6 @@
 # Validation after rebasing onto dev
 
-These runs use dev `a766133fc4` plus TASK-32505's unchanged Chatterbox lifecycle fix, including the newly landed audio-format selection/admission changes. [Wheel identity](provenance/rebased-wheel-identity.json) records SHA256 `2f166ef75edcbcfc7af20354b41219f8c3fed84b7b1a26b3b2075261d2b6be50`; all 2,344 application/profile-core Python files match the current worktree, clean source, wheel and both installed environments. Earlier runs remain separate historical evidence.
+These runs use dev `a766133fc4` plus TASK-32505's unchanged Chatterbox lifecycle fix, including the newly landed audio-format selection/admission changes. [Wheel identity](provenance/rebased-wheel-identity.json) records SHA256 `2f166ef75edcbcfc7af20354b41219f8c3fed84b7b1a26b3b2075261d2b6be50`; the 2,344 application Python files match that worktree, clean source, wheel and both installed environments. This historical scan omitted the nine profile-core files because their sources live under `packages/tldw_profile_core/src/`; the final review rerun checks both complete packages. Earlier runs remain separate historical evidence.
 
 | Runtime | Full-content evidence | Stop to return | Observed Logi streams |
 | --- | --- | --- | --- |

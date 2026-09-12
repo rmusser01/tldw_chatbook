@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/ml-user/tts-linux-cuda-20260912/qualify-qodo.py", line 26, in <module>
+    installed={str(p.relative_to(site)):sha(p) for pkg in ['tldw_chatbook','tldw_profile_core'] for p in (site/pkg).rglob('*.py')};assert installed==actual,v
+                                                                                                                                          ^^^^^^^^^^^^^^^^^
+AssertionError: /home/ml-user/tts-linux-cuda-20260912/venv-kokoro-py312

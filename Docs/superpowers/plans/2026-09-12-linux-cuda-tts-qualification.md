@@ -39,7 +39,7 @@ Files: `scripts/validate_live_tts.py`, `Tests/TTS/test_live_validation_harness.p
 - [x] Run the existing validator with `--engine pytorch --device cuda --voice af_heart --format wav --scenarios playback,cancel,repeat --repeats 3 --play-audio`, explicit local model/voice paths, isolated package root and a new output directory.
 - [x] Run the analogous `--engine onnx --device cpu --format mp3` tuple using pinned local ONNX model/voices.
 - [x] Transcribe every full successful clip with `scripts/verify_live_tts_content.py`; retain begin/middle/end coverage, native overlap, repeated settled memory, device PCM and drained shutdown evidence.
-- [ ] Coordinate a complete known utterance through the headset with the user and record the actual listening response separately.
+- [x] Coordinate a complete known utterance through the headset with the user and record the actual listening response separately.
 
 ## Task 3: Qualify the registered Chatterbox CUDA runtime
 
@@ -51,7 +51,7 @@ Files: `scripts/validate_live_tts.py`, `Tests/TTS/test_live_validation_harness.p
 ## Task 4: Close out evidenced work
 
 - [x] Curate credential-free records under `Docs/QA/tts-linux-cuda-2026-09-12/` with immutable failure records and source/runtime/model manifests.
-- [ ] Run targeted verification for changed tooling and review the diff. Update backlog criteria only where evidence establishes them; keep any remaining criteria open.
+- [x] Run targeted verification for changed tooling and review the diff. Update backlog criteria only where evidence establishes them; keep any remaining criteria open.
 - [x] Release task-owned processes and device handles, retain reproducible assets/evidence, and report remaining validation limits.
 
 ## Discovered fix: TASK-32505
@@ -61,7 +61,7 @@ ADR required: no. Existing ADR-023 initialization/resource ownership applies; th
 - [x] Retain startup, process acquisition and readiness ownership so close cannot return before a late child or native loader settles.
 - [x] Preserve nonblocking initialization, join cancellation-safe close, and prove queued startup, gated spawn, late readiness and fallback behavior with targeted regressions.
 - [x] Rebuild the installed wheel and repeat Chatterbox CUDA qualification on base `8ab21ecaf3` plus the corrected backend.
-- [ ] Complete final review and repeat installed-wheel qualification after rebasing onto the newer dev audio-player changes.
+- [x] Complete final review and repeat installed-wheel qualification after rebasing onto the newer dev audio-player changes.
 
 ## Execution record
 
@@ -82,8 +82,16 @@ ADR required: no. Existing ADR-023 initialization/resource ownership applies; th
 
 ## Rebase verification
 
-Rebased onto `a766133fc4`, preserving both independent lesson entries. A landed task already owned ID 32494, so our lifecycle fix moved to TASK-32505 with provenance after sweeping 57 origin refs and 41 worktrees. Rebuilt the wheel and verified all 2,344 Python files against current source and both installed environments.
+Rebased onto `a766133fc4`, preserving both independent lesson entries. A landed task already owned ID 32494, so our lifecycle fix moved to TASK-32505 with provenance after sweeping 57 origin refs and 41 worktrees. Rebuilt the wheel and verified the 2,344 application Python files against source and both installed environments.
 
 All three repeated runtime checks passed. Twenty observed streams across nineteen successful clips reached Logi sink 55, and all cleanup/process/GPU/audio checks passed. Kokoro CUDA and ONNX each passed 6/6 full-text checks with Whisper medium. Chatterbox passed 7/7 with Whisper small; medium recovered only the opening sentence from its reference clip. Both same-audio reports and the original orchestration exit 1 are retained. No synthesis replacement was made, and human listening criteria remain open.
 
 Rebased targeted tests: 217 passed. Ruff/format/diff/backlog/profile census checks passed. See `Docs/QA/tts-linux-cuda-2026-09-12/rebased/README.md`.
+
+## Qodo review follow-up
+
+Qodo identified shutdown admission during joined startup, central device validation, and optional PyTorch loading. Two gated shutdown cases failed before guards were added under the generation lock and after readiness waiting. The device boundary now uses shared validation; PyTorch loads through the optional-dependency helper after private worker setup. Targeted verification passed 229 tests and independent review passed 83 relevant cases. The branch was rebased onto `71313cccd8`; those upstream changes do not touch TTS/Audio.
+
+A stronger installed-file equality check caught a provenance-scan omission before model execution: profile-core sources live under `packages/tldw_profile_core/src/`, not beside the app. The original final-build attempt and manifests are retained; the corrected check includes all 2,350 Python files across both packages. The earlier 2,344-file rebased map covered the application only. Final hardware validation passed all three runtime checks: Kokoro CUDA/ONNX medium ASR 6/6 each; Chatterbox medium 6/7 and small 7/7 with the reference opening disagreement retained. All 19 streams routed to Logi and all resource/process/device checks cleared. Independent review verified 22 copied records and the complete 2,350-file map. See `Docs/QA/tts-linux-cuda-2026-09-12/qodo-final/README.md`.
+
+Final human replay: the user confirmed “All four were clear and complete” for Kokoro CUDA, ONNX MP3, Chatterbox default and the disputed reference clip through Logi. Exact question/answer and hashes are retained in `qodo-final/human-listening.json`. This closes the three qualification tasks while preserving every original ASR discrepancy and the scope of four replayed clips.
