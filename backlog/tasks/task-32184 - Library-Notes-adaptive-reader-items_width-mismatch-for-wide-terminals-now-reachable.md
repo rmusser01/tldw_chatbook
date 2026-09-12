@@ -72,5 +72,24 @@ fails as a disagreement rather than as a constant.
 RED: 12 of 24 parametrisations (`assert 64 == 56`, `assert 58 == 56`), 16 on
 dev. GREEN: 24 passed.
 
+Task-8 review (finding 9) doubted the 100-column arithmetic and proposed that
+the row collapses because the work-first prefs carry `library_open=True`.
+Re-measured under pytest with `resolve_adaptive_reader_layout(100, prefs,
+LIBRARY_NOTES_READER_PROFILE, reader_has_item=True)`:
+
+| custom_widths_enabled | library_open | items_width pref | items pane |
+|---|---|---|---|
+| True | True | 50 | closed, 0 (reader 90) |
+| True | False | 50 | closed, 0 (reader 90) |
+| True | either | 42 | open, 42 (reader 48) |
+| False | either | 50 or 42 | open, 42 (reader 48) |
+
+So the library flag makes no difference (the library pane closes at 100
+columns either way) and the saved 50-cell Items width IS what closes the
+pane: a custom width is honoured exactly or not at all, and 10 + 50 + 48 does
+not fit 100 while 42 does. The review's `items_width=42, items_open=True`
+reading is the custom-widths-OFF row of this table, not the test's
+configuration. The explanation above stands as written.
+
 Files: `Tests/UI/test_library_shell.py`.
 <!-- SECTION:NOTES:END -->
