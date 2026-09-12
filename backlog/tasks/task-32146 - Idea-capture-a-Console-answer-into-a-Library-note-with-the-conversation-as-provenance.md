@@ -114,7 +114,7 @@ Fix round 1 (review findings 1–7):
 - `_capturable_assistant_answer` carries its own three conditions instead of
   aliasing the speech predicate; the dead `console-message-action-capture-
   note-` prefix entry is gone (production More rows post `console_action_id`).
-- Riders filed: task-32467 (TASK-31759's `summarize-note` /
+- Riders filed: task-32512 (TASK-31759's `summarize-note` /
   `save-transcript-note` bypass the ephemeral registry) and task-32469 (the
   24-cell More menu truncates labels past ~15 characters with no ellipsis).
 <!-- SECTION:NOTES:END -->

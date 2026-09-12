@@ -1,5 +1,5 @@
 ---
-id: TASK-32467
+id: TASK-32512
 title: >-
   Console span note actions bypass the ephemeral registry (summarize-note /
   save-transcript-note)
