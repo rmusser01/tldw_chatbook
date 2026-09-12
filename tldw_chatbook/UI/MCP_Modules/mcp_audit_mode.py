@@ -22,7 +22,12 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
-from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
+from tldw_chatbook.MCP.execution_log import (
+    APPROVED_SESSION_DECISION,
+    KILL_SWITCH_DENIED_DECISION,
+    POLICY_DENIED_DECISION,
+    UNRESOLVED_DENIED_DECISION,
+)
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
@@ -80,15 +85,35 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
 # audit note for a rug-pull-invalidated tool-level allow
 # (`_audit_downgrade_if_fresh()`), not a call outcome at all -- see
 # `_outcome_text()` below.
+#
+# task-32280: "denied" and "denied-policy" are two different facts wearing
+# one word in the old vocabulary. "Denied by you" is a person pressing Deny
+# on the approval card; "Blocked (Off)" is the permissions refusing a call
+# nobody was ever shown. Audit exists to answer "what did I refuse?", which
+# one shared bucket cannot.
+#
+# Fix round: once "denied" MEANS "you", every producer writing it for a
+# refusal the user did not make became a lie in the log, so each refuser got
+# its own token -- the kill switch ("Blocked (kill switch)": neither a
+# person nor a per-tool setting, so the row points at the switch) and
+# "nobody decided" ("Denied (no decision)": a cancelled approval, a gate
+# that raised, a stale Hub-test admission, a moved workspace root).
 _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Allowed", "allowed"),
     ("Approved", "approved"),
     ("Approved (session)", APPROVED_SESSION_DECISION),
-    ("Denied", "denied"),
+    ("Denied by you", "denied"),
+    ("Blocked (Off)", POLICY_DENIED_DECISION),
+    ("Blocked (kill switch)", KILL_SWITCH_DENIED_DECISION),
     ("Denied (timeout)", "denied-timeout"),
-    ("Denied (no decision)", "denied-unresolved"),
+    ("Denied (no decision)", UNRESOLVED_DENIED_DECISION),
     ("Downgraded", "downgraded"),
 ]
+
+#: The Decision column renders these same labels, so the word in the table
+#: and the word in the filter are one vocabulary (an unrecognized raw value
+#: falls back to itself, as the "—" empty case already did).
+_DECISION_LABELS: dict[str, str] = {value: label for label, value in _DECISION_OPTIONS}
 
 _INITIATOR_OPTIONS: list[tuple[str, str]] = [
     ("Test", "test"),
@@ -96,7 +121,13 @@ _INITIATOR_OPTIONS: list[tuple[str, str]] = [
     ("System", "system"),
 ]
 
-_BLOCKED_DECISIONS = {"denied", "denied-timeout", "denied-unresolved"}
+_BLOCKED_DECISIONS = {
+    "denied",
+    POLICY_DENIED_DECISION,
+    KILL_SWITCH_DENIED_DECISION,
+    "denied-timeout",
+    UNRESOLVED_DENIED_DECISION,
+}
 
 # Task 1 (MCP Hub Phase 6): `state_text()` kind buckets for the Decision and
 # Outcome columns -- "allowed"/"approved" reached the tool (ready);
@@ -111,7 +142,15 @@ _DECISION_KIND: dict[str, str] = {
     "approved": "ready",
     APPROVED_SESSION_DECISION: "ready",
     "denied": "error",
+    POLICY_DENIED_DECISION: "error",
+    KILL_SWITCH_DENIED_DECISION: "error",
     "denied-timeout": "error",
+    # task-32280 fix round: "denied-unresolved" was in `_BLOCKED_DECISIONS`
+    # but had no kind, so it painted `muted` -- an unremarkable grey row for
+    # a call that never ran. The fix round gave it four more producers
+    # (cancelled mid-approval, a gate that raised, a stale Hub-test
+    # admission, a moved workspace root), which made the gap load-bearing.
+    UNRESOLVED_DENIED_DECISION: "error",
     "downgraded": "warning",
 }
 
@@ -571,13 +610,14 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             # (error) both fall back to `_outcome_text()`'s own "Downgraded"/
             # "Blocked" copy, which needs the identical color to stay
             # visually consistent between the two columns for the same row.
-            decision_value = str(entry.get("decision") or "—")
+            decision_raw = str(entry.get("decision") or "—")
+            decision_value = _DECISION_LABELS.get(decision_raw, decision_raw)
             outcome_value = _outcome_text(entry)
             table.add_row(
                 Text(_format_when(entry.get("ts"))),
                 Text(f"{entry.get('server_key', '')}::{entry.get('tool_name', '')}"),
                 Text(str(entry.get("initiator") or "—")),
-                state_text(decision_value, _decision_kind(decision_value)),
+                state_text(decision_value, _decision_kind(decision_raw)),
                 Text(format_duration_ms(int(entry.get("duration_ms") or 0))),
                 state_text(outcome_value, _outcome_kind(outcome_value)),
                 key=key,

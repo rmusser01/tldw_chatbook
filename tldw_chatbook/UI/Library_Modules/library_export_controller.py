@@ -1363,7 +1363,11 @@ class LibraryExportController:
         exists, so the overwrite line the form shows always names the
         actual path that will be written, never the raw picked one (the
         F4 design spec's explicit ordering: "normalized to .zip BEFORE any
-        overwrite confirmation").
+        overwrite confirmation"). The NORMALIZED path is validated too
+        (TASK-31204): suffix replacement rewrites the final segment, so
+        the path the export actually writes must itself clear the shared
+        seam -- validating only the raw pick left that written path
+        unchecked.
 
         Args:
             selected_path: The chosen destination, or ``None`` if the
@@ -1373,6 +1377,10 @@ class LibraryExportController:
             return
         try:
             validated_path = validate_path_simple(selected_path, require_exists=False)
+            normalized_path = normalize_export_destination(validated_path)
+            normalized_path = validate_path_simple(
+                normalized_path, require_exists=False
+            )
         except ValueError as exc:
             logger.warning(
                 f"Rejected Library export destination {selected_path!r}: {exc}"
@@ -1381,7 +1389,6 @@ class LibraryExportController:
             if callable(notify):
                 notify(f"Rejected export destination: {exc}", severity="warning")
             return
-        normalized_path = normalize_export_destination(validated_path)
         self._library_export_form["destination"] = str(normalized_path)
         self._library_export_form["destination_exists"] = normalized_path.exists()
         self.refresh(recompose=True)

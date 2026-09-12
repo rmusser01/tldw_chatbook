@@ -89,13 +89,13 @@ def _install_textual_compatibility_shims() -> None:
         )
 
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __author__ = "Robert Musser"
 __email__ = "contact@rmusser.net"
 __license__ = "AGPLv3+"
 
 # Version tuple for programmatic comparison
-VERSION_TUPLE = (0, 2, 0)
+VERSION_TUPLE = (0, 2, 1)
 
 # Export key components when package is imported
 __all__ = [

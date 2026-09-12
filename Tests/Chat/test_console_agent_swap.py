@@ -1514,13 +1514,17 @@ async def test_regenerate_through_agent_path_uses_bridge_and_forks_sibling(
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("error:coroutine .* was never awaited:RuntimeWarning")
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
 async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     """Flipping ``[console] agent_runtime`` after controller construction must
     change the next send's path. Previously only controller construction
     (``_ensure_console_chat_controller``) read the gate/bridge --
     ``_sync_console_chat_core_state`` refreshed provider selection on every
     access but never the gate, so toggling the kill-switch had no effect
-    until the whole screen was torn down and rebuilt."""
+    until the whole screen was torn down and rebuilt. The unmounted screen cannot
+    start its acceptance refresh worker; that refusal must not leak a coroutine.
+    """
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -1739,13 +1743,29 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
     controller.app = _fake_app()  # no unified_mcp_service -- MCP is irrelevant here
 
     sentinel = _SentinelBuiltinGate()
-    monkeypatch.setattr(
-        controller_module, "build_builtin_gate", lambda service=None, **_policy: sentinel
-    )
+
+    # TASK-633: a call-COUNTING factory, not a constant-returning lambda.
+    # The old stub could not distinguish "built once and threaded to both
+    # consumers" from "built twice and merely coincidentally equal" -- a
+    # regression to two build_builtin_gate calls per run would have passed
+    # unchanged, since the real factory builds a fresh gate per call.
+    factory_calls = []
+
+    def _single_call_factory(service=None, **_policy):
+        factory_calls.append(service)
+        if len(factory_calls) > 1:
+            raise AssertionError(
+                f"build_builtin_gate was called {len(factory_calls)}x for "
+                "one run; the review hook and run_reply must share ONE gate"
+            )
+        return sentinel
+
+    monkeypatch.setattr(controller_module, "build_builtin_gate", _single_call_factory)
 
     result = await controller.submit_draft("hi")
 
     assert result.accepted is True
+    assert len(factory_calls) == 1
     assert captured[0]["builtin_gate"] is sentinel
 
     review_hook = captured[0]["review_tool_calls"]

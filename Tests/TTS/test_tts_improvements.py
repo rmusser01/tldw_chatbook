@@ -179,6 +179,7 @@ class TestTTSEventHandler:
                 *,
                 text,
                 voice_override=None,
+                response_format_override=None,
                 progress_sink=None,
             ):
                 self.calls.append((text, voice_override, progress_sink))

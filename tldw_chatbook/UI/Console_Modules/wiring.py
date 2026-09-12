@@ -1146,7 +1146,24 @@ def build_console_controllers(
             lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
         ),
     )
+    def _character_progress_counts() -> dict[str, int]:
+        bridge = screen._ensure_console_agent_bridge()
+        store = screen._console_chat_store
+        read_counts = getattr(bridge, "progress_counts", None)
+        if store is None or not callable(read_counts):
+            return {}
+        counts = read_counts()
+        result: dict[str, int] = {}
+        for session in store.sessions():
+            if session.persisted_conversation_id:
+                conversation_id = session.persisted_conversation_id
+                result[conversation_id] = max(
+                    result.get(conversation_id, 0), counts.get(session.id, 0)
+                )
+        return result
+
     screen._character_context = ConsoleCharacterContextController(
+        progress_counts=_character_progress_counts,
         database_accessor=(
             lambda: getattr(screen.app_instance, "chachanotes_db", None)
         ),
@@ -1217,6 +1234,29 @@ def build_console_controllers(
         ),
     )
 
+    async def _seed_console_fleet_history(wake) -> None:
+        import asyncio
+        try:
+            if await asyncio.to_thread(wake.seed_from_marks):
+                wake.retry_soon()
+        except Exception as exc:
+            from loguru import logger
+            logger.warning("console fleet history seed failed (exception_type={})", type(exc).__name__)
+
+    def _schedule_console_fleet_history_seed() -> bool:
+        from functools import partial
+        wake = getattr(screen._console_chat_controller, "fleet_wake", None)
+        store = screen._console_chat_store
+        if wake is not None and store is not None and any(
+            session.persisted_conversation_id for session in store.sessions()
+        ):
+            screen.run_worker(
+                partial(_seed_console_fleet_history, wake),
+                exclusive=True,
+                group="console-fleet-seed",
+            )
+        return False
+
     screen._fleet = ConsoleFleetLifecycleController(
         pending_handoffs_accessor=lambda: screen.app_instance.pending_handoffs,
         ensure_chat_store=lambda: screen._ensure_console_chat_store(),
@@ -1254,20 +1294,7 @@ def build_console_controllers(
                 else False
             )
         ),
-        seed_wake_from_marks=(
-            lambda: bool(
-                wake.seed_from_marks()
-                if (
-                    wake := getattr(
-                        screen._console_chat_controller,
-                        "fleet_wake",
-                        None,
-                    )
-                )
-                is not None
-                else False
-            )
-        ),
+        seed_wake_from_marks=_schedule_console_fleet_history_seed,
         retry_wake_soon=(
             lambda: (
                 retry()
@@ -1302,7 +1329,7 @@ def build_console_controllers(
                 else False
             )
         ),
-        wake_delivering_conversation_id=(
+        wake_delivering_session_ids=(
             lambda: (
                 delivering()
                 if callable(
@@ -1312,7 +1339,7 @@ def build_console_controllers(
                             "fleet_wake",
                             None,
                         ),
-                        "delivering_conversation_id",
+                        "delivering_session_ids",
                         None,
                     )
                 )
@@ -2024,6 +2051,19 @@ def build_console_controllers(
     #: See `agent.py`'s module docstring for the full map of what moved and
     #: why, including the one method that name-matched but is not part of
     #: this cluster.
+    def _reveal_agent_detail() -> None:
+        from ...Chat.console_rail_state import console_context_reveal_preferences
+        columns = screen._console_rail_available_columns()
+        changes = console_context_reveal_preferences(
+            screen._current_console_rail_state(available_columns=columns), columns
+        )
+        screen._set_console_rail_preference(
+            left_open=changes["left_open"],
+            right_open=changes.get("right_open"),
+            explicit_right_toggle=False,
+            section_updates={"agent": True},
+        )
+
     screen._agent = ConsoleAgentController(
         screen,
         app_instance=screen.app_instance,
@@ -2045,6 +2085,7 @@ def build_console_controllers(
             lambda: screen._character._current_console_rail_conversation_id()
         ),
         current_rail_state_accessor=lambda: screen._current_console_rail_state(),
+        reveal_agent_detail=_reveal_agent_detail,
         # `getattr` with a default, matching the pre-move body: the fleet
         # summary line is reachable on a screen that has never built a chat
         # controller.

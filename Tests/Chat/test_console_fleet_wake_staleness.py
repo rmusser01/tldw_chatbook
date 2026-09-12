@@ -56,7 +56,10 @@ async def test_deferred_wake_notice_reports_done_despite_a_pinned_snapshot(
         tmp_path
     )
     try:
-        parent_id = runs_db.create_run(conversation_id=session.id, agent_kind="primary")
+        chain = runs_db.automatic_work.create_chain(session.id, root_submission_id="manual")
+        parent_id = runs_db.create_run(
+            conversation_id=session.id, agent_kind="primary", work_chain_id=chain
+        )
         runs_db.set_status(parent_id, "done", "turn final")
         child_id = runs_db.create_run(
             conversation_id=session.id,

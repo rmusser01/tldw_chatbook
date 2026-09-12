@@ -15,6 +15,7 @@ This page is the orientation tour; the details live on the child pages below:
 - [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) — tab strip, "Switch Session", conversation browser, workspaces.
 - [Branching & rewind](console/branching-and-rewind.md) — regenerate variants, edit-and-resend forks, `/rewind`.
 - [Attachments, images & voice](console/attachments-images-voice.md) — Attach picker, paste/drop, clipboard images, image generation, dictation.
+- [Voice & hands-free](console/voice-and-hands-free.md) — hands-free loop, spoken commands, Speak replies, platform setup (incl. Linux players).
 - [Video generation, playback & streaming](console/video.md) — `/generate-video`, ephemeral videos & tombstones, in-app playback, `/stream-video`.
 - [Agent runs & tools](console/agent-runs-and-tools.md) — per-tab runs, fleet markers, approvals, skills, MCP tools.
 - [Canvas](console/canvas.md) — create, revise, inspect, recover, and safely export interactive artifacts.
@@ -293,8 +294,8 @@ composer-level strip below shows once setup completes.
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Buddy** (composer **Menu**) | Manage independent Buddy artwork, follow a conversation/workspace, and change Persona settings — see [Buddies](buddies.md). |
 | **Help** | Opens the Console help panel (same as F1). |
-| **Speak replies** | Speaks new assistant replies in this conversation. |
-| **Hands-free** | Enters/exits the voice conversation loop. Use this visible switch on macOS and with a touch or soft keyboard. |
+| **Speak replies** | Speaks new assistant replies in this conversation — see [Voice & hands-free](console/voice-and-hands-free.md). |
+| **Hands-free** | Enters/exits the voice conversation loop (same as Ctrl+Shift+H) — the switch is the touch/soft-keyboard route into the mode. See [Voice & hands-free](console/voice-and-hands-free.md). |
 
 For local Kokoro, open **Settings > Speech & TTS** and use **Exact** voice policy
 with a Kokoro voice value. If an older configuration shows **Server default**,
@@ -416,6 +417,16 @@ button, the Model section's **Configure** button in the left rail, or the
 - Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
   applies to this session only. Save as default also writes provider +
   streaming defaults to config."
+
+Need another server beyond the built-in providers? **New endpoint…**, next
+to **Base URL**, creates a named custom endpoint without leaving the modal:
+pick a template (blank OpenAI-compatible, any provider, or an existing named
+entry), adjust family, URL, and models, name it, and **Create**. The entry
+is saved to `config.toml` immediately and becomes selectable here, so unlike
+a typed-in URL it never trips the "Endpoint not saved" block, and
+conversations using it survive restart. Renaming, editing, and deletion
+(with a guard that detaches conversations first) live in **F9 ▸ Providers &
+Models ▸ Custom endpoints**.
 
 For a faster switch, **Alt+M** opens the quick **Model** popover —
 provider, model, and temperature without the full modal.

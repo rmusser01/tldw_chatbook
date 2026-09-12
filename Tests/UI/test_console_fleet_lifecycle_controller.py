@@ -28,7 +28,7 @@ _CALLBACK_NAMES = (
     "seed_wake_from_marks",
     "retry_wake_soon",
     "wake_has_pending",
-    "wake_delivering_conversation_id",
+    "wake_delivering_session_ids",
     "displayed_composer_draft_accessor",
     "screen_displayed_accessor",
     "screen_mounted_accessor",
@@ -287,7 +287,7 @@ def test_completion_claim_acknowledges_missing_session_without_side_effects(
     ]
 
 
-def test_mount_claim_reads_uncached_marks_before_wiring_and_retry() -> None:
+def test_mount_claim_seeds_history_independently_of_attention_marks() -> None:
     edges = _Edges()
     edges.replace("read_fleet_unseen_ids", lambda: frozenset({"conversation-a"}))
     edges.replace("ensure_agent_bridge", object)
@@ -297,7 +297,6 @@ def test_mount_claim_reads_uncached_marks_before_wiring_and_retry() -> None:
     edges.controller._claim_console_fleet_wake_marks()
 
     assert edges.call_names == [
-        "read_fleet_unseen_ids",
         "ensure_agent_bridge",
         "wire_wake_coordinator",
         "seed_wake_from_marks",
@@ -481,7 +480,7 @@ async def test_teardown_stages_counts_only_after_a_truthy_leave() -> None:
 
 
 @pytest.mark.asyncio
-async def test_survivor_tick_is_idempotent_and_final_paints_after_stop() -> None:
+async def test_survivor_tick_is_idempotent_and_final_paints_before_stop() -> None:
     edges = _Edges()
     timer = _Timer(edges.calls)
     survivors_live = True
@@ -510,11 +509,11 @@ async def test_survivor_tick_is_idempotent_and_final_paints_after_stop() -> None
         ("record_timer_created", ("console-fleet-survivor-tick",))
     ]
     assert edges.call_names[-3:] == [
+        "sync_native_console_ui",
         "timer.stop",
         "record_timer_stopped",
-        "sync_native_console_ui",
     ]
-    assert edges.calls[-2] == (
+    assert edges.calls[-1] == (
         "record_timer_stopped",
         ("console-fleet-survivor-tick",),
     )

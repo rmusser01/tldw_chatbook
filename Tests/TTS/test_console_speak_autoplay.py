@@ -634,6 +634,7 @@ async def test_manual_generation_preserves_legacy_service_call_shape(tmp_path) -
             *,
             text: str,
             voice_override: str | None,
+            response_format_override: str | None = None,
             progress_sink,
         ):
             del text, voice_override, progress_sink

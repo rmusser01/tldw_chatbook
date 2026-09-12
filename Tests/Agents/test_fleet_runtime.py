@@ -3082,14 +3082,14 @@ def test_thread_start_and_transient_terminal_status_failure_are_both_contained(
     real_set_terminal = db.set_terminal_with_step
     status_attempts = 0
 
-    def fail_child_terminal_once(run_id, status, result, terminal_step):
+    def fail_child_terminal_once(run_id, status, result, terminal_step, **kwargs):
         nonlocal status_attempts
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             status_attempts += 1
             if status_attempts == 1:
                 raise RuntimeError("transient terminal write failure")
-        return real_set_terminal(run_id, status, result, terminal_step)
+        return real_set_terminal(run_id, status, result, terminal_step, **kwargs)
 
     monkeypatch.setattr(threading.Thread, "start", fail_fleet_start_once)
     monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal_once)

@@ -1924,6 +1924,14 @@ def _load_settings_uncached(
     # loader) never saw a completed/started run and the wizard re-offered on
     # every launch even after real completion.
     final_first_run_settings_cli = get_toml_section("first_run")
+    # Console run hooks (spec 2026-09-11, Task 4): the RAW [hooks] table
+    # passes through untouched. Same shape as the first_run projection
+    # above -- a section only one consumer reads, and that consumer
+    # (Agents/run_hooks.py load_hooks_config) re-validates on every fire,
+    # so coercing here would only duplicate that logic. Without this
+    # projection the runtime could not reach [hooks] at all: the dict
+    # returned below is curated, not the parsed TOML.
+    final_hooks_settings_cli = get_toml_section("hooks")
     final_console_settings_cli = copy.deepcopy(get_toml_section("console"))
     if not isinstance(final_console_settings_cli, dict):
         final_console_settings_cli = {}
@@ -2305,6 +2313,7 @@ def _load_settings_uncached(
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
+        "hooks": final_hooks_settings_cli,  # Raw [hooks] table for Agents/run_hooks.py (Console run hooks)
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
@@ -3653,6 +3662,14 @@ scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
 
+[hooks]
+enabled = true  # master switch for Console run hooks (external commands on session/run lifecycle events)
+# [[hooks.hook]] entries: event / matcher / command / timeout_s
+# event: UserPromptSubmit | PreToolUse | PostToolUse | ApprovalRequested | Stop | SubagentStop
+# matcher: tool-name glob, valid only on PreToolUse/PostToolUse
+# command: argv list, no shell — e.g. ["/usr/local/bin/guard.sh", "--strict"]
+# timeout_s: per-hook ceiling in seconds (default 10); PreToolUse fails closed on timeout
+
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
 
@@ -3787,9 +3804,23 @@ openai_cache_key = false
 #
 # How many sub-agents of ONE conversation may run at once, counting any
 # still working from an earlier message. 1 disables the fleet (sub-agents
-# run inline, one at a time). The cap is per conversation AND per running
-# app -- N conversations can hold N * this between them.
+# run inline, one at a time). The conversation cap is also subject to the
+# shared runtime cap below.
 # max_live_subagents = 3
+#
+# Shared child execution slots across this Console runtime, including inline
+# children and cleanup still running after a child is marked terminal.
+# Automatic work may occupy four of six; manual/queued work can use all six.
+# max_runtime_subagents = 6
+# reserved_manual_subagents = 2
+#
+# Local tool workers shared across all conversations in this Console runtime.
+# A timed-out worker keeps its slot until it really exits. Automatic wakes
+# may occupy six of the default eight slots; two remain for manual work.
+# Defaults are owned by Agents/execution_capacity.py. Read before admission;
+# lowering a limit does not cancel already admitted work.
+# max_runtime_tool_workers = 8
+# reserved_manual_tool_workers = 2
 #
 # Whether a sub-agent may keep working after the reply that spawned it has
 # finished. false settles every sub-agent at the end of its own turn.
@@ -5099,7 +5130,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # Deep-Search Configuration
 # ==========================================================
 [tools]
-# web_deep_search_enabled = false    # Opt-in deep-search tool; requires app restart; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
+# web_deep_search_enabled = false    # Opt-in deep-search tool; the Console picks this up on its next agent run (each run rebuilds its tool catalog fresh, no app restart needed); external MCP clients only see it on their next client launch, and only when [mcp] expose_local_tools = true; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
 
 [SearchSettings]
 # Default search backend shared by basic web_search and web_deep_search.
@@ -5108,8 +5139,11 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # web-search dependencies and network access are still required).
 # search_provider_default = "duckduckgo"
 # Deep-search-only defaults below. Enable the deep-search tool with
-# [tools] web_deep_search_enabled = true (requires app restart; each call makes
-# ~2x-results+3 LLM calls plus page fetches -- real money on paid providers).
+# [tools] web_deep_search_enabled = true -- the Console picks this up on its
+# next agent run (no app restart needed); external MCP clients only see it on
+# their next client launch, and only when [mcp] expose_local_tools = true.
+# Each call makes ~2x-results+3 LLM calls plus page fetches -- real money on
+# paid providers.
 # relevance_analysis_llm = "openai"
 # final_answer_llm = "openai"
 # search_enable_subquery = false   # generate sub-questions from the query and

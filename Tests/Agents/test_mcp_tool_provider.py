@@ -9,6 +9,7 @@ rather than being hidden by a permissive fake.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 import time
 from types import SimpleNamespace
@@ -27,6 +28,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
     UNRESOLVED_REFUSAL,
 )
 from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.MCP.execution_log import POLICY_DENIED_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
 
@@ -776,8 +778,11 @@ def test_invoke_deny_refuses_and_records_decision(running_loop):
     assert result.ok is False
     assert result.error == DENY_REFUSAL
     assert result.outcome == "blocked"
+    # task-32280: the permissions are Off -- nobody was asked and nobody said
+    # no, so this must NOT land in Audit's "Denied by you" bucket alongside a
+    # card Deny the user actually pressed.
     assert service.record_tool_decision_calls == [
-        ("local:srv", "run", "denied", "agent", None)
+        ("local:srv", "run", POLICY_DENIED_DECISION, "agent", None)
     ]
     assert service.execute_calls == []
 
@@ -802,8 +807,11 @@ def test_invoke_ask_without_callback_fails_closed(running_loop):
     assert result.ok is False
     assert result.error == DENY_REFUSAL
     assert service.execute_calls == []
+    # task-32280: this refusal tells the model "blocked by MCP permissions
+    # (set to Off)", so the audit row has to say the same thing -- the
+    # transcript and the log must not disagree about who refused.
     assert service.record_tool_decision_calls == [
-        ("local:srv", "run", "denied", "agent", None)
+        ("local:srv", "run", POLICY_DENIED_DECISION, "agent", None)
     ]
 
 
@@ -1002,6 +1010,287 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
     result3 = provider.invoke(tool_id, {})
     assert result3.ok is False  # default "ask" state, no callback -> fail closed
     assert len(service.record_tool_decision_calls) == 3
+
+
+# ---------------------------------------------------------------------------
+# task-32280: a card Deny resolved by the review hook never reaches invoke()
+# ---------------------------------------------------------------------------
+
+
+def test_record_user_denial_writes_one_denied_row(running_loop):
+    """The seam the review hook uses when the runtime skips dispatch."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    provider.record_user_denial(tool_id)
+
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ]
+    assert service.execute_calls == []
+
+    # A name this provider does not own (a built-in, a skill tool) is not
+    # its denial to record.
+    provider.record_user_denial("read_file")
+    assert len(service.record_tool_decision_calls) == 1
+
+
+def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(running_loop):
+    """task-32280 regression, live-observed on dev 3315241674.
+
+    Three approvals of one MCP tool wrote three execution-log rows; the
+    fast-button Deny on the same tool wrote NONE, so Audit could not answer
+    "what did I refuse?". Cause: `run_agent_loop` turns any non-"proceed"
+    verdict from the review hook straight into the call's result and skips
+    dispatch, so `MCPToolProvider.invoke` -- the only thing that was
+    recording denials -- never ran for a denied call.
+
+    Drives the REAL provider through the REAL production hook so a fake
+    cannot paper over the gap.
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    class _NoBuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+    class _NoBuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    hook = build_tool_review_hook(
+        _NoBuiltinGate(),
+        _NoBuiltinProvider(),
+        provider,
+        lambda pending: {row.call_id: "deny" for row in pending},
+        workspace_id=None,
+    )
+    verdicts = hook([ToolCall(name=tool_id, args={"x": 1}, call_id="c-1")], RUN)
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"precondition: the denied call must not be dispatched: {verdicts}"
+    )
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ], (
+        "the user's Deny left no row in the execution log: "
+        f"{service.record_tool_decision_calls}"
+    )
+    assert service.execute_calls == []
+
+
+def test_stop_mid_approval_records_only_the_unresolved_row(running_loop):
+    """R23 regression: a Stop while the card is up is not a user denial.
+
+    `request_mcp_approvals` fails the unanswered round closed to "deny" AND
+    writes the honest `denied-unresolved` audit row itself. The review hook,
+    seeing only "deny", then wrote a SECOND row that Audit renders as
+    "Denied by you" -- a decision the user never got to make. Drives the
+    REAL controller through the REAL hook (a direct `request_mcp_approvals`
+    call cannot see the duplicate, since the duplicate is the hook's).
+    """
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleChatController,
+        build_tool_review_hook,
+    )
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    class _NoBuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+    class _NoBuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(), provider_gateway=object()
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
+        unified_mcp_service=service,
+    )
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_soon() -> None:
+        time.sleep(0.05)
+        # begin_shutdown() runs its owner-thread queue teardown inline when
+        # no owner loop is bound (none is, in this synchronous test), which
+        # trips the queue's cross-thread guard -- it still denies the
+        # unresolved approval first (in begin_shutdown's `finally`), so the
+        # assertions below hold; only the thread-local exception is noise.
+        with contextlib.suppress(Exception):
+            controller.begin_shutdown()
+
+    stopper = threading.Thread(target=_stop_soon)
+    stopper.start()
+    hook = build_tool_review_hook(
+        _NoBuiltinGate(),
+        _NoBuiltinProvider(),
+        provider,
+        controller.request_mcp_approvals,
+        workspace_id=None,
+    )
+    verdicts = hook([ToolCall(name=tool_id, args={"x": 1}, call_id="c-1")], RUN)
+    stopper.join()
+
+    assert verdicts.get("c-1", "proceed") != "proceed", (
+        f"the stopped call was cleared for dispatch: {verdicts}"
+    )
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied-unresolved", "agent", "run stopped while approval pending")
+    ], (
+        "a Stop mid-approval recorded a user denial it never received: "
+        f"{service.record_tool_decision_calls}"
+    )
+    assert service.execute_calls == []
+
+
+def test_hook_level_approval_and_deny_of_one_tool_record_one_row_each(running_loop):
+    """Two calls of one tool, one approved and one denied: the approval is
+    recorded by `invoke()`/`execute_hub_tool` and the denial by the hook --
+    one row each, never two for the same call."""
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    class _NoBuiltinGate:
+        def begin_turn(self, run_id):
+            pass
+
+    class _NoBuiltinProvider:
+        def tool_for(self, name):
+            return None
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    hook = build_tool_review_hook(
+        _NoBuiltinGate(),
+        _NoBuiltinProvider(),
+        provider,
+        lambda pending: {
+            row.call_id: ("deny" if row.call_id == "c-no" else "approve_once")
+            for row in pending
+        },
+        workspace_id=None,
+    )
+    verdicts = hook(
+        [
+            ToolCall(name=tool_id, args={"x": 1}, call_id="c-ok"),
+            ToolCall(name=tool_id, args={"x": 2}, call_id="c-no"),
+        ],
+        RUN,
+    )
+
+    assert verdicts.get("c-no", "proceed") != "proceed"
+    # Exactly the denied call is recorded here; the approved one is
+    # dispatched and recorded service-side by `execute_hub_tool`.
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ]
+    result = provider.invoke(tool_id, {"x": 1})
+    assert result.ok is True
+    assert len(service.record_tool_decision_calls) == 1
+    assert service.execute_calls[0][4] == "approved"
+
+
+def test_high_risk_rows_do_not_offer_the_inert_exact_input_option(running_loop):
+    """R22: `permission_store.arg_rule_allows` returns False outright for a
+    tool whose tags intersect `HIGH_RISK_TAGS`, so "always allow this exact
+    input" could never quiet one of its calls -- the card was advertising a
+    decision that does nothing. `always_allow` STAYS offered: it persists a
+    `tool_override` allow, the one origin `resolve_effective_state`'s risk
+    floor spares.
+    """
+    from dataclasses import replace
+
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("wipe"), _tool_dict("peek")])
+        ]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    risky_name = next(
+        e.name for e in provider.list_catalog() if e.name.endswith("wipe")
+    )
+    safe_name = next(
+        e.name for e in provider.list_catalog() if e.name.endswith("peek")
+    )
+    tool, state = provider._entry_by_llm_name[risky_name]
+    provider._entry_by_llm_name[risky_name] = (
+        replace(tool, tags=("mutates",)),
+        state,
+    )
+
+    risky = provider.pending_gate_for(risky_name, {"x": 1}, "c-1")
+    safe = provider.pending_gate_for(safe_name, {"x": 1}, "c-2")
+
+    assert risky is not None and safe is not None
+    assert "allow_matching" not in risky.options, (
+        f"a high-risk row still offers an inert exact-input rule: {risky.options}"
+    )
+    assert risky.options == (
+        "approve_once",
+        "approve_session",
+        "always_allow",
+        "deny",
+    )
+    # Untagged tools are untouched -- "" means "offer the full set".
+    assert safe.options == ()
+
+
+def test_allow_matching_on_a_high_risk_tool_approves_once_without_persisting(
+    running_loop,
+):
+    """R22(b): defense in depth for a verdict that reaches the provider
+    anyway (a stale card, a caller that ignores `options`). Storing the
+    rule would leave permanently dead state in `mcp_permissions.json`."""
+    from dataclasses import replace
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("wipe")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    tool, state = provider._entry_by_llm_name[tool_id]
+    provider._entry_by_llm_name[tool_id] = (replace(tool, tags=("mutates",)), state)
+    provider.apply_batch_decisions(RUN, {tool_id: "allow_matching"})
+
+    result = provider.invoke(tool_id, {"x": 1})
+
+    assert result.ok is True, "the approved call did not run"
+    assert service.add_arg_rule_calls == [], (
+        f"a rule `arg_rule_allows` can never honour was persisted: "
+        f"{service.add_arg_rule_calls}"
+    )
 
 
 def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
@@ -1525,7 +1814,11 @@ def test_invoke_refuses_when_kill_switch_flips_between_compose_and_invoke(runnin
     assert result.ok is False
     assert result.error == KILL_SWITCH_REFUSAL
     assert service.execute_calls == []
-    assert service.record_tool_decision_calls[-1][2] == "denied"
+    # task-32280 fix round: the SWITCH refused. Recording the bare "denied"
+    # here put a row Audit renders as "Denied by you" in the log for a call
+    # no person was ever asked about -- and pointed the reader at this
+    # tool's permissions instead of at the switch that actually blocked it.
+    assert service.record_tool_decision_calls[-1][2] == "denied-killswitch"
 
 
 def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(

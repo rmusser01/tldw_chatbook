@@ -9,6 +9,17 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Fail-closed assertions need a successful control on the real scheduler path
+
+During PR #2645 review, a disposal test called synchronous `RunHooksEngine.fire`
+inside an async test and asserted that a guard was blocked. It passed because
+the nested event-loop error failed closed, even when runtime disposal did not
+close the engine. The test also assumed `/bin/true` existed on macOS. Using
+`sys.executable`, awaiting `fire_async`, and first proving that the same hook
+succeeds before disposal exposed the missing cleanup. For fail-closed behavior,
+establish a successful control and exercise the production sync/async entry;
+an unrelated exception can otherwise satisfy the failure assertion.
+
 ## Cancellation waiters cannot own terminal acknowledgements
 
 **TASK-32115, Buddy/TTS integration, 2026-09-09.** Replacing a Buddy utterance
@@ -13257,6 +13268,22 @@ correcting the mock contract then made that assertion pass. Batch tests must
 assert the specific item's persisted outcome or write payload, not only an
 aggregate count that unrelated items can satisfy.
 
+
+## Render helpers must distinguish widget content, borders, and layout slots
+
+**Incident (TASK-32506, 2026-09-10).** Release verification found five Library
+assertion failures, all reproduced on pristine pre-release dev. The focus helper
+required underline on the newly added solid border; a width helper measured the
+32-cell canvas while its test expected the 36-cell padded pane; and a grid test
+treated the intentional two-cell danger-action margin as column drift.
+
+Inspect the exact geometry a helper measures before changing the application.
+Keep underline assertions on painted content, distinguish canvas and pane widths,
+and compare grid origins with independently pinned expected margins. Subtracting
+whatever margin is currently present would hide the accidental indentation the
+original regression was intended to catch. The repaired five cases and four
+shared focus-helper caller cases passed without changing application behavior.
+
 ### Rebased cold-session fixtures must cross activation boundaries (2026-09-10)
 
 PR #2504's final integration initially failed 31 closed-history cases before the
@@ -13369,6 +13396,53 @@ those shorthands with `background-color`, `border-width`, `border-style`, and
 `border-color` made the exact packaged examples execute without changing pinned
 runtime assets. Compiler acceptance alone does not qualify authoring examples;
 run their exact source through the actual renderer and exercise the controls.
+
+## Reconstructing a PR must verify a fresh checkout's test prerequisites
+
+During the agent-orchestration preservation PR (2026-09-11), two mounted progress
+checks reached their screenshot capture and failed because the parent SDD evidence
+directory existed only in the original working checkout. The test used
+`mkdir(exist_ok=True)` for a nested path. Creating parents makes the capture work
+in a fresh checkout. The same pass found two survivor tests whose separately built
+app missed another module's autouse database fixture: recovery correctly reported
+`history_unavailable`, so the intended elapsed-row assertions could not run.
+Attaching the existing real-database helper before mount restored both exact
+checks without changing production behavior or weakening their assertions.
+
+A helper imported from another test module does not bring that module's autouse
+fixtures with it. Verify local artifact directories and explicit application
+prerequisites when reconstructing reviewed work outside its original checkout.
+
+## Isolated subprocess tests need the isolated checkout's import binding
+
+During PR 2631 integration, the shared virtual environment imported the rebased checkout for ordinary pytest calls, but its Python -I helper subprocesses loaded the original shared checkout through that environment's installed package. Newer parent/helper protocols then disagreed. A separate verification environment bound the exact worktree ahead of the existing dependency directory; checking `python -I -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` proved the binding, and all 431 feature and 575 upstream Agent cases passed, including real subprocess/worktree checks. Verify child-process package provenance as well as pytest cwd; do not change a shared editable installation to repair another checkout's tests.
+
+## A leaked TTS artifact deletes itself during interpreter shutdown, when builtins are gone
+
+**TASK-32013, 2026-09-11.** New `TTSEventHandler` tests that monkeypatched
+`_play_utterance_legacy_artifact` to a no-op started logging
+`Error securely deleting file /tmp/tts_audio_*.mp3: name 'open' is not
+defined` -- only under pytest, only for those tests, and the function
+worked fine when called directly in the same session. The no-op'd play
+path is also the path that schedules artifact cleanup, so every test
+leaked its written artifact; the global temp manager's `__del__` then ran
+`secure_delete_file` during interpreter teardown, where `open` is already
+cleared from builtins. The NameError was caught, logged, and the file
+left in /tmp -- a log line that looks like a code bug but is a test
+hygiene artifact.
+
+**What to do.** Any test that fakes the TTS play path must still run the
+handler's own teardown (`await handler.cleanup_tts_resources()` at test
+end) so artifacts are deleted inline while the interpreter is alive.
+When you see "name 'open' is not defined" from secure deletion, look for
+leaked temp artifacts deleted at shutdown, not a bug in the deleting
+code.
+
+## Preinitialized backend fixtures do not establish startup ownership
+
+During Linux CUDA qualification (TASK-32505, 2026-09-12), a Chatterbox preflight incorrectly assumed that awaiting `initialize()` awaited readiness. The API intentionally schedules initialization. Closing immediately afterward exposed a separate defect: queued startup could launch a child after close, an in-flight spawn could publish a late child, and a readiness waiter could restore initialized state after cleanup. Bounded fake-IPC reproductions established those races independently of the preflight's shutdown hang. The 30 existing audio-delivery tests used preinitialized models and did not cover startup ownership; nine focused lifecycle tests now cover queued/in-flight startup, readiness, native fallback, generation waiting for initialization, and repeated or cancelled close.
+
+Preserve a provider's nonblocking startup contract, but test ownership from admission through close. Waiting for a ready fixture before testing cancellation skips the startup boundary that can leak work. A cancelled native-loader await is not evidence that its thread stopped; retain and join that work before claiming closure.
 
 ### A Library canvas swallows a harness press while it is hidden — it looks like "the feature never ran" (2026-09-11)
 

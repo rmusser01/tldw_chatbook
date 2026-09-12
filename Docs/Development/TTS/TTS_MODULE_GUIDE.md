@@ -1057,9 +1057,10 @@ Local TTS installs:
    - Generate audio with the default voice
    - Play the audio automatically
 
-### TTS Playground (S/TT/S Tab)
+### TTS Playground (Speech Lab)
 
-The S/TT/S tab provides a comprehensive TTS testing environment:
+The Speech Lab (previously the S/TT/S tab) provides a comprehensive TTS
+testing environment:
 
 1. **Text Input**: Enter any text to synthesize
 2. **Provider Selection**: Choose `audio_cpp` or one of the six legacy

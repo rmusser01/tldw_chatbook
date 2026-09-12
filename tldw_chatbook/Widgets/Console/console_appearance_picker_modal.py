@@ -387,7 +387,7 @@ class ConsoleAppearancePickerModal(
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
 
-        def cancel_filter_timer() -> None:
+        async def cancel_filter_timer() -> None:
             self._cancel_filter_timer()
 
         await self.run_cancel_effect_once(cancel_filter_timer)

@@ -64,7 +64,7 @@ def test_other_refusals_keep_their_own_copy():
     """
     assert mtp.DENY_REFUSAL == "blocked by MCP permissions (set to Off)"
     assert mtp.UNRESOLVED_REFUSAL == "tool call not approved (no decision recorded)"
-    assert mtp.KILL_SWITCH_REFUSAL == "blocked — MCP tools are switched off"
+    assert mtp.KILL_SWITCH_REFUSAL == "tool call blocked: the chat tool kill switch is on"
     assert (
         mtp.TIMEOUT_REFUSAL
         == "user did not approve within the time limit; do not retry"

@@ -42,6 +42,20 @@ def _active_native_session(console):
     return next(s for s in store.sessions() if s.id == store.active_session_id)
 
 
+async def _bind_existing_console_conversation(console, conversation_id: str):
+    """Bind a persisted conversation with its required durable policy."""
+    store = console._ensure_console_chat_store()
+    session = _active_native_session(console)
+    session.persisted_conversation_id = conversation_id
+    policy = store.persistence.console_library_policy_repository.insert(
+        conversation_id,
+        store.session_library_policy_candidate(session.id),
+    )
+    assert policy.snapshot.policy_revision == 1
+    await store.hydrate_session_library_policy(session.id)
+    return session
+
+
 class _CapturingGateway:
     """Records the provider_messages the send would transmit; yields one chunk."""
 
@@ -97,7 +111,7 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        _active_native_session(screen).persisted_conversation_id = conv_id
+        await _bind_existing_console_conversation(screen, conv_id)
 
         controller = screen._ensure_console_chat_controller()
         gateway = _CapturingGateway()
@@ -137,7 +151,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
-        _active_native_session(screen).persisted_conversation_id = conv_id
+        await _bind_existing_console_conversation(screen, conv_id)
 
         controller = screen._ensure_console_chat_controller()
         gateway = _CapturingGateway()
@@ -188,3 +202,10 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
         assert (
             _final_user_content(captured["agent_messages"]) == "The grim jailer nods."
         )
+        store = screen._ensure_console_chat_store()
+        stored = [
+            m
+            for m in store.messages_for_session(_active_native_session(screen).id)
+            if m.role is ConsoleMessageRole.USER
+        ]
+        assert stored[-1].content == "The Warden nods."

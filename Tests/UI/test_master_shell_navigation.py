@@ -551,6 +551,42 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         assert destination.accessible_label in binding.description
 
 
+def test_no_screen_shadows_shell_destination_hotkeys():
+    """ADR-152: no BaseAppScreen subclass may bind a shell destination hotkey.
+
+    Screen-level bindings shadow app-level bindings, so a screen that binds a
+    shell nav key makes the nav bar's label lie on that screen. PersonasScreen
+    did exactly that with ctrl+1..4 (its mode strip) until task-32500; this
+    guard fails on the next regression instead of shipping another lying label.
+    Modal screens own their keyboard while open and are out of scope here.
+    """
+    import importlib
+    import pkgutil
+
+    from textual.binding import Binding
+
+    import tldw_chatbook.UI.Screens as screens_pkg
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+    from tldw_chatbook.UI.Navigation.shell_destinations import (
+        SHELL_DESTINATION_SHORTCUTS,
+    )
+
+    for module_info in pkgutil.walk_packages(
+        screens_pkg.__path__, prefix="tldw_chatbook.UI.Screens."
+    ):
+        importlib.import_module(module_info.name)
+
+    nav_keys = {key.lower() for key in SHELL_DESTINATION_SHORTCUTS.values()}
+    offenders: list[tuple[str, str]] = []
+    for screen_cls in BaseAppScreen.__subclasses__():
+        for binding in getattr(screen_cls, "BINDINGS", ()):
+            raw_key = binding.key if isinstance(binding, Binding) else binding[0]
+            for single_key in str(raw_key).split(","):
+                if single_key.strip().lower() in nav_keys:
+                    offenders.append((screen_cls.__name__, single_key.strip()))
+    assert offenders == []
+
+
 def test_shell_destination_binding_arguments_are_textual_strings():
     """Ctrl+1 and F5 must dispatch a string destination ID, not a name token."""
     from textual.actions import ActionError, parse
