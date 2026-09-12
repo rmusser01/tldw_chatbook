@@ -771,11 +771,10 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
     """Wall clocks and token ceilings: the wake cannot vary them.
 
     On the agent path both a manual send and a headless wake go through the
-    single `ConsoleAgentBridge.run_reply` dispatch site, and that method has
-    no budget parameter at all -- `CONSOLE_RUN_BUDGET` (`max_wall_seconds`,
-    `max_total_tokens`) is applied inside it. So "same entry point, same
-    inputs, no budget knob" is what makes the two turns identically bounded,
-    and each half is asserted rather than assumed.
+    single `ConsoleAgentBridge.run_reply` dispatch site with the same frozen
+    `run_budget`. Automatic work also remains subject to its durable chain
+    allowance under ADR-134. The shared per-run ceiling is asserted here
+    rather than assumed.
     """
     chacha, app, runs_db, store, session, _gateway, _bridge, _controller = (
         _controller_rig(tmp_path)
@@ -838,8 +837,8 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
         # notice; the payload before it is the same conversation.
         assert WAKE_NOTICE_HEADER in str(wake_call["agent_messages"][-1]["content"])
 
-        # Current dev freezes one budget at admission for every caller.
-        # A wake must carry the same ceiling, not a special wake override.
+        # Admission freezes one run budget for every caller. A wake carries
+        # the same per-run ceiling while ADR-134 adds its automatic-chain cap.
         parameters = set(inspect.signature(ConsoleAgentBridge.run_reply).parameters)
         assert {
             name

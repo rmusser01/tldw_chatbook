@@ -3,10 +3,11 @@ id: TASK-13215
 title: >-
   Fleet approval revocation: add a revoked-run tombstone and close the residual
   arm/read windows
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-08-10 01:37'
-updated_date: '2026-08-10 02:15'
+updated_date: '2026-09-12 07:25'
 labels: []
 dependencies: []
 priority: medium
@@ -15,13 +16,42 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Follow-up from supervisor-fleet PR 2a Task 7 review. Revocation sweeps rounds that are already armed, which leaves two narrow fail-open windows: (a) revoke-then-arm — an in-flight provider invoke() that reaches its single-call approval fallback AFTER the last revoke pass arms a card nobody will ever revoke (bounded only by the 120s approval timeout); (b) the worker can read was_revoked==False and have revocation land before it returns, and on the MCPToolProvider.invoke/LocalToolProvider fallback paths there is no later cancellation checkpoint. A set of revoked run ids consulted at ARM time (return all-deny immediately when the owner is already revoked) closes (a) outright and narrows (b). Also from the same review: the sibling retained-payload rule is correct but untested — replacing its guard with an unconditional _parked_approval_payloads.pop leaves all 235 tests green, and regressing it reproduces TASK-1050 Defect B (a live sibling child's card unrecoverable on switch-away/back, badge lit until timeout). And a round armed with an empty run-id owner (lost ContextVar binding) is silently unrevocable — worth a warning log.
+Cancellation must fence delayed approval fallbacks even when no round existed at the revoke pass. The current interrupt host already owns one shared lock and exact round-keyed payloads; the remaining gaps are revoke-before-arm admission, mixed final MCP verdict snapshots, and missing empty-owner diagnostics. Preserve sibling payloads and remountability with mutation-sensitive regressions. Indefinite default waits make timeout an unsuitable fallback; a fully committed approval cannot be retroactively retracted by later cancellation.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A revoked-run registry is consulted at arm time so a card armed after revocation resolves all-deny immediately
-- [ ] #2 The sibling retained-payload rule has a regression test (unconditional pop must fail it)
-- [ ] #3 Arming a round with an empty run-id owner logs a warning
-- [ ] #4 _revoke_skill_script_rounds' cross-lock window is closed: it snapshots still_armed under _pending_skill_script_lock, releases it, then pops _parked_skill_script_payloads under _approval_state_lock — a sibling confirm armed in that window has its payload popped (TASK-1050 Defect B: card unrecoverable on switch-away/back, badge lit until timeout). Fix with an identity-guarded pop (only when the stored payload's request_id is among the revoked ids), matching _clear_pending_skill_script_if_round_is_current. Note the same window pre-exists in request_skill_script_confirm's own teardown.
+- [x] #1 A revoked-run registry is consulted at arm time so a card armed after revocation resolves all-deny immediately
+- [x] #2 The sibling retained-payload rule has a regression test (unconditional pop must fail it)
+- [x] #3 Arming a round with an empty run-id owner logs a warning
+- [x] #4 Revoking or tearing down one skill-script round preserves the exact retained payload and remountability of a live sibling round.
+- [x] #5 The final tool-approval decision snapshot is atomic with revocation, so revocation before snapshot completion cannot return a partially approved batch.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR; clarify the existing cancellation contract
+ADR path: backlog/decisions/067-indefinite-human-approval-waits.md
+Reason: close late-arm and mixed-snapshot gaps in existing per-run cancellation authority; preserve primary-only unswept kinds and sibling ownership.
+1. Use current InterruptRoundHost probe evidence: late arming after revoke can approve and execute fs_write; no empty-owner warning; payload guards lack revoke-specific mutation coverage. Old cross-lock premise is stale after extraction.
+2. Retain revocation tombstones per run and swept kind for the host lifetime, under the same lock as registration. No TTL, capacity eviction, or session-close clearing can reactivate an abandoned daemon thread.
+3. Fail revoked arms before publishing cards, discard preregistered state by identity, return unresolved deny, and warn without payload content when revocable rounds have no run owner.
+4. Make MCP final decision snapshots atomic with revocation under the approval lock, keeping UI and audit side effects outside that lock. Preserve exact round-keyed sibling payload cleanup.
+5. Add deterministic regressions for post-revoke MCP/local/skill prompts, sibling payload remountability, empty-owner warning, and snapshot/revoke ordering. Run targeted approval/host/provider tests and changed-line static checks; independent review before Done.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented host-lifetime per-kind revoked-run tombstones with atomic shared admission at early controller registration and host entry. Late MCP/local/script fallbacks fail closed before configuration, publication, badge, or payload retention; unowned legacy arms warn once without content and remain answerable. MCP verdicts commit as a whole under the sweep lock, with revoked unresolved provenance and audit callbacks outside. Exact-round payload cleanup is unchanged.
+
+ADR required: no new ADR. Clarified backlog/decisions/067-indefinite-human-approval-waits.md: memory grows with distinct revoked runs for the host lifetime; eviction requires proof every physical invocation drained. Completed approvals and side effects are not retroactively retractable.
+
+Regression evidence: unchanged production gave 12 intended failures and 4 passing controls; repaired admission/snapshot/sibling selection gave 20 passes. A destructive same-session unpark mutation fails all four approval/script revoke/teardown remount cases. The real local fs_write fallback creates no file after revoke. Local approval selection: 16 passed. Scoped same-session script harness now waits for actual badge and retained payload and joins workers through begin_shutdown; its old preregistration-only wait raced publication and leaked a waiter on failure.
+
+Affected-file initial run: 201 passed, 9 failed. Exact original-source rerun of those nodes: 8 reproduced and the script readiness race passed once; human-wait passes alone (7), and corrected script plus human-wait passes together (12). Baseline UI failures and their exact node IDs are recorded in the task report; they remain outside this bounded fix. No full suite, dependency, guard/cap, provider authority, or cancellation-policy changes. Final combined host/wiring/script/human-wait/MCP run: 197 passed, 5 baseline mounted-UI cases deselected; parked-payload/approval targeted selection: 30 passed. Changed-line Ruff lint/format checks are clean; whole-file inherited debt is compared in task-2-static.log. Self-review preserved per-kind ownership, check_revoked=False, callback lock boundaries, sibling cleanup, and terminal snapshot semantics. Independent task review approved; final review evidence is recorded below.
+
+Independent task review and final whole-branch review approved. The final documentation correction was also re-reviewed and approved at 13456c5393. Targeted test evidence above remains applicable; no runtime code changed after those runs. Changed-line lint/format checks and branch whitespace checks passed. Seven inherited mounted-UI/readiness failures and environment warnings remain explicitly recorded in backlog/docs/agent-orchestration-followups-2026-09-12.md; this closure does not claim a full green suite. Closed on codex/agent-orchestration-followups, pending integration.
+PR #2641 follow-up: documented register_round arguments, mutable-state refusal, opt-out semantics, admission results, and unsupported-kind KeyError without runtime changes. Reviewed diagnostic statements against origin/dev: exactly one added content-free literal warning, no removed/moved calls or sink changes. Regenerated Docs/security/production-diagnostic-inventory.json: TASK-492 total 1387 -> 1388; console_interrupt_rounds.py 2/8e096c7f2fd6511a94e1 -> 3/974b70ae79ac4e3a7eb4. ADR required: no; public API documentation and an existing reviewed artifact. Verification: inventory no-write check passed (605 owners, 1388 TASK-492 calls, 55 TASK-31551 calls, 7715 TASK-494 calls, 12 sink files); host Ruff lint/format and git diff --check passed. No runtime tests repeated for documentation and derived-artifact changes.
+<!-- SECTION:NOTES:END -->

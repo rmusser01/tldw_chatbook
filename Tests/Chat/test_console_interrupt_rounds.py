@@ -364,3 +364,33 @@ def test_a_state_revoked_before_host_entry_is_never_resurrected():
     assert result == "revoked" and outcomes == ["revoked"]
     assert host.registries["approval"] == {} and host.payloads["approval"] == {}
     assert seams.mounted["approval"] == [] and seams.badges == []
+
+
+@pytest.mark.parametrize("check_revoked", [True, False])
+@pytest.mark.parametrize("kind", ["approval", "skill_script", "question"])
+def test_late_host_registration_respects_per_kind_tombstones(kind, check_revoked):
+    seams = FakeSeamsFull()
+    host = InterruptRoundHost(seams)
+    assert host.revoke_for_run("gone", {kind: lambda state: None}) == {kind: []}
+    state = {"event": threading.Event(), "run_id": "gone", "session_id": "sess-A"}
+    state["event"].set()
+    # A legacy preregistration must also be removed when refused.
+    host.registries[kind]["late"] = state
+    result = host.run_round(
+        kind,
+        "late",
+        _payload("late"),
+        state,
+        session_id="sess-A",
+        owning_session_id="sess-A",
+        deadline=None,
+        is_parked=False,
+        check_revoked=check_revoked,
+    )
+    assert result == ("revoked" if check_revoked else "decided")
+    assert host.registries[kind] == {} and host.payloads[kind] == {}
+    if check_revoked:
+        assert state["revoked"] is True
+        assert seams.mounted[kind] == [] and seams.badges == []
+    else:
+        assert any(seams.mounted[kind])

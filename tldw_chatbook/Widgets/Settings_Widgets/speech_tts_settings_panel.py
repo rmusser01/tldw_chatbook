@@ -8,6 +8,7 @@ change rather than a dynamic schema side effect.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
@@ -31,9 +32,11 @@ from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, 
 from textual.worker import NoActiveWorker, get_current_worker
 
 from tldw_chatbook.Chat.console_voice_input import (
+    DEFAULT_HANDSFREE_SEND_DELAY_SECONDS,
     DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
     DEFAULT_REALTIME_MODEL,
     DEFAULT_REALTIME_PROVIDER,
+    acoustic_barge_in_enabled as _read_acoustic_barge_in,
     handsfree_engine as _read_handsfree_engine,
     realtime_enabled as _read_realtime_enabled,
     realtime_model as _read_realtime_model,
@@ -307,6 +310,12 @@ def _read_realtime_settings_draft() -> _RealtimeSettingsDraft:
         # than writing a number the user never chose.
         vad_threshold=_format_optional_number(_read_realtime_vad_threshold()),
         vad_silence_ms=_format_optional_number(_read_realtime_vad_silence_ms()),
+        # TASK-32496: same "blank = unset" contract for the send delay --
+        # an unset key lets the readers' own default win.
+        handsfree_send_delay_seconds=_format_optional_number(
+            get_cli_setting("dictation", "handsfree_send_delay_seconds", None)
+        ),
+        acoustic_barge_in=_read_acoustic_barge_in(),
     )
 
 
@@ -2949,6 +2958,32 @@ class SpeechTTSSettingsPanel(Vertical):
                 classes="settings-select-row",
                 error=self._error("realtime", "handsfree_engine"),
             )
+            yield self._row(
+                "Send delay (seconds, pipeline engine)",
+                Input(
+                    value=draft.handsfree_send_delay_seconds,
+                    id="settings-speech-handsfree-send-delay",
+                    placeholder=str(DEFAULT_HANDSFREE_SEND_DELAY_SECONDS),
+                    classes=("settings-compact-input settings-speech-draft-field"),
+                ),
+                error=self._error("realtime", "handsfree_send_delay_seconds"),
+            )
+            yield self._row(
+                "Acoustic barge-in (headphones)",
+                Switch(
+                    value=draft.acoustic_barge_in,
+                    id="settings-speech-handsfree-acoustic-barge-in",
+                    classes="settings-speech-field settings-speech-draft-field",
+                ),
+                error=self._error("realtime", "acoustic_barge_in"),
+            )
+            yield Static(
+                "Acoustic barge-in lets your voice interrupt a speaking "
+                "reply. There is no echo cancellation: on speakers the "
+                "recognizer hears the reply itself -- use headphones.",
+                classes="settings-detail-row",
+                markup=False,
+            )
             yield Static(
                 "Spoken commands do not work inside realtime mode -- there is "
                 "no client-side speech-to-text running, so phrases like "
@@ -3771,6 +3806,17 @@ class SpeechTTSSettingsPanel(Vertical):
             self._realtime_draft.turn_detection = mode_widget.value
         self._realtime_draft.vad_threshold = threshold_widget.value
         self._realtime_draft.vad_silence_ms = silence_widget.value
+        try:
+            send_delay_widget = self.query_one(
+                "#settings-speech-handsfree-send-delay", Input
+            )
+            barge_in_widget = self.query_one(
+                "#settings-speech-handsfree-acoustic-barge-in", Switch
+            )
+        except QueryError:
+            return
+        self._realtime_draft.handsfree_send_delay_seconds = send_delay_widget.value
+        self._realtime_draft.acoustic_barge_in = bool(barge_in_widget.value)
 
     def _collect_pipeline_voice_visible_state(self) -> None:
         """Copy the mounted pipeline controls into their separate draft."""
@@ -4356,10 +4402,34 @@ class SpeechTTSSettingsPanel(Vertical):
                 realtime_section["vad_silence_ms"] = silence
         else:
             removed.extend(("vad_threshold", "vad_silence_ms"))
-        delete_keys: dict[str, tuple[str, ...]] = (
-            {"realtime": tuple(removed)} if removed else {}
+        # TASK-32496: the pipeline send delay follows the optional-number
+        # contract (blank = unset = delete; a deliberate value must be
+        # positive); barge-in is an explicit Switch and always written.
+        send_delay = self._validated_optional_number(
+            self._realtime_draft.handsfree_send_delay_seconds,
+            field="handsfree_send_delay_seconds",
+            message="Send delay must be a positive number of seconds.",
+            cast=float,
+            low=0.0,
+            high=None,
+            exclusive_low=True,
         )
-        dictation_section = {"handsfree_engine": self._realtime_draft.handsfree_engine}
+        dictation_removed: list[str] = []
+        if send_delay is None:
+            dictation_removed.append("handsfree_send_delay_seconds")
+        elif send_delay.is_integer():
+            send_delay = int(send_delay)
+        dictation_section: dict[str, Any] = {
+            "handsfree_engine": self._realtime_draft.handsfree_engine,
+            "acoustic_barge_in": self._realtime_draft.acoustic_barge_in,
+        }
+        if send_delay is not None:
+            dictation_section["handsfree_send_delay_seconds"] = send_delay
+        delete_keys: dict[str, tuple[str, ...]] = {}
+        if removed:
+            delete_keys["realtime"] = tuple(removed)
+        if dictation_removed:
+            delete_keys["dictation"] = tuple(dictation_removed)
         return _RealtimeSavePayload(
             section_values={
                 "realtime": realtime_section,
@@ -4379,6 +4449,7 @@ class SpeechTTSSettingsPanel(Vertical):
         cast: Any,
         low: float,
         high: float | None,
+        exclusive_low: bool = False,
     ) -> Any:
         """Validate one optional numeric knob; blank means "unset".
 
@@ -4386,6 +4457,12 @@ class SpeechTTSSettingsPanel(Vertical):
         panel uses, so a bad value refuses the WHOLE Save with an inline
         error rather than being silently dropped -- a silently dropped
         threshold reads to the user as "the setting does nothing".
+        `exclusive_low` makes the bound strict (TASK-32496: a zero send
+        delay is a footgun the readers would warn-and-fallback on every
+        boot, so Settings refuses to write it at all). Non-finite values
+        are rejected BEFORE the bounds: `value < low` is False for NaN
+        (it compares False to everything) and infinity passes a positive
+        lower bound, yet neither belongs in config (PR #2638 Qodo #5).
         """
         text = (raw or "").strip()
         if not text:
@@ -4394,7 +4471,11 @@ class SpeechTTSSettingsPanel(Vertical):
             value = cast(text)
         except (TypeError, ValueError):
             raise GlobalSpeechTTSValidationError("realtime", field, message)
-        if value < low or (high is not None and value > high):
+        if not math.isfinite(value):
+            raise GlobalSpeechTTSValidationError("realtime", field, message)
+        if value < low or (exclusive_low and value == low) or (
+            high is not None and value > high
+        ):
             raise GlobalSpeechTTSValidationError("realtime", field, message)
         return value
 

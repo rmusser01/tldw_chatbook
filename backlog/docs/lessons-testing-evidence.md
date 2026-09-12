@@ -13389,3 +13389,23 @@ prerequisites when reconstructing reviewed work outside its original checkout.
 ## Isolated subprocess tests need the isolated checkout's import binding
 
 During PR 2631 integration, the shared virtual environment imported the rebased checkout for ordinary pytest calls, but its Python -I helper subprocesses loaded the original shared checkout through that environment's installed package. Newer parent/helper protocols then disagreed. A separate verification environment bound the exact worktree ahead of the existing dependency directory; checking `python -I -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` proved the binding, and all 431 feature and 575 upstream Agent cases passed, including real subprocess/worktree checks. Verify child-process package provenance as well as pytest cwd; do not change a shared editable installation to repair another checkout's tests.
+## A leaked TTS artifact deletes itself during interpreter shutdown, when builtins are gone
+
+**TASK-32013, 2026-09-11.** New `TTSEventHandler` tests that monkeypatched
+`_play_utterance_legacy_artifact` to a no-op started logging
+`Error securely deleting file /tmp/tts_audio_*.mp3: name 'open' is not
+defined` -- only under pytest, only for those tests, and the function
+worked fine when called directly in the same session. The no-op'd play
+path is also the path that schedules artifact cleanup, so every test
+leaked its written artifact; the global temp manager's `__del__` then ran
+`secure_delete_file` during interpreter teardown, where `open` is already
+cleared from builtins. The NameError was caught, logged, and the file
+left in /tmp -- a log line that looks like a code bug but is a test
+hygiene artifact.
+
+**What to do.** Any test that fakes the TTS play path must still run the
+handler's own teardown (`await handler.cleanup_tts_resources()` at test
+end) so artifacts are deleted inline while the interpreter is alive.
+When you see "name 'open' is not defined" from secure deletion, look for
+leaked temp artifacts deleted at shutdown, not a bug in the deleting
+code.

@@ -1103,6 +1103,17 @@ class ConsoleDictationController:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
         self._cancel_console_dictation_elapsed_timer()
+        # TASK-32495: a dictation failure inside the hands-free loop
+        # (capture start refused -- missing extras, no device -- or a
+        # mid-capture failure) strands the loop otherwise: the FSM has no
+        # capture-failed input and `listening` has no watchdog, so the
+        # Switch kept claiming a live mode over a dead microphone. Exit
+        # through the loop's own reasoned path, exactly the precedent
+        # `_handle_console_dictation_limit` set for bounded endings -- the
+        # failure toast below still fires from this method.
+        hands_free_session = self._console_hands_free
+        if hands_free_session is not None:
+            hands_free_session.controller.on_exit_request()
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
         self._console_dictation_partial = ""

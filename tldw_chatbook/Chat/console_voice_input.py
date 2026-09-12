@@ -15,6 +15,7 @@ from __future__ import annotations
 # objects, which the detection helpers then read).
 import importlib
 import importlib.util  # noqa: F401 - patched seam; see comment above
+import math
 import string
 import sys  # noqa: F401 - patched seam; see comment above
 import threading
@@ -921,12 +922,15 @@ def handsfree_send_delay_seconds() -> float:
     """Countdown duration from `dictation.handsfree_send_delay_seconds`.
 
     Sibling validation shape to `Chat/attachment_core.py`'s numeric config
-    readers (e.g. `max_image_bytes`): a non-numeric or non-positive
-    configured value is invalid, logged, and falls back to the default
-    rather than arming a zero/negative/broken countdown.
+    readers (e.g. `max_image_bytes`): a non-numeric, non-positive, or
+    non-finite configured value is invalid, logged, and falls back to the
+    default rather than arming a zero/negative/broken countdown. The
+    finite guard matters because `value <= 0` is False for NaN (it
+    compares False to everything) and infinity is positive yet would arm
+    a countdown that never expires (PR #2638 Qodo #5).
 
     Returns:
-        The countdown duration in seconds, always positive.
+        The countdown duration in seconds, always positive and finite.
     """
     raw = get_cli_setting(
         "dictation",
@@ -937,7 +941,7 @@ def handsfree_send_delay_seconds() -> float:
         value = float(raw)
     except (TypeError, ValueError):
         value = 0.0
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         logger.warning(
             "dictation.handsfree_send_delay_seconds invalid ({!r}); using {}",
             raw,

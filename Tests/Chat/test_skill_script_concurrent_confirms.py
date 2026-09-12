@@ -151,47 +151,67 @@ def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resol
     session_id = controller.store.create_session(title="S").id
     controller.store.switch_session(session_id)
 
-    results = {}
-    t1 = _arm_for_session(controller, "skill-one", session_id, results, "one")
-    assert _wait_until(lambda: len(controller.pending_skill_script_ids()) == 1)
-    id1 = controller.pending_skill_script_ids()[0]
-    assert controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL
-
-    t2 = _arm_for_session(controller, "skill-two", session_id, results, "two")
-    assert _wait_until(lambda: len(controller.pending_skill_script_ids()) == 2)
-    id2 = [i for i in controller.pending_skill_script_ids() if i != id1][0]
-    # PR0: round 2 keeps its OWN key rather than overwriting round 1's --
-    # round 1 is still the session's head and still owns the card.
-    assert (
-        controller._head_round_payload(
-            controller._parked_skill_script_payloads, session_id
-        )["request_id"]
-        == id1
-    ), "arming round 2 must not evict round 1's card"
-
-    controller.resolve_pending_skill_script(False, False, request_id=id1)
-    t1.join(timeout=5)
-    assert results["one"] == {"allow": False, "remember": False}
-    assert controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL
-    assert session_id in controller._pending_approvals
-    assert (
-        controller._head_round_payload(
-            controller._parked_skill_script_payloads, session_id
-        )["request_id"]
-        == id2
-    ), "round 1 resolving must promote round 2, not discard it"
-
-    controller.resolve_pending_skill_script(True, True, request_id=id2)
-    t2.join(timeout=5)
-    assert results["two"] == {"allow": True, "remember": True}
-    assert controller.run_marker_for(session_id) is ConsoleRunMarker.NONE
-    assert session_id not in controller._pending_approvals
-    assert (
-        controller._head_round_payload(
-            controller._parked_skill_script_payloads, session_id
+    t1 = t2 = None
+    try:
+        results = {}
+        t1 = _arm_for_session(controller, "skill-one", session_id, results, "one")
+        assert _wait_until(lambda: len(controller.pending_skill_script_ids()) == 1)
+        id1 = controller.pending_skill_script_ids()[0]
+        assert _wait_until(
+            lambda: (
+                id1 in controller._pending_approvals.get(session_id, set())
+                and id1 in controller._parked_skill_script_payloads
+            )
         )
-        is None
-    )
+        assert controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL
+
+        t2 = _arm_for_session(controller, "skill-two", session_id, results, "two")
+        assert _wait_until(lambda: len(controller.pending_skill_script_ids()) == 2)
+        id2 = next(i for i in controller.pending_skill_script_ids() if i != id1)
+        assert _wait_until(
+            lambda: (
+                id2 in controller._pending_approvals.get(session_id, set())
+                and id2 in controller._parked_skill_script_payloads
+            )
+        )
+        # PR0: round 2 keeps its OWN key rather than overwriting round 1's --
+        # round 1 is still the session's head and still owns the card.
+        assert (
+            controller._head_round_payload(
+                controller._parked_skill_script_payloads, session_id
+            )["request_id"]
+            == id1
+        ), "arming round 2 must not evict round 1's card"
+
+        controller.resolve_pending_skill_script(False, False, request_id=id1)
+        t1.join(timeout=5)
+        assert results["one"] == {"allow": False, "remember": False}
+        assert controller.run_marker_for(session_id) is ConsoleRunMarker.NEEDS_APPROVAL
+        assert session_id in controller._pending_approvals
+        assert (
+            controller._head_round_payload(
+                controller._parked_skill_script_payloads, session_id
+            )["request_id"]
+            == id2
+        ), "round 1 resolving must promote round 2, not discard it"
+
+        controller.resolve_pending_skill_script(True, True, request_id=id2)
+        t2.join(timeout=5)
+        assert results["two"] == {"allow": True, "remember": True}
+        assert controller.run_marker_for(session_id) is ConsoleRunMarker.NONE
+        assert session_id not in controller._pending_approvals
+        assert (
+            controller._head_round_payload(
+                controller._parked_skill_script_payloads, session_id
+            )
+            is None
+        )
+    finally:
+        controller.begin_shutdown()
+        for worker in (t1, t2):
+            if worker is not None:
+                worker.join(timeout=3)
+                assert not worker.is_alive()
 
 
 def test_shutdown_denies_every_armed_round(controller):
