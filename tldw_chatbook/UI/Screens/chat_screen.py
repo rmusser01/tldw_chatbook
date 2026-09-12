@@ -17117,10 +17117,10 @@ class ChatScreen(BaseAppScreen):
 
     async def _consume_pending_conversation_resume(self) -> None:
         """Consume recovery only while Console owns the visible screen."""
-        if self.app.screen is not self:
+        handoffs = self.app_instance.pending_handoffs
+        if self.app.screen is not self or not handoffs.has_pending(HandoffChannel.CONSOLE_CONVERSATION_RESUME):
             return
         from ..Console_Modules.archive import consume_conversation_resume
-
         await consume_conversation_resume(self)
 
     @on(Button.Pressed, "#console-archive-chat")

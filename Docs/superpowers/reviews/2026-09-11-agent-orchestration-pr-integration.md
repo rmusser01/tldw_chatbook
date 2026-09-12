@@ -78,7 +78,9 @@ Verification is targeted; overlapping counts below are not added:
   attempts passed 32 cases. Eight bounded orchestration modules join the fast lane. The local bounded PR fast lane passed 1,097
   cases; twelve process cases failed during host semaphore allocation before
   application behavior (six task-store and six existing operation-lease cases).
-  These cases remain enabled and must pass on a clean CI runner.
+  Clean-runner verification now passes all **1,125 tests**, including every
+  process case; the required derived-artifact job also passed on head f66a87d12f.
+  Evidence: [CI run](https://github.com/rmusser01/tldw_chatbook/actions/runs/34671103740).
 - Derived CSS, diagnostic inventory, private-owner inventory, task IDs, SQL table
   allowlist and index-plan census pass. The index census covers 298 declarations;
   the three automatic-work indexes are pinned against real captured queries.
@@ -100,7 +102,27 @@ in the original ledger do not describe this integrated revision.
 
 - Publish the final reviewed head and resolve external review feedback.
 - Resolve Qodo and other actionable PR review comments, require green CI, and merge.
-  TASK-32493 remains In Progress until clean-runner evidence is available.
+  TASK-32493 is Done after clean-runner verification; final follow-up heads
+  must rerun the required checks before merge.
+
+## Qodo review follow-up
+
+All four Qodo findings on head f66a87d12f have corresponding corrections:
+
+- Historical run databases lacking `wake_delivered_at` are discovered with the
+  existing survivor predicate and handed to the normal DB owner for guarded
+  upgrade and recovery. Discovery stays read-only, empty/absent DBs stay cheap,
+  and chainless legacy results require manual review. The real old-schema
+  regression failed before the fix; 23 targeted launch/boot cases pass afterward.
+- Rewritten public wake methods document their actual argument, return and
+  lifecycle contracts and carry explicit types without eager runtime imports.
+- The unchanged 256-result claim bound is named `MAX_RESULTS_PER_ATTEMPT`.
+
+CI also exposed a startup scheduling difference: archive actions could load for
+an empty native-session list before `_ui_ready`, raising Linux's count to 974
+against the 973 cap. Blank-session refresh now skips that read, and unclaimed
+archive resume paths defer their imports. Saved-session reads and late handoff
+claims retain their owner fences. The corrected head requires fresh CI.
 
 ## Intentional capability boundaries
 

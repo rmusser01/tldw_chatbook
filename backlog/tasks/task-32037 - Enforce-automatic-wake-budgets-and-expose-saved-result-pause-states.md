@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-08 05:22'
-updated_date: '2026-09-12 03:40'
+updated_date: '2026-09-12 03:57'
 labels:
   - agents
   - console
@@ -70,4 +70,6 @@ New modules/tests pass Ruff and formatting; modified legacy production files add
 Updated the user guide, implementation plans, ADR status/implementation notes, review ledger, private SQLite owner inventory, and testing-evidence lesson. Changes remain uncommitted in the shared working tree.
 
 Final PR #2631 integration preserves latest dev lifecycle custody and controller boundaries. Review corrected live stuck-child intake and durable selection to match eligible done/error/cancelled results, releasing exact wake ownership without pausing the chain or blocking later done siblings. Both real-badge regression variants pass; focused dispatch/scheduling/recovery selections passed 59 and 38 overlapping cases. Permanent bridge-close fencing, readiness-gated startup recovery and plural wake projection were also verified. Existing ADR-135 applies; automatic authority was not broadened.
+
+Qodo #2631 follow-up: old run schemas without wake_delivered_at now expose survivor candidates through read-only discovery, then the normal AgentRunsDB owner performs guarded upgrades and ADR-135 recovery. Chainless legacy results require manual review, with no automatic allowance or provider call granted. Real old-schema regression failed before the fix; 23 launch/no-feature-DB cases passed afterward. Wake public API docstrings/types are complete and the unchanged batch cap is named MAX_RESULTS_PER_ATTEMPT.
 <!-- SECTION:NOTES:END -->

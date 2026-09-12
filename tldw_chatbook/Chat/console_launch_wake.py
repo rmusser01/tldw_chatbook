@@ -49,6 +49,9 @@ def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
 
     Includes claimed results awaiting recovery or review, regardless of badges.
     The private read-only connection performs no migration or run reconciliation.
+    Historical schemas without delivery stamps expose survivor candidates so the
+    native database owner can upgrade them before recovery. Discovery itself
+    grants no automatic authority; chainless results require manual review.
     Disabled automatic work, memory databases, absent files, and failed reads
     return no launch candidates. Explicit Console startup still owns recovery.
     """
@@ -67,12 +70,26 @@ def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
                 "chat.launch_wake", path, read_only=True, must_exist=True
             )
         ) as connection:
+            # Inspect actual columns, as AgentRunsDB's guarded migrations do.
+            # Historical survivors must reach that owner before a new delivery
+            # column can exist. This read only discovers candidates: subsequent
+            # runtime recovery still refuses automatic work without lineage.
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")
+            }
+            if not columns:
+                return ()
+            delivery_filter = (
+                "child.wake_delivered_at IS NULL AND "
+                if "wake_delivered_at" in columns
+                else ""
+            )
             # Same survivor predicate as AgentRunsDB.pending_wake_conversation_ids.
             # Do not construct AgentRunsDB here: its startup sweep mutates runs.
             rows = connection.execute(
                 "SELECT DISTINCT child.conversation_id FROM agent_runs AS child "
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
-                "WHERE child.wake_delivered_at IS NULL AND child.agent_kind!='primary' "
+                f"WHERE {delivery_filter}child.agent_kind!='primary' "
                 "AND child.status IN ('done','error','cancelled') "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",

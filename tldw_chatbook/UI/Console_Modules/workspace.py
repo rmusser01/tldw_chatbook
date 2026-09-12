@@ -3508,26 +3508,28 @@ class ConsoleWorkspaceController:
         rows, _total, error = result
         if not error:
             self._record_canonical_owner_rows(rows)
-        from ...Chat.conversation_archive_actions import (
-            local_conversation_service,
-            storage_call,
-        )
-
         store = self._console_chat_store
         native_ids = [
             str(session.persisted_conversation_id)
             for session in (store.sessions() if store is not None else ())
             if session.persisted_conversation_id
         ]
-        try:
-            states = await storage_call(
-                local_conversation_service(self.app_instance),
-                "get_conversation_archive_states",
-                native_ids,
+        states = {}
+        if native_ids:
+            from ...Chat.conversation_archive_actions import (
+                local_conversation_service,
+                storage_call,
             )
-        except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
-            logger.debug("Archive state refresh unavailable")
-            states = {}
+
+            try:
+                states = await storage_call(
+                    local_conversation_service(self.app_instance),
+                    "get_conversation_archive_states",
+                    native_ids,
+                )
+            except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
+                logger.debug("Archive state refresh unavailable")
+                states = {}
         # Both database reads await: retain ownership through the last one,
         # including any archive receipt that settled while its snapshot loaded.
         if (

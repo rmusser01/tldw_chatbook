@@ -14,9 +14,9 @@ import asyncio
 import re
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Callable, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from loguru import logger
@@ -34,6 +34,8 @@ from tldw_chatbook.Chat.console_fleet_attention import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Chat.console_agent_bridge import FleetChildSettled, FleetDrained
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
 
@@ -233,6 +235,8 @@ class ConsoleFleetWakeCoordinator:
     RETRY_DELAY_SECONDS = 1.0
     COALESCE_SECONDS = 0.25
     MAX_AUTOMATIC_PRIMARIES = 2
+    #: Bound the number of child results selected for one durable wake claim.
+    MAX_RESULTS_PER_ATTEMPT = 256
 
     def __init__(self, controller: ConsoleChatController) -> None:
         self._controller = controller
@@ -259,7 +263,24 @@ class ConsoleFleetWakeCoordinator:
         self._conversation_fences: dict[str, int] = {}
         self._runtime_submitter = None
 
-    def wire(self, *, app=None, loop=None, startup_ready=None):
+    def wire(
+        self,
+        *,
+        app: TldwCli | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+        startup_ready: Callable[[], bool] | None = None,
+    ) -> None:
+        """Attach runtime services and the loop used to schedule wake delivery.
+
+        Omitted services retain their current bindings. Without an explicit
+        loop, capture the caller's running loop if one exists.
+
+        Args:
+            app: Application owning durable completion marks and attention.
+            loop: Explicit event loop override for delivery scheduling.
+            startup_ready: Predicate allowing recovery after startup readiness;
+                retained when omitted and initially always true.
+        """
         if startup_ready is not None:
             self._startup_ready = startup_ready
         if app is not None:
@@ -269,7 +290,13 @@ class ConsoleFleetWakeCoordinator:
         else:
             self.capture_loop_if_running()
 
-    def capture_loop_if_running(self):
+    def capture_loop_if_running(self) -> None:
+        """Capture the caller's running loop and schedule requested recovery.
+
+        Leave the existing loop unchanged when the caller has no running loop.
+        If recovery was requested, create its task only when none exists;
+        capturing a loop alone does not request a new recovery audit.
+        """
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -278,11 +305,26 @@ class ConsoleFleetWakeCoordinator:
             self._recovery_task = self._loop.create_task(self.recover())
 
     def bind_runtime_submitter(self, submit_wake: Callable[..., str]) -> None:
-        """Route future wake turns through app-owned runtime custody."""
+        """Route future wake turns through app-owned runtime custody.
+
+        Args:
+            submit_wake: Runtime callback accepting wake submission keywords
+                and returning the admitted turn ID.
+        """
 
         self._runtime_submitter = submit_wake
 
-    def authorizes(self, authorization, session_id):
+    def authorizes(self, authorization: object, session_id: str) -> bool:
+        """Check an opaque token against this coordinator's exact live delivery.
+
+        Args:
+            authorization: Candidate authority; arbitrary objects are refused.
+            session_id: Native session that would receive the automatic turn.
+
+        Returns:
+            True only for the active token with matching coordinator, owner,
+            and session while no disposal or conversation-close fence applies.
+        """
         if not isinstance(authorization, AgentWakeAuthorization):
             return False
         active = self._active.get(authorization.conversation_id)
@@ -297,20 +339,51 @@ class ConsoleFleetWakeCoordinator:
         )
 
     def pending_conversation_ids(self) -> tuple[str, ...]:
+        """Snapshot conversations with pending results under the registry lock.
+
+        Returns:
+            Conversation IDs in current registry order, including paused work.
+        """
         with self._registry_lock:
             return tuple(self._pending)
 
     def has_pending(self, conversation_id: str) -> bool:
+        """Check whether a conversation has any locally pending result IDs.
+
+        Args:
+            conversation_id: Durable conversation whose pending work to inspect.
+
+        Returns:
+            True when its pending bucket is nonempty, even if delivery is paused.
+        """
         with self._registry_lock:
             return bool(self._pending.get(conversation_id))
 
     def delivering_conversation_ids(self) -> tuple[str, ...]:
+        """Snapshot conversations occupying automatic delivery slots.
+
+        Returns:
+            Durable conversation IDs from scheduling through delivery cleanup.
+        """
         return tuple(self._active)
 
     def delivering_session_ids(self) -> tuple[str, ...]:
+        """Snapshot native sessions targeted by active automatic deliveries.
+
+        Returns:
+            Native session IDs used to reconcile mounted delivery UI hooks.
+        """
         return tuple(item.session_id for item in self._active.values())
 
     def pause_reason(self, conversation_id: str) -> str | None:
+        """Read the recovery failure or first stored pause for a conversation.
+
+        Args:
+            conversation_id: Durable conversation whose pause to inspect.
+
+        Returns:
+            Recovery failure code, first matching chain pause code, or None.
+        """
         if self._recovery_failure_reason is not None:
             return self._recovery_failure_reason
         return next(
@@ -322,13 +395,31 @@ class ConsoleFleetWakeCoordinator:
             None,
         )
 
-    def on_child_settled(self, event):
+    def on_child_settled(self, event: FleetChildSettled) -> None:
+        """Stage one eligible survivor from the native settlement callback.
+
+        May run on the child thread. Intake records eligible results even when
+        automatic waking is disabled, then schedules attempts on the bound loop.
+        Within-turn, missing-ID, and ineligible-status children are excluded.
+
+        Args:
+            event: Durable child settlement with its owning conversation and
+                original within-turn or survivor classification.
+        """
         child = getattr(event, "child", None)
         self._intake(str(getattr(event, "conversation_id", "") or ""), (child,))
 
-    def on_fleet_drained(self, event):
-        # Compatibility for older producers; the native bridge uses individual
-        # settlement. Duplicate result IDs never extend the coalescing window.
+    def on_fleet_drained(self, event: FleetDrained) -> None:
+        """Stage eligible survivors from a legacy fleet-drain callback.
+
+        Supports older producers; the native bridge uses individual settlement.
+        May run on a child thread. Duplicate result IDs do not extend the fixed
+        coalescing window, and intake uses the same filters as child settlement.
+
+        Args:
+            event: Drained conversation and children settled since its previous
+                drain, including their original survivor classifications.
+        """
         self._intake(
             str(getattr(event, "conversation_id", "") or ""),
             getattr(event, "children", ()) or (),
@@ -370,7 +461,12 @@ class ConsoleFleetWakeCoordinator:
         self._publish_active_wakes(conversation_id, tuple(str(child.run_id) for child in survivors))
         self.retry_soon()
 
-    def retry_soon(self):
+    def retry_soon(self) -> None:
+        """Schedule pending delivery checks on the bound loop from any thread.
+
+        Do nothing after disposal or when no usable loop is bound. Delivery
+        checks retain responsibility for coalescing, readiness, and admission.
+        """
         if self._disposed:
             return
         loop = self._loop
@@ -503,9 +599,28 @@ class ConsoleFleetWakeCoordinator:
             except Exception:  # noqa: BLE001 - a detached UI cannot prevent cleanup
                 return
 
-    async def accept(self, authorization, session_id):
-        """Required fence before helpers, models, or tools; only True may run."""
-        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
+    async def accept(
+        self, authorization: AgentWakeAuthorization, session_id: str
+    ) -> bool:
+        """Accept durable wake authority before helpers, models, or tools run.
+
+        Args:
+            authorization: Coordinator-issued token for the prepared attempt.
+            session_id: Native session receiving the automatic turn.
+
+        Returns:
+            True after durable acceptance and owner revalidation; False when
+            manual priority refuses the attempt before acceptance.
+
+        Raises:
+            PermissionError: The supplied authority is no longer live.
+            AutomaticWorkRefused: The prepared attempt or execution owner cannot
+                be accepted. Durable ledger errors also propagate to the caller.
+        """
+        from tldw_chatbook.Agents.automatic_work_budget import (
+            AutomaticWorkLimits,
+            AutomaticWorkRefused,
+        )
         if not self.authorizes(authorization, session_id):
             raise PermissionError("wake authority is no longer live")
         if not self._priority_allows(session_id, accepting=True):
@@ -577,7 +692,10 @@ class ConsoleFleetWakeCoordinator:
                     return
 
     async def _deliver(self, conversation_id, session_id):
-        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
+        from tldw_chatbook.Agents.automatic_work_budget import (
+            AutomaticWorkLimits,
+            AutomaticWorkRefused,
+        )
         from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
         from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 
@@ -609,7 +727,7 @@ class ConsoleFleetWakeCoordinator:
                 return
             chain_id = eligible[0]["work_chain_id"]
             selected = [row for row in eligible if row["work_chain_id"] == chain_id][
-                :256
+                :self.MAX_RESULTS_PER_ATTEMPT
             ]
             run_ids = tuple(str(row["id"]) for row in selected)
             attempt_id = uuid4().hex
@@ -738,7 +856,12 @@ class ConsoleFleetWakeCoordinator:
             await self._pause(cid, chain_id, "completion_unrecorded", review=True)
 
     def seed_from_marks(self) -> int:
-        """Compatibility entry point: discover from run history, independently of badges."""
+        """Discover pending results from durable history, independently of badges.
+
+        Returns:
+            Number of eligible conversations whose results were seeded, including
+            conversations already represented in the local registry.
+        """
         db = self._runs_db()
         if self._disposed or db is None:
             return 0
@@ -757,7 +880,11 @@ class ConsoleFleetWakeCoordinator:
         return seeded
 
     def start_recovery(self) -> None:
-        """Called once by native runtime creation, never by view/DB attachment."""
+        """Request the runtime's single recovery audit and block wake admission.
+
+        Native runtime creation calls this once. Repeated requests are no-ops;
+        without a running loop, a later loop capture schedules the audit.
+        """
         if self._recovery_requested:
             return
         self._recovery_requested = True
@@ -765,12 +892,23 @@ class ConsoleFleetWakeCoordinator:
         self.capture_loop_if_running()
 
     async def wait_for_recovery(self) -> bool:
-        """Wait for the runtime's single audit; never start recovery on a view read."""
+        """Await an existing recovery task without starting another audit.
+
+        Returns:
+            Current recovery readiness after any existing task finishes. A failed
+            audit remains unready; cancellation of this wait does not cancel it.
+        """
         if self._recovery_task is not None:
             await asyncio.shield(self._recovery_task)
         return self._recovery_ready
 
     async def recover(self) -> None:
+        """Audit execution ownership and restore pending results after startup.
+
+        Wait for the startup predicate before reading the ledger. Disposal stops
+        the wait; audit failures retain the admission fence and a failure reason.
+        A successful audit restores pause state and schedules eligible deliveries.
+        """
         self._recovery_ready = False
         try:
             while not self._startup_ready():
@@ -853,7 +991,12 @@ class ConsoleFleetWakeCoordinator:
             return False
 
     def fence_conversation(self, conversation_id: str, *, generation: int) -> None:
-        """Reject stale wake work for one closing conversation."""
+        """Reject stale wake work for one closing conversation.
+
+        Args:
+            conversation_id: Durable conversation to fence and cancel.
+            generation: Close generation retained until its exact fence releases.
+        """
 
         with self._registry_lock:
             # The first unreleased fence owns this conversation. A later
@@ -879,7 +1022,7 @@ class ConsoleFleetWakeCoordinator:
         if self._app is not None:
             try:
                 clear_fleet_unseen_completion(self._app, conversation_id)
-            except Exception:  # noqa: BLE001 - close remains best effort
+            except Exception:  # noqa: BLE001, S110 - mark cleanup must not interrupt close
                 pass
 
     def release_conversation_fence(
@@ -890,6 +1033,14 @@ class ConsoleFleetWakeCoordinator:
         A stale generation or retained delivery owner fails closed. Timeout
         and app-disposal paths never call this seam, so uncooperative old work
         remains fenced for the process lifetime.
+
+        Args:
+            conversation_id: Durable conversation whose fence to release.
+            generation: Exact generation that originally established the fence.
+
+        Returns:
+            True only when the matching fence is removed with no delivery owners
+            remaining and the coordinator has not been disposed.
         """
 
         with self._registry_lock:

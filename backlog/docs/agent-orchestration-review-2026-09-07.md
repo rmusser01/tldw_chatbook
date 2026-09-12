@@ -675,12 +675,11 @@ schema versions 16–18 while preserving dev's indexed steps, spawn identities,
 and activity receipts. Colliding task IDs were reassigned to TASK-32483–32492;
 canonical upstream TASK-3070 records and controller ownership were retained.
 
-PR #2631 still needs final integrated review, a push against the latest dev,
-Qodo feedback resolution, required CI, and merge. TASK-32493 adds bounded
-orchestration checks to the existing PR fast lane. Its clean-runner result is
-required because twelve local process tests fail during host semaphore allocation
-before application behavior (six task-store and six existing operation-lease
-cases). Existing Console architecture debt remains upstream; no ratchet cap was
+PR #2631 is rebased and published, with final independent integration review
+complete. Qodo follow-up fixes await their final review and fresh CI before merge.
+TASK-32493 is Done: the existing PR fast lane passed all 1,125 cases on a clean
+runner, including the twelve process cases blocked by this host's semaphore
+allocation. The required derived-artifact job also passed on that head. Existing Console architecture debt remains upstream; no ratchet cap was
 raised. The current integration status records exact checks and measurements.
 
 Direct peer addressing, progress-triggered wakes, and durable progress inboxes

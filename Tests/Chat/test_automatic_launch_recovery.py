@@ -316,3 +316,110 @@ async def test_dispose_before_first_frame_never_audits(native, monkeypatch):
     await asyncio.sleep(0.06)
     assert calls == []
     assert not controller.fleet_wake._recovery_ready
+
+
+def _legacy_launch_database(path, *, with_survivor):
+    from Tests.DB.test_agent_runs_db import _LEGACY_V1_AGENT_RUNS_DDL
+
+    with sqlite3.connect(path) as connection:
+        connection.executescript(_LEGACY_V1_AGENT_RUNS_DDL)
+        if with_survivor:
+            connection.executemany(
+                "INSERT INTO agent_runs "
+                "(id,conversation_id,parent_run_id,agent_kind,status,result,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                [
+                    ("parent", "conversation", None, "primary", "done", "parent result",
+                     "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"),
+                    ("child", "conversation", "parent", "subagent", "done", "saved legacy result",
+                     "2026-01-01T00:00:00Z", "2026-01-01T00:00:02Z"),
+                ],
+            )
+
+
+@pytest.mark.parametrize("with_survivor", [False, True])
+def test_legacy_launch_discovery_preserves_old_schema_and_empty_fast_path(
+    tmp_path, monkeypatch, with_survivor
+):
+    path = tmp_path / "agent_runs.db"
+    _legacy_launch_database(path, with_survivor=with_survivor)
+    app = SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / "chacha.sqlite"))
+    monkeypatch.setattr(launch, "autowake_enabled", lambda: True)
+    monkeypatch.setattr(launch, "_ensure_launch_runtime", _forbid_runtime)
+    assert launch.pending_conversations_at_launch(app) == (
+        ("conversation",) if with_survivor else ()
+    )
+    with sqlite3.connect(path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")}
+        assert "wake_delivered_at" not in columns
+        assert connection.execute("SELECT version FROM schema_version").fetchall() == [(1,)]
+    assert not hasattr(app, "_console_runtime")
+
+
+@pytest.mark.asyncio
+async def test_launch_upgrades_legacy_survivor_and_preserves_manual_review(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    path = tmp_path / "agent_runs.db"
+    _legacy_launch_database(path, with_survivor=True)
+    chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="legacy-launch")
+    chacha.add_conversation({"id": "conversation", "title": "Legacy"})
+    app = SimpleNamespace(
+        chachanotes_db=chacha,
+        app_config={},
+        chat_conversation_scope_service=SimpleNamespace(
+            get_conversation_tree=lambda cid, **kwargs: {
+                "conversation": {"id": cid, "title": "Legacy"}, "root_threads": []
+            }
+        ),
+    )
+    monkeypatch.setattr(launch, "autowake_enabled", lambda: True)
+    opened = []
+
+    def open_runtime(actual_app):
+        # Only the normal database owner upgrades and starts recovery, after
+        # read-only discovery has identified a real saved survivor.
+        db = AgentRunsDB(path, client_id="legacy-launch-upgrade")
+        runtime, controller = _controller(actual_app, db)
+        opened.append((db, runtime, controller))
+        return controller
+
+    monkeypatch.setattr(launch, "_ensure_launch_runtime", open_runtime)
+    try:
+        assert await launch.deliver_launch_wakes(app) == 1
+        assert len(opened) == 1
+        db, _runtime, controller = opened[0]
+        assert await controller.fleet_wake.wait_for_recovery()
+        assert controller.fleet_wake.pause_reason("conversation") == "legacy_lineage"
+        row = db.get_run("child")
+        assert row["result"] == "saved legacy result"
+        assert row["wake_delivered_at"] is None
+        assert row["work_chain_id"] is None
+        with db.connection() as connection:
+            assert connection.execute("SELECT count(*) FROM automatic_work_chains").fetchone()[0] == 0
+            assert connection.execute("SELECT count(*) FROM automatic_wake_attempts").fetchone()[0] == 0
+        assert [session.persisted_conversation_id for session in controller.store.sessions()] == ["conversation"]
+    finally:
+        for db, runtime, _controller_instance in opened:
+            await runtime.dispose()
+            db.close()
+        chacha.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_table", [False, True])
+async def test_empty_historical_database_never_constructs_launch_runtime(
+    tmp_path, monkeypatch, legacy_table
+):
+    path = tmp_path / "agent_runs.db"
+    if legacy_table:
+        _legacy_launch_database(path, with_survivor=False)
+    else:
+        sqlite3.connect(path).close()
+    app = SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / "chacha.sqlite"))
+    monkeypatch.setattr(launch, "autowake_enabled", lambda: True)
+    monkeypatch.setattr(launch, "_ensure_launch_runtime", _forbid_runtime)
+    assert await launch.deliver_launch_wakes(app) == 0
+    assert not hasattr(app, "_console_runtime")
