@@ -6037,13 +6037,11 @@ class ConsoleChatController:
         tick (task-15664). Reads the bridge's drain-paired unsettled
         counter (``has_unsettled_children``, Task 3) per live session --
         cheap dict reads under one lock, safe on a UI timer, unlike
-        ``_fleet_survivor_session_ids``'s coordinator sweep (which
-        ``busy_fleet_session_count`` documents as navigation-only and
-        which task-15666 records as prune-on-read). True exactly while at
-        least one fleet child of a live session has entered its run scope
-        and not yet reached its settle hook -- so the tick keeps painting
-        through the scope-exit->settle window and stops on the same edge
-        the drain (and the badge it stamps) fires on.
+        ``_fleet_survivor_session_ids``'s coordinator sweep. True exactly
+        while at least one fleet child of a live session has entered its
+        run scope and not yet reached its settle hook -- so the tick keeps
+        painting through the scope-exit->settle window and stops on the
+        same edge the drain (and the badge it stamps) fires on.
 
         Returns:
             True while any live session's fleet still owes a drain.
@@ -13312,8 +13310,11 @@ class ConsoleChatController:
         # Registered before the timeout config read so sweeps and
         # `pending_*` readers see the round across that (lock-taking) call;
         # `run_round` re-registers the same object, harmlessly.
-        with self._approval_state_lock:
-            self._pending_approval_rounds[round_id] = round_state
+        if not self._interrupt_host.register_round("approval", round_id, round_state):
+            self._record_cancelled_approval_decisions(list(unique_keys), call_by_key)
+            denied = ApprovalDecisions({key: "deny" for key in unique_keys})
+            denied.unresolved_keys = frozenset(unique_keys)
+            return denied
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = (
             time.monotonic() + timeout_seconds
@@ -13358,18 +13359,23 @@ class ConsoleChatController:
         result: dict[str, dict[str, str]] = {}
 
         def _on_outcome(outcome: str) -> None:
-            if outcome == "revoked":
+            # Commit the whole batch under the sweep lock. Cancellation can
+            # win before this snapshot, but cannot retract a completed one.
+            with self._approval_state_lock:
+                revoked = outcome == "revoked" or bool(round_state.get("revoked"))
+                if revoked:
+                    unresolved_keys.update(unique_keys)
+                    result["map"] = {key: "deny" for key in unique_keys}
+                else:
+                    for key in unique_keys:
+                        decisions.setdefault(key, "deny")
+                    result["map"] = {
+                        key: decisions.get(key, "deny") for key in unique_keys
+                    }
+            if revoked:
                 self._record_cancelled_approval_decisions(
                     list(unique_keys), call_by_key
                 )
-                # Same as cancellation: the card was pulled, so NO key here
-                # carries a user decision.
-                unresolved_keys.update(unique_keys)
-                result["map"] = {key: "deny" for key in unique_keys}
-                return
-            for key in unique_keys:
-                decisions.setdefault(key, "deny")
-            result["map"] = {key: decisions.get(key, "deny") for key in unique_keys}
 
         def _announce_if_detached() -> bool:
             # Sampled after the park, at the same moment the pre-host body
@@ -15638,16 +15644,10 @@ class ConsoleChatController:
         session: session-keyed teardown could not tell a cancelled child's
         card from its live sibling's.
 
-        Covers BOTH card registries a cancelled child can be holding:
-        ``_pending_approval_rounds`` (tool-call approvals) and
-        ``_pending_skill_script_rounds`` (run_skill_script confirms). The
-        skill-script leg is the wider hazard of the two -- that tool is
-        all-agents scope, its schema is not filtered by
-        ``config.allowed_tools``, and ``console_agent_bridge``'s closure
-        runs the script on the very next line after the confirm returns
-        Allow, with no cancellation checkpoint in between. (Skill-INSTALL
-        confirms are deliberately not swept: ``install_skill`` is wired
-        for the primary agent only, so no sub-agent can arm one.)
+        Covers tool-call approvals, run_skill_script confirms, and ask_user
+        questions. Skill-install and worktree-merge confirms are primary-only
+        and are not swept. The host also fences future arms for the revoked
+        run and these kinds for its lifetime, even when no round exists yet.
 
         Each revoked round is (a) marked ``revoked`` so the waiting thread
         fails closed even if a click lands in its shared decision box
@@ -15662,11 +15662,10 @@ class ConsoleChatController:
         round's own teardown uses, so a sibling round's card is never
         clobbered.
 
-        Thread-safe. Each registry is swept under its own lock, and the
-        two locks are taken SEQUENTIALLY, never nested. ``discard_pending_
-        round`` and both UI clears take those (non-reentrant) locks
-        themselves, so they are deliberately called after every critical
-        section is released.
+        Thread-safe. InterruptRoundHost records the per-kind revocation
+        fences and sweeps the registries under one shared non-reentrant lock.
+        Exact-round payload cleanup and badge/UI callbacks run after that
+        critical section; callbacks may acquire the same lock themselves.
 
         Args:
             run_id: The cancelled/abandoned run whose cards must die. A
@@ -15675,8 +15674,8 @@ class ConsoleChatController:
                 sweeping those would deny cards no run owns.
 
         Returns:
-            How many rounds were revoked across both registries (``0``
-            when the run had none).
+            How many existing rounds were revoked across the swept kinds
+            (``0`` when the run had none; the late-arm fence still persists).
         """
         if not run_id:
             return 0
@@ -15765,9 +15764,9 @@ class ConsoleChatController:
     def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
         """Fail this run's ``run_skill_script`` confirms closed.
 
-        Registry work only, under ``_pending_skill_script_lock`` and then
-        (sequentially, never nested) ``_approval_state_lock`` for the
-        retained-payload slot.
+        The host fences and sweeps under its shared lock, then removes only
+        each swept round's retained payload. Same-session siblings retain
+        their own round-keyed payloads through revocation and teardown.
 
         Args:
             run_id: The cancelled/abandoned run.
@@ -16032,8 +16031,10 @@ class ConsoleChatController:
             "cancel_event": round_cancel_event,
             "visit_event": visit_cancel_event,
         }
-        with self._pending_skill_script_lock:
-            self._pending_skill_script_rounds[request_id] = script_round_state
+        if not self._interrupt_host.register_round(
+            "skill_script", request_id, script_round_state
+        ):
+            return {"allow": False, "remember": False}
         timeout_seconds = (
             self.skill_script_confirm_timeout_seconds()
             if self.skill_script_confirm_timeout_seconds is not None

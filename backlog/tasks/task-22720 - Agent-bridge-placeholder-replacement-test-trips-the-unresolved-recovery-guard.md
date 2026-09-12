@@ -1,16 +1,22 @@
 ---
 id: TASK-22720
 title: Agent bridge placeholder-replacement test trips the unresolved-recovery guard
-status: To Do
+status: Done
+assignee:
+  - '@codex'
+created_date: ''
+updated_date: '2026-09-12 07:25'
 labels:
   - console
   - agents
   - bug
+dependencies: []
 priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 `test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair`
 fails with `assert '' == 'runtime replacement'`. This is PRE-EXISTING: it is one
 of the original 40 failures in `test_console_local_citation_boundary.py`,
@@ -31,15 +37,15 @@ The swallowing is the defect worth fixing; whatever `run_reply` trips over is
 secondary and may well be a stale expectation in the test's own bridge double
 (it calls `session_id_for_message`, `restore_state`, and a `_first` over
 `sessions()`). Establish WHICH call raises before changing anything.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] The exception raised inside `run_reply` is identified and named
-- [ ] An agent-bridge failure is no longer silently swallowed into an empty
+<!-- AC:BEGIN -->
+- [x] #1 The exception raised inside `run_reply` is identified and named
+- [x] #2 An agent-bridge failure is no longer silently swallowed into an empty
       assistant row -- it is either surfaced or logged with its exception type
-- [ ] The xfail marker in `test_console_local_citation_boundary.py` is removed
+- [x] #3 The xfail marker in `test_console_local_citation_boundary.py` is removed
       and the test passes
-
 
 ## Correction 2026-08-27 — the filed premise was wrong on both counts
 
@@ -75,3 +81,39 @@ what SHOULD happen when an agent replaces a placeholder that is gone? Either
 
 Pre-existing either way: this was one of the original 40 failures in
 `test_console_local_citation_boundary.py`, failing before TASK-22301 touched it.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: N/A
+Reason: remove a stale expected-failure marker from an existing passing recovery regression.
+1. Record the baseline XPASS and inspect the assertions: the real replacement row completes, no citation repair dispatch occurs, and visible output matches.
+2. Remove the stale xfail marker without weakening the assertions or changing product code; retain the task correction identifying the original recovery-guard exception.
+3. Run the exact regression normally and its nearby agent citation cases, then static checks and independent review before closing.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Current merged behavior makes the corrected regression pass normally: the
+agent bridge replaces the missing placeholder with its runtime row, citation
+repair does not dispatch, the replacement becomes complete, and visible output
+matches it. The stale non-strict xfail was removed without changing those
+assertions or the unresolved-recovery guard. The earlier task correction
+remains the root-cause record: its old double had raised `RuntimeError:
+Unresolved temporary dispatch recovery cannot be replaced.` while attempting
+an invalid restore. No production code changed.
+
+Verification used the isolated worktree interpreter:
+
+```sh
+.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python -m pytest -q Tests/Chat/test_console_local_citation_boundary.py -k citation_repair_agent
+```
+
+Result: 7 passed, 96 deselected. ADR required: no; this removes stale
+expected-failure metadata from an existing recovery regression.
+
+Independent task review and final whole-branch review approved. The final documentation correction was also re-reviewed and approved at 13456c5393. Targeted test evidence above remains applicable; no runtime code changed after those runs. Changed-line lint/format checks and branch whitespace checks passed. Seven inherited mounted-UI/readiness failures and environment warnings remain explicitly recorded in backlog/docs/agent-orchestration-followups-2026-09-12.md; this closure does not claim a full green suite. Closed on codex/agent-orchestration-followups, pending integration.
+<!-- SECTION:NOTES:END -->
