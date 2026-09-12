@@ -145,6 +145,7 @@ def test_documented_design_vocabulary_is_available() -> None:
         "$ds-hover-bg",
         "$ds-hover-fg",
         "$ds-disabled-bg",
+        "$ds-surface-sunken",
         "$ds-text-disabled-readable",
         "$ds-sidebar-width",
         "$ds-sidebar-min-width",

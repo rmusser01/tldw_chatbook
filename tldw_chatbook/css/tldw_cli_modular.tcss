@@ -213,6 +213,12 @@ $ds-text-emphasis: italic;
 $ds-hover-bg: $surface-lighten-1;
 $ds-hover-fg: $ds-text-primary;
 $ds-disabled-bg: $surface-darken-1;
+/* Recessed resting surface for ENABLED chrome that sits visually below the
+ * panel (inactive toggles, sunken strips). Not a disabled state — disabled
+ * action controls use $ds-disabled-bg + $ds-text-disabled-readable. Same
+ * hue, different semantics: re-theming disabled states must not drag
+ * enabled chrome with it (Qodo review, PR #2632). */
+$ds-surface-sunken: $surface-darken-1;
 
 /* ========================================
  * LAYOUT LAWS (ADR-150)
@@ -1095,7 +1101,9 @@ Button:disabled:hover {
     height: $ds-control-height;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;
-    background: $ds-disabled-bg;
+    /* Enabled but recessed chrome: sunken resting surface, not the
+       disabled token (PR #2632 review follow-up). */
+    background: $ds-surface-sunken;
     color: $ds-text-primary;
 }
 .sidebar-toggle:hover { background: $ds-surface-raised; }
@@ -6943,7 +6951,9 @@ PersonalContextLinkModal {
     min-width: 5;
     height: $ds-control-height;
     border: none;
-    background: $ds-disabled-bg;
+    /* Enabled but recessed chrome: sunken resting surface, NOT the
+       disabled token (Qodo review, PR #2632). */
+    background: $ds-surface-sunken;
     color: $ds-text-muted;
 }
 
@@ -7019,10 +7029,14 @@ PersonalContextLinkModal {
     transition: background $ds-duration-fast, color $ds-duration-fast;
 }
 
-/* Stop button state - when button is in stop mode */
-.send-button:disabled {
-    opacity: $ds-opacity-dim;
-}
+/* Stop button state: the shared Button:disabled contract applies.
+ * This sheet previously stacked `opacity: 0.7` on the global disabled
+ * colors -- the exact TASK-25822 contrast failure (disabled read as
+ * absent). The class+pseudo selector outranks `Button:disabled`, so the
+ * override is removed rather than re-stated; the global rule supplies full
+ * opacity, $ds-disabled-bg, and $ds-text-disabled-readable.
+ * Intentional a11y fix, the one deliberate visual change in this
+ * migration (Qodo review, PR #2632). */
 
 /* Visual feedback for stop state */
 .send-button.stop-state {

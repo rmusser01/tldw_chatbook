@@ -32,7 +32,9 @@ Multi-value composite tokens are not used (ADR-150).
 ### 2.1 Color and semantic meaning (existing layer)
 
 - **Surfaces:** `$ds-surface-panel`, `$ds-surface-raised`,
-  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`
+  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`,
+  `$ds-surface-sunken` (recessed resting surface for **enabled** chrome —
+  inactive toggles, sunken strips; never a disabled state)
 - **Text:** `$ds-text-primary`, `$ds-text-muted`, `$ds-text-disabled`
 - **Focus (non-obscuring focus contract):** `$ds-focus-bg`, `$ds-focus-fg`,
   `$ds-focus-accent`, `$ds-action-focus`, `$ds-input-focus-border`,

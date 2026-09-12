@@ -78,7 +78,9 @@
     min-width: 5;
     height: $ds-control-height;
     border: none;
-    background: $ds-disabled-bg;
+    /* Enabled but recessed chrome: sunken resting surface, NOT the
+       disabled token (Qodo review, PR #2632). */
+    background: $ds-surface-sunken;
     color: $ds-text-muted;
 }
 
@@ -154,10 +156,14 @@
     transition: background $ds-duration-fast, color $ds-duration-fast;
 }
 
-/* Stop button state - when button is in stop mode */
-.send-button:disabled {
-    opacity: $ds-opacity-dim;
-}
+/* Stop button state: the shared Button:disabled contract applies.
+ * This sheet previously stacked `opacity: 0.7` on the global disabled
+ * colors -- the exact TASK-25822 contrast failure (disabled read as
+ * absent). The class+pseudo selector outranks `Button:disabled`, so the
+ * override is removed rather than re-stated; the global rule supplies full
+ * opacity, $ds-disabled-bg, and $ds-text-disabled-readable.
+ * Intentional a11y fix, the one deliberate visual change in this
+ * migration (Qodo review, PR #2632). */
 
 /* Visual feedback for stop state */
 .send-button.stop-state {
