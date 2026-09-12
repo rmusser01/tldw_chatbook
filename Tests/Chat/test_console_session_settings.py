@@ -3397,6 +3397,34 @@ def test_custom_endpoint_keyed_family_requires_key():
     assert readiness.native_send_supported is False
 
 
+def test_custom_endpoint_declared_resolving_key_names_credential_provenance():
+    """H4: an entry that DECLARES a credential which resolves must not be
+    told 'No API key is required' -- the readiness names the declared
+    credential's provenance instead (the keyless-family copy only stands for
+    entries that declare nothing)."""
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="custom-ep:paid", model="m", base_url=None),
+        app_config=_registry_config(),
+        environ={"PAID_KEY": "paid-secret"},
+    )
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+    assert "Credential: env PAID_KEY" in readiness.detail
+    assert "No API key is required" not in readiness.detail
+
+
+def test_custom_endpoint_undeclared_key_keeps_family_keyless_copy():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="custom-ep:gpu", model="m", base_url=None
+        ),
+        app_config=_registry_config(),
+        environ={},
+    )
+    assert readiness.label == "Ready"
+    assert "No API key is required" in readiness.detail
+
+
 def test_provider_settings_resolves_custom_endpoint_aliases():
     settings_view = custom_endpoint_provider_settings(
         _registry_config(), "custom-ep:paid"

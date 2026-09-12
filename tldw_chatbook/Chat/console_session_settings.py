@@ -1516,6 +1516,12 @@ def build_console_settings_readiness(
             _custom_endpoint_missing_key_readiness(entry, provider_key, environ)
             or readiness
         )
+    # H4 wording: an entry that declares a resolving credential rides the
+    # keyless family readiness, whose "No API key is required" copy would
+    # misdescribe a send that actually authenticates with that credential.
+    declared_credential: str | None = None
+    if entry is not None and readiness.ready:
+        declared_credential = _custom_endpoint_declared_credential(entry, environ)
     exact_identity_evidence = bool(
         evidence is not None
         and current_identity is not None
@@ -1643,6 +1649,11 @@ def build_console_settings_readiness(
     else:
         label = "Ready"
         detail = readiness.user_message
+        if declared_credential is not None:
+            detail = (
+                f"{readiness.provider} is ready. "
+                f"Credential: {declared_credential}."
+            )
 
     configuration = snapshot.configuration
     configuration_issue = snapshot.configuration_issue
@@ -1967,6 +1978,38 @@ def _provider_settings(
         return provider_settings_for_key(api_settings, provider_key)
     except ProviderSettingsError:
         return {}
+
+
+def _custom_endpoint_declared_credential(
+    entry: "CustomEndpointEntry",
+    environ: Mapping[str, str] | None,
+) -> str | None:
+    """Return the provenance descriptor for an entry's resolved credential.
+
+    Companion to :func:`_custom_endpoint_missing_key_readiness`: that helper
+    blocks when a declared credential does not resolve; this one names the
+    credential that DOES flow for a ready entry, so the readiness copy never
+    claims "No API key is required" while a send authenticates with one.
+    ADR-146 precedence applies (the env reference wins over the stored key).
+
+    Args:
+        entry: Resolved registry entry for the session's custom-ep provider.
+        environ: Environment mapping, injectable for deterministic tests;
+            ``None`` reads ``os.environ``.
+
+    Returns:
+        ``"env <VAR>"`` or ``"stored api_key"`` when a declared credential
+        resolves, else None (nothing declared, or nothing that resolves).
+    """
+    env = environ if environ is not None else os.environ
+    if entry.api_key_env:
+        if (
+            resolve_provider_api_key(env.get(entry.api_key_env, "")) is not None
+        ):
+            return f"env {entry.api_key_env}"
+    if resolve_provider_api_key(entry.api_key) is not None:
+        return "stored api_key"
+    return None
 
 
 def _custom_endpoint_missing_key_readiness(
