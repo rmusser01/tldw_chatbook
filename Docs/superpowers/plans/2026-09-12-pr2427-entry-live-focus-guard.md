@@ -122,6 +122,24 @@ The older settlement module retains identical pre-existing formatter debt.
 This closes the approved focus repair and observed scroll-pin mismatch, not
 the separate Shell readiness timeout or whole-PR gates.
 
+Published checkpoint: `5963721cae`; remote PR head verified identical. PR is
+still open/conflicting against dev `c105413846e3db22fbac64fa57a50b4eb95243b4`.
+No rebase or merge occurred in this bounded repair.
+
+Further read-only timeout diagnosis is terminal. Immediate predecessor plus
+target pass 2/2 (`/private/tmp/pr2427-mutation-prefix2.awDPcy/pytest.log`), and
+the exact six-node preceding shard prefix passes 6/6
+(`/private/tmp/pr2427-mutation-prefix6.iK85s1/pytest.log`). Ten uninstrumented
+fresh processes produce nine passes and one identical timeout:
+`/private/tmp/pr2427-mutation-isolated-loop.OGrEmA/run-6.log`.
+Thus preceding-test state is not required. Process-local detailed observation
+produces thirteen completed passes in `/private/tmp/pr2427-mutation-rich-loop.UbETbJ`;
+a fourteenth was interrupted and is not evidence. Passing observations show
+an attached enabled Next and real dispatch, but no failing trace establishes
+the cause. The proposed facet-state/recompose window remains a hypothesis.
+No wait, readiness assertion, fixture or runtime change was made for this
+failure; causal investigation remains open. All diagnostic runs are terminal.
+
 ## Task 1: Regression first, then the shared continuation guard
 
 Files:
