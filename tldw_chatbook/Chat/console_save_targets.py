@@ -7,6 +7,7 @@ derivations stay unit-testable without a running app.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +20,15 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 
 CONSOLE_SAVE_TITLE_MAX_CHARS = 80
 CONSOLE_SAVE_TITLE_PREFIX = "Console message"
+#: task-32146: title for a captured answer that turns out to be all
+#: whitespace. The capture action is only offered on non-blank completed
+#: assistant rows, so this is a floor, not an expected outcome.
+CONSOLE_NOTE_FALLBACK_TITLE = "Console answer"
+#: task-32146 fix round 1: a captured answer that opens with a fenced code
+#: block or a markdown heading must not be titled by the fence or the
+#: hashes -- the Library notes list shows titles verbatim.
+_NOTE_TITLE_FENCE_LINE = re.compile(r"^\s*(?:`{3,}|~{3,})")
+_NOTE_TITLE_MARKDOWN_PREFIX = re.compile(r"^[\s#>]+")
 
 # Stable bounds for Console chatbook artifacts consumed by Artifacts and Home.
 CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS = 20_000
@@ -108,6 +118,73 @@ def derive_console_save_title(
         # the truncated title within budget even at available == 1.
         normalized_title = f"{normalized_title[: available - 1].rstrip()}…"
     return f"{prefix}{separator}{normalized_title}{date_suffix}"
+
+
+def console_answer_note_title(
+    answer_text: Any,
+    *,
+    max_length: int = CONSOLE_SAVE_TITLE_MAX_CHARS,
+) -> str:
+    """Title a captured answer with the answer's own first line.
+
+    Unlike ``derive_console_save_title`` (which names the CONVERSATION a
+    saved message came from), a captured note is filed by what it SAYS --
+    the Library notes list shows titles, and "Console message — Chat 1"
+    repeated per capture is unreadable there.
+
+    Args:
+        answer_text: The assistant answer being captured.
+        max_length: Hard cap for the returned title.
+
+    Returns:
+        The first non-blank line that is not a code fence, with any
+        leading heading/quote markers dropped, whitespace-collapsed and
+        bounded, or ``CONSOLE_NOTE_FALLBACK_TITLE`` when there is no text
+        at all.
+    """
+    for line in str(answer_text or "").splitlines():
+        if _NOTE_TITLE_FENCE_LINE.match(line):
+            continue
+        normalized = _collapse_whitespace(
+            _NOTE_TITLE_MARKDOWN_PREFIX.sub("", line, count=1)
+        )
+        if not normalized:
+            continue
+        if len(normalized) > max_length:
+            return f"{normalized[: max_length - 1].rstrip()}…"
+        return normalized
+    return CONSOLE_NOTE_FALLBACK_TITLE
+
+
+def console_note_provenance_keywords(
+    *,
+    conversation_id: Any,
+    message_id: Any,
+) -> list[str]:
+    """Return the keywords that record where a captured note came from.
+
+    task-32146 AC#2. An unpersisted (temporary) session has no conversation
+    id, so that tag is omitted rather than written blank -- a
+    ``conversation:`` tag with nothing after it would match every other
+    provenance-less note in a keyword search.
+
+    Args:
+        conversation_id: Persisted Chat conversation id, if the session has
+            one.
+        message_id: Console transcript message id being captured.
+
+    Returns:
+        ``["console", "conversation:<id>", "message:<id>"]``, minus any part
+        with no id to record.
+    """
+    keywords = ["console"]
+    conversation = _collapse_whitespace(conversation_id)
+    if conversation:
+        keywords.append(f"conversation:{conversation}")
+    message = _collapse_whitespace(message_id)
+    if message:
+        keywords.append(f"message:{message}")
+    return keywords
 
 
 def console_message_preview(

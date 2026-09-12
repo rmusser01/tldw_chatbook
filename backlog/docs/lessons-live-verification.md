@@ -2741,3 +2741,22 @@ starting. Note also that every encoding a terminal might send for one key
 usually normalises to a single Textual name (`\x1b[1;5F`, `\x1b[1;5H` →
 `ctrl+end`/`ctrl+home` in `_ansi_sequences.py`), so "it failed in three
 encodings" is one failure, not three.
+
+## A new menu label can ship pre-truncated — only the running app says so (task-32146, 2026-09-11)
+
+**What happened.** A new Console message action shipped with the label
+"Save answer as note" (19 chars). Every test was green: the action-row
+contracts assert `action_id`/label STRINGS, never rendered width. The first
+live walk showed the More menu — a fixed 24-cell overlay — rendering it as
+"Save answer as": Textual had cut it at about fifteen characters with no
+ellipsis, so the live label named no destination at all. The two TASK-31759
+note labels beside it ("Summarize up to here as note", "Save transcript up to
+here as note") were already taking the same cut, undetected, since they
+shipped.
+
+**What to do.** A label is not verified until a capture shows it rendered.
+Any new entry in a fixed-width surface (this More menu, the composer menu, a
+rail row) gets one `tmux capture-pane` before the guide is written — and if
+the incumbents in that surface are also truncated, say so in the guide rather
+than assuming the copy on screen is the copy in the source. Choosing a label
+that fits is a one-line fix; widening a shared menu for one row is not.
