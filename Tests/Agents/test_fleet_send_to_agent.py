@@ -248,7 +248,7 @@ def test_supervisor_steers_a_live_child_end_to_end(db, tmp_path, monkeypatch):
     child_turns = chat.child_calls["steer target"]
     assert len(child_turns) == 2
     second_payload = child_turns[1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
     assert str(second_payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -610,7 +610,7 @@ def test_a_run_id_reaches_the_same_mailbox_as_the_handle_id(db):
         STEERING_SOURCE_SUPERVISOR, "addressed by run id"
     )
     second_payload = chat.child_calls["run id target"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
     # The ok copy names the HANDLE the run id resolved to -- proof the two
     # vocabularies land on one mailbox, not two.
     sends = _sends(db, run_id)
@@ -829,7 +829,7 @@ def test_steering_never_cancels_the_child(db):
     assert _child_row(db)["status"] == RUN_DONE
     labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "keep going")
     second_payload = chat.child_calls["steady task"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
 
 
 # -- steering never satisfies an approval ---------------------------------
@@ -924,7 +924,7 @@ def test_steering_never_satisfies_a_pending_approval(db):
     assert len(child_turns) == 2
     payload = child_turns[1]["messages_payload"]
     labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "steer at the card")
-    assert payload[-1] == {"role": "user", "content": labeled}
+    assert payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
     assert str(payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -1019,4 +1019,4 @@ def test_a_foreign_live_survivor_is_steerable(db):
         STEERING_SOURCE_SUPERVISOR, "focus on the tests"
     )
     second_payload = chat.child_calls["survivor"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}

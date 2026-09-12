@@ -3787,9 +3787,23 @@ openai_cache_key = false
 #
 # How many sub-agents of ONE conversation may run at once, counting any
 # still working from an earlier message. 1 disables the fleet (sub-agents
-# run inline, one at a time). The cap is per conversation AND per running
-# app -- N conversations can hold N * this between them.
+# run inline, one at a time). The conversation cap is also subject to the
+# shared runtime cap below.
 # max_live_subagents = 3
+#
+# Shared child execution slots across this Console runtime, including inline
+# children and cleanup still running after a child is marked terminal.
+# Automatic work may occupy four of six; manual/queued work can use all six.
+# max_runtime_subagents = 6
+# reserved_manual_subagents = 2
+#
+# Local tool workers shared across all conversations in this Console runtime.
+# A timed-out worker keeps its slot until it really exits. Automatic wakes
+# may occupy six of the default eight slots; two remain for manual work.
+# Defaults are owned by Agents/execution_capacity.py. Read before admission;
+# lowering a limit does not cancel already admitted work.
+# max_runtime_tool_workers = 8
+# reserved_manual_tool_workers = 2
 #
 # Whether a sub-agent may keep working after the reply that spawned it has
 # finished. false settles every sub-agent at the end of its own turn.

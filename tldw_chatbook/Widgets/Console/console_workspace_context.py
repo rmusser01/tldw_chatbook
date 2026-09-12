@@ -408,18 +408,20 @@ _ROW_BOTTOM_MARGIN = 1
 _RELABEL_MIN_WIDTH_DELTA = 2
 
 
-def _conversation_row_render_height(name_line_count: int, subagent_count: int) -> int:
+def _conversation_row_render_height(name_line_count: int, subagent_count: int, progress_count: int = 0) -> int:
     """Return the button height for a row: name lines + metadata line,
     plus a dedicated badge line when this conversation has historical
     sub-agent runs (see `format_console_conversation_row_label`)."""
     height = max(1, int(name_line_count)) + 1
     if subagent_count > 0:
         height += 1
+    if progress_count > 0:
+        height += 1
     return height
 
 
 def format_console_conversation_row_label(
-    title: str, *, subagent_count: int = 0
+    title: str, *, subagent_count: int = 0, progress_count: int = 0
 ) -> str:
     """Return a markup-safe conversation-row label with an optional badge.
 
@@ -446,7 +448,9 @@ def format_console_conversation_row_label(
     """
     base = _escape_markup(str(title))
     if subagent_count > 0:
-        return f"{base}\n[dim]\\[{subagent_count} Sub-Agents][/dim]"
+        base += f"\n[dim]\\[{subagent_count} Sub-Agents][/dim]"
+    if progress_count > 0:
+        base += f"\nProgress: {progress_count}"
     return base
 
 
@@ -1156,13 +1160,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         run_marker: str = "",
         selected: bool = False,
         subagent_count: int = 0,
+        progress_count: int = 0,
         name_line_count: int = 1,
     ) -> Button:
         # Escaped-then-markup rendering round-trips plain text unchanged while
         # letting `format_console_conversation_row_label` safely append a dim
         # "[N Sub-Agents]" badge when this conversation has historical runs.
         label = format_console_conversation_row_label(
-            text, subagent_count=subagent_count
+            text, subagent_count=subagent_count, progress_count=progress_count
         )
         button = Button(
             Text.from_markup(label),
@@ -1170,6 +1175,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             classes="console-workspace-conversation-row",
             compact=True,
         )
+        if progress_count:
+            # Names and metadata are already wrapped/truncated to explicit lines.
+            # A second Textual wrap can otherwise push the progress badge below
+            # the row's allocated height at narrow rail widths.
+            button.styles.text_wrap = "nowrap"
+            button.styles.text_overflow = "ellipsis"
         button.conversation_id = conversation_id
         fallback_tooltip = text.splitlines()[0].strip() if text else text
         # TASK-1233 AC#1 (review round 1): `_marker_aware_tooltip` escapes
@@ -1180,7 +1191,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # "[" in a bracket-wrapped status badge; pre-escaping either branch
         # here too would double-escape it instead.
         button.tooltip = _marker_aware_tooltip(
-            f"Switch to {tooltip_label or fallback_tooltip}",
+            f"Switch to {tooltip_label or fallback_tooltip}"
+            + (f" · {progress_count} queued progress reports" if progress_count else ""),
             run_marker,
         )
         button.set_class(selected, "console-workspace-conversation-row-selected")
@@ -1190,7 +1202,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         state_class = _ROW_STATE_CLASS_BY_GLYPH.get(str(run_marker or "").strip())
         if state_class:
             button.add_class(state_class)
-        row_height = _conversation_row_render_height(name_line_count, subagent_count)
+        row_height = _conversation_row_render_height(name_line_count, subagent_count, progress_count)
         button.styles.height = row_height
         button.styles.min_height = row_height
         return button
@@ -1268,6 +1280,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     )
                 ),
                 row.subagent_count,
+                row.progress_count,
             )
             + _ROW_BOTTOM_MARGIN
             for row in rows
@@ -1995,7 +2008,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # task-31207: the icon control is the row's leftmost element,
             # left of the conversation name, mirroring the star on the right.
             control_height = _conversation_row_render_height(
-                len(name_lines), row.subagent_count
+                len(name_lines), row.subagent_count, row.progress_count
             )
             yield self._conversation_appearance_button(
                 row,
@@ -2019,6 +2032,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 run_marker=row.run_marker,
                 selected=row.selected,
                 subagent_count=row.subagent_count,
+                progress_count=row.progress_count,
                 name_line_count=len(name_lines),
             )
             row_button.row_key = row.row_key

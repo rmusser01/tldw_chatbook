@@ -13369,3 +13369,23 @@ those shorthands with `background-color`, `border-width`, `border-style`, and
 `border-color` made the exact packaged examples execute without changing pinned
 runtime assets. Compiler acceptance alone does not qualify authoring examples;
 run their exact source through the actual renderer and exercise the controls.
+
+## Reconstructing a PR must verify a fresh checkout's test prerequisites
+
+During the agent-orchestration preservation PR (2026-09-11), two mounted progress
+checks reached their screenshot capture and failed because the parent SDD evidence
+directory existed only in the original working checkout. The test used
+`mkdir(exist_ok=True)` for a nested path. Creating parents makes the capture work
+in a fresh checkout. The same pass found two survivor tests whose separately built
+app missed another module's autouse database fixture: recovery correctly reported
+`history_unavailable`, so the intended elapsed-row assertions could not run.
+Attaching the existing real-database helper before mount restored both exact
+checks without changing production behavior or weakening their assertions.
+
+A helper imported from another test module does not bring that module's autouse
+fixtures with it. Verify local artifact directories and explicit application
+prerequisites when reconstructing reviewed work outside its original checkout.
+
+## Isolated subprocess tests need the isolated checkout's import binding
+
+During PR 2631 integration, the shared virtual environment imported the rebased checkout for ordinary pytest calls, but its Python -I helper subprocesses loaded the original shared checkout through that environment's installed package. Newer parent/helper protocols then disagreed. A separate verification environment bound the exact worktree ahead of the existing dependency directory; checking `python -I -c "import tldw_chatbook; print(tldw_chatbook.__file__)"` proved the binding, and all 431 feature and 575 upstream Agent cases passed, including real subprocess/worktree checks. Verify child-process package provenance as well as pytest cwd; do not change a shared editable installation to repair another checkout's tests.

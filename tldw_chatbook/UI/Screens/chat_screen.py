@@ -2446,25 +2446,16 @@ class ChatScreen(BaseAppScreen):
     def on_console_inspector_section_view_all(
         self, message: ConsoleInspectorSection.ViewAllRequested
     ) -> None:
-        """Force a full (both-tier) Environment refresh from the "Refresh" tail.
+        """Route the Agents history action or explicitly refresh Environment.
 
-        Only the Environment section mounts a tail today, and its label is
-        "Refresh" (task-9), so this is the panel's explicit re-fetch: it
-        busts the 60s ``gh`` TTL, which is the entire point of pressing it.
-
-        TASK-31664 AC#3 (round-1 review I1/I2): the button flips to
-        "Refreshing…" only if the controller actually dispatched something
-        (checked AFTER the call, via ``pending_ack_tiers`` -- never armed
-        unconditionally BEFORE it, which is what let the ack wedge forever
-        on an ``UNKNOWN_ROOT``/rail-closed no-op call that would never
-        land). It stays up until every tier the press dispatched has
-        landed -- not just the fast local one -- so the ~12 measured
-        seconds a fresh `gh` fetch can take are never indistinguishable
-        from a dead control. ``_land_console_environment`` clears it once
-        ``pending_ack_tiers`` is empty. Never armed here by the 10s
-        automatic poll (which never sets ``force_net``), so that cadence
-        never flickers it.
+        Environment refresh bypasses the network TTL. Its busy state starts
+        only after a refresh dispatch and ends when all dispatched tiers land;
+        automatic polling does not change that button acknowledgement.
         """
+        if message.section_id == CONSOLE_AGENT_FLEET_SECTION_ID:
+            message.stop()
+            self._agent.open_fleet_history()
+            return
         if message.section_id != ENVIRONMENT_SECTION_ID:
             return
         message.stop()
@@ -2600,6 +2591,11 @@ class ChatScreen(BaseAppScreen):
             try:
                 self.query_one(ConsoleAgentSteeringBar).clear_draft()
             except Exception:  # noqa: BLE001 -- a mid-recompose bar is fine
+                pass
+        else:
+            try:
+                self.query_one(ConsoleAgentSteeringBar).show_delivery_refusal()
+            except Exception:  # noqa: BLE001 -- the bar may have unmounted
                 pass
 
     @on(Button.Pressed, "#console-context-rail-collapse")
@@ -9452,7 +9448,7 @@ class ChatScreen(BaseAppScreen):
             fleet_previous_summary = fleet_section.summary
             fleet_section.sync_state(fleet_section_state)
             fleet_section.styles.display = (
-                "block" if fleet_section_state.rows else "none"
+                "block" if fleet_section_state.rows or fleet_section_state.summary else "none"
             )
             if fleet_focus_row_id is not None and (
                 tuple(fleet_section_state.rows) != tuple(fleet_previous_rows)
@@ -16003,6 +15999,9 @@ class ChatScreen(BaseAppScreen):
                     agent_cancel_all_visible=(
                         self._agent._console_agent_cancel_all_visible()
                     ),
+                    open_agent_progress=lambda: self._agent.open_fleet_progress(),
+                    agent_progress_state=lambda: self._agent.progress_state(),
+                    refresh_progress_navigation=lambda: self._sync_console_workspace_context(),
                     show_character_section=show_character_avatar,
                     character_context_controller=self._character_context,
                     character_avatar_widget_builder=character_avatar_widget_builder,
@@ -18368,8 +18367,8 @@ class ChatScreen(BaseAppScreen):
         if controller is None:
             return False
         wake = getattr(controller, "fleet_wake", None)
-        delivering_read = getattr(wake, "delivering_conversation_id", None)
-        wake_delivering = callable(delivering_read) and delivering_read() is not None
+        delivering_read = getattr(wake, "delivering_conversation_ids", None)
+        wake_delivering = callable(delivering_read) and bool(delivering_read())
         review_coordinator = self._console_runtime().change_review_coordinator
         review_pending = (
             review_coordinator.publication_signal.snapshot().pending > 0

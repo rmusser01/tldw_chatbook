@@ -44,6 +44,7 @@ from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
 from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
 from .agent_models import (
     AgentDefinition,
+    MESSAGE_TOOL_NAMES,
     CHECK_AGENTS_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FIND_TOOLS_RESULT_LIMIT,
@@ -82,6 +83,10 @@ from .run_log_search import (
 # keeps the module off the UI-ready census path. The live policy object is
 # constructed by its callers (see `Chat/console_agent_bridge.py`).
 if TYPE_CHECKING:
+    from .fleet_message_tools import (
+        READ_AGENT_MESSAGES_SCHEMA as READ_AGENT_MESSAGES_SCHEMA,
+        REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
+    )
     from .run_tool_policy import RunToolPolicy
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
@@ -2067,7 +2072,7 @@ def probe_initial_catalog(
     schemas: list[ToolSchema] = []
     try:
         for entry in registry.list_catalog():
-            if entry.name not in allowed:
+            if entry.name not in allowed or entry.name in MESSAGE_TOOL_NAMES:
                 continue
             schemas.append(registry.load_schema(entry.id))
             measured = measure_schema_set(tuple(schemas))
@@ -2078,3 +2083,12 @@ def probe_initial_catalog(
     except Exception:
         return None
     return tuple(schemas)
+
+
+def __getattr__(name: str):
+    """Keep the public progress-schema exports lazy until explicitly requested."""
+    if name in {"READ_AGENT_MESSAGES_SCHEMA", "REPORT_TO_SUPERVISOR_SCHEMA"}:
+        from . import fleet_message_tools
+
+        return getattr(fleet_message_tools, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

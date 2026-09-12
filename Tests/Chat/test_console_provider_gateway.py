@@ -4987,6 +4987,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
         "_trace_preparation",
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "model_retry_callback",
         "usage_payload",
@@ -5007,6 +5008,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
         "_trace_preparation",
+        "automatic_work_chain_id",
         "_synthetic_fallback",
         "model_retry_callback",
         "usage_payload",
@@ -5053,6 +5055,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         f"ConsoleProviderStreamSignals(run_tag={signals.run_tag!r}, "
         "exchange_capture_enabled=True)"
     )
+    signals.automatic_work_chain_id = "private-chain-identity"
+    assert "private-chain-identity" not in repr(signals)
     signals.record_usage_payload({"prompt_tokens": 4242})
     call = signals.new_usage_call()
     call.begin_exchange(

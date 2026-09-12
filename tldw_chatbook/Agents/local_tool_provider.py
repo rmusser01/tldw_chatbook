@@ -1639,6 +1639,9 @@ class LocalToolProvider:
         executions record nothing: MCPToolProvider records those
         service-side via execute_hub_tool, which has no local analogue.
         """
+        from .automatic_work_runtime import current_automatic_work
+        from .automatic_work_budget import AutomaticWorkRefused
+
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
         if spec is None:
@@ -1647,6 +1650,26 @@ class LocalToolProvider:
                 final_gate="not_checked",
                 approval_consumed=False,
                 reason_code=LocalToolInvocationReason.UNKNOWN_TOOL,
+                dispatch_started=False,
+                provider_terminal=LocalProviderTerminal.NOT_STARTED,
+            )
+        automatic_work = current_automatic_work()
+        automatic_refusal = None
+        if automatic_work is not None:
+            try:
+                automatic_work.check()
+            except AutomaticWorkRefused as exc:
+                automatic_refusal = f"automatic tool call refused: {exc}"
+            except Exception:
+                automatic_refusal = "automatic tool call refused: chain unavailable"
+            if name == "web_deep_search":
+                automatic_refusal = "web_deep_search is unavailable during automatic follow-up; request it in a manual message"
+        if automatic_refusal is not None:
+            return LocalToolInvocationResult(
+                result=ToolResult.blocked(automatic_refusal),
+                final_gate="not_checked",
+                approval_consumed=False,
+                reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
                 dispatch_started=False,
                 provider_terminal=LocalProviderTerminal.NOT_STARTED,
             )
@@ -1759,6 +1782,19 @@ class LocalToolProvider:
                     if authority is not None
                     else self._result_redaction_root
                 )
+                if automatic_work is not None:
+                    try:
+                        automatic_work.check()
+                    except Exception as exc:
+                        reason = str(exc) if isinstance(exc, AutomaticWorkRefused) else "chain unavailable"
+                        return LocalToolInvocationResult(
+                            result=ToolResult.blocked(f"automatic tool call refused: {reason}"),
+                            final_gate=gate.verdict,
+                            approval_consumed=gate.approval_consumed,
+                            reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+                            dispatch_started=False,
+                            provider_terminal=LocalProviderTerminal.NOT_STARTED,
+                        )
                 dispatch_started = True
                 # ruling 1 (TASK-28238 P1 T3): `clean_args` is read by the
                 # fs_read branch below BEFORE the fs_write branch's

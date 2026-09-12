@@ -5676,12 +5676,27 @@ Button.console-inspector-action:disabled {
 /* TASK-31665 AC#5: no top margin. With the section's own bottom margin the
    tail button floated between two blank lines, "orphaned ~28 lines from its
    data"; flush under the last row makes its owner unambiguous. */
+.console-inspector-section-row-stuck > .console-inspector-section-row-primary {
+    color: $ds-status-warning;
+}
+
+.console-inspector-section-row-cancelled > .console-inspector-section-row-primary {
+    color: $ds-text-muted;
+}
+
 .console-inspector-section-view-all {
     width: 100%;
     height: 1;
     min-height: 1;
     margin: 0;
 }
+
+ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
+#agent-history-dialog { width: 90%; max-width: 110; height: 85%; border: round $primary; background: $panel; padding: 1 2; }
+#agent-history-state { height: auto; color: $ds-text-muted; margin-bottom: 1; }
+#agent-history-table { height: 1fr; min-height: 3; }
+#agent-history-actions { height: 3; margin-top: 1; align-horizontal: right; }
+#agent-history-actions Button { min-width: 12; margin-left: 1; }
 
 .console-live-work-source-readiness {
     height: auto;
@@ -12194,3 +12209,15 @@ BuddyConversationModal .approval-row-decision {
     width: 1fr;
     min-width: 10;
 }
+
+/* Session-only progress inspection shares the Console modal grammar. */
+ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
+#agent-progress-dialog { width: 90%; max-width: 110; height: 85%; border: round $primary; background: $panel; padding: 1 2; }
+#agent-progress-scope, #agent-progress-count, #agent-progress-status { height: auto; margin-bottom: 1; }
+#agent-progress-scope { color: $ds-text-muted; }
+#agent-progress-list { height: 5; min-height: 3; margin-bottom: 1; }
+#agent-progress-detail { height: 1fr; min-height: 3; margin-bottom: 1; }
+#agent-progress-body { height: auto; }
+#agent-progress-actions { height: 3; align-horizontal: right; }
+#agent-progress-actions Button { min-width: 10; margin-left: 1; }
+#console-agent-progress { width: 1fr; height: 1; min-height: 1; margin: 1 0; }

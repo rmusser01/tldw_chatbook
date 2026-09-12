@@ -950,6 +950,7 @@ class ConsoleRuntime:
                 `console_provider_gateway_factory` test seam — never
                 mutated.
         """
+        self._execution_capacity = None
         self._app = app
         self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
         # -- setters, for the screen handles that now READ THROUGH here ----
@@ -1576,8 +1577,29 @@ class ConsoleRuntime:
         """Replace the provider-gateway handle."""
         self._provider_gateway = value
 
+    @property
+    def execution_capacity(self):
+        """Allocate shared admission only when agent work first needs it."""
+        if self._execution_capacity is None:
+            from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+            self._execution_capacity = RuntimeCapacity.from_settings()
+        return self._execution_capacity
+
     def set_agent_bridge(self, value: Any) -> None:
         """Replace the agent-bridge handle."""
+        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+        if (
+            isinstance(value, ConsoleAgentBridge)
+            and value.runtime_capacity is not self.execution_capacity
+        ):
+            if value.runtime_capacity.snapshot().executions:
+                raise ValueError("cannot replace capacity of an active bridge")
+            value.runtime_capacity = self.execution_capacity
+        if self._agent_bridge is not value:
+            close_progress = getattr(self._agent_bridge, "close_all_progress", None)
+            if callable(close_progress):
+                close_progress()
         self._agent_bridge = value
 
     def set_chat_controller(self, value: Any) -> None:
@@ -3286,6 +3308,7 @@ class ConsoleRuntime:
             self._change_review_coordinator = change_coordinator
         self._agent_bridge = ConsoleAgentBridge(
             agent_runs_db=runs_db,
+            runtime_capacity=self.execution_capacity,
             store=store_factory(),
             provider_gateway=provider_gateway_factory(),
             skills_service=skills_service,
@@ -3422,6 +3445,14 @@ class ConsoleRuntime:
             self._clear_view_hooks(only="wake")
         else:
             self._bind_view_hooks()
+        # ADR-135: the native controller's birth owns recovery. View remounts
+        # and repeated ensure/read calls return above without auditing owners.
+        wake = self._chat_controller.fleet_wake
+        wake.wire(
+            app=self._app,
+            startup_ready=lambda: bool(getattr(self._app, "_ui_ready", True)),
+        )
+        wake.start_recovery()
         return self._chat_controller
 
     # -- the view seam -----------------------------------------------------
@@ -3607,20 +3638,21 @@ class ConsoleRuntime:
         wake = self._hook_target("wake")
         if wake is None:
             return
-        reader = getattr(wake, "delivering_session_id", None)
-        session_id = reader() if callable(reader) else None
-        if not session_id:
+        reader = getattr(wake, "delivering_session_ids", None)
+        session_ids = reader() if callable(reader) else ()
+        if not session_ids:
             return
         hook = getattr(wake, "delivery_ui_hook", None)
         if not callable(hook):
             return
-        try:
-            hook(session_id)
-        except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
-            logger.debug(
-                "wake delivery UI hook re-arm raised (exception_type={})",
-                type(exc).__name__,
-            )
+        for session_id in session_ids:
+            try:
+                hook(session_id)
+            except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
+                logger.debug(
+                    "wake delivery UI hook re-arm raised (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def remount_pending_approval(self) -> None:
         """Re-derive decision cards for rounds armed while viewless.
@@ -4144,6 +4176,11 @@ class ConsoleRuntime:
         for decision in dispatch_decisions:
             self.resolve_project_instruction_dispatch(decision.decision_id, "cancel")
         self._scratch_spaces.tombstone_all()
+        close_progress = getattr(self._agent_bridge, "close_all_progress", None)
+        if callable(close_progress):
+            close_progress()
+        if self._execution_capacity is not None:
+            self._execution_capacity.close()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
         canvas_gateway = self._canvas_gateway

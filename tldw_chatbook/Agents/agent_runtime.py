@@ -12,7 +12,10 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
+
+if TYPE_CHECKING:
+    from .fallback_chain import FallbackRuntime
 
 from loguru import logger
 
@@ -35,6 +38,7 @@ from tldw_chatbook.model_capabilities import (
 # retry/fallback/projection helpers are loop-only dependencies, imported
 # at the top of `run_agent_loop`; `FallbackRuntime` appears here only as
 # a string annotation on `LoopDeps.fallback`.
+from .agent_models import MESSAGE_TOOL_NAMES, READ_AGENT_MESSAGES_TOOL_NAME, REPORT_TO_SUPERVISOR_TOOL_NAME
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
@@ -92,6 +96,7 @@ from .agent_models import (
     ModelTurn,
     ProviderContinuationEvent,
     RunOutcome,
+    SpawnAdmissionRefusal,
     ToolBatchReady,
     ToolCall,
     ToolCallExecuting,
@@ -547,6 +552,8 @@ class LoopDeps:
     # tools on one path. Validation (non-empty, MAX_STEERING_CHARS) and
     # every piece of refusal copy live in the service closure, not here.
     send_to_agent: Callable[[str, str], ToolResult] | None = None
+    report_to_supervisor: Callable[[dict], ToolResult] | None = None
+    read_agent_messages: Callable[[dict], ToolResult] | None = None
     # drain_mailbox: fleet steering (PR3b Task 1, spec SS6). Wired ONLY for
     # a THREADED fleet child -- the service's spawn tail closes it over
     # that child's own coordinator mailbox
@@ -1109,6 +1116,11 @@ def run_agent_loop(
     context_trace_reserved = False
     current_call_correlation = ""
 
+    def message_metadata(result: ToolResult | None = None) -> str:
+        from .fleet_message_tools import metadata
+
+        return metadata(result)
+
     def projection_opt_in(call: ToolCall) -> bool | None:
         """Return the catalog-authoritative projection mode, or None on error."""
         try:
@@ -1122,6 +1134,13 @@ def run_agent_loop(
         result: ToolResult | None = None,
     ) -> ToolRecordProjection:
         """Project one non-model tool consumer without ever formatting raw data."""
+        if call.name in MESSAGE_TOOL_NAMES and audience not in {"continuation", "cycle"}:
+            return ToolRecordProjection(
+                arguments={},
+                content=message_metadata(result),
+                error=message_metadata(result),
+                ok=result.ok if result is not None else None,
+            )
         opted_in = projection_opt_in(call)
         if opted_in is None:
             return failed_tool_record_projection(
@@ -1246,6 +1265,13 @@ def run_agent_loop(
             kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         if kw.get("owner_seq") is None:
             kw["owner_seq"] = claim_owner_seq()
+        if kw.get("tool_name") in MESSAGE_TOOL_NAMES:
+            if "args" in kw:
+                kw["args"] = {}
+            if "result" in kw:
+                kw["result"] = kw.pop("message_projection", "progress_tool_result")
+            if "summary" in kw:
+                kw["summary"] = "progress_tool_call"
         step = AgentStep(index=len(steps), kind=kind, **kw)
         steps.append(step)
         if counts_toward_budget:
@@ -1258,6 +1284,28 @@ def run_agent_loop(
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass
         return step
+
+    def reader_cycle_stuck(call: ToolCall, result: ToolResult | None) -> bool:
+        """Evaluate reader progress only after its result and history barriers."""
+        if call.name != READ_AGENT_MESSAGES_TOOL_NAME:
+            return False
+        from .fleet_message_tools import MessageToolResult
+
+        if (
+            isinstance(result, MessageToolResult)
+            and result.ok
+            and type(result.collected_count) is int
+            and result.collected_count > 0
+        ):
+            recent_calls.clear()
+            return False
+        if _detect_cycle(recent_calls) is None:
+            return False
+        add(
+            STEP_ERROR,
+            summary="Agent stopped: repeated progress reads without making progress.",
+        )
+        return True
 
     def trace(kind: str, **kw) -> AgentStep:
         """Capture a safe lifecycle observation outside legacy control steps."""
@@ -2092,6 +2140,8 @@ def run_agent_loop(
                 summary=(
                     "Ephemeral tool continuation is non-resumable."
                     if ephemeral_continuation
+                    else "progress_tool_call"
+                    if any(c.name in MESSAGE_TOOL_NAMES for c in calls)
                     else model_step_summary
                 ),
                 parent_step_index=model_response_step.index,
@@ -2361,7 +2411,7 @@ def run_agent_loop(
                 return _outcome(RUN_CANCELLED)
             cycle_projection = project_record("cycle", call)
             recent_calls.append((call.name, projection_arguments_json(cycle_projection)))
-            cycle = _detect_cycle(recent_calls)
+            cycle = None if call.name == READ_AGENT_MESSAGES_TOOL_NAME else _detect_cycle(recent_calls)
             if cycle is not None:
                 period, repeats = cycle
                 # Name the offending tool(s) so the user-facing "Agent run
@@ -2418,6 +2468,8 @@ def run_agent_loop(
             # verdicts, and the fence path builds ToolCalls with NO call_id
             # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
+            if restoring_batch and call.name in MESSAGE_TOOL_NAMES:
+                verdict = "ERROR: restored_pending"
             if continuation_checkpoint is not None and verdict != "proceed":
                 consecutive_tool_failures = 0
                 refusal_result = ToolResult.blocked(verdict)
@@ -2469,6 +2521,8 @@ def run_agent_loop(
                         return continuation_error()
                 else:
                     _append_tool_result(messages, call, content)
+                if reader_cycle_stuck(call, None):
+                    return _outcome(RUN_STUCK)
                 continue
             if continuation_checkpoint is not None and not transition_call(
                 call, "executing"
@@ -2597,7 +2651,7 @@ def run_agent_loop(
                             #   VALID named spawn would be wrongly refused here
                             #   before ever reaching deps.spawn's own (real)
                             #   budget check.
-                            if result.ok or not agent_name:
+                            if not isinstance(result, SpawnAdmissionRefusal) and (result.ok or not agent_name):
                                 spawned += 1
                 elif (
                     call.name == WAIT_AGENTS_TOOL_NAME and deps.wait_agents is not None
@@ -2667,6 +2721,23 @@ def run_agent_loop(
                     add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.discard_agent_worktree(
                         str(call.args.get("handle_id", ""))
+                    )
+                elif call.name in MESSAGE_TOOL_NAMES:
+                    from .fleet_message_tools import refused
+
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=call.args)
+                    callback = (
+                        deps.report_to_supervisor
+                        if call.name == REPORT_TO_SUPERVISOR_TOOL_NAME
+                        else deps.read_agent_messages
+                    )
+                    result = callback(call.args) if callback is not None else refused()
+                elif (
+                    call.name == SEND_TO_AGENT_TOOL_NAME and deps.send_to_agent is None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args={})
+                    result = ToolResult(
+                        False, error="Tool not permitted: send_to_agent"
                     )
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
@@ -2922,6 +2993,15 @@ def run_agent_loop(
                 tool_name=call.name,
                 result=display_result_content[:2000],
                 tool_outcome=tool_outcome,
+                **(
+                    {
+                        "message_projection": message_metadata(
+                            result if verdict == "proceed" else None
+                        )
+                    }
+                    if call.name in MESSAGE_TOOL_NAMES
+                    else {}
+                ),
             )
             if restoring_batch and continuation_checkpoint is not None:
                 if not expand_restore_history(continuation_checkpoint):
@@ -2949,4 +3029,6 @@ def run_agent_loop(
                         "Check the tool error before retrying, or use a different tool."
                     ),
                 )
+                return _outcome(RUN_STUCK)
+            if reader_cycle_stuck(call, result if verdict == "proceed" else None):
                 return _outcome(RUN_STUCK)

@@ -668,6 +668,11 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
+    if "work_chain_id" not in kwargs:
+        from uuid import uuid4
+        kwargs["work_chain_id"] = bridge._db.automatic_work.create_chain(
+            kwargs["conversation_id"], root_submission_id=uuid4().hex
+        )
     # run_reply returns (run_id, outcome); these tests assert on the outcome.
     _run_id, outcome = bridge.run_reply(**kwargs)
     return outcome
@@ -890,14 +895,16 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     )
     events = []
     monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
-    monkeypatch.setattr(agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10)
+    monkeypatch.setattr(
+        agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10
+    )
     monkeypatch.setattr(
         bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
     )
     monkeypatch.setattr(
         bridge_module,
         "_count_model_messages",
-        lambda *_: transformed_tokens,
+        lambda *_, **_kwargs: transformed_tokens,
         raising=False,
     )
     marks = []
@@ -4006,7 +4013,12 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     assert tool_step.tool_outcome == "success"
     assert persisted_step["tool_outcome"] == "success"
     assert live[-1].activity_presentation.status == "success"
-    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+    assert resumed[-1].activity_presentation == live[-1].activity_presentation
+    if content.startswith("tool call denied"):
+        assert "***REDACTED***" in resumed[-1].content
+        assert resumed[-1].tool_output_full is None
+    else:
+        assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
 @pytest.mark.parametrize(
@@ -7024,7 +7036,12 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     # task-32279: the hook returned the Console review hook's USER-denial
     # copy, so the marker names the user, not a policy.
     assert live[1].activity_presentation.status == "denied"
-    assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
+    assert [row.activity_presentation for row in resumed] == [
+        row.activity_presentation for row in live
+    ]
+    assert resumed[0].content == live[0].content
+    assert "***REDACTED***" in resumed[1].content
+    assert resumed[1].tool_output_full is None
 
 
 def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(
@@ -7453,6 +7470,12 @@ def test_admitted_run_budget_is_intersected_with_later_live_narrowing():
 def _make_bridge() -> ConsoleAgentBridge:
     store = MagicMock()
     store.messages_for_session.return_value = []
+    identity_store = ConsoleChatStore()
+    identity_store.create_session(session_id="s1")
+    store.progress_owner_scope = identity_store.progress_owner_scope
+    store.register_progress_message_store = (
+        identity_store.register_progress_message_store
+    )
     return ConsoleAgentBridge(
         agent_runs_db=MagicMock(),
         store=store,

@@ -35,6 +35,7 @@ from Tests.Chat.test_console_agent_swap import (
     FakeMCPService,
     _catalog_record,
     _controller,
+    _disable_project_instructions_for_legacy_agent_swap_tests,  # noqa: F401 - pytest fixture
     _fake_app,
     _fence,
     _tool_dict,
@@ -120,15 +121,18 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
         app = _AppStub(chacha)
         controller.fleet_wake.wire(app=app)
         session = store.ensure_session()
+        if session.persisted_conversation_id is None:
+            store.append_message(session.id, role=ConsoleMessageRole.USER, content="Earlier request", persist=True)
+        await store.hydrate_session_library_policy(session.id)
         _parent, run_id = _terminal_subagent_run(
-            runs_db, session.id, result="survivor findings"
+            runs_db, session.persisted_conversation_id or session.id, result="survivor findings"
         )
         app.conversation_local_marks_service.set_mark(
-            session.id, ConversationLocalMarksService.FLEET_UNSEEN
+            session.persisted_conversation_id or session.id, ConversationLocalMarksService.FLEET_UNSEEN
         )
 
         controller.fleet_wake.on_fleet_drained(
-            _drain(session.id, _survivor(run_id, session_id=session.id))
+            _drain(session.persisted_conversation_id or session.id, _survivor(run_id, session_id=session.id))
         )
         surfaced = await _settle(lambda: received and received[-1] is not None)
         assert surfaced, (
@@ -177,7 +181,7 @@ async def test_a_woken_turns_gated_tool_still_raises_the_approval_card(tmp_path)
         assert await _settle(
             lambda: (
                 not app.conversation_local_marks_service.has_mark(
-                    session.id, ConversationLocalMarksService.FLEET_UNSEEN
+                    session.persisted_conversation_id or session.id, ConversationLocalMarksService.FLEET_UNSEEN
                 )
             ),
             seconds=5.0,
@@ -214,8 +218,11 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
         app = _AppStub(chacha)
         controller.fleet_wake.wire(app=app)
         session = store.ensure_session()
+        if session.persisted_conversation_id is None:
+            store.append_message(session.id, role=ConsoleMessageRole.USER, content="Earlier request", persist=True)
+        await store.hydrate_session_library_policy(session.id)
         _parent, run_id = _terminal_subagent_run(
-            runs_db, session.id, result="finished while you decided"
+            runs_db, session.persisted_conversation_id or session.id, result="finished while you decided"
         )
 
         send_task = asyncio.ensure_future(controller.submit_draft("please run it"))
@@ -227,12 +234,12 @@ async def test_a_wake_defers_behind_a_pending_card_and_cannot_resolve_it(
 
         # The completion lands NOW, mid-decision.
         controller.fleet_wake.on_fleet_drained(
-            _drain(session.id, _survivor(run_id, session_id=session.id))
+            _drain(session.persisted_conversation_id or session.id, _survivor(run_id, session_id=session.id))
         )
         assert await _quiet(
             lambda: round_state["event"].is_set() or round_state["decisions"]
         ), "the arriving wake must not decide or release the pending card"
-        assert controller.fleet_wake.has_pending(session.id), (
+        assert controller.fleet_wake.has_pending(session.persisted_conversation_id or session.id), (
             "the deferred wake keeps its pending bit"
         )
         assert not any(
@@ -393,7 +400,6 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     try:
         controller, store, runs_db = _controller(tmp_path, [["m."], ["w."]])
-        store.persistence = FakePersistence()
         controller.app = _fake_app()
         captured: list[dict] = []
         real_run_reply = controller._agent_bridge.run_reply
@@ -406,12 +412,15 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
         app = _AppStub(chacha)
         controller.fleet_wake.wire(app=app)
         session = store.ensure_session()
-        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        if session.persisted_conversation_id is None:
+            store.append_message(session.id, role=ConsoleMessageRole.USER, content="Earlier request", persist=True)
+        await store.hydrate_session_library_policy(session.id)
+        _parent, run_id = _terminal_subagent_run(runs_db, session.persisted_conversation_id or session.id)
 
         manual = await controller.submit_draft("hello", session_id=session.id)
         assert manual.accepted is True
         controller.fleet_wake.on_fleet_drained(
-            _drain(session.id, _survivor(run_id, session_id=session.id))
+            _drain(session.persisted_conversation_id or session.id, _survivor(run_id, session_id=session.id))
         )
         assert await _settle(lambda: len(captured) >= 2, seconds=10.0), (
             "the wake turn never reached run_reply"
@@ -433,3 +442,64 @@ async def test_a_wake_dispatches_run_reply_under_the_same_authority_as_manual(
         assert "not user input" in wake_kwargs["agent_messages"][-1]["content"]
     finally:
         chacha.close()
+
+
+@pytest.mark.asyncio
+async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_path):
+    """The second automatic slot does not resolve or bypass the first card."""
+    controller, store, runs_db = _controller(
+        tmp_path,
+        [
+            [_fence("mcp__srv__run", {"x": 1})],
+            ["second conversation completed"],
+            ["first conversation completed"],
+        ],
+    )
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    controller.app = _fake_app(service)
+    received = []
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    first = store.ensure_session()
+    second = store.create_session(title="Second")
+    for session in (first, second):
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="Earlier request", persist=True)
+        await store.hydrate_session_library_policy(session.id)
+    store.switch_session(first.id)
+    wake = controller.fleet_wake
+    _, first_child = _terminal_subagent_run(runs_db, first.persisted_conversation_id)
+    _, second_child = _terminal_subagent_run(runs_db, second.persisted_conversation_id)
+    try:
+        wake.on_fleet_drained(
+            _drain(first.persisted_conversation_id, _survivor(first_child, session_id=first.id))
+        )
+        assert await _settle(lambda: any(received), seconds=5)
+        payload = next(item for item in received if item)
+        round_id = payload["round_id"]
+        with controller._approval_state_lock:
+            held = controller._pending_approval_rounds[round_id]
+        wake.on_fleet_drained(
+            _drain(second.persisted_conversation_id, _survivor(second_child, session_id=second.id))
+        )
+        assert await _settle(
+            lambda: runs_db.get_run(second_child)["wake_delivered_at"] is not None,
+            seconds=5,
+        )
+        assert not held["event"].is_set()
+        assert not held["decisions"]
+        assert runs_db.get_run(first_child)["wake_delivered_at"] is None
+        assert service.execute_calls == []
+        controller.resolve_pending_approval(
+            {"mcp__srv__run": "denied"}, round_id=round_id
+        )
+        assert await _settle(lambda: not wake._delivery_tasks, seconds=5)
+    finally:
+        controller._disposed = True
+        for sid in wake.delivering_session_ids():
+            controller._signal_stop(session_id=sid)
+        for task in tuple(wake._delivery_tasks):
+            task.cancel()
+        await asyncio.gather(*wake._delivery_tasks, return_exceptions=True)
+        runs_db.close()

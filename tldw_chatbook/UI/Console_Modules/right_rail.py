@@ -1657,12 +1657,16 @@ class ConsoleInspectorRail(Vertical):
                 section_id=CONSOLE_AGENT_FLEET_SECTION_ID,
                 rows=self._agent_fleet_section_state.rows,
                 summary=self._agent_fleet_section_state.summary,
+                notice=self._agent_fleet_section_state.notice,
+                max_visible_rows=4,
+                scroll_on_expand=True,
+                view_all_label="View all runs",
                 collapsible=True,
                 open=False,
                 id="console-agent-section-subagents",
             )
             fleet_section.styles.display = (
-                "block" if self._agent_fleet_section_state.rows else "none"
+                "block" if self._agent_fleet_section_state.rows or self._agent_fleet_section_state.summary else "none"
             )
             yield fleet_section
 

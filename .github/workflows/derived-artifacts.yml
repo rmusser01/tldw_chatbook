@@ -83,6 +83,14 @@ jobs:
           pytest \
             Tests/CI \
             Tests/test_smoke.py \
+            Tests/Agents/test_execution_capacity.py \
+            Tests/Agents/test_fleet_messages.py \
+            Tests/Agents/test_session_todo_store.py \
+            Tests/DB/test_agent_orchestration_dev_migration.py \
+            Tests/DB/test_agent_run_budget_accounting.py \
+            Tests/DB/test_automatic_work_budget.py \
+            Tests/DB/test_automatic_runtime_owner.py \
+            Tests/DB/test_automatic_wake_attempts.py \
             Tests/Model_Artifacts/test_operation_leases.py \
             Tests/Model_Artifacts/test_operation_leases_process.py \
             Tests/UI/test_mcp_workbench.py \

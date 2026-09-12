@@ -16,12 +16,14 @@ import stat
 import contextlib
 import threading
 import time
+from contextlib import nullcontext
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from sqlite3 import Error as SQLiteError
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -52,6 +54,7 @@ from tldw_chatbook.Chat.attachment_core import (
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     CONSOLE_DISPATCH_DISCARDED_COPY,
@@ -322,6 +325,7 @@ from tldw_chatbook.Chat.library_preparation import (
     library_preparation_event_for_outcome,
 )
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
+from tldw_chatbook.Agents.execution_capacity import WorkOrigin
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     PromptQueueMutationResult,
@@ -8397,6 +8401,93 @@ class ConsoleChatController:
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
+        """Submit work, explicitly identifying a wake's proven preflight refusal."""
+        from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+        scope = (
+            nullcontext()
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            else manual_work_scope()
+        )
+        try:
+            with scope:
+                result = await self._submit_draft_body(
+                    draft,
+                    session_id=session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                    preserve_composer=preserve_composer,
+                    configuration=configuration,
+                    accepted_attachments=accepted_attachments,
+                    captured_one_shot_prefill=captured_one_shot_prefill,
+                    captured_one_shot_prefill_revision=captured_one_shot_prefill_revision,
+                    staged_evidence_launch=staged_evidence_launch,
+                    staged_evidence_capture=staged_evidence_capture,
+                    staged_evidence_release=staged_evidence_release,
+                    custody_acceptance_hook=custody_acceptance_hook,
+                    _resume_preparation_id=_resume_preparation_id,
+                    _resume_resolution=_resume_resolution,
+                )
+        except BaseException as exc:
+            # A wake may stop while preparation is still awaiting a helper,
+            # before the streaming layer owns its terminal-state cleanup.
+            if (
+                origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                and self._fleet_wake.authorizes(wake_authorization, session_id)
+            ):
+                self._signal_stop(session_id=session_id)
+                if (
+                    self.run_state_for(session_id).status
+                    in FEEDBACK_ACTIVE_RUN_STATUSES
+                ):
+                    status = (
+                        ConsoleRunStatus.STOPPED
+                        if isinstance(exc, asyncio.CancelledError)
+                        else ConsoleRunStatus.FAILED
+                    )
+                    self._set_run_state(
+                        ConsoleRunState(
+                            status, "Automatic follow-up paused. Results are saved."
+                        ),
+                        session_id=session_id,
+                    )
+            raise
+
+        if (
+            origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            and self._fleet_wake.authorizes(
+                wake_authorization, result.session_id or session_id
+            )
+            and not wake_authorization.acceptance_started
+            and not result.accepted
+        ):
+            wake_authorization.preflight_refused = True
+        return result
+
+    async def _submit_draft_body(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        preserve_composer: bool = False,
+        configuration: ConsoleTurnConfigurationSnapshot | None = None,
+        accepted_attachments: tuple[PendingAttachment, ...] | None = None,
+        captured_one_shot_prefill: str | None = None,
+        captured_one_shot_prefill_revision: int | None = None,
+        staged_evidence_launch: Any | None = None,
+        staged_evidence_capture: (
+            Callable[[str, Any, Any], Awaitable[Any]] | None
+        ) = None,
+        staged_evidence_release: Callable[[Any, Any], None] | None = None,
+        custody_acceptance_hook: Callable[[], None] | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+    ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
 
         PR3a-2 Task 5: ``origin=AGENT_WAKE`` (requires a coordinator-issued
@@ -9236,6 +9327,21 @@ class ConsoleChatController:
                         queue_entry_id=queue_entry_id,
                     )
 
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+            try:
+                accepted = await self._fleet_wake.accept(wake_authorization, session.id)
+            except (SQLiteError, OSError, AutomaticWorkRefused):
+                return self._block(
+                    session.id,
+                    "Automatic work paused. Results are saved; send a message to continue.",
+                )
+            if not accepted:
+                return self._block(
+                    session.id,
+                    "Manual work has priority. Background results are saved.",
+                )
         citation_context: str | None = None
         citation_trace_builder: CitationTraceBuilder | None = None
         prompt_evidence_set_id: str | None = None
@@ -9696,6 +9802,16 @@ class ConsoleChatController:
             stream_result = await self._stream_assistant_response(
                 route=ConsoleRequestRoute.FRESH,
                 resolution=resolution,
+                work_origin=(
+                    WorkOrigin.AUTOMATIC
+                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    else WorkOrigin.MANUAL
+                ),
+                work_chain_id=(
+                    wake_authorization.work_chain_id
+                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    else None
+                ),
                 provider_messages=provider_messages,
                 assistant_message_id=assistant.id,
                 prefill=prefill,
@@ -12512,6 +12628,10 @@ class ConsoleChatController:
         # approval-card revocation and cancelled-is-never-retained ride
         # along. getattr-guarded and wrapped: a bare bridge double, no
         # bridge, or a raising cancel must never break a close.
+        fleet_conversation_id = self._agent_conversation_id(session_id)
+        close_progress = getattr(self._agent_bridge, "close_progress", None)
+        if callable(close_progress):
+            close_progress(session_id, conversation_id=fleet_conversation_id)
         cancel_all = (
             getattr(self._agent_bridge, "cancel_all_subagents", None)
             if self._agent_bridge is not None
@@ -17333,6 +17453,9 @@ class ConsoleChatController:
             content="",
             persist=self.store.persistence is not None,
         )
+        existing_message_ids = {
+            row.id for row in self.store.all_messages_for_session(session_id)
+        }
         result = await self._stream_assistant_response(
             route=ConsoleRequestRoute.REGENERATE,
             resolution=resolution,
@@ -17354,7 +17477,7 @@ class ConsoleChatController:
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.id not in existing_message_ids
             ):
                 # Provider failure rows are transcript-only. Re-home the row
                 # from beneath the failed sibling onto the restored original
@@ -17365,9 +17488,9 @@ class ConsoleChatController:
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.id not in existing_message_ids
             ):
-                self._append_failure_system_row(session_id, result.visible_copy)
+                self._append_failure_system_row(session_id, failure_row.content)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None
@@ -22879,33 +23002,45 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
+        from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+
+        scope = (
+            nullcontext()
+            if work_origin is WorkOrigin.AUTOMATIC
+            else manual_work_scope()
+        )
         try:
-            return await self._stream_assistant_response_inner(
-                resolution=resolution,
-                provider_messages=provider_messages,
-                assistant_message_id=assistant_message_id,
-                route=route,
-                prepare_retry=prepare_retry,
-                variant_mode=variant_mode,
-                prefill=prefill,
-                prefill_from_one_shot=prefill_from_one_shot,
-                one_shot_prefill_revision=one_shot_prefill_revision,
-                skill_bindings=skill_bindings,
-                skill_bundle_block=skill_bundle_block,
-                citation_repair_session=citation_repair_session,
-                turn_context=turn_context,
-                preparation_id=preparation_id,
-                stream_signals=stream_signals,
-                generation_token=generation_token,
-                before_provider_dispatch=before_provider_dispatch,
-                capture_mode_override=capture_mode_override,
-                trace_request=trace_request,
-                propagate_trace_call_persistence_errors=(
-                    propagate_trace_call_persistence_errors
-                ),
-                trusted_profile_user_message_id=trusted_profile_user_message_id,
-            )
+            with scope:
+                return await self._stream_assistant_response_inner(
+                    resolution=resolution,
+                    work_origin=work_origin,
+                    work_chain_id=work_chain_id,
+                    provider_messages=provider_messages,
+                    assistant_message_id=assistant_message_id,
+                    route=route,
+                    prepare_retry=prepare_retry,
+                    variant_mode=variant_mode,
+                    prefill=prefill,
+                    prefill_from_one_shot=prefill_from_one_shot,
+                    one_shot_prefill_revision=one_shot_prefill_revision,
+                    skill_bindings=skill_bindings,
+                    skill_bundle_block=skill_bundle_block,
+                    citation_repair_session=citation_repair_session,
+                    turn_context=turn_context,
+                    preparation_id=preparation_id,
+                    stream_signals=stream_signals,
+                    generation_token=generation_token,
+                    before_provider_dispatch=before_provider_dispatch,
+                    capture_mode_override=capture_mode_override,
+                    trace_request=trace_request,
+                    propagate_trace_call_persistence_errors=(
+                        propagate_trace_call_persistence_errors
+                    ),
+                    trusted_profile_user_message_id=trusted_profile_user_message_id,
+                )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
                 try:
@@ -22943,6 +23078,8 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -23205,6 +23342,36 @@ class ConsoleChatController:
                 "trajectory_step_start_failed"
             )
         try:
+            runs_db = getattr(self._agent_bridge, "runs_db", None)
+            ledger = getattr(runs_db, "automatic_work", None)
+            try:
+                if ledger is not None:
+                    if work_origin is WorkOrigin.MANUAL:
+                        work_chain_id = await asyncio.to_thread(
+                            ledger.create_chain,
+                            self._agent_conversation_id(owner_id),
+                            root_submission_id=uuid4().hex,
+                        )
+                    elif work_chain_id is not None:
+                        snapshot = await asyncio.to_thread(
+                            ledger.snapshot, work_chain_id
+                        )
+                        if snapshot.conversation_id != self._agent_conversation_id(
+                            owner_id
+                        ):
+                            raise ValueError(
+                                "Automatic work chain does not own this conversation."
+                            )
+            except (SQLiteError, OSError):
+                self.store.mark_message_failed(assistant_message_id)
+                return self._block(
+                    owner_id, "Run history could not be saved. Try again."
+                )
+            if self._disposed or owner_id not in {
+                session.id for session in self.store.sessions()
+            }:
+                return self._session_closed_result()
+            stream_signals.automatic_work_chain_id = work_chain_id
             if (
                 bool(
                     turn_context.tool_configuration.get(
@@ -23217,6 +23384,8 @@ class ConsoleChatController:
             ):
                 return await self._run_agent_reply(
                     resolution=resolution,
+                    work_origin=work_origin,
+                    work_chain_id=work_chain_id,
                     provider_messages=provider_messages,
                     assistant_message_id=assistant_message_id,
                     prepare_retry=prepare_retry,
@@ -23491,12 +23660,13 @@ class ConsoleChatController:
         self._fleet_wake.capture_loop_if_running()
         if bridge is None:
             return
-        register = getattr(bridge, "on_fleet_drained", None)
+        register = getattr(bridge, "on_fleet_child_settled", None)
         if callable(register):
-            register(
-                ConsoleFleetWakeCoordinator.NAME,
-                self._fleet_wake.on_fleet_drained,
-            )
+            register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled)
+        else:
+            register = getattr(bridge, "on_fleet_drained", None)
+            if callable(register):
+                register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained)
 
     def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
         """``FleetDrained`` consumer: hop off the child's thread and fold.
@@ -24696,6 +24866,8 @@ class ConsoleChatController:
         propagate_trace_call_persistence_errors: bool = False,
         _generation_handoff: _GenerationTokenHandoff | None = None,
         trusted_profile_user_message_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -24716,6 +24888,11 @@ class ConsoleChatController:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
+        # Capture before preparatory awaits or executor scheduling. A restored
+        # native session can reuse its ID without setting this run's cancel event.
+        progress_owner_id = self.store.progress_owner_id(session_id)
+        if progress_owner_id is None:
+            return self._session_closed_result(session_id=session_id)
         turn_context = self._require_complete_turn_execution_context(turn_context)
         if turn_context.session_id != session_id:
             raise ValueError("Console turn context does not own the assistant row.")
@@ -25308,8 +25485,11 @@ class ConsoleChatController:
             run_id, outcome = await asyncio.to_thread(
                 self._run_owned_chat_db_operation,
                 self._agent_bridge.run_reply,
+                work_origin=work_origin,
+                work_chain_id=work_chain_id,
                 conversation_id=conversation_id,
                 session_id=session_id,
+                expected_progress_owner_id=progress_owner_id,
                 resolution=resolution,
                 assistant_message_id=assistant_message_id,
                 model=(
@@ -25465,6 +25645,8 @@ class ConsoleChatController:
                 profile_context_service=profile_context_service,
             )
         except asyncio.CancelledError:
+            if work_origin is WorkOrigin.AUTOMATIC:
+                cancel_event.set()
             if cancel_event.is_set():
                 # Whatever the provider already billed for this turn's
                 # completed steps is real money -- record it (partial)
