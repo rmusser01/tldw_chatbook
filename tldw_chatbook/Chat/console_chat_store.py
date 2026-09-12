@@ -255,7 +255,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     read_thinking_blocks_json,
 )
 from tldw_chatbook.Chat.trajectory import contains_local_path
-from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
+from tldw_chatbook.DB.ChaChaNotes_DB import InputError, TrajectoryRowWrite
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
@@ -2812,10 +2812,20 @@ class ConsoleChatStore:
             session.generation_durable_snapshot = generation_durable_snapshot
             session.generation_metadata_status = generation_metadata_status
             self.hydrate_session_capture_policy(session.id)
-            self._hydrate_dispatch_recovery(
+            recovery = self._hydrate_dispatch_recovery(
                 session.id,
                 str(persisted_conversation_id),
             )
+            if recovery is not None and recovery.checkpoint is not None:
+                # Reconciliation may have repaired an older stranded cursor.
+                # Publish the committed cursor, not the pre-reconcile snapshot.
+                database = getattr(self.persistence, "db", None)
+                if database is not None:
+                    active_leaf_persisted_id, active_leaf_before_persisted_id = (
+                        database.get_conversation_active_cursor(
+                            str(persisted_conversation_id)
+                        )
+                    )
             session.library_policy_hydrated = False
             coordinator = self.library_policy_coordinator
             if coordinator is not None:
@@ -13567,6 +13577,10 @@ class ConsoleChatStore:
                     before_message_id=before_message_id,
                 )
             )
+        except InputError:
+            self._active_leaf_by_session[session_id] = previous_leaf
+            self._recompute_active_path(session_id)
+            return False
         except Exception:
             logger.bind(
                 session_id=session_id,
@@ -13595,9 +13609,9 @@ class ConsoleChatStore:
         and the persistence adapter exposes a raw ``db`` seam -- write-throughs
         the local-only ``conversations.active_leaf_message_id`` pointer (mapped
         to the leaf node's *persisted* id, or ``None`` when the leaf is cleared
-        or not yet persisted). A durable write failure is logged, never raised:
-        the in-memory pointer is authoritative and already updated, matching
-        this store's persist-through convention elsewhere.
+        or not yet persisted). An ownership refusal leaves both cursors intact.
+        Other durable write failures retain the existing in-memory write-through
+        convention and are logged.
 
         Args:
             session_id: Native Console session ID.
@@ -13607,15 +13621,17 @@ class ConsoleChatStore:
         Raises:
             KeyError: If the session is unknown, or ``message_id`` is not
                 ``None`` and does not reference a node in the session's tree.
+            RuntimeError: Pending dispatch ownership refuses the cursor change.
         """
         self._session_or_raise(session_id)
         nodes = self._nodes_by_session.get(session_id, {})
         if message_id is not None and message_id not in nodes:
             raise KeyError(f"Unknown Console message: {message_id}")
+        if not self._persist_active_leaf(session_id, message_id):
+            raise RuntimeError("Conversation cursor change was refused.")
         previous_leaf = self._active_leaf_by_session.get(session_id)
         self._active_leaf_by_session[session_id] = message_id
         self._recompute_active_path(session_id)
-        self._persist_active_leaf(session_id, message_id)
         self._bump_payload_revision(session_id)
         if message_id != previous_leaf:
             self._bump_conversation_context_epoch(session_id)
@@ -21569,7 +21585,7 @@ class ConsoleChatStore:
         message_id: str | None,
         *,
         content_safe_diagnostic: bool = False,
-    ) -> None:
+    ) -> bool:
         """Write-through the local-only active-leaf pointer for a persisted conv.
 
         No-op unless the session owns a persisted conversation AND the
@@ -21577,35 +21593,36 @@ class ConsoleChatStore:
         ``persistence_db = getattr(self.persistence, "db", None)`` pattern in
         ``persist_session_if_needed``). Maps the in-memory leaf to its persisted
         message id (``None`` when cleared or not yet persisted).
+
+        Returns False only for an ownership refusal. Other I/O errors preserve
+        the historical in-memory write-through behavior.
         """
         session = self._sessions.get(session_id)
-        conversation_id = (
-            session.persisted_conversation_id if session is not None else None
-        )
+        conversation_id = session.persisted_conversation_id if session is not None else None
         if conversation_id is None:
-            return
+            return True
         persistence_db = getattr(self.persistence, "db", None)
         if persistence_db is None:
-            return
+            return True
         leaf_persisted_id: str | None = None
         if message_id is not None:
             node = self._nodes_by_session.get(session_id, {}).get(message_id)
             leaf_persisted_id = node.persisted_message_id if node is not None else None
         try:
-            persistence_db.set_conversation_active_leaf(
-                conversation_id, leaf_persisted_id
-            )
+            persistence_db.set_conversation_active_leaf(conversation_id, leaf_persisted_id)
+        except InputError:
+            logger.warning("console_cursor_pending_dispatch")
+            return False
         except Exception:
             if content_safe_diagnostic:
                 logger.warning("terminal_persistence_bookkeeping_unavailable")
-                return
+                return True
             logger.bind(
                 session_id=session_id,
                 conversation_id=conversation_id,
-            ).exception(
-                "Failed to persist Console active-leaf pointer; the in-memory "
-                "pointer keeps the applied value."
-            )
+            ).exception("Failed to persist Console active-leaf pointer.")
+            return True
+        return True
 
     def _persist_context_summary(
         self,
