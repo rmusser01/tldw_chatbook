@@ -66,11 +66,12 @@ DEEP_ROW_SCROLL_Y = 28
 #: The offset ``_open_scrolled_compact_media_viewer`` leaves the compact row
 #: list at when it scrolls row 15 into view at ``COMPACT_SCROLL_SIZE``. It was
 #: 42 while a wide item painted three rows; task-31633 made it two, so the same
-#: row now sits shallower. TASK-32064 then removed the one-row global Chunking
-#: tools strip: the viewport grew from three rows to four, changing 29 to 28.
+#: row now sits shallower. TASK-32064 removed the one-row global Chunking tools
+#: strip, but TASK-32350 added the one-row applied-scope line, so the viewport
+#: remains three rows and the offset remains 29.
 #: The helper returns the real offset; this exact pin ensures a silent clamp
 #: cannot pass as a deep scroll.
-COMPACT_ROW_SCROLL_Y = 28
+COMPACT_ROW_SCROLL_Y = 29
 
 
 def _park_row_scroll(owner) -> tuple[int, int]:
