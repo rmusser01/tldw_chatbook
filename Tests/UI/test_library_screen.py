@@ -664,8 +664,10 @@ def test_ingest_browse_remembers_the_directory_of_the_picked_file(
     picked.write_text("hi")
 
     saved: list[tuple] = []
+    # task-32242: the write now goes through the shared, generation-ordered
+    # `library_browse_location`, so that is the module whose save is patched.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        "tldw_chatbook.Library.library_browse_location.save_setting_to_cli_config",
         lambda section, key, value: saved.append((section, key, value)) or True,
     )
 

@@ -290,6 +290,40 @@ def resolve_adaptive_reader_layout(
         ):
             priority = inherited
 
+    if (
+        priority == "items"
+        and preferences.items_open
+        and not reader_has_item
+        and profile.list_first_when_empty
+        and width < LIBRARY_EMERGENCY_WIDTH
+    ):
+        # task-32389: an "items" priority takes the width-starved branch
+        # below, which keeps the list at its floor and hands the rest to
+        # the work pane -- 32 cells of list beside 18 cells of EMPTY stage
+        # at 60 columns. That is the exact shape task-32065's rule exists
+        # to prevent, and the rule never saw the width because the starved
+        # branch returns first. Dropping the priority here lets that one
+        # rule own the case for every caller that asks for the list first
+        # (Notes' list view asks unconditionally); with something open,
+        # ``reader_has_item`` is True and nothing changes.
+        #
+        # ``preferences.items_open`` is load-bearing, not a restatement
+        # (review of this branch, F3): the priority is the ONLY thing that
+        # can force a CLOSED items pane open, and task-32065's rescue
+        # branch below requires the preference. Without this clause a
+        # reopen request at 48-63 columns was discarded and the pane stayed
+        # shut -- latent today only because every production caller flips
+        # the preference before resolving.
+        #
+        # This reaches BOTH profiles that set the flag, Notes and Media
+        # (review F2). It is claimed for Media deliberately: Media Trash
+        # resolves with ``priority="items"`` and no item open
+        # (``library_screen.py``'s trash leg), which produced exactly the
+        # 32/18 shape at 60 columns that task-32065 wrote the rule to kill.
+        # Pinned for both profiles in
+        # ``Tests/Library/test_library_adaptive_reader_state.py``.
+        priority = None
+
     grip_width = 2 * profile.grip_width
     work_min_width = max(profile.work_min_width, 0)
     # The added default space is preferred, not a new collapse threshold.

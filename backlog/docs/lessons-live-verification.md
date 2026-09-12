@@ -2711,3 +2711,71 @@ directive, and end the system prompt with a recency anchor that names the
 required output shape and forbids near-copies. When the DB has no attempt
 row, replay the exact request payload against the provider before believing
 any UI state.
+
+## A plain-text tmux capture cannot tell a focused control from an unfocused one — two reports were "focus is missing" when it was only invisible (task-32246, task-32252, 2026-09-11)
+
+**What happened.** Two wave-3 tasks were filed from `capture-pane -p` evidence
+that focus had gone somewhere it had not.
+
+- task-32246 reported "no focused control anywhere in the visible pane" after
+  Tab out of the note body, reproduced twice. Focus was on
+  `#library-notes-source-database` the whole time. `capture-pane -e` on that
+  one row decoded `1;4` bold+underline on `48;2;16;49;75` — identical to what
+  the button already wears for its own `-selected` class. Invisible, not
+  absent.
+- task-32252 reported `/` typing itself into the Notes filter "from a state
+  where no control on the canvas is focused", three clean repros. Rebuilt live
+  and in the harness from a genuinely unfocused canvas (`set_focus(None)`),
+  the behaviour is correct. A Textual `Input` renders its placeholder whenever
+  its value is empty, focused or not, and a plain-text capture shows no focus
+  border colour — so an already-focused empty filter is pixel-identical to an
+  unfocused one, and `/` typing literally into it (the task-32131 ruling, kept
+  deliberately so `Work/Q3` stays typeable) reads as a leak.
+
+**What to do.** Before filing or fixing "nothing is focused" / "focus went
+nowhere", get the focus identity from something other than the glyphs:
+`capture-pane -e` and decode the SGR on the candidate row, or reproduce in a
+harness and read `screen.focused`. And when a control's focus treatment is a
+colour swap that its own selected/active state also uses, that is itself the
+bug worth filing — a reader cannot see focus there either.
+
+## "The key is being swallowed" — check the framework binds it at all before hunting the swallower (task-32247, 2026-09-11)
+
+**What happened.** The task recorded, as an inferred cause, "Textual's
+`TextArea` binds `ctrl+end` to `cursor_document_end`, so something upstream is
+swallowing it", and pointed at this repo's several layers of priority
+bindings, `on_key` handlers and screen-level grabs. Textual 8.2.8 binds no
+such key and defines no `action_cursor_document_end`: its only end binding is
+`"end,ctrl+e" -> cursor_line_end`. Nothing was swallowing anything. Two
+one-minute checks settled it — `grep -n "ctrl+end" textual/widgets/_text_area.py`
+(no hits) and a harness probe asserting
+`"ctrl+end" in body._bindings.key_to_bindings` (False).
+
+**What to do.** An inert key has two very different causes — consumed
+upstream, or never bound — and the cheap check distinguishes them before any
+tracing: grep the third-party widget's `BINDINGS` and `action_*` for the key
+and the action, and assert the key's presence in the live widget's
+`_bindings.key_to_bindings`. Only if it IS bound is the swallower hunt worth
+starting. Note also that every encoding a terminal might send for one key
+usually normalises to a single Textual name (`\x1b[1;5F`, `\x1b[1;5H` →
+`ctrl+end`/`ctrl+home` in `_ansi_sequences.py`), so "it failed in three
+encodings" is one failure, not three.
+
+## A new menu label can ship pre-truncated — only the running app says so (task-32146, 2026-09-11)
+
+**What happened.** A new Console message action shipped with the label
+"Save answer as note" (19 chars). Every test was green: the action-row
+contracts assert `action_id`/label STRINGS, never rendered width. The first
+live walk showed the More menu — a fixed 24-cell overlay — rendering it as
+"Save answer as": Textual had cut it at about fifteen characters with no
+ellipsis, so the live label named no destination at all. The two TASK-31759
+note labels beside it ("Summarize up to here as note", "Save transcript up to
+here as note") were already taking the same cut, undetected, since they
+shipped.
+
+**What to do.** A label is not verified until a capture shows it rendered.
+Any new entry in a fixed-width surface (this More menu, the composer menu, a
+rail row) gets one `tmux capture-pane` before the guide is written — and if
+the incumbents in that surface are also truncated, say so in the guide rather
+than assuming the copy on screen is the copy in the source. Choosing a label
+that fits is a one-line fix; widening a shared menu for one row is not.

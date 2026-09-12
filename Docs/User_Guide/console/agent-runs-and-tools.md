@@ -58,25 +58,30 @@ finish or interrupt it." Runs continue when you switch screens — see
 **In the reply row itself** — while the turn works, the unfinished
 `Assistant` row shows a live activity line in place of its (empty) text, so
 a long tool call never looks frozen. `Connecting tools… · 4s` marks the
-pre-provider setup step — the first send after a launch pays for it once,
-assembling the turn's tools and your profile; that setup step is capped at
-ten seconds, so if something it needs (an OS keychain prompt, for
-instance) does not answer in time, the send goes ahead without profile
-tools rather than waiting. `⚙ read_file · 4s` names the tool that is
-running and how long it has been running, `Thinking… · 6s` means the tool
-finished and the model is composing the next round, and `Generating…` is
-the wait for the model's first response of the turn. Once an approval or
-confirm card is up and waiting on you, the line reads `Waiting for your
-approval · 12s` instead of `Thinking…` — a decision only you can make
-outranks whatever the model's last step happened to be — and the same
-applies to the "Run:" status chip above the composer and the Inspector's
-`Live work`/`Run` rows, which read "Waiting for your approval"/"Waiting
-for approval" rather than the generic run-in-progress copy while a card is
-pending. The elapsed figure advances while you watch. The line is
-live-only — it vanishes the moment the reply's own text arrives, and a
-conversation you reopen later shows the completed `Tool` rows below
-instead. During a fleet turn, while the primary waits on its children, the
-line reads `2 sub-agents · ⚙ grep_files · 12s`
+pre-provider setup step. The first send after a launch pays for it once,
+assembling the turn's tools and your profile. `⚙ read_file · 4s` names the
+tool that is running and how long it has been running, `Thinking… · 6s`
+means the tool finished and the model is composing the next round, and
+`Generating…` is the wait for the model's first response of the turn. That
+setup step is capped at ten seconds: if something it needs — an OS
+keychain prompt, for instance — does not answer in time, the send goes
+ahead without profile tools rather than waiting. Once an approval, a skill
+or worktree confirm, or a question is up and waiting on you, the line reads
+`Waiting for your approval · 12s` for an approval, `Waiting for your
+answer · 12s` for a question, or `Waiting for your confirmation · 12s` for
+a skill/worktree confirm — instead of `Thinking…`, since a decision only
+you can make outranks whatever the model's last step happened to be — and
+the "Run:" status chip above the composer reads the same kind-aware line.
+The Inspector's `Live work` row and the pinned authority summary's `Run`
+fact stay approval-specific, though: they read "Waiting for your approval"
+only while an actual approval card (not a question or confirm) is mounted,
+and otherwise show their ordinary copy — `Generating…`, or no active work —
+even while a question or confirm card is the one genuinely pending. The
+elapsed figure
+advances while you watch. The line is live-only — it vanishes the moment
+the reply's own text arrives, and a conversation you reopen later shows the
+completed `Tool` rows below instead. During a fleet turn, while the primary
+waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
 (the count of running sub-agents and their longest-running tool) instead of
 `Thinking…`; the running sub-agent list itself lives in the **Agents**
 section of the Inspect rail (**Alt+I**), and each child's full step list
@@ -231,21 +236,57 @@ appears above the transcript:
 
 ![The "Approval required" card with a pending tool call](../images/console/approval-card.svg)
 
-- Each pending tool call gets a row with a decision select: **Approve once**
-  (the default), **Approve for session**, **Always allow this exact input**,
-  **Always allow**, or **Deny** — some rows narrow that set (built-in tools
-  don't offer "Always allow"; decisions for them last at most the session).
-- Bulk controls: **Approve all** sets every row to Approve once, **Submit**
+*(The card above shows a countdown because the screenshot generator
+(`scripts/regen_approval_card_svg.py`) hardcodes a 120-second deadline
+directly on the card, the same way a positive `[mcp] approval_timeout_seconds`
+would; the setting itself defaults to `0`, which waits indefinitely and shows
+no countdown — see below.)*
+
+Each pending tool call gets its own row, one full-width line at a time: the
+`server · tool` header, the arguments the call wants to run with, the decision
+controls, and — under the controls — a line spelling out what the decision
+you have highlighted actually commits you to.
+
+The five decisions, with the scope line each one shows:
+
+| Decision | Scope line |
+|---|---|
+| **Once** | This call only. |
+| **This session** | Every call to this tool until Chatbook exits. |
+| **Always · these args** | Remembered for exactly these arguments. Remove it under MCP ▸ Tools ▸ this tool. |
+| **Always** | Remembered for this tool. Change it under MCP ▸ Permissions. |
+| **Deny** | This call only; the model is told not to retry. |
+
+- Not every row offers all five. MCP tool rows do, except a high-risk tool
+  (tagged `mutates` or `process`), whose row does **not** offer **Always ·
+  these args** — the risk floor would make a stored exact-argument rule
+  inert, so the card never offers it; see [Exact-input allow
+  rules](../mcp.md#exact-input-allow-rules). A **local workspace tool**
+  offers **Once**, **This session**, **Always** and **Deny** — no
+  exact-argument rule, since nothing stores one for local tools. A
+  **built-in** tool offers **Once**, **This session** and **Deny** only:
+  **Always** is the one decision that writes a permission to disk, and a
+  built-in never does that from this card. The model's raw shell capability
+  is its own shape again — **Run once**, **All shell · session**, **Deny** —
+  and it starts on **Deny** rather than on the usual Once.
+- Bulk controls: **Approve all** sets every row to **Once**, **Submit**
   applies each row's selected decision and resumes the run, **Deny all** sets
   every row to Deny.
 - When exactly one tool call is pending, the row also gets fast **Approve
   once** and **Deny** buttons that resume immediately, skipping Submit.
 - Watch the badges on a row's header: **(definition changed)** means the
   tool's definition differs from what you previously approved; **(high risk)**
-  flags reads that could exfiltrate file contents; and a path warning —
-  "path outside private scratch and bound Workspace folders; will fail even
-  if approved" — means the file path will be rejected regardless of your
-  decision.
+  flags a tool the permission store floors to Ask; and a path warning —
+  "path outside allowed folders; will fail even if approved" — means the
+  file path will be rejected regardless of your decision.
+- Each badge also gets a visible line under the header saying what it means,
+  rather than a hover-only tooltip: "Definition changed since you last
+  allowed it; review the arguments.", "High risk: this tool reads local data
+  and always asks first.", or — for a tool whose declared effects include a
+  local mutation — "High risk: this tool changes local data and always asks
+  first."
+- A row you left undecided when you pressed Submit is marked in text, not
+  just in colour: its header gains a `needs decision · ` prefix.
 - Some local-tool rows also state their code-owned effects: they may read
   private local data, modify local data, access the network, or incur LLM
   usage costs. These labels come from the registered tool descriptor, never
@@ -264,10 +305,58 @@ however long you take. Stopping the run or closing the session withdraws a
 pending card; nothing else does. If you'd rather have undecided calls
 auto-denied on a clock, set `[mcp] approval_timeout_seconds` in
 `config.toml` (seconds; `0`, the default, waits indefinitely — the skill
-install and run-script confirm cards follow the same rule).
+install and run-script confirm cards follow the same rule). With a finite
+clock set, the card shows **Auto-denies in M:SS** beside its title and ticks
+it down once a second, so the deadline deciding for you is one you can watch.
 Finite clocks pause while no supported view can answer the card, including hidden
 Console, another conversation, or an earlier card of the same kind. A visible
 Buddy interaction card can keep its own decision answerable.
+
+#### Reaching a card from the keyboard
+
+**Alt+A** jumps to the pending approval from anywhere in Console — the
+composer included, where Tab alone never reached it. The footer advertises it
+as **Approval**, and F1's Navigation list carries it as "Review pending
+approval"; the inspector's **Review approval** button is the same route. A
+session tab wearing the **◆** marker (the status legend reads "● running · ◆
+needs approval · ✓ finished · ✗ failed") routes straight to whichever
+decision card is actually pending — approval, question, skill-install, or
+skill-script confirm, checked in that precedence (a worktree-merge confirm
+has no card wired on this screen) — when you press it: the session is
+activated first — a parked round only mounts its card once its session is
+the one you are viewing — and the usual "press the active tab to rename it"
+gesture is pre-empted only when a card is actually found. When none is (a
+stale marker, or a pending worktree-merge confirm), the press falls back to
+the ordinary tab press instead of warning "No approval is pending." (rename
+stays available from the session switcher either way).
+
+While a card is up, the assistant's live activity line names the kind
+that's waiting — **Waiting for your approval · 12s**, **Waiting for your
+answer · 12s**, or **Waiting for your confirmation · 12s**. That state
+outranks every other one — a stale tool name, or a fleet of sub-agents
+still nominally working — because a card waiting on you is the most
+important thing on screen. See [the activity
+line](#layout-tour--what-you-see-during-a-run) for the other states,
+including `Connecting tools…`.
+
+#### After you decide
+
+A refused call leaves a row in the transcript naming **who** refused it, not
+one generic word:
+
+- `· denied by you` — you pressed **Deny** on the card. Covers MCP tools
+  and **local workspace tools** alike.
+- `· blocked (Off)` — the tool's permission is **Off**; no card was shown.
+  Covers MCP, local workspace, and raw-shell tools alike.
+- `· blocked (kill switch)` — the global kill switch refused it.
+- `· blocked` — an approval timeout, or a round that ended undecided.
+
+Expanding a refused row is labelled **Sent to the model** rather than "Full
+output": what it holds is the refusal text the model was given ("Do not retry
+this call…"), never a result the tool produced. The same vocabulary shows up
+in the MCP screen's [Audit mode](../mcp.md#permission-continuity-for-built-in-tools),
+so what you read in the transcript and what you read in the log are the same
+words.
 
 Some short local database mutations have a definitive-after-start contract.
 Before approval, Stop still withdraws the request. After you approve and the
@@ -281,15 +370,15 @@ Closing that Console chat
 removes its finishing row because the session no longer exists; it does not
 retroactively cancel a mutation that already started.
 
-**Always allow** (MCP tools only) is remembered per tool, tied to the tool's
-current definition — if the server later changes the tool, the approval card
-comes back with a "(definition changed)" badge. Review or change a remembered
-allow from the tool's row on the [MCP screen](../mcp.md) 🚧.
-
-**Always allow this exact input** is narrower: it remembers only the exact
-arguments shown on that card, not the whole tool — the same tool called
-again with different arguments still asks. See [Exact-input allow
-rules](../mcp.md#exact-input-allow-rules) for where to review or remove one.
+**Always** applies to MCP tools *and* local workspace tools — built-in tools
+are the exception, and only ever get a decision that lasts to the end of the
+session. A remembered allow is tied to the tool's current definition: if the
+server later changes the tool, the approval card comes back with a
+"(definition changed)" badge. Change a remembered allow under **MCP ▸
+Permissions**; **Always · these args** stores a narrower rule instead — the
+same tool with different arguments still asks — and is removed from the
+tool's row in [MCP ▸ Tools](../mcp.md#exact-input-allow-rules). A **This
+session** grant is listed there too, with a **Revoke** beside it.
 
 With sub-agents running in parallel (see below), more than one approval card
 can be pending at once — cards aren't merged across sub-agents: each is
@@ -311,8 +400,8 @@ forces a separate per-call review even if ordinary Notes tools are allowed for
 the session. The row identifies create/update, title, classification, and a
 content digest without placing the full private note body on the card; the
 agent must first show the complete proposed title, content, organization,
-target, and versions in the conversation. The only decisions are **Approve
-once** and **Deny**.
+target, and versions in the conversation. The only decisions are **Once**
+and **Deny**.
 
 Only the foreground primary can submit that save. A subagent can search
 lessons, verify evidence, and return a structured draft, but a mutation returns
@@ -336,7 +425,7 @@ count makes a lesson authoritative. Subagents can return evidence, target hints,
 candidate wording, and verification ideas, but cannot present a promotion card
 or apply a change.
 
-For repository instructions, preparation is one **Approve once** / **Deny**
+For repository instructions, preparation is one **Once** / **Deny**
 card over an exact read-only preview. Application is a second card over the
 identical retained proposal. Only `AGENTS.md` or `AGENTS.override.md` inside the
 selected writable binding qualifies. A changed target, binding, applicable
@@ -1566,9 +1655,11 @@ Allow value is treated as Ask. Unless the current Console session already has a
 temporary grant, every request shows a command-visible approval card containing
 the complete command, selected shell, absolute initial directory, timeout,
 full-host-authority warning, and the scope of a session decision. The choices
-are **Run once**, **Allow all raw shell commands for this Console session**, and
-**Deny**. Run once applies only to the displayed call; repeated calls retain
-separate identities. A session grant may cover later calls in that same live
+are **Run once**, **All shell · session** (that one option covers every later
+raw command in this live Console session, which is why the row states its own
+scope), and **Deny** — and the row starts on **Deny**, not on Run once. Run
+once applies only to the displayed call; repeated calls retain separate
+identities. A session grant may cover later calls in that same live
 Console session, but it is held in process memory only and is cleared by
 Disarm, locking raw CLI, shutdown, or restart.
 
@@ -1590,12 +1681,12 @@ Once a run's cumulative returned output passes an aggregate budget
 (256 KiB), results above a 4 KiB floor spill even under the ceiling.
 Standalone providers without a scratch root keep today's truncation exactly.
 
-For ordinary MCP/catalog tools, the approval card offers **Always allow
-this exact input** alongside the existing choices: it saves an allow scoped
-to exactly the arguments displayed on the card — the same tool called with
-different arguments still asks. Argument-scoped rules obey the same
-definition-hash rug-pull guard as whole-tool allows (a changed tool
-definition silently invalidates them), never quiet a high-risk-tagged tool,
+For ordinary MCP/catalog tools, the approval card offers **Always · these
+args** alongside the other decisions: it saves an allow scoped to exactly the
+arguments displayed on the card — the same tool called with different
+arguments still asks. Argument-scoped rules obey the same definition-hash
+rug-pull guard as whole-tool allows (a changed tool definition silently
+invalidates them), never quiet a high-risk-tagged tool,
 and can be extended by hand in `mcp_permissions.json` with
 `{"field": …, "pattern": …}` glob rules. Raw shell does not offer this
 option.
@@ -1723,7 +1814,7 @@ appears above the transcript:
 
 ### MCP tools
 
-Servers you configure on the [MCP screen](../mcp.md) 🚧 surface in Console as
+Servers you configure on the [MCP screen](../mcp.md) surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
@@ -1736,8 +1827,8 @@ an equivalent boundary itself; review its arguments and permission policy.
 Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
 agent tools, not tools supplied by an external MCP server. They are registered
-by default. Configure their master switch in **MCP → Tools → Local workspace,
-web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
+by default. Configure their registration control in **MCP → Tools → Local
+workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
 Permissions. Console file authority comes from the Chat's private scratch plus
 explicit Workspace bindings, not a global confinement-directory field.
 `[mcp] expose_local_tools` is only for external MCP clients and does not enable
@@ -2194,7 +2285,7 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
-- [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
+- [MCP](../mcp.md) — servers, tools, and permissions.
 - [Console runs continue during navigation](../index.md#console-runs-continue-during-navigation)
   — what leaving Console does to runs and approvals.
 - [Console](../console.md) — the screen itself.
@@ -2546,11 +2637,38 @@ rail keeps the run status/steps lines, the drilled-in single-child view, and
 the live 80x24/200x50 run for this task exercised the sibling Environment and
 Tasks sections, not a real sub-agent fleet.*
 
-*"Always allow this exact input" named in the decision-option list, and its
-own short paragraph added, for TASK-32281 — 2026-09-10. Docs-only pass
-against code and tests, not a live screen: the option previously persisted
-an argument-scoped rule with no UI to list or remove it, and the Virtual CLI
+*Approvals section verified against `fix/approval-wave-b-card` @ e7409210cc
+and `fix/approval-wave-c-hub` @ a999fcf6e6 — 2026-09-10 (task-32290, against
+code and tests, not a live screen). The card offers five decisions, not four
+(`_DECISION_OPTIONS`), each with the scope line it paints verbatim from
+`DECISION_SCOPE_COPY`; **Always** covers MCP *and* local workspace tools and
+only built-ins are capped at the session; the path warning now quotes
+`_PATH_PRECHECK_SUFFIX` exactly; added the Alt+A / ◆-tab route, the
+`Waiting for your approval · Ns` activity state, the ticking
+`Auto-denies in M:SS` countdown, and the `denied by you` / `blocked (Off)` /
+`blocked (kill switch)` transcript vocabulary with its **Sent to the model**
+disclosure. The approval-card SVG was regenerated from that card
+(`scripts/regen_approval_card_svg.py`).*
+
+*"Always · these args" named in the decision-option list, and its own short
+paragraph added, for TASK-32281 — 2026-09-10. Docs-only pass against code
+and tests, not a live screen: the option previously persisted an
+argument-scoped rule with no UI to list or remove it, and the Virtual CLI
 provider's verdict path silently dropped or denied it; both gaps are now
 closed (see [Exact-input allow rules](../mcp.md#exact-input-allow-rules) for
 the review/remove surface). The rest of this page is unchanged from the
 prior stamp.*
+
+*Docs pass 2026-09-11 (Qodo follow-ups: task-32277/32278/32279/32280/32281/
+32284/32286/32289/32291/32345, against code and tests, not a live screen):
+the ◆-tab route is now documented as landing on whichever decision card is
+actually pending — approval, question, skill-install, or skill-script,
+checked in that precedence — and falling back to the ordinary tab press
+when none is mounted (a worktree-merge confirm has no card wired on this
+screen); the refusal vocabulary's bare `· blocked` bullet dropped its
+local-workspace-tool carve-out now that a local Deny reads `denied by you`
+and a local or raw-shell Off reads `blocked (Off)` just like MCP's; and the
+kind-aware `Waiting for your approval`/`answer`/`confirmation` copy is now
+scoped correctly — it covers the "Run:" chip and the reply row's activity
+line, but the Inspector's `Live work` row and the pinned authority
+summary's `Run` fact remain approval-specific.*

@@ -993,3 +993,62 @@ strings in Python — including multi-line constants, so grep for the bare
 token, not `"quoted"` patterns, (3) tests that assert on those strings,
 (4) `Docs/`. Sweep all four with one loose grep for the token and filter
 noise by eye; a quote-anchored regex is not evidence of absence.
+
+---
+
+## The MRO walk also runs the BASE's private `_on_*` handler — and it runs LAST, so an inline effect in a subclass gets undone (task-32251, 2026-09-11)
+
+The `super().on_mount()` lesson above is about a base body running *twice*.
+The same dispatcher has a second, sharper consequence for the private
+`_on_<event>` handlers Textual's own widgets use: the base implementation
+runs for the event **whether or not you call `super()`**, and because
+`_get_dispatch_methods` walks `self.__class__.__mro__` most-derived-first,
+it runs **after** yours. If the base handler's job is to SET something your
+override wants to set differently, you lose.
+
+The incident: `PathInput` (the picker path field) needed the click that
+focuses it to select the pre-filled directory, so typing an absolute path
+replaces it instead of appending — the defect was a field holding
+`/Users/me/Users/me/.cache/...` after a click and a type. The obvious
+override was
+
+```python
+async def _on_mouse_down(self, event):
+    await super()._on_mouse_down(event)
+    self.action_select_all()          # <- never survives
+```
+
+and it failed the first test run with the typed text spliced in at the click
+offset. `Input._on_mouse_down` sets `self.selection = Selection.cursor(...)`;
+the dispatcher called it again after the override returned and collapsed the
+selection to the click point. Calling `super()` was not merely redundant here,
+it was misleading — deleting it changed nothing.
+
+**The fix that works: defer past the dispatch.** `self.call_next(
+self.action_select_all)` runs after every MRO handler for that message has
+been invoked. `call_after_refresh` works too where a layout pass is wanted.
+
+**Corollaries.**
+- A subclass `_on_focus` / `_on_key` that only records state is safe (nothing
+  to undo) and still must not call `super()`.
+- `self.has_focus` inside `_on_mouse_down` is always `True` and tells you
+  nothing: `Screen._forward_event` focuses a clicked widget BEFORE forwarding
+  the `MouseDown` to it. So "was this the click that focused me?" has to be
+  reconstructed from event ORDER — `set_focus` only posts `Focus` when focus
+  actually moves, so the focusing click always arrives as `Focus` then
+  `MouseDown`.
+- **Necessary is not sufficient, and the first cut shipped the difference.**
+  A flag armed on `Focus` and consumed by the next `MouseDown` also fires for
+  a Tab focus followed much later by a deliberate click-to-place-the-caret —
+  the review reproduced it: Tab in, click at offset 3, whole value selected,
+  next keystroke wipes it. What separates them is the pointer: a deliberate
+  click needs a `MouseMove` across the widget AFTER the focus, and a genuine
+  click-to-focus cannot have one, because there the move PRECEDES the focus
+  (Textual forwards `MouseMove` without touching focus; only `MouseDown`
+  focuses). So disarm on `_on_mouse_move` as well as on `_on_key`.
+- `Pilot.click` posts `[MouseDown, MouseUp, Click]` and **no** `MouseMove`,
+  while `Pilot.mouse_down`/`mouse_up` each post one. A test that only clicks
+  is therefore not exercising the terminal's own event shape — `pilot.hover`
+  first, or the pointer-derived half of your logic is untested.
+- `Input.select_on_focus` defaults to `True` already; the reason click-to-
+  focus behaved differently from Tab-to-focus is entirely this ordering.

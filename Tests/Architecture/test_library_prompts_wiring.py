@@ -42,7 +42,7 @@ docstring's own note on the collision).
 **Task 2 (controller PR)** adds the full-cluster ownership / same-name-
 delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
 checks (``_PROMPTS_CLUSTER_METHOD_NAMES``, 139 names) plus a
-constructor-binding coverage check (``_PROMPTS_CONTROLLER_BOUND_NAMES``, 42
+constructor-binding coverage check (``_PROMPTS_CONTROLLER_BOUND_NAMES``, 43
 names) that no prior series' wiring test carries -- added here because the
 skills series shipped a silent production regression precisely in that gap
 (a moved body's ``getattr(self, "focused", None)`` with no ``focused``
@@ -497,7 +497,7 @@ _PROMPTS_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "run_worker",
     "set_timer",
     "workers",
-    # -- general Library-wide shell helpers, named constructor callables (12)
+    # -- general Library-wide shell helpers, named constructor callables (13)
     "_arm_library_list_entry_focus",
     "_focus_library_control",
     "_library_entry_reconcile_is_current",
@@ -506,6 +506,9 @@ _PROMPTS_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_note_keywords_from_input",
     "_open_library_export_canvas",
     "_refresh_local_source_snapshot",
+    # task-32393: the prompt editor's dirty flip repaints its meta line
+    # without a recompose, and the footer's Escape chip reads the same flag.
+    "_register_footer_shortcuts",
     "_run_library_service_call",
     "_safe_text",
     "_sanitize_media_field",
@@ -697,8 +700,8 @@ def test_prompts_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryPromptsController,
     )
 
-    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 42, (
-        f"expected 42 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
+    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 43, (
+        f"expected 43 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
     )
     unbound = [
         name

@@ -6,9 +6,12 @@ from unittest.mock import Mock
 
 from tldw_chatbook.Chat.console_save_targets import (
     CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS,
+    CONSOLE_NOTE_FALLBACK_TITLE,
     CONSOLE_SAVE_TITLE_MAX_CHARS,
+    console_answer_note_title,
     console_chatbook_artifact_payload,
     console_message_preview,
+    console_note_provenance_keywords,
     derive_console_save_title,
     resolve_console_artifact_owner_request,
 )
@@ -249,3 +252,60 @@ def test_derive_console_save_title_stays_within_budget_at_one_char_headroom():
     )
     assert len(title) <= max_length
     assert title.endswith("(2026-07-11)")
+
+# --- task-32146: capture a Console answer into a Library note ----------------
+
+
+def test_console_answer_note_title_uses_the_answers_first_line():
+    title = console_answer_note_title(
+        "  Use a worker for anything over 100ms.  \n\nThen stream the result."
+    )
+
+    assert title == "Use a worker for anything over 100ms."
+
+
+def test_console_answer_note_title_skips_leading_blank_lines_and_caps_length():
+    long_line = "word " * 40
+    title = console_answer_note_title(f"\n\n   \n{long_line}\nsecond line")
+
+    assert len(title) <= CONSOLE_SAVE_TITLE_MAX_CHARS
+    assert title.endswith("…")
+    assert title.startswith("word word")
+
+
+def test_console_answer_note_title_falls_back_when_there_is_no_text():
+    assert console_answer_note_title("   \n\n ") == CONSOLE_NOTE_FALLBACK_TITLE
+    assert console_answer_note_title("") == CONSOLE_NOTE_FALLBACK_TITLE
+
+
+def test_console_note_provenance_keywords_record_conversation_and_message():
+    assert console_note_provenance_keywords(
+        conversation_id="conv-7", message_id="msg-3"
+    ) == ["console", "conversation:conv-7", "message:msg-3"]
+
+
+def test_console_note_provenance_keywords_drop_absent_provenance():
+    """An unpersisted session has no conversation id -- never a blank tag."""
+    assert console_note_provenance_keywords(
+        conversation_id=None, message_id="msg-3"
+    ) == ["console", "message:msg-3"]
+    assert console_note_provenance_keywords(
+        conversation_id="  ", message_id=""
+    ) == ["console"]
+
+
+def test_console_answer_note_title_skips_code_fence_lines():
+    """task-32146 fix round 1 (review finding 4): a reply that opens with a
+    fenced block must not title the note with the fence."""
+    assert console_answer_note_title("```python\nprint(1)\n```") == "print(1)"
+    assert console_answer_note_title("~~~\nSELECT 1;\n~~~") == "SELECT 1;"
+    assert console_answer_note_title("```\n```") == CONSOLE_NOTE_FALLBACK_TITLE
+
+
+def test_console_answer_note_title_strips_heading_and_quote_markers():
+    """task-32146 fix round 1 (review finding 4): a markdown heading or a
+    block quote titles the note by its text, not by the marker."""
+    assert console_answer_note_title("# Heading\n\nbody") == "Heading"
+    assert console_answer_note_title("## Two hashes ##") == "Two hashes ##"
+    assert console_answer_note_title("> quoted first line\nmore") == "quoted first line"
+    assert console_answer_note_title("#\n#\nreal line") == "real line"

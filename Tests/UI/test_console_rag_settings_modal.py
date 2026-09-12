@@ -19,6 +19,10 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_RAG_SOURCE_TYPES,
 )
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_GLYPH_SELECTED,
+    LIBRARY_GLYPH_UNSELECTED,
+)
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.Widgets.Console.console_library_search_modal import (
@@ -192,11 +196,14 @@ async def test_modal_shows_one_toggle_per_library_source_with_display_labels():
         await pilot.pause()
         modal = app.screen
 
+        # task-32303 (user decision): this modal adopts the Library glyph
+        # legend, so a selection here wears the checkbox pair rather than the
+        # ✓/○ pair whose "○" means blocked/disabled in Library.
         assert _toggle_labels(modal) == [
-            "✓ Notes",
-            "○ Media",
-            "✓ Conversations",
-            "○ Prompts",
+            "☑ Notes",
+            "☐ Media",
+            "☑ Conversations",
+            "☐ Prompts",
         ]
         # No fifth vocabulary: the ids are Library's source-type keys and
         # the labels come from Library's one label table.
@@ -266,7 +273,7 @@ async def test_toggling_a_source_off_returns_the_reduced_source_types():
 
         await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}media")
         await pilot.pause()
-        assert _toggle_labels(modal)[1] == "○ Media"
+        assert _toggle_labels(modal)[1] == "☐ Media"
 
         await pilot.click("#console-rag-settings-run")
         await pilot.pause()
@@ -585,11 +592,13 @@ def test_toggle_labels_come_from_the_one_library_label_table():
     labels = dict(LIBRARY_RAG_SOURCE_TYPES)
     for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
         assert console_rag_source_toggle_label(source_type, True) == (
-            f"✓ {labels[source_type]}"
+            f"{LIBRARY_GLYPH_SELECTED} {labels[source_type]}"
         )
         assert console_rag_source_toggle_label(source_type, False) == (
-            f"○ {labels[source_type]}"
+            f"{LIBRARY_GLYPH_UNSELECTED} {labels[source_type]}"
         )
+        # task-32303: the SHARED constants, not a second copy of the glyphs.
+        assert (LIBRARY_GLYPH_SELECTED, LIBRARY_GLYPH_UNSELECTED) == ("☑", "☐")
 
 
 @pytest.mark.unit
@@ -715,3 +724,57 @@ def test_modal_open_prefills_a_normal_question_draft():
 
     modal = screen.app_instance.push_screen.call_args.args[0]
     assert modal._query == "  what   changed in auth  "
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_the_source_toggles_paint_the_library_legend_at_235_columns():
+    """task-32303: the glyphs the user actually sees, at the review width.
+
+    Painted rather than read off the Button labels, and at 235x52 because
+    that is where the legend was reviewed. (The live Console cannot reach
+    this modal on a fresh profile -- its control bar is locked until
+    first-run provider setup -- so this mounted capture stands in for the
+    live check.)
+    """
+
+    class RagHost(ConsolidatedCSSApp):
+        pass
+
+    app = RagHost()
+    async with app.run_test(size=(235, 52)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(source_types=("notes", "conversations"))
+        )
+        await pilot.pause()
+        await pilot.pause()
+        modal = app.screen
+        strips = modal._compositor.render_strips()
+
+        def _painted(button: Button) -> str:
+            region = button.region
+            rows = []
+            for y in range(region.y, min(region.bottom, len(strips))):
+                row = "".join(seg.text for seg in strips[y])
+                rows.append(row[region.x : region.right].strip())
+            return " ".join(part for part in rows if part)
+
+        painted_by_id = {
+            str(button.id): _painted(button)
+            for button in modal.query(
+                ".console-rag-settings-source-toggle"
+            ).results(Button)
+        }
+        painted = repr(painted_by_id)
+        prefix = CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX
+        assert painted_by_id[f"{prefix}notes"] == f"{LIBRARY_GLYPH_SELECTED} Notes", (
+            painted
+        )
+        assert painted_by_id[f"{prefix}media"] == (
+            f"{LIBRARY_GLYPH_UNSELECTED} Media"
+        ), painted
+        # In THIS modal "○" is not a selection glyph, so an unchecked source
+        # may not borrow it back, and a selected one is not a settled outcome
+        # either. (Console's radio buttons keep ●/○ -- task-32464.)
+        assert "○" not in painted, painted
+        assert "✓" not in painted, painted
