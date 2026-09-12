@@ -36,6 +36,8 @@ Reason: the optional `run_model_scope` establishes a new cross-module `AgentServ
 - Read: `Docs/superpowers/specs/2026-09-12-live-per-run-usage-design.md`
 - Modify: `tldw_chatbook/Agents/agent_service.py`
 - Modify: `tldw_chatbook/Chat/console_agent_bridge.py`
+- Modify if required for existing emission provenance: `tldw_chatbook/Chat/console_provider_gateway.py`
+- Test if touched: targeted `Tests/Chat` gateway provenance/stream tests identified from the actual gateway seam
 - Test: `Tests/Agents/test_agent_service.py`
 - Test: `Tests/Chat/test_console_agent_bridge.py`
 
@@ -53,6 +55,7 @@ Reason: the optional `run_model_scope` establishes a new cross-module `AgentServ
 - [ ] Add failing lifecycle/concurrency tests for: monotonic sequence assignment per run without an unpruned finished-run ID map; a new call replacing its predecessor; late old-sequence events ignored; overlapping primary/sibling attribution; first publication immediate; later publication no faster than one second; adapter callback exceptions contained; finish/error/cancel/prune/shutdown cleanup; map cardinality no greater than active runs; final `RunOutcome.total_tokens` unchanged.
 - [ ] Run `pytest -q Tests/Chat/test_console_agent_bridge.py -k "live_usage or run_scope"` and confirm the failures describe the missing scalar bridge.
 - [ ] Implement `AgentLiveTurnUsage`, `AgentLiveUsageEvent`, `_LiveTurnUsageAccumulator`, and the bridge's locked active-run map. Count only cumulative actual provider text bytes, store only integers/timestamps/provenance, arbitrate provider values exactly as specified, and remove state only on a matching sequence.
+- [ ] Preserve the gateway's existing per-emission synthetic flag through a minimal backward-compatible adapter-facing seam; exclude fallback copy while counting later real provider text. Preserve ordinary gateway consumers and final accounting. Do not infer live output from budget-normalized totals or add provider-specific branches. Exercise actual gateway/adapter emissions for synthetic+real text and explicit raw terminal usage.
 - [ ] Implement `_StreamingModelAdapter.run_scope`, capture `(run_id, agent_kind)` before submitting async work, emit start/text/provider/finish events, and contain sink errors so telemetry cannot affect model execution. Bound any diagnostic per run/call and use fixed content-free text; no delta, payload or arbitrary exception repr. Cover the late-start-after-terminal case at the real adapter/service boundary so callbacks cannot resurrect an ended run slot.
 - [ ] Wire the adapter scope into the Console-created `AgentService` and the adapter sink into the bridge. Preserve `None` behavior for every other service construction.
 - [ ] Prove actual primary and child counts are observable before either run emits its first step: the current child `live_run_snapshot` returns None before on_step, and the primary uses a separate per-turn live key. Establish the exact run-to-current-snapshot attribution through the new scope without inventing AgentSteps or advancing the primary pointer from a child. Preserve per-conversation ownership and reject late started events after scope exit/terminal cleanup without a finished-run history map.
