@@ -214,7 +214,7 @@ def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
     ]
 
     assert "runs-on: ubuntu-latest" in shape
-    assert "if:" not in shape
+    assert "if: github.event_name != 'workflow_dispatch' || inputs.backup_platform_only != true" in shape
     assert "uses: actions/checkout@v4" in shape
     assert "uses: actions/setup-python@v5" in shape
     assert 'python-version: "3.11"' in shape
