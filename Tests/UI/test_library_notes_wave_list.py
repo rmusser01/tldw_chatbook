@@ -274,6 +274,46 @@ def test_notes_list_narrows_again_once_a_note_is_open() -> None:
     assert shell.applied.items_width >= 60
 
 
+#: The critique's narrow geometry (task-32389). Below the 64-column
+#: single-stage floor there is no rail on screen, so an empty work pane
+#: holding cells back from the list leaves nothing to select from.
+NARROW_WIDTH = 60
+
+
+def test_notes_list_takes_the_narrow_stage_when_nothing_is_open() -> None:
+    """task-32389 AC#1: 60 columns, no note open -- the list is the stage.
+
+    The list view asks for ``priority="items"`` unconditionally, and that
+    request used to reach the width-starved branch, which kept the list at
+    its 32-cell floor and handed the other 18 to a work pane painting only
+    "Select a note to edit it here.".
+    """
+    fake, shell = _layout_screen_fake(width=NARROW_WIDTH, view="list")
+
+    LibraryScreen._sync_library_notes_reader_layout_from_shell(fake)
+
+    assert shell.applied is not None
+    assert shell.applied.items_open is True
+    assert shell.applied.reader_width == 0, (
+        f"{shell.applied.reader_width} columns are still held by an empty "
+        f"work pane while the list is cut to {shell.applied.items_width}."
+    )
+    assert shell.applied.items_width == NARROW_WIDTH - 2 * (
+        LIBRARY_NOTES_READER_PROFILE.grip_width
+    )
+
+
+def test_notes_reading_split_returns_at_the_narrow_width_once_a_note_opens() -> None:
+    """task-32389 AC#2: opening a note hands the stage straight back."""
+    fake, shell = _layout_screen_fake(width=NARROW_WIDTH, view="editor")
+
+    LibraryScreen._sync_library_notes_reader_layout_from_shell(fake)
+
+    assert shell.applied is not None
+    assert shell.applied.reader_width >= LIBRARY_NOTES_READER_PROFILE.work_min_width - 2
+    assert shell.applied.items_open is False
+
+
 def _folder_selected_projection() -> LibraryNotesTreeProjection:
     return LibraryNotesTreeProjection(
         rows=(

@@ -457,6 +457,7 @@ from ...Widgets.Library import (
     skill_editor_warning_lines,
 )
 from ...Widgets.Library.library_rail import (
+    LibraryDetailsRow,
     library_db_size_rows,
     library_diagnostics_disclosure,
 )
@@ -772,6 +773,8 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
+    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP,
+    LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
     LIBRARY_SKILL_DIRTY_VETO_COPY,
     LIBRARY_SKILL_TRUST_MISMATCH_COPY,
@@ -928,6 +931,26 @@ def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
     logger.opt(exception=True).warning(
         f"Failed to load local Library source snapshot.{deadline_marker}"
     )
+
+
+#: task-32246 AC#2: the Enter action of every control Tab can reach inside
+#: the open note editor, so the footer can name where focus is when the
+#: characters typed there would go nowhere. Read by
+#: ``LibraryScreen._library_focus_enter_label``.
+_LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
+    "library-note-back": "back to list",
+    "library-note-context-back": "back to list",
+    "library-note-edit": "edit note",
+    "library-note-preview": "preview note",
+    "library-note-context": "show info",
+    "library-note-save": "save note",
+    "library-note-use-in-console": "use in Console",
+    "library-note-discard-new": "discard new note",
+    "library-note-context-copy": "copy note",
+    "library-note-context-export-md": "export Markdown",
+    "library-note-context-export-txt": "export text",
+    "library-note-context-delete": "delete note",
+}
 
 
 class LibraryScreen(BaseAppScreen):
@@ -1466,8 +1489,30 @@ class LibraryScreen(BaseAppScreen):
         ("/", "find"),
         ("esc", "rail"),
     )
-    LIBRARY_NOTES_EDITOR_SHORTCUTS = (("esc", "back to notes"),)
-    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (("esc", "notes"),)
+    # task-32247 AC#2: the document-end key is advertised beside the other
+    # editor keys. Without it the only way to learn it was to guess -- and
+    # before the binding existed, guessing it did nothing.
+    # Escape stays FIRST here, unlike its sibling tiers, because the real
+    # footer drops trailing chips that miss the width budget and the exit
+    # is the one that must survive. Measured through the real
+    # ``AppFooterStatus`` at 60 columns (fix round 1, review F2 -- the
+    # round-0 comment cited a pin that did not exist and a budget of one
+    # chip that is not this tier's): BOTH compact chips paint
+    # ("esc notes | ctrl+end end"), a third is dropped, and the same pair
+    # in the WIDE wording paints only "esc back to notes". So the head of
+    # the tier is what is guaranteed, whatever a later label growth does.
+    # ``test_only_one_context_chip_paints_at_sixty_columns`` pins the budget
+    # itself; ``test_the_editor_exit_chip_survives_at_sixty_columns`` pins
+    # this tier against the focus chip appended below. The two tiers carry
+    # the same keys in the same order, which the honesty contract requires.
+    LIBRARY_NOTES_EDITOR_SHORTCUTS = (
+        ("esc", "back to notes"),
+        ("ctrl+end", "end of note"),
+    )
+    LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT = (
+        ("esc", "notes"),
+        ("ctrl+end", "end"),
+    )
     LIBRARY_NOTES_PREVIEW_SHORTCUTS = (
         ("pgup/pgdn", "scroll"),
         ("esc", "back to notes"),
@@ -2856,6 +2901,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             refresh_local_source_snapshot=(
                 lambda *a, **k: self._refresh_local_source_snapshot(*a, **k)
+            ),
+            register_footer_shortcuts=(
+                lambda *a, **k: self._register_footer_shortcuts(*a, **k)
             ),
             run_library_service_call=(
                 lambda *a, **k: self._run_library_service_call(*a, **k)
@@ -4289,6 +4337,36 @@ class LibraryScreen(BaseAppScreen):
                     + trash_keys
                     + escape_chip
                 )
+            if self._library_prompt_editor_active():
+                # task-32393: while the prompt editor REFUSES Escape
+                # (``_exit_library_prompt_editor_guarded``'s two vetoes, which
+                # now both say so) the chip names the blocker rather than
+                # promising an exit the key will not make. The skill editor's
+                # own set two branches below is the same idiom.
+                #
+                # Order matches that seam's own checks -- an in-flight write is
+                # tested BEFORE ``dirty``, so a busy editor that is also dirty
+                # reports the blocker the key will actually hit (PR #2655, Qodo
+                # finding 1: a clean prompt deletion left this chip promising
+                # "back to list" for the whole write).
+                blocker = (
+                    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP
+                    if self._prompts_state.mutation_in_flight
+                    else (
+                        LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP
+                        if self._prompts_state.dirty
+                        else ""
+                    )
+                )
+                if blocker:
+                    # Spliced, never re-literalled -- the Trash branch's rule
+                    # above (review round 1, F2): the constant stays the one
+                    # definition of the keys this set shares with it.
+                    return tuple(
+                        pair
+                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                        if pair[0] != "esc"
+                    ) + (("esc", blocker),)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -4393,7 +4471,12 @@ class LibraryScreen(BaseAppScreen):
             return "cancel"
         if widget_id == "library-note-delete-confirm":
             return "delete"
-        return ""
+        # task-32246 AC#2: Tab out of the note body lands on the editor's
+        # first toolbar Button, which swallows whatever is typed next. The
+        # characters cannot land visibly there, so the footer names the
+        # control instead -- the AC's other branch, in the grammar the two
+        # surfaces above already use.
+        return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
 
     @staticmethod
     def _review_footer_entries(
@@ -8008,10 +8091,28 @@ class LibraryScreen(BaseAppScreen):
                 self.LIBRARY_NOTES_CONTEXT_SHORTCUTS_COMPACT,
             )
         if region == "editor":
-            return self._notes_footer_tier(
+            tier = self._notes_footer_tier(
                 self.LIBRARY_NOTES_EDITOR_SHORTCUTS,
                 self.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
             )
+            # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
+            # where typed characters go nowhere. Name it, so focus is never
+            # unaccounted for -- the honest-footer rule, applied to the
+            # editor the way the create canvas and delete prompt apply it.
+            #
+            # APPENDED, not prepended (fix round 1, review F1). The real
+            # footer keeps only the leading chips that fit, and the
+            # <=64-column narrow stage fits exactly one
+            # (``test_only_one_context_chip_paints_at_sixty_columns``), so a
+            # LEADING "enter …" evicted the exit outright: after the very Tab
+            # this task fixes the footer painted "enter back to list" alone,
+            # and with Save focused it advertised neither an exit nor a way
+            # back. Naming focus is the smaller promise of the two, so it
+            # yields wherever the two compete for the budget.
+            enter_label = self._library_focus_enter_label()
+            if enter_label:
+                return tier + (("enter", enter_label),)
+            return tier
         if region == "create":
             if self._notes_state.create_running:
                 return ()
@@ -8540,6 +8641,31 @@ class LibraryScreen(BaseAppScreen):
         self._mark_library_notes_user_interaction()
         self._move_library_screen_focus(-1)
 
+    #: task-32246: the Tab region INSIDE an open note editor. The body is the
+    #: last focusable of ``#screen-content``, so one Tab out of it used to
+    #: wrap the whole cycle round to that region's first control --
+    #: ``#library-notes-source-database``, the browse chrome's source switch
+    #: above the editor. Live at dev 4a14b3f36f: the body lost its focus
+    #: border and "TAILEDIT" typed straight after vanished, because a Button
+    #: swallows printable keys; the switch's focus treatment is the same
+    #: background-and-bold it already wears for ``-selected``, which is why
+    #: the pane read as having nothing focused at all. Tab now closes inside
+    #: the editor the way it already closes inside the delete prompt
+    #: (``on_key``) and inside ``#screen-content`` (task-32052). F6 and
+    #: Escape remain the ways out, as the guide says.
+    _LIBRARY_NOTE_EDITOR_TAB_REGION = (
+        "#library-note-work-pane, #library-note-work-pane *"
+    )
+
+    def _library_note_editor_owns_tab(self, focused: Widget | None) -> bool:
+        """Whether Tab should cycle inside the open note editor."""
+        if focused is None or self._notes_state.view != "editor":
+            return False
+        return any(
+            node.id == "library-note-work-pane"
+            for node in focused.ancestors_with_self
+        )
+
     def _move_library_screen_focus(self, direction: int) -> Widget | None:
         """Cycle focus within the Library content, or app-wide from chrome.
 
@@ -8548,6 +8674,11 @@ class LibraryScreen(BaseAppScreen):
         ``_advance_library_ordinary_emergency_user_interaction``.
         """
         focused = self.focused
+        if self._library_note_editor_owns_tab(focused):
+            selector = self._LIBRARY_NOTE_EDITOR_TAB_REGION
+            if direction >= 0:
+                return self.focus_next(selector)
+            return self.focus_previous(selector)
         inside = focused is not None and any(
             node.id == "screen-content" for node in focused.ancestors
         )
@@ -10317,6 +10448,8 @@ class LibraryScreen(BaseAppScreen):
                     getattr(row, "media_id", "")
                 ):
                     self.set_focus(row)
+                    if self.focused is not row:
+                        self._retry_library_list_entry_focus_while_armed()
                     return
         target = rows[0]
         media_return = self._library_pending_list_entry_media_return
@@ -10336,6 +10469,22 @@ class LibraryScreen(BaseAppScreen):
             # ``on_descendant_focus`` and activate the Reader before Enter.
             self._library_notes_programmatic_focus_target = target
         self.set_focus(target, scroll_visible=False)
+        if self.focused is not target:
+            # task-32302: a MOUNTED row is not necessarily a FOCUSABLE one --
+            # ``Widget.focusable`` is also false while it is disabled, hidden or
+            # loading, and ``set_focus`` on such a widget is a silent no-op. The
+            # Conversations regression was exactly that: dev's archive-scope
+            # recovery hop fires a second page request during route entry, and
+            # ``LibraryConversationRecovery.project`` folds ``loading`` into
+            # ``actions_disabled``, which the canvas paints onto every row
+            # (``button.disabled = actions_disabled``). The first load's rows
+            # were up, the arm's one attempt spent itself on a disabled row, and
+            # returning here made that indistinguishable from success -- the
+            # same rule the empty-list fallback above already applies to its
+            # controls. Keep the arm owed a landing instead; the retry chain is
+            # bounded by the arm's own window either way (task-32301 owns that).
+            self._retry_library_list_entry_focus_while_armed()
+            return
         if row_class == "library-media-row" and media_return is not None:
             scroll_offset = media_return.scroll_offset
             if scroll_offset is not None:
@@ -14028,12 +14177,12 @@ class LibraryScreen(BaseAppScreen):
                 id="library-details-group-workspace",
                 classes="library-details-group",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text("Active", state.workspace_name),
                 id="library-workspaces-active-workspace",
                 classes="library-details-row",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text(
                     "Handoff", self._workspace_handoff_summary_label(state)
                 ),
@@ -14150,7 +14299,7 @@ class LibraryScreen(BaseAppScreen):
         # it joins the other Details actions and says what it does.
         widgets.extend(
             (
-                Static(
+                LibraryDetailsRow(
                     "Chunking Lab — compare how text is split for search",
                     id="library-details-chunking-gloss",
                     classes="library-details-row",
@@ -15353,7 +15502,9 @@ class LibraryScreen(BaseAppScreen):
                 existing[0].update(rendered)
                 previous = existing[0]
                 continue
-            row = Static(rendered, id=row_id, classes="library-details-row")
+            row = LibraryDetailsRow(
+                rendered, id=row_id, classes="library-details-row"
+            )
             try:
                 await parent.mount(row, after=previous)
             except Exception:
