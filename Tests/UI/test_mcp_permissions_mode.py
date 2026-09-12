@@ -704,14 +704,12 @@ async def test_legend_line_renders_fixed_marker_key():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
-<<<<<<< HEAD
             "≡ exact-input allows · "
             "(session) approved until Chatbook exits · "
             "Space cycles Inherit → Ask → Allow → Off"
-=======
+
             "Space cycles Inherit → Ask → Allow → Off · shift+space bulk "
             "set · C clears overrides (visible rows only)"
->>>>>>> b116e1a401 (feat(mcp): bulk bindings + messages + hint flash on the Permissions canvas (ADR-149 Wave F))
         )
 
 
@@ -758,14 +756,12 @@ async def test_update_matrix_with_no_gate_breadcrumb_shows_bare_legend():
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert legend == (
             "• override · ⚠ definition changed · ⚑ high-risk floor · "
-<<<<<<< HEAD
             "≡ exact-input allows · "
             "(session) approved until Chatbook exits · "
             "Space cycles Inherit → Ask → Allow → Off"
-=======
+
             "Space cycles Inherit → Ask → Allow → Off · shift+space bulk "
             "set · C clears overrides (visible rows only)"
->>>>>>> b116e1a401 (feat(mcp): bulk bindings + messages + hint flash on the Permissions canvas (ADR-149 Wave F))
         )
 
 

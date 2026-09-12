@@ -75,7 +75,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel, MCPPro
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCP_RAIL_ROW_PREFIX, MCPRail
 from tldw_chatbook.UI.MCP_Modules.mcp_server_mutations import MCPServerMutationsPanel
 from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
-from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode, _ellipsize
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 
@@ -7069,12 +7069,15 @@ async def test_builtin_server_inventory_renders_tools_mode_rows(tmp_path):
         assert rows["builtin:tldw_chatbook::list_characters"] == (
             "list_characters",
             "Ask",
-            "tldw_chatbook",
+            # ADR-148 Wave D (TASK-32459): the external-MCP inventory
+            # group's label names its surface (ellipsis comes from the
+            # Tools Server column's cell budget).
+            _ellipsize("tldw_chatbook (external MCP)", 24),
         )
         assert rows["builtin:tldw_chatbook::search_notes"] == (
             "search_notes",
             "Ask",
-            "tldw_chatbook",
+            _ellipsize("tldw_chatbook (external MCP)", 24),
         )
 
 
@@ -11719,7 +11722,7 @@ async def test_agent_tools_rail_row_routes_to_agent_detail(monkeypatch):
         await pilot.pause()
         assert workbench._selected_server_key == "agent:builtin"
         assert app.query_one("#mcp-servers-detail").display is True
-        assert list(app.query("#mcp-detail-tool-gates Checkbox"))
+        assert list(app.query("#mcp-detail-tool-gates Button"))
         assert not list(app.query("#mcp-detail-builtin-toggles Checkbox"))
 
         workbench.set_mode("permissions")

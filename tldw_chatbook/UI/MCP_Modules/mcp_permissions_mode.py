@@ -53,14 +53,12 @@ _TOOL_ROW_INDENT = "  "
 # through `update_matrix()`.
 _LEGEND_TEXT = (
     "• override · ⚠ definition changed · ⚑ high-risk floor · "
-<<<<<<< HEAD
     "≡ exact-input allows · "
     "(session) approved until Chatbook exits · "
     "Space cycles Inherit → Ask → Allow → Off"
-=======
+
     "Space cycles Inherit → Ask → Allow → Off · shift+space bulk set · "
     "C clears overrides (visible rows only)"
->>>>>>> b116e1a401 (feat(mcp): bulk bindings + messages + hint flash on the Permissions canvas (ADR-149 Wave F))
 )
 
 # T8: exact copy pinned by the server-source governance section below --

@@ -819,7 +819,9 @@
     }
     /* ADR-148 Wave E: below 120 cols the grid STACKS -- main row on top,
     the inspector as a bounded, internally scrolling band underneath (the
-    old squeezed third column broke words mid-token at ~20 cols). */
+    old squeezed third column broke words mid-token at ~20 cols; the
+    `layout:` override has in-repo precedent, e.g.
+    screen_feature_watchlists.tcss). */
     MCPWorkbench #mcp-hub-grid.mcp-compact {
         layout: vertical;
     }

@@ -648,6 +648,17 @@
     pattern documented there). */
 
 
+    /* ADR-148 Wave E: the main row carries the old rail+canvas share of
+    the grid (8 of 11 units) so the wide layout is geometrically
+    unchanged, one nesting level deeper. */
+
+    /* ADR-148 Wave E: below 120 cols the grid STACKS -- main row on top,
+    the inspector as a bounded, internally scrolling band underneath (the
+    old squeezed third column broke words mid-token at ~20 cols; the
+    `layout:` override has in-repo precedent, e.g.
+    screen_feature_watchlists.tcss). */
+
+
 
 
 

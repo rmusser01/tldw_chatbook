@@ -14,6 +14,7 @@ from textual.widgets import Button, Checkbox, DataTable, Static
 import tldw_chatbook
 
 from tldw_chatbook.MCP.readiness import (
+    agent_tools_readiness,
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
     STATE_LABELS,
@@ -736,12 +737,11 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
         # expanding 1fr container, which measured in the hundreds.
         assert tool_gates.size.height < 26
 
-        # The tool-gates container sits directly under the [mcp] toggles.
-        gap_between = tool_gates.region.y - (toggles.region.y + toggles.region.height)
-        assert 0 <= gap_between <= 2
-        # The copy button sits directly under the tool-gates container, not
-        # dozens of rows further down the scroll pane.
-        gap = copy_button.region.y - (tool_gates.region.y + tool_gates.region.height)
+        # ADR-148 Wave D: the gate group no longer renders in the built-in
+        # detail at all (it moved to the Agent tools detail), so the copy
+        # button must sit directly under the [mcp] toggles themselves.
+        assert not tool_gates.display
+        gap = copy_button.region.y - (toggles.region.y + toggles.region.height)
         assert 0 <= gap <= 2
 
 
@@ -819,8 +819,6 @@ async def test_tool_gate_buttons_render_under_agent_detail_with_subheadings_and_
         canvas = app.query_one(MCPServersMode)
         from tldw_chatbook.MCP.readiness import agent_tools_readiness
 
-        from tldw_chatbook.MCP.readiness import agent_tools_readiness
-
         # ADR-148 Wave D: gates toggle from the AGENT detail now
         await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
@@ -894,7 +892,8 @@ async def test_local_group_dependents_are_disabled_while_master_is_off(monkeypat
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         note = app.query_one("#mcp-gate-local-master-off-note", Static)
@@ -942,7 +941,8 @@ async def test_local_group_dependents_are_enabled_while_master_is_on(monkeypatch
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         assert not list(app.query("#mcp-gate-local-master-off-note"))
@@ -959,17 +959,18 @@ async def test_tool_gate_buttons_do_not_appear_outside_agent_detail():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
+        # A local-profile detail renders no gates.
         await canvas.show_detail(_snap("local:docs", "docs"))
         await pilot.pause()
+        assert not list(app.query("#mcp-gate-toggles-note"))
+        assert not list(app.query("#mcp-gate-heading-builtin"))
+        assert not list(app.query("#mcp-gate-heading-local"))
         # ADR-148 Wave D: the BUILT-IN server detail no longer hosts the
         # gates either -- they moved to the Agent tools row.
         await canvas.show_detail(builtin_readiness(enabled=True))
         await pilot.pause()
         assert not list(app.query("#mcp-gate-toggles-note"))
         assert not list(app.query("#mcp-gate-heading-builtin"))
-        assert not list(app.query("#mcp-gate-toggles-note"))
-        assert not list(app.query("#mcp-gate-heading-builtin"))
-        assert not list(app.query("#mcp-gate-heading-local"))
 
 
 @pytest.mark.asyncio
@@ -985,7 +986,8 @@ async def test_showing_builtin_detail_does_not_post_tool_gate_changed(monkeypatc
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
         assert not app.events
 
@@ -1082,7 +1084,8 @@ async def test_gate_row_state_is_spelled_out_and_follows_the_saved_value(monkeyp
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+                # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
@@ -1096,7 +1099,8 @@ async def test_gate_row_state_is_spelled_out_and_follows_the_saved_value(monkeyp
 
         # What the workbench does with that event: persist, then resync.
         saved[entry.gate_key] = True
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
@@ -1884,7 +1888,8 @@ async def test_two_gate_presses_before_a_resync_request_opposite_values(monkeypa
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+                # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         row = app.query_one(f"#mcp-gate-{entry.gate_key}", Button)
@@ -1925,7 +1930,8 @@ async def test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected(
     app = CanvasApp()
     async with app.run_test(size=(100, 30)) as pilot:
         canvas = app.query_one(MCPServersMode)
-        await canvas.show_detail(builtin_readiness(enabled=True))
+                # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         app.query_one(f"#mcp-gate-{entry.gate_key}", Button).press()
@@ -1937,7 +1943,8 @@ async def test_a_gate_rebuild_repaints_an_optimistic_flip_the_save_rejected(
 
         # The save failed -- nothing was persisted, so the resync rebuild
         # must put the row back to "off".
-        await canvas.show_detail(builtin_readiness(enabled=True))
+        # ADR-148 Wave D: gates render from the AGENT detail now
+        await canvas.show_detail(agent_tools_readiness(enabled=True))
         await pilot.pause()
 
         assert (
