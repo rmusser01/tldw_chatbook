@@ -151,3 +151,42 @@ def test_params_never_come_from_parent():
     t = resolve_spawn_target(APP_CFG, parent_provider="moonshot",
         parent_model="kimi-k2", routing=CFG_OFF, readiness=READY)
     assert dict(t.params)["temperature"] == 0.9   # chat_defaults, not a parent value
+
+# --- _default_readiness: the production readiness gate (no readiness= fake) ---
+
+def test_default_readiness_custom_ep_keyless_family_resolves_ready():
+    # Regression-guards the custom-ep adaptation: a custom-ep id must check
+    # its entry's FAMILY readiness (llama_cpp is keyless), not read as an
+    # unknown api_settings section.
+    t = resolve_spawn_target(APP_CFG, parent_provider="moonshot",
+        parent_model="kimi-k2", preset=PRESET, routing=CFG_OFF)
+    assert (t.provider, t.model) == ("custom-ep:qwen-local", "qwen3.8-27b")
+    assert t.base_url == "http://127.0.0.1:8080" and t.source == "preset"
+
+def test_default_readiness_custom_ep_unresolvable_credential_blocks(monkeypatch):
+    # Entry declares an env credential that provably cannot be set.
+    monkeypatch.delenv("TLDW_TEST_AGENT_ROUTING_ENTRY_KEY", raising=False)
+    cfg = {"custom_endpoints": {"locked-box": {
+        "display_name": "Locked Box", "family": "llama_cpp",
+        "base_url": "http://127.0.0.1:8080",
+        "api_key_env": "TLDW_TEST_AGENT_ROUTING_ENTRY_KEY",
+    }}}
+    preset = AgentDefinition(name="r", instructions="i",
+        provider="custom-ep:locked-box", model="qwen3.8-27b")
+    try:
+        resolve_spawn_target(cfg, parent_provider="m", parent_model="k",
+            preset=preset, routing=CFG_OFF)
+        assert False
+    except RoutingError as e:
+        assert e.code == "provider_not_ready" and e.level == "preset"
+
+def test_default_readiness_keyed_builtin_without_key_blocks(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    preset = AgentDefinition(name="r", instructions="i",
+        provider="openai", model="gpt-4o")
+    try:
+        resolve_spawn_target(APP_CFG, parent_provider="m", parent_model="k",
+            preset=preset, routing=CFG_OFF)
+        assert False
+    except RoutingError as e:
+        assert e.code == "provider_not_ready" and e.level == "preset"

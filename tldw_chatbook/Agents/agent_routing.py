@@ -8,7 +8,6 @@ the six-layer stack in resolve_child_params.
 from __future__ import annotations
 
 import fnmatch
-import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -21,8 +20,6 @@ from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Chat.sampling_params import (
     KNOWN_SAMPLING_PARAM_KEYS, params_to_dict, params_to_tuple,
 )
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_SUBAGENT_DEFAULT_PROVIDER = ""
 DEFAULT_SUBAGENT_DEFAULT_MODEL = ""
