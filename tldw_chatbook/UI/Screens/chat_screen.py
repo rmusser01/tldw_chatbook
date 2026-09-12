@@ -6098,6 +6098,49 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(self._open_console_settings(), exclusive=False)
 
+    def action_open_console_new_endpoint(self) -> None:
+        """Open the endpoint-template creation flow on top of session settings.
+
+        ``/endpoint`` (H6): the same flow the Conversation-settings provider
+        list's "New custom endpoint…" sentinel row opens. The settings modal
+        is pushed first so the created entry lands as its selected provider
+        (``EndpointCreated`` is announced to the opener screen), mirroring the
+        sentinel path exactly.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._open_console_new_endpoint(), exclusive=False)
+
+    async def _open_console_new_endpoint(self) -> None:
+        """Push Conversation settings, then its endpoint template modal."""
+        opened = await self._open_console_settings()
+        if not opened:
+            return
+        # Lazy import: the modal module chain is heavy and stays off the boot
+        # path (ADR-097 ratchet); this action imports it on first use only.
+        from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+            ConsoleEndpointTemplateModal,
+        )
+
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        settings = (
+            store.session_settings(session_id)
+            if session_id is not None
+            else None
+        )
+        active_provider = settings.provider if settings is not None else None
+        providers_models = await self._providers_models_for_console_settings(
+            active_provider
+        )
+        self.app.push_screen(
+            ConsoleEndpointTemplateModal(
+                app_config=self._provider_readiness_app_config(),
+                providers_models=providers_models,
+                template_provider=active_provider or None,
+            )
+        )
+
     def action_open_console_prompt_insert(self) -> None:
         """Open the `/prompt` insert picker from the command palette ("Insert prompt…").
 
@@ -18777,6 +18820,7 @@ class ChatScreen(BaseAppScreen):
         "temp": "action_new_temporary_console_tab",
         "settings": "action_open_console_session_settings",
         "context": "action_view_chat_context",
+        "endpoint": "action_open_console_new_endpoint",
     }
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
