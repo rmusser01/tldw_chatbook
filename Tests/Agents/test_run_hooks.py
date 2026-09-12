@@ -60,3 +60,26 @@ class TestLoadHooksConfig:
     def test_default_timeout_applied(self):
         result = load_hooks_config({"hooks": {"hook": [{"event": "Stop", "command": ["/bin/true"]}]}})
         assert result.hooks[0].timeout_s == HOOK_DEFAULT_TIMEOUT_S
+
+    def test_hook_key_not_a_list_disables_hooks(self):
+        result = load_hooks_config({"hooks": {"enabled": True, "hook": None}})
+        assert result == RunHooksConfig(enabled=True, hooks=())
+
+    def test_unhashable_event_disables_that_hook(self):
+        result = load_hooks_config({"hooks": {"hook": [{"event": ["Stop"], "command": ["/bin/true"]}]}})
+        assert result.hooks == ()
+
+    def test_nan_timeout_rejected(self):
+        result = load_hooks_config({"hooks": {"hook": [{"event": "Stop", "command": ["/bin/true"],
+                                                         "timeout_s": float("nan")}]}})
+        assert result.hooks == ()
+
+    def test_inf_timeout_rejected(self):
+        result = load_hooks_config({"hooks": {"hook": [{"event": "Stop", "command": ["/bin/true"],
+                                                         "timeout_s": float("inf")}]}})
+        assert result.hooks == ()
+
+    def test_bool_timeout_rejected(self):
+        result = load_hooks_config({"hooks": {"hook": [{"event": "Stop", "command": ["/bin/true"],
+                                                         "timeout_s": True}]}})
+        assert result.hooks == ()

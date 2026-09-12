@@ -9,6 +9,7 @@ fail direction (PreToolUse fails closed, UserPromptSubmit fails open).
 from __future__ import annotations
 
 import fnmatch
+import math
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -47,7 +48,7 @@ def _parse_hook(raw: object) -> HookSpec | None:
         logger.warning("run-hooks: hook entry is not a table; disabled: {!r}", raw)
         return None
     event = raw.get("event")
-    if event not in HOOK_EVENTS:
+    if not isinstance(event, str) or event not in HOOK_EVENTS:
         logger.warning("run-hooks: unknown event {!r}; hook disabled", event)
         return None
     command = raw.get("command")
@@ -64,8 +65,9 @@ def _parse_hook(raw: object) -> HookSpec | None:
             logger.warning("run-hooks: matcher must be a non-empty string; hook disabled")
             return None
     timeout = raw.get("timeout_s", HOOK_DEFAULT_TIMEOUT_S)
-    if not isinstance(timeout, (int, float)) or timeout <= 0:
-        logger.warning("run-hooks: timeout_s must be positive; hook disabled")
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout) or timeout <= 0):
+        logger.warning("run-hooks: timeout_s must be a positive finite number; hook disabled")
         return None
     return HookSpec(event=event, command=tuple(command), matcher=matcher, timeout_s=float(timeout))
 
@@ -75,5 +77,9 @@ def load_hooks_config(config: Mapping) -> RunHooksConfig:
     if not isinstance(section, Mapping):
         return RunHooksConfig(enabled=True, hooks=())
     enabled = section.get("enabled", True)
-    hooks = tuple(h for h in (_parse_hook(r) for r in section.get("hook", [])) if h is not None)
+    raw_hooks = section.get("hook", [])
+    if not isinstance(raw_hooks, list):
+        logger.warning("run-hooks: [hooks] hook must be a list of tables; hooks disabled: {!r}", raw_hooks)
+        raw_hooks = []
+    hooks = tuple(h for h in (_parse_hook(r) for r in raw_hooks) if h is not None)
     return RunHooksConfig(enabled=bool(enabled), hooks=hooks)
