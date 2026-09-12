@@ -12,10 +12,10 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+    ConsoleTTSDestination,
     TTSMessageSpeechRequestEvent,
 )
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
-from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import ConsoleTTSDestination
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
     ConsoleAutoSpeakCoordinator,
@@ -912,3 +912,151 @@ async def test_modal_callback_scheduler_rejection_unwinds_modal() -> None:
 
     assert harness.session.speech_preferences.auto_speak is False
     assert len(harness.opened) == 1
+
+
+@pytest.mark.asyncio
+async def test_consent_survives_the_modal_push_suspend(monkeypatch):
+    """TASK-32509 (UAT-found): enabling Speak replies pushes the consent
+    modal over the Console, and the coordinator behind the switch was
+    being unmounted while its own modal was open -- Enable arrived dead,
+    consent was silently discarded, and the switch snapped back OFF. The
+    coordinator must survive its own consent modal."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_fleet_wake_hidden_screen import (
+        _mount_chat,
+    )
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+    )
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import ConsoleTTSDestination
+
+    destination = ConsoleTTSDestination(
+        fingerprint="sha256:" + "a" * 64,
+        provider_label="Test Provider",
+        sanitized_destination="https://t.example",
+        charges_may_apply=False,
+    )
+
+    class _StubHandler:
+        async def resolve_console_speech_destination(self, *_a, **_k):
+            return destination
+
+    async def _stub_ensure():
+        return _StubHandler()
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app._ensure_tts_handler = _stub_ensure
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _mount_chat(app, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        # Shared polling cadence for the modal-open, screen-return, and
+        # persistence waits below (PR #2656 Qodo #3) so the three loops'
+        # timing cannot drift apart.
+        _CONSENT_POLL_SECONDS = 0.25
+
+        from textual.widgets import Switch
+
+        speak = console.query_one("#console-auto-speak", Switch)
+        speak.value = True
+
+        modal = None
+        for _ in range(120):
+            await pilot.pause(_CONSENT_POLL_SECONDS)
+            if type(app.screen).__name__ == "AutoSpeakConsentModal":
+                modal = app.screen
+                break
+        assert modal is not None, "consent modal never opened"
+
+        # The coordinator behind the switch must still be live while its
+        # own modal is open -- unmounted here means Enable arrives dead.
+        assert console._console_auto_speak._mounted is True, (
+            "auto-speak coordinator was unmounted while its consent modal "
+            "was open -- the Enable callback is tombstoned"
+        )
+
+        await pilot.click("#console-auto-speak-consent-confirm")
+        for _ in range(40):
+            await pilot.pause(_CONSENT_POLL_SECONDS)
+            if type(app.screen).__name__ == "ChatScreen":
+                break
+
+        session = None
+        for _ in range(20):
+            await pilot.pause(_CONSENT_POLL_SECONDS)
+            session = next((s for s in store.sessions() if s.id == session_id), None)
+            if session is not None and session.speech_preferences.auto_speak:
+                break
+        assert session is not None and session.speech_preferences.auto_speak is True, (
+            "consent was discarded after pressing Enable "
+            f"(prefs={getattr(session, 'speech_preferences', None)})"
+        )
+
+
+class TestSuspendGuardUnit:
+    """PR #2656 Qodo #1/#4: isolated coverage of the suspend-path guard.
+
+    Three flag states matter: modal up with a live callback (suspend must
+    PRESERVE the coordinator), modal dismissed with the async finish work
+    still running (suspend must QUIESCE it -- the post-dismissal window),
+    and no modal at all (suspend must quiesce, the original TASK-31520
+    behavior).
+    """
+
+    def _bare_coordinator(self) -> ConsoleAutoSpeakCoordinator:
+        coordinator = object.__new__(ConsoleAutoSpeakCoordinator)
+        coordinator._mounted = True
+        coordinator._modal_open = False
+        coordinator._modal_callback_consumed = False
+        return coordinator
+
+    def test_pending_requires_open_modal_and_live_callback(self) -> None:
+        coordinator = self._bare_coordinator()
+        assert coordinator.modal_result_pending is False
+
+        coordinator._modal_open = True
+        assert coordinator.modal_result_pending is True
+
+        # The post-dismissal window: modal flag still up, callback already
+        # consumed by the async finish work.
+        coordinator._modal_callback_consumed = True
+        assert coordinator.modal_result_pending is False
+
+    @pytest.mark.asyncio
+    async def test_suspend_preserves_coordinator_only_while_result_pending(
+        self,
+    ) -> None:
+        from Tests.UI.app_factory import _build_test_app
+        from Tests.UI.test_console_fleet_wake_hidden_screen import _mount_chat
+
+        app = _build_test_app()
+        unmounted: list[bool] = []
+
+        class _StubCoordinator:
+            modal_result_pending = False
+
+            def unmount(self) -> None:
+                unmounted.append(True)
+
+        async with app.run_test(size=(160, 48)) as pilot:
+            console = await _mount_chat(app, pilot)
+            real = console._console_auto_speak
+            stub = _StubCoordinator()
+            console._console_auto_speak = stub
+            try:
+                # Modal result pending: suspend must NOT quiesce.
+                stub.modal_result_pending = True
+                console.on_screen_suspend()
+                assert unmounted == [], "suspend quiesced a mid-consent coordinator"
+
+                # No modal (or dismissed mid-finish): suspend must quiesce.
+                stub.modal_result_pending = False
+                console.on_screen_suspend()
+                assert unmounted == [True], (
+                    "suspend failed to quiesce the coordinator without a "
+                    "pending modal result"
+                )
+            finally:
+                console._console_auto_speak = real
