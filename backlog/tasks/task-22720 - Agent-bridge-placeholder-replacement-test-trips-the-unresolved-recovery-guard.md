@@ -1,16 +1,22 @@
 ---
 id: TASK-22720
 title: Agent bridge placeholder-replacement test trips the unresolved-recovery guard
-status: To Do
+status: In Progress
+assignee:
+  - '@codex'
+created_date: ''
+updated_date: '2026-09-12 06:52'
 labels:
   - console
   - agents
   - bug
+dependencies: []
 priority: medium
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 `test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair`
 fails with `assert '' == 'runtime replacement'`. This is PRE-EXISTING: it is one
 of the original 40 failures in `test_console_local_citation_boundary.py`,
@@ -31,15 +37,15 @@ The swallowing is the defect worth fixing; whatever `run_reply` trips over is
 secondary and may well be a stale expectation in the test's own bridge double
 (it calls `session_id_for_message`, `restore_state`, and a `_first` over
 `sessions()`). Establish WHICH call raises before changing anything.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [ ] The exception raised inside `run_reply` is identified and named
-- [ ] An agent-bridge failure is no longer silently swallowed into an empty
+<!-- AC:BEGIN -->
+- [ ] #1 The exception raised inside `run_reply` is identified and named
+- [ ] #2 An agent-bridge failure is no longer silently swallowed into an empty
       assistant row -- it is either surfaced or logged with its exception type
-- [ ] The xfail marker in `test_console_local_citation_boundary.py` is removed
+- [ ] #3 The xfail marker in `test_console_local_citation_boundary.py` is removed
       and the test passes
-
 
 ## Correction 2026-08-27 — the filed premise was wrong on both counts
 
@@ -75,3 +81,15 @@ what SHOULD happen when an agent replaces a placeholder that is gone? Either
 
 Pre-existing either way: this was one of the original 40 failures in
 `test_console_local_citation_boundary.py`, failing before TASK-22301 touched it.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: N/A
+Reason: remove a stale expected-failure marker from an existing passing recovery regression.
+1. Record the baseline XPASS and inspect the assertions: the real replacement row completes, no citation repair dispatch occurs, and visible output matches.
+2. Remove the stale xfail marker without weakening the assertions or changing product code; retain the task correction identifying the original recovery-guard exception.
+3. Run the exact regression normally and its nearby agent citation cases, then static checks and independent review before closing.
+<!-- SECTION:PLAN:END -->

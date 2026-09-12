@@ -99,6 +99,45 @@ with self.lock:
 - [ ] Run focused revocation, host wiring, local approval, and human-wait tests named by the report. Run changed-line lint, formatting checks, and `git diff --check`; compare pre-existing whole-file debt without reformatting unrelated code. Add an ADR-067 clarification and task notes with exact evidence and the lifetime tradeoff.
 - [ ] Commit task-scoped changes and report red/green/mutation evidence. Root performs independent task and final branch reviews before marking Done.
 
+### Task 3: Reconcile the remaining old harness failures (TASK-2155, TASK-22720, TASK-19642.8.3)
+
+**Files:**
+- Modify: `Tests/UI/test_console_dictionary_send_integration.py` (real durable-policy test setup).
+- Modify: `Tests/Chat/test_console_local_citation_boundary.py` (remove the one TASK-22720 xfail marker only).
+- Update: the three existing task files for TASK-2155, TASK-22720 (now named `Agent-bridge-placeholder-replacement-test-trips-the-unresolved-recovery-guard`), and TASK-19642.8.3.
+
+**Spec:** The three task acceptance criteria. No production behavior changes.
+
+ADR required: no
+ADR path: N/A for test repairs; existing ADR-134 for wake-budget verification
+Reason: align old harnesses and records with already-shipped durable acceptance and wake authority.
+
+**Interfaces:**
+- The real dictionary test's manually bound conversation must have a durable Console Library policy before accepting a turn. Use the real policy repository and hydrate the real holder, as the adjacent world-info integration harness already does. Do not bypass durable commit or mark the session ephemeral.
+- Keep the provider/agent payload substitution assertions and verify the stored user text stays raw.
+- The citation replacement test already passes all its assertions on merged dev. Remove only its stale expected-failure marker; do not weaken recovery guards or delete assertions.
+
+- [ ] Read root's `stale-harness-probes.log`, `dictionary-durable-probe.log`, `dictionary-hydration-probe.log`, and `dictionary-policy-probe.log` in the plan workspace. The exact exception is `RuntimeError: Durable Console Library policy no longer matches acceptance.` Hydration alone still failed because the policy row did not exist. Inserting the policy and hydrating made the agent dictionary test pass; no production source was changed in those probes.
+- [ ] Update both dictionary test setups using the existing real repository seam after binding their conversation, before submitting:
+
+```python
+store = screen._ensure_console_chat_store()
+session = _active_native_session(screen)
+session.persisted_conversation_id = conv_id
+policy = store.persistence.console_library_policy_repository.insert(
+    conv_id, store.session_library_policy_candidate(session.id)
+)
+assert policy.snapshot.policy_revision == 1
+await store.hydrate_session_library_policy(session.id)
+```
+
+  A small helper within this test module may share this setup. Do not import from the world-info test, which already imports this module. Keep production gateway/controller behavior intact; if another harness defect surfaces, identify its cause before fixing it and record the evidence.
+- [ ] Run the dictionary module before and after its harness edit. Extend the agent path with the same raw stored user-text assertion already present in the provider test, so fixing dispatch cannot accidentally endorse substituting persisted text.
+- [ ] Remove the `pytest.mark.xfail` attached to `test_citation_repair_agent_missing_placeholder_keeps_runtime_row_without_repair`. Run that exact test and nearby `citation_repair_agent` cases normally. The expected replacement content/status/visible-output assertions remain unchanged.
+- [ ] Reconcile TASK-19642.8.3 using the four exact nodes from root's passing baseline and inspect the assertions in the two wake modules. Same manual authority gates and frozen run budget still apply; automatic-chain budgets add restrictions under ADR-134. Correct the old headless test docstring only if necessary for accuracy; no production changes or new budget behavior.
+- [ ] Run the targeted dictionary module, the citation agent selection, and the four named wake nodes. Do not add the entire Chat/UI suites. Run changed-line lint/format checks and whitespace checks, recording any pre-existing debt precisely.
+- [ ] Update all three task implementation notes with current root causes, unchanged production contracts, verification commands/results, and ADR decisions. Do not mark Done until independent review. Commit the batch's scoped files and write `task-3-report.md` with exact evidence.
+
 ## Revalidation and durable inventory
 
 In parallel with this bounded fix, root records the remaining workstream in `backlog/docs/agent-orchestration-followups-2026-09-12.md`. TASK-13215 is independently revalidated against the current interrupt host. Investigation does not authorize speculative code changes or closing an older ticket without evidence. Newly confirmed fixes receive a task plan before implementation.
