@@ -289,7 +289,112 @@ async def test_close_releases_generation_waiting_for_initialization(owner, monke
             asyncio.gather(generation, closing, return_exceptions=True), 2
         )
         await stream.aclose()
-    assert isinstance(results[0], ValueError)
+    assert isinstance(results[0], RuntimeError)
+    assert str(results[0]) == "Chatterbox backend is closing"
     assert results[1] is None
     assert process.waited
     assert owner.model is owner.process is None
+
+
+@pytest.mark.asyncio
+async def test_queued_generation_cannot_start_after_close_begins(owner, monkeypatch):
+    owner.model = object()
+    owner._initialized = True
+    native_calls = []
+
+    async def generate(*args, **kwargs):
+        native_calls.append(True)
+        return b"synthetic audio"
+
+    monkeypatch.setattr(owner, "_generate_single", generate)
+    request = OpenAISpeechRequest(
+        input="Hello.", voice="default", model="chatterbox", response_format="wav"
+    )
+    stream = owner.generate_speech_stream(request)
+    await owner._generation_lock.acquire()
+    generation = asyncio.create_task(anext(stream))
+    await turn()
+    closing = asyncio.create_task(owner.close())
+    try:
+        await turn()
+        assert owner._closing
+        assert not closing.done()
+    finally:
+        owner._generation_lock.release()
+        results = await asyncio.wait_for(
+            asyncio.gather(generation, return_exceptions=True), 2
+        )
+        await stream.aclose()
+        await asyncio.wait_for(closing, 2)
+    assert native_calls == []
+    assert isinstance(results[0], RuntimeError)
+    assert str(results[0]) == "Chatterbox backend is closing"
+
+
+@pytest.mark.asyncio
+async def test_waiting_generation_rejects_fallback_ready_during_close(
+    owner, monkeypatch
+):
+    loading, polling, published, release_poll = [asyncio.Event() for _ in range(4)]
+    publish, finish_loading = threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    native_calls = []
+    original_sleep = asyncio.sleep
+
+    def load():
+        loop.call_soon_threadsafe(loading.set)
+        assert publish.wait(3)
+        owner.model = object()
+        owner._initialized = True
+        loop.call_soon_threadsafe(published.set)
+        assert finish_loading.wait(3)
+
+    async def spawn(*args, **kwargs):
+        raise OSError("synthetic spawn failure")
+
+    async def sleep(delay):
+        if delay == 0.1:
+            polling.set()
+            await release_poll.wait()
+        else:
+            await original_sleep(delay)
+
+    async def generate(*args, **kwargs):
+        native_calls.append(True)
+        return b"synthetic audio"
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    monkeypatch.setattr(owner, "_initialize_sync", load)
+    monkeypatch.setattr(owner, "_generate_single", generate)
+    request = OpenAISpeechRequest(
+        input="Hello.", voice="default", model="chatterbox", response_format="wav"
+    )
+    stream = owner.generate_speech_stream(request)
+    generation = asyncio.create_task(anext(stream))
+    closing = None
+    try:
+        await asyncio.wait_for(loading.wait(), 1)
+        await asyncio.wait_for(polling.wait(), 1)
+        closing = asyncio.create_task(owner.close())
+        await turn()
+        assert owner._closing
+        publish.set()
+        await asyncio.wait_for(published.wait(), 1)
+        assert owner._initialized
+        assert not closing.done()
+        release_poll.set()
+        results = await asyncio.wait_for(
+            asyncio.gather(generation, return_exceptions=True), 1
+        )
+        assert native_calls == []
+        assert isinstance(results[0], RuntimeError)
+        assert str(results[0]) == "Chatterbox backend is closing"
+        assert not closing.done()
+    finally:
+        publish.set()
+        finish_loading.set()
+        release_poll.set()
+        await stream.aclose()
+        await asyncio.wait_for(closing or owner.close(), 2)
+    assert owner.model is None

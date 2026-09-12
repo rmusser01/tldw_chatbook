@@ -52,6 +52,23 @@ TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
 
 
+def validate_tts_inference_device(value: object) -> str:
+    """Admit an exact device family for the opt-in TTS qualification runner.
+
+    Args:
+        value: Candidate device family, without coercion or ordinal expansion.
+
+    Returns:
+        The validated cpu, mps or cuda value.
+
+    Raises:
+        ValueError: The value is not a supported device family.
+    """
+    if not isinstance(value, str) or value not in ("cpu", "mps", "cuda"):
+        raise ValueError("device must be cpu, mps, or cuda")
+    return value
+
+
 class ReasoningHistorySelectorInput(BaseModel):
     """Strict boundary for a Console reasoning-history selector event.
 

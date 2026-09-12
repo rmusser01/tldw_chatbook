@@ -48,6 +48,12 @@ Retain the host's NVIDIA driver version and physical GPU identity separately
 with your environment manifest; the CUDA build version is not the driver version.
 ONNX validation remains CPU-only.
 
+Device families also pass the shared input validator before output creation,
+including programmatic admission that bypasses argparse. PyTorch is loaded
+through the optional-dependency helper after private worker profile setup;
+a missing runtime reports the `local_tts` install extra. Help and module import
+remain inert and never load that runtime.
+
 For ONNX:
 
 ```sh

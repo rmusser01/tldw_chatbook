@@ -94,6 +94,9 @@ def validate_args(args: argparse.Namespace) -> None:
     Raises:
         ValueError: Admission, assets, paths or worker ownership are invalid.
         OSError: A required local path cannot be inspected."""
+    from tldw_chatbook.Utils.input_validation import validate_tts_inference_device
+
+    args.device = validate_tts_inference_device(args.device)
     if not args.play_audio:
         raise ValueError("Real device playback requires --play-audio")
     if not 1 <= args.repeats <= 12:
@@ -285,6 +288,20 @@ def observe_native(
                     row["exit_at"] = time.monotonic()
 
     return observed
+
+
+def load_pytorch_runtime() -> Any:
+    """Load PyTorch after worker profile setup, with optional-extra guidance.
+
+    Returns:
+        The centrally loaded PyTorch module.
+
+    Raises:
+        ImportError: PyTorch is unavailable; includes the supported extra name.
+    """
+    from tldw_chatbook.Utils.optional_deps import require_dependency
+
+    return require_dependency("torch", "local_tts")
 
 
 def pytorch_device_provenance(torch: Any, requested: str) -> dict:
@@ -722,7 +739,7 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
     )
     cuda_device = None
     if args.engine == "pytorch":
-        import torch
+        torch = load_pytorch_runtime()
 
         evidence["pytorch_device"] = pytorch_device_provenance(torch, args.device)
         if args.device == "cuda":
@@ -1189,7 +1206,6 @@ async def run_live(args: argparse.Namespace, evidence: dict) -> None:
         observers.enter_context(patch.object(sd, "OutputStream", output_stream))
         if args.engine == "pytorch":
             import spacy
-            import torch
 
             if args.language.startswith("en-") and not spacy.util.is_package(
                 "en_core_web_sm"

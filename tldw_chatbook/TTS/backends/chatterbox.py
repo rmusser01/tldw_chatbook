@@ -1003,6 +1003,8 @@ class ChatterboxTTSBackend(TTSBackendBase):
             self._generation_lock,
             contextlib.aclosing(self._generate_speech_stream(request)) as stream,
         ):
+            if self._closing:
+                raise RuntimeError("Chatterbox backend is closing")
             async for chunk in stream:
                 yield chunk
 
@@ -1042,6 +1044,9 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 ):
                     logger.error("Chatterbox process died during initialization")
                     break
+
+        if self._closing:
+            raise RuntimeError("Chatterbox backend is closing")
 
         if not self._initialized:
             logger.error("ChatterboxTTSBackend: Model not initialized after waiting")
