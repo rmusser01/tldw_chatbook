@@ -57,7 +57,11 @@ def test_recovery_error_observer_preserves_mapping_without_error_message(
         received.append((error, kind))
         return "permission_denied"
 
-    module = SimpleNamespace(issue_code=original)
+    class Service:
+        issue_code = staticmethod(original)
+
+    module = SimpleNamespace(issue_code=original, RecoveryService=Service)
+    original_static = Service.__dict__["issue_code"]
     monkeypatch.setattr(package, "recovery_service", module, raising=False)
     path = tmp_path / "errors.log"
     stop = observe_recovery_failures(path)
@@ -67,7 +71,8 @@ def test_recovery_error_observer_preserves_mapping_without_error_message(
         except PermissionError as error:
             error.winerror = 5
             assert module.issue_code(error, kind="restore") == "permission_denied"
-            assert received == [(error, "restore")]
+            assert Service().issue_code(error, kind="open") == "permission_denied"
+            assert received == [(error, "restore"), (error, "open")]
     finally:
         stop()
     record = json.loads(path.read_text())[0]
@@ -75,3 +80,4 @@ def test_recovery_error_observer_preserves_mapping_without_error_message(
     assert record["error_class"] == "PermissionError"
     assert "synthetic-secret-must-not-appear" not in path.read_text()
     assert module.issue_code is original
+    assert Service.__dict__["issue_code"] is original_static

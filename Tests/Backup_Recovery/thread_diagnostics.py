@@ -98,6 +98,8 @@ def observe_recovery_failures(path: Path) -> Callable[[], None]:
     from tldw_chatbook.Backup_Recovery import recovery_service
 
     original = recovery_service.issue_code
+    service_class = recovery_service.RecoveryService
+    original_static = service_class.__dict__["issue_code"]
     records, lock = [], threading.Lock()
 
     def observed(error, *, kind=""):
@@ -122,8 +124,10 @@ def observe_recovery_failures(path: Path) -> Callable[[], None]:
         return original(error, kind=kind)
 
     recovery_service.issue_code = observed
+    service_class.issue_code = staticmethod(observed)
 
     def stop():
         recovery_service.issue_code = original
+        service_class.issue_code = original_static
 
     return stop

@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-12 19:59
+updated_date: 2026-09-12 20:07
 ---
 
 ## Description
@@ -57,6 +57,8 @@ Windows focused run 34714728661 at d00547813: native 42/42 pass; actual plain F9
 Scratch-root correction: use existing staging SHA256(root_id) physical naming in installed validation instead of logical colon-containing IDs. Independent review accepted topology/bytes/alias checks unchanged. Regression RED on colon path; assertion adapted to expected existing config relocation to recovered profile. Actual macOS plain F9 passed36.09s. Broader maintenance checks30pass+2 unrelated study alias publication_selector_mismatch failures reproduced using unchanged HEAD publication module in both held modes; logs retained. Bandit0; only unchanged existing unused fcntl Ruff finding. Windows correction verification pending.
 Pre-full-run observer audit found two-profile capture test cancels at55s/outer60s although native Windows one-profile capture was still active at100s. Two-profile restore outer75s also encloses two45s child opens plus actual restore. Correcting only Windows fixture observers to accommodate observed native runtime and nested bounds; production deadlines unchanged. Mounted outer360s is only7s above observed startup38+review90+backup225 allowances and needs headroom.
 Windows observer calibration independently reviewed,8embedded scripts compile, scopedRuff clean, Bandit matches unchanged baseline counts (test asserts and existing subprocess import). Capture watchdog300s inside360s parent; seed180s; two-profile restore600s encloses two135s opens/servicewait150; resume60; mountedouter480. All Windows-only; production limits and assertions unchanged. acb134a73 Linux F9three+two-profile pass, rollback running; macOS firstfour productcases pass, rollback running; Windows focused34715486325 running.
+Windows34715486325 at acb134a73:42nativePASS, actual backup and restore now succeed; plain UI case then times out waiting for open_profile to start. All14artifact hashes match; no child log/original operation failure/fatal error. Need observe UI focus/dispatch and actual terminal suspend entry; shared error observer currently misses RecoveryService.issue_code static alias used by app's prelaunch error handler. Linux full sameapplication3F9+two-profile+rollback allpass127.25/66.75/281.96s; macOS5casespass334.08s.
+Open-dispatch diagnostics: real Widget.focus is queued, so test now waits for actual focused mounted button before Enter; bounded fixed event labels observe actual app handler and real suspend context without replacing behavior. Original-error observer now also wraps/restores exact RecoveryService static descriptor alias; regression verifies same mapping and descriptor identity restoration. All3embedded UI scripts compile; scopedRuff/Bandit0; observer3+actualmacplain4pass35.27s. Preparing fullWindows22product with these observers and reviewed Windows-only nested deadlines.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

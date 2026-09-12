@@ -15,7 +15,25 @@ in `_validate_installed`. That one physical path now uses the same SHA256 root k
 as staging; logical topology and archive identities are unchanged. A regression
 reproduced the colon path before correction. Actual macOS plain F9 creation,
 restore and open passed after correction (36.09 seconds). Windows verification
-of this correction is pending.
+of this correction reached backup and restore success in focused run
+[34715486325](https://github.com/rmusser01/tldw_chatbook/actions/runs/34715486325)
+at `acb134a73fa36462ec26e7074f900321aa2ca795`. Native tests passed 42/42 and all 14
+artifact hashes matched, but the actual UI case failed waiting for an open-profile
+operation after activating the enabled profile button. No child process started.
+Test-only observations now distinguish queued keyboard focus, handler dispatch,
+and entry into the real terminal suspension; the original error observer also
+covers the service's static error mapper used before launch.
+
+Full Linux product verification of application revision `acb134a73` passed all
+three F9 modes (127.25 seconds), the two-profile roundtrip (66.75 seconds), and
+replacement/later rollback (281.96 seconds), with no failures or skips. Its public
+codeload SHA256 is
+`163cb81a15b0e836553dca5d9bab10dcd7f1c50fa5088c668776beb029c4aac7`.
+The same application passed all five macOS product cases in 334.08 seconds.
+Subsequent test-observer and actual macOS plaintext F9 regression passed four
+cases in 35.27 seconds. Windows-only multi-profile fixture deadlines now cover
+observed native capture duration and sequential opens; production limits are
+unchanged. Full Windows product success remains required.
 
 ## Source and boundaries
 

@@ -134,13 +134,35 @@ async def main():
  destination=Path.home()/('ui.tldw-backup.zip.age' if encrypted else 'ui.tldw-backup.zip')
  restored=fixture/'restored';restored.mkdir(mode=0o700)
  async with app.run_test(headless=False,size=(120,42)) as pilot:
+  from contextlib import contextmanager
+  ui_events=[]
+  def ui_event(event):
+   current=app.recovery_service.current()
+   ui_events.append({'event':event,'kind':current['kind'] if current else None,'state':current['state'] if current else None})
+   (fixture/'ui-dispatch.log').write_text(json.dumps(ui_events[-32:]))
+  actual_suspend=app.suspend
+  @contextmanager
+  def observed_suspend():
+   ui_event('suspend_enter')
+   try:
+    with actual_suspend():
+     ui_event('suspend_entered');yield
+   finally:ui_event('suspend_exited')
+  app.suspend=observed_suspend
+  actual_open=app.open_recovery_profile
+  def observed_open(profile_id):
+   ui_event('open_handler');return actual_open(profile_id)
+  app.open_recovery_profile=observed_open
   async def press(query):
    button=app.screen.query_one(query,Button)
    async with asyncio.timeout(2):
     while button.has_class('-active'):await asyncio.sleep(.02)
    assert not button.disabled,query
    button.scroll_visible(immediate=True);button.focus()
+   await ready(lambda:app.focused is button and button.is_mounted)
+   if query=='.backup-open-profile':ui_event('open_button_focused')
    await pilot.press('enter')
+   if query=='.backup-open-profile':ui_event('open_enter_delivered')
   async def ready(predicate,timeout=30):
    if sys.platform=='win32':timeout*=3
    try:
