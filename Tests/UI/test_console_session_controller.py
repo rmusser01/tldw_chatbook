@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -176,6 +177,99 @@ async def test_tab_sync_initial_session_keeps_provenance_for_character_handoff(
     assert len(sessions) == 1
     assert sessions[0].id == original.id
     assert sessions[0].title == "Chat with Alba"
+
+
+@pytest.mark.parametrize("replace_sync", [False, True])
+def test_handoff_staging_uses_live_ports_and_exact_screen_worker_callback(
+    monkeypatch, replace_sync
+) -> None:
+    screen = ChatScreen(_published_blank_defaults_app())
+    owner = screen._session
+    store = screen._ensure_console_chat_store()
+    calls = []
+
+    def stage(launch):
+        assert screen._pending_console_launch_auto_open_inspector is True
+        calls.append(("stage", launch))
+
+    monkeypatch.setattr(
+        screen, "_retrieval", SimpleNamespace(_stage_console_library_rag_launch=stage)
+    )
+    monkeypatch.setattr(
+        screen._workspace,
+        "_console_initial_session_title_for_workspace",
+        lambda workspace_id: "Live workspace title",
+    )
+    monkeypatch.setattr(
+        screen,
+        "_load_console_handoff_composer_if_empty",
+        lambda prompt: calls.append(("composer", prompt)),
+    )
+    if replace_sync:
+        monkeypatch.setattr(screen, "_sync_native_console_chat_ui", AsyncMock())
+    callback = screen._sync_native_console_chat_ui
+    # Only the framework worker service may reach through the retained screen.
+    owner._screen = SimpleNamespace(
+        run_worker=lambda function, **kwargs: calls.append(("worker", function, kwargs))
+    )
+
+    screen._session._stage_handoff_as_console_live_work(
+        ChatHandoffPayload(
+            source="Library",
+            item_type="media",
+            title="Evidence title",
+            body="Evidence body",
+            suggested_prompt="Use this evidence",
+        )
+    )
+
+    assert [call[0] for call in calls] == ["stage", "composer", "worker"]
+    assert calls[0][1].payload["evidence_bundle"]["references"][0]["snippet"] == (
+        "Evidence body"
+    )
+    assert calls[1] == ("composer", "Use this evidence")
+    assert calls[2] == (
+        "worker",
+        callback,
+        {"exclusive": True, "group": "console-sync"},
+    )
+    [session] = store.sessions()
+    assert session.title == "Live workspace title"
+    assert store.session_draft(session.id) == "Use this evidence"
+
+
+@pytest.mark.asyncio
+async def test_handoff_consumer_reads_replaced_screen_app_store(monkeypatch) -> None:
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        PendingHandoffStore,
+    )
+
+    screen = ChatScreen(_published_blank_defaults_app())
+    owner = screen._session
+    replacement_store = PendingHandoffStore()
+    payload = ChatHandoffPayload(
+        source="Library",
+        item_type="media",
+        title="Replacement service",
+        body="Evidence",
+    )
+    replacement_store.stage(HandoffChannel.CHAT, payload)
+    monkeypatch.setattr(
+        screen, "app_instance", SimpleNamespace(pending_handoffs=replacement_store)
+    )
+    staged = []
+    monkeypatch.setattr(
+        owner, "_start_character_console_session", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(owner, "_stage_handoff_as_console_live_work", staged.append)
+
+    await screen._session._consume_pending_chat_handoff()
+
+    assert staged == [payload]
+    assert not replacement_store.has_pending(HandoffChannel.CHAT)
+    assert owner._handoff_consumption_in_progress is False
+    assert screen._handoff_consumption_in_progress is False
 
 
 def _published_blank_defaults_app():
@@ -396,7 +490,7 @@ def test_personas_preview_handoff_preserves_control_derived_source_settings(
         "published-model",
     )
 
-    screen._stage_handoff_as_console_live_work(
+    screen._session._stage_handoff_as_console_live_work(
         ChatHandoffPayload(
             source="personas",
             item_type="preview-conversation",

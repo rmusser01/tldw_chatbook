@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 import inspect
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -411,7 +413,9 @@ async def test_real_file_backed_screen_check_is_read_only_then_import_refreshes(
             assert screen._library_note_import_controller.snapshot.receipt.imported == 1
     finally:
         interop.close_all_user_connections()
-        database.close_connection()
+        with database.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert database.registered_connection_count() == 0
 
 
 async def test_hidden_import_fences_notes_mutations_until_receipt(
@@ -591,7 +595,9 @@ async def test_real_import_then_back_offers_last_import_and_names_the_skips(
             await _wait_for_selector(screen, pilot, "#note-import-skipped")
     finally:
         interop.close_all_user_connections()
-        database.close_connection()
+        with database.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert database.registered_connection_count() == 0
 
 
 
@@ -630,30 +636,93 @@ async def _reach_import_review(screen, pilot, source: Path) -> None:
 def _import_ready_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Yield a Library harness whose Import once has real local authorities."""
     database = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="library-obsidian")
-    folders = LocalNoteFolderRepository(database)
-    interop = NotesInteropService(
-        base_db_directory=tmp_path,
-        api_client_id="library-obsidian",
-        global_db_to_use=database,
-    )
-    monkeypatch.setattr(
-        library_screen_module,
-        "get_notes_sync_state_db_path",
-        lambda: tmp_path / "import-receipts.sqlite",
-    )
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=[])
-    app.chachanotes_db = database
-    app.notes_scope_service = NotesScopeService(
-        local_notes_service=interop,
-        server_service=None,
-        folder_repository=folders,
-    )
+    interop = None
     try:
+        folders = LocalNoteFolderRepository(database)
+        interop = NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="library-obsidian",
+            global_db_to_use=database,
+        )
+        monkeypatch.setattr(
+            library_screen_module,
+            "get_notes_sync_state_db_path",
+            lambda: tmp_path / "import-receipts.sqlite",
+        )
+        app = _build_test_app()
+        _seed_conversations(app, _two_conversations(), notes=[])
+        app.chachanotes_db = database
+        app.notes_scope_service = NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+            folder_repository=folders,
+        )
         yield LibraryHarness(app)
     finally:
-        interop.close_all_user_connections()
-        database.close_connection()
+        try:
+            if interop is not None:
+                interop.close_all_user_connections()
+        finally:
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
+            assert database.registered_connection_count() == 0
+
+
+@pytest.mark.parametrize("failure_phase", ("setup", "body", "cancel"))
+async def test_import_ready_host_closes_only_owned_worker_connections_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_phase: str,
+) -> None:
+    """Actual helper teardown closes joined worker handles, including setup failure.
+
+    Args:
+        tmp_path: Private database directory.
+        monkeypatch: Scoped constructor and setup fault injection.
+        failure_phase: Setup, test body, or delivered cancellation path.
+    """
+    databases = []
+    worker_connections = []
+    foreign = CharactersRAGDB(tmp_path / "foreign.sqlite", client_id="foreign")
+    foreign_connection = foreign.get_connection()
+    original_database = CharactersRAGDB
+    primary = (
+        asyncio.CancelledError("import fixture cancellation")
+        if failure_phase == "cancel"
+        else RuntimeError("import fixture failure")
+    )
+
+    def capture_database(*args, **kwargs):
+        database = original_database(*args, **kwargs)
+        databases.append(database)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connections.append(
+                executor.submit(database.get_connection).result(timeout=2.0)
+            )
+        return database
+
+    def fail_setup(*_args, **_kwargs):
+        raise primary
+
+    monkeypatch.setattr(f"{__name__}.CharactersRAGDB", capture_database)
+    if failure_phase == "setup":
+        monkeypatch.setattr(f"{__name__}.LocalNoteFolderRepository", fail_setup)
+    try:
+        with (
+            pytest.raises(type(primary)) as caught,
+            _import_ready_host(tmp_path, monkeypatch),
+        ):
+            raise primary
+        assert caught.value is primary
+        assert len(databases) == len(worker_connections) == 1
+        assert databases[0].registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connections[0].execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        for database in [*databases, foreign]:
+            with database.quiesce_connections(timeout_seconds=2.0):
+                pass
 
 
 async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault(

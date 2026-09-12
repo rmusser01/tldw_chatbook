@@ -2,9 +2,9 @@
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
  * library-owned rules split out of components/_agentic_terminal.tcss
- * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
- * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit components/_agentic_terminal.tcss and re-run build_css.py.
+ * by build_css.py (TASK-25812/TASK-24459). Loaded at the app or owning-screen
+ * stylesheet boundary; route-owned sheets are deferred until first visit.
+ * Edit components/_agentic_terminal.tcss and re-run build_css.py.
  * ======================================== */
 
 $ds-surface-panel: $panel;
@@ -1313,8 +1313,7 @@ Button.library-canvas-action:focus {
 sibling filters (#library-conversations-filter / #library-notes-filter):
 a deliberate $ds-grid-line frame on the raised surface instead of the
 near-invisible Textual default border (which read as a borderless void
-with stray left-edge border fragments), and padding 0 1 so the full
-"Search Library…" placeholder still fits at 100 columns. */
+with stray left-edge border fragments). */
 /* task-32069: the box shares its row with a "x" clear button now, so it
    takes the remaining width rather than the whole row (which squeezed the
    button to zero cells and painted nothing where the affordance should be). */
@@ -1345,8 +1344,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 3;
     min-height: 3;
     margin: 0 0 1 0;
-    padding: 0 1;
+    /* Share the clear button's left border; recover its three cells without
+       clipping "Search Library…" or widening the rail at 100 columns. */
+    padding: 0;
     border: tall $ds-grid-line;
+    border-right: none;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
@@ -1375,6 +1377,15 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-surface-panel;
     color: $ds-text-muted;
     text-overflow: ellipsis;
+}
+
+#library-search-input:focus {
+    border: tall $ds-input-focus-accent;
+    border-right: none;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
 }
 
 #library-conversations-filter {

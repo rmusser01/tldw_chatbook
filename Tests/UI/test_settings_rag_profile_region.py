@@ -29,6 +29,10 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,

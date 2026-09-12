@@ -76,29 +76,15 @@ from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....UI.Screens.scheduling.workbench_host_screen import WorkbenchHostScreen
 from ....Widgets.confirmation_dialog import ConfirmationDialog
 from ....Widgets.detail_value_row import DetailValueRow
-from .definition_audit_view import DefinitionAuditView
-from .definition_detail import (
-    DefinitionDetail,
-    _definition_transfer_suffix,
-    _LIFECYCLE_TOGGLE_RESULTS,
-    automation_name_cell,
-)
-from .forms.automation_definition_form import AutomationDefinitionForm
-from .forms.new_task_choice_modal import NewTaskChoiceModal
-from .forms.reminder_form import ReminderForm
-from .task_detail import (
-    SCHEDULES_EMPTY_CONSOLE_RECOVERY,
-    TaskDetail,
-    TaskInspector,
-    _format_next_run,
-    _format_relative,
-    _format_timezone,
-    _managed_elsewhere_notice,
-    _queue_owner_suffix,
-    _transfer_row_suffix,
-    _was_missed_while_away,
-    transfer_row_dict,
-)
+if TYPE_CHECKING:
+    from .definition_audit_view import DefinitionAuditView
+    from .definition_detail import (
+        DefinitionDetail,
+    )
+    from .task_detail import (
+        TaskDetail,
+    )
+
 # schedules-redesign PR-2, Task 2: the pure row adapter -- see that
 # module's docstring for why it is a standalone, Textual-free file.
 from .unified_rows import (
@@ -215,6 +201,37 @@ _NOTIFICATION_OBSERVER_MAX_RECONNECTS = 5
 _NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS = 5.0
 
 
+def __getattr__(name: str) -> Any:
+    """Resolve existing widget/helper re-exports without charging route discovery."""
+    from importlib import import_module
+
+    modules = {
+        "DefinitionAuditView": ".definition_audit_view",
+        "DefinitionDetail": ".definition_detail",
+        "_definition_transfer_suffix": ".definition_detail",
+        "_LIFECYCLE_TOGGLE_RESULTS": ".definition_detail",
+        "automation_name_cell": ".definition_detail",
+        "AutomationDefinitionForm": ".forms.automation_definition_form",
+        "NewTaskChoiceModal": ".forms.new_task_choice_modal",
+        "ReminderForm": ".forms.reminder_form",
+        "SCHEDULES_EMPTY_CONSOLE_RECOVERY": ".task_detail",
+        "TaskDetail": ".task_detail",
+        "TaskInspector": ".task_detail",
+        "_format_next_run": ".task_detail",
+        "_format_relative": ".task_detail",
+        "_managed_elsewhere_notice": ".task_detail",
+        "_queue_owner_suffix": ".task_detail",
+        "_transfer_row_suffix": ".task_detail",
+        "_was_missed_while_away": ".task_detail",
+        "transfer_row_dict": ".task_detail",
+    }
+    if name not in modules:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(modules[name], __package__), name)
+    globals()[name] = value
+    return value
+
+
 def _cancel_toast_text(name: str) -> str:
     """Honest cancel confirmation (final review L13).
 
@@ -276,6 +293,13 @@ def _row_title_cell(
     rather than
     inventing one shared format neither primitive used before.
     """
+    from .definition_detail import _definition_transfer_suffix, automation_name_cell
+    from .task_detail import (
+        _queue_owner_suffix,
+        _transfer_row_suffix,
+        _was_missed_while_away,
+    )
+
     if row.kind == "reminder":
         task = row.source_row
         assert isinstance(task, ReminderTask)
@@ -313,6 +337,8 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
     unlike the reminder path, this one never had a timezone token, so a
     UTC value read as a bare, unlabeled `YYYY-MM-DD HH:MM`.
     """
+    from .task_detail import _format_next_run, _format_relative, _format_timezone
+
     if row.kind == "reminder":
         next_text = _format_next_run(row.source_row, now=now, compact=True)
     elif row.bucket == "paused":
@@ -629,6 +655,9 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def compose_content(self) -> ComposeResult:
         """Build the three-pane scheduling workbench layout."""
+        from .definition_detail import DefinitionDetail
+        from .task_detail import TaskDetail, TaskInspector
+
         service = self._service()
         owner_id = service.owner_id if service else "local"
         active_server_id = self._active_server_id()
@@ -722,21 +751,25 @@ class SchedulesWorkbench(BaseAppScreen):
                             id="scheduling-chip-all",
                             variant="primary",
                             classes="scheduling-queue-chip",
+                            tooltip="Show all scheduled tasks.",
                         )
                         yield Button(
                             "Active",
                             id="scheduling-chip-active",
                             classes="scheduling-queue-chip",
+                            tooltip="Show active scheduled tasks.",
                         )
                         yield Button(
                             "Paused",
                             id="scheduling-chip-paused",
                             classes="scheduling-queue-chip",
+                            tooltip="Show paused scheduled tasks.",
                         )
                         yield Button(
                             "Completed",
                             id="scheduling-chip-completed",
                             classes="scheduling-queue-chip",
+                            tooltip="Show completed scheduled tasks.",
                         )
                         # redesign PR-4, task 6 (spec §11): below the
                         # 84-column threshold the four chips above
@@ -1240,6 +1273,7 @@ class SchedulesWorkbench(BaseAppScreen):
             _load,
             exclusive=True,
             group="schedules-load-tasks",
+            exit_on_error=False,
         )  # type: ignore[arg-type]
 
     def _current_definitions(self) -> list[dict[str, Any]]:
@@ -1312,6 +1346,9 @@ class SchedulesWorkbench(BaseAppScreen):
         -- a reminder-only refresh must not keep painting a definitions
         snapshot a since-edited/transferred/run automation has outgrown.
         """
+        from .definition_detail import DefinitionDetail
+        from .task_detail import TaskDetail, TaskInspector
+
         service = self._scheduling_service
         if service is None:
             logger.debug("No scheduling_service available; cannot load tasks")
@@ -1357,6 +1394,8 @@ class SchedulesWorkbench(BaseAppScreen):
 
             all_rows = await asyncio.to_thread(_build_rows)
         except Exception as exc:  # noqa: BLE001
+            if not self.is_mounted:
+                return
             # UAT Major 5: a read failure is not evidence the queue is
             # empty. This used to reset `_tasks`/`_all_rows`, clear the
             # table, and blank every detail/inspector pane on ANY
@@ -1389,6 +1428,11 @@ class SchedulesWorkbench(BaseAppScreen):
             await self._refresh_console_context()
             return
 
+        # Navigation may unmount this workbench while either service I/O or
+        # the threaded row build above is in flight. Its widgets no longer
+        # exist at that point, so the completed snapshot is obsolete.
+        if not self.is_mounted:
+            return
         self._tasks = reminders
         # Marks must always refer to rows that still exist (task-23107
         # review F1): a task deleted or filtered out of existence must not
@@ -1480,6 +1524,9 @@ class SchedulesWorkbench(BaseAppScreen):
         single frame straddle a bucket boundary); injectable for
         deterministic tests.
         """
+        from .definition_detail import DefinitionDetail
+        from .task_detail import TaskDetail, TaskInspector
+
         render_now = now if now is not None else datetime.now(timezone.utc)
         # Fix wave F2: before anything re-feeds the panes, close a pushed
         # overlay whose row is no longer in `_all_rows` -- otherwise the
@@ -1686,6 +1733,9 @@ class SchedulesWorkbench(BaseAppScreen):
         width-based hide: this only ever runs while `#scheduling-detail-
         pane` itself is shown.
         """
+        from .definition_detail import DefinitionDetail
+        from .task_detail import TaskDetail
+
         is_reminder = kind == "reminder"
         self.query_one("#scheduling-task-detail", TaskDetail).set_class(
             not is_reminder, "pane-hidden"
@@ -1875,6 +1925,9 @@ class SchedulesWorkbench(BaseAppScreen):
         `TaskDetail.set_task`/`DefinitionDetail.set_definition` both
         query their children.
         """
+        from .definition_detail import DefinitionDetail
+        from .task_detail import TaskDetail
+
         if not (0 <= index < len(self._visible_rows)):
             return
         row = self._visible_rows[index]
@@ -2001,6 +2054,9 @@ class SchedulesWorkbench(BaseAppScreen):
         refresh-driven calls: those re-feed on purpose, because the
         DATA can change while the selection stands still.
         """
+        from .definition_detail import DefinitionDetail
+        from .task_detail import TaskDetail, TaskInspector
+
         previously_selected_row_id = self._selected_row_id
         if not (0 <= index < len(self._visible_rows)):
             self._selected_row_id = None
@@ -2092,6 +2148,8 @@ class SchedulesWorkbench(BaseAppScreen):
         `to_server_failed` mutation errors (PR-3 task 5 fix round 1,
         finding 2), both never re-derived elsewhere.
         """
+        from .task_detail import transfer_row_dict
+
         service = self._scheduling_service
         if service is None or not isinstance(task, ReminderTask):
             task_detail.set_lifecycle_lock(None)
@@ -2125,6 +2183,8 @@ class SchedulesWorkbench(BaseAppScreen):
         from `SchedulingService.transfer_lock_reason` -- never re-derived
         here.
         """
+        from .task_detail import transfer_row_dict
+
         service = self._scheduling_service
         if service is None or not isinstance(task, ReminderTask):
             return False
@@ -2140,6 +2200,8 @@ class SchedulesWorkbench(BaseAppScreen):
         latest_console_launch = None
         if latest_console_item is None:
             latest_console_launch = await self._latest_reading_digest_console_launch()
+        if not self.is_mounted:
+            return
         self._apply_console_context(latest_console_item, latest_console_launch)
 
     async def _latest_console_follow_item_from_adapter(self) -> Any | None:
@@ -2247,6 +2309,8 @@ class SchedulesWorkbench(BaseAppScreen):
         self._update_follow_button_state()
 
     def _update_follow_button_state(self) -> None:
+        from .task_detail import TaskDetail
+
         available = (
             self._latest_console_follow_item_id is not None
             or self._latest_console_launch_kwargs is not None
@@ -2606,6 +2670,8 @@ class SchedulesWorkbench(BaseAppScreen):
         subclass, no `dismissed` hook needed (nothing here can go stale
         by being viewed).
         """
+        from .definition_audit_view import DefinitionAuditView
+
         service = self._service()
         name = str(
             definition.get("name") or definition.get("id") or "Untitled automation"
@@ -2767,6 +2833,8 @@ class SchedulesWorkbench(BaseAppScreen):
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:
         """Hand off the active schedule run or digest output to the Console."""
+        from .task_detail import SCHEDULES_EMPTY_CONSOLE_RECOVERY
+
         event.stop()
         if event.button.disabled:
             return
@@ -2847,6 +2915,8 @@ class SchedulesWorkbench(BaseAppScreen):
         probe) silently offered only "This device" in `_runs_on_options`,
         with no notice and no correction while the form stayed open.
         """
+        from .forms.reminder_form import ReminderForm
+
         service = self._service()
         if service is not None:
             await self._reprobe_server_reachability(service)
@@ -2866,6 +2936,8 @@ class SchedulesWorkbench(BaseAppScreen):
         Final review finding 3: same re-probe as `action_create_
         reminder` above, for the same reason.
         """
+        from .forms.automation_definition_form import AutomationDefinitionForm
+
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
@@ -2884,6 +2956,8 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def _open_new_task_chooser(self) -> None:
         """Ask which kind of scheduled task to create (task-5)."""
+        from .forms.new_task_choice_modal import NewTaskChoiceModal
+
         self.app.push_screen(NewTaskChoiceModal(), callback=self._on_new_task_choice)
 
     async def _on_new_task_choice(self, choice: str | None) -> None:
@@ -3035,6 +3109,8 @@ class SchedulesWorkbench(BaseAppScreen):
     @on(EditTaskRequested)
     def _on_edit_task_requested(self, event: EditTaskRequested) -> None:
         """Open the reminder form pre-filled for editing."""
+        from .forms.reminder_form import ReminderForm
+
         event.stop()
         options, default_owner = self._runs_on_options()
         self.app.push_screen(
@@ -3267,6 +3343,8 @@ class SchedulesWorkbench(BaseAppScreen):
         field. An unparented row (never mounted, or already removed)
         paints as before: there is no pane to contradict it.
         """
+        from .definition_detail import DefinitionDetail
+
         pane = next(
             (
                 ancestor
@@ -3346,6 +3424,8 @@ class SchedulesWorkbench(BaseAppScreen):
         value it eventually reads back -- this method does not need to
         know about that guard, only rely on it already existing.
         """
+        from .definition_detail import DefinitionDetail, _LIFECYCLE_TOGGLE_RESULTS
+
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
@@ -3532,6 +3612,8 @@ class SchedulesWorkbench(BaseAppScreen):
     def _reminder_owner_action(
         self, task: ReminderTask, action: str, row: DetailValueRow
     ) -> None:
+        from .task_detail import transfer_row_dict
+
         def _refresh() -> None:
             self._request_tasks_refresh(refresh_definitions=False)
 
@@ -3759,6 +3841,9 @@ class SchedulesWorkbench(BaseAppScreen):
         transfer dropdown for this row", it just opens it where the user
         can see it. At or above the threshold nothing changes.
         """
+        from .definition_detail import DefinitionDetail
+        from .task_detail import TaskDetail
+
         row: DetailValueRow | None
         if self._detail_hidden():
             table = self.query_one("#scheduling-task-table", DataTable)
@@ -4034,6 +4119,8 @@ class SchedulesWorkbench(BaseAppScreen):
         # Every live instance of this pane (redesign PR-4 task 6: the
         # docked one, plus a pushed one at narrow widths) -- re-queried
         # after the await, since a push/pop can land while it runs.
+        from .definition_detail import DefinitionDetail
+
         definition_id = str(definition.get("id") or "")
         service = self._scheduling_service
         if service is None:
@@ -4267,6 +4354,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 default with the Automations tab it read from; the one
                 remaining caller always passes a value explicitly.
         """
+        from .forms.automation_definition_form import AutomationDefinitionForm
+
         if definition is None:
             self.app_instance.notify(
                 "Nothing to edit — select an automation first.",
@@ -4842,6 +4931,8 @@ class SchedulesWorkbench(BaseAppScreen):
         the ◇ missed-while-away glyph gets an on-screen explanation
         whenever a visible row carries it.
         """
+        from .task_detail import _was_missed_while_away
+
         try:
             notice = self.query_one("#scheduling-pane-notice", Static)
         except Exception:  # noqa: BLE001 - not mounted yet
@@ -5058,6 +5149,8 @@ class SchedulesWorkbench(BaseAppScreen):
         (`ResultsHostScreen`) owns its own `d`, and a screen underneath
         never receives the key anyway.
         """
+        from .task_detail import TaskDetail
+
         if self._marked_ids:
             marked = self._marked_reminder_tasks()
             if not marked:
@@ -5208,6 +5301,8 @@ class SchedulesWorkbench(BaseAppScreen):
         edit-in-full), which refuses honestly for a
         non-`recurring_question` row.
         """
+        from .task_detail import _managed_elsewhere_notice
+
         task = self._selected_task()
         if task is not None:
             if not isinstance(task, ReminderTask):
@@ -5239,6 +5334,8 @@ class SchedulesWorkbench(BaseAppScreen):
         silently ignored by the bulk actions or, worse, let them fall
         through to an unmarked row.
         """
+        from .task_detail import _managed_elsewhere_notice
+
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
@@ -5278,6 +5375,8 @@ class SchedulesWorkbench(BaseAppScreen):
         While ANY mark exists, space never falls through to the
         highlighted, unmarked row (task-23107 review F1).
         """
+        from .task_detail import _managed_elsewhere_notice
+
         if self._marked_ids:
             marked = self._marked_reminder_tasks()
             if not marked:

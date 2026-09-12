@@ -28,6 +28,13 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 import Tests.UI._optional_module_stubs  # noqa: F401
+from Tests.app_thread_resource_fixtures import (  # noqa: E402
+    close_owned_console_workers as close_owned_console_workers,
+)
+from Tests.console_resource_fixtures import (  # noqa: E402
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
 import tldw_chatbook.UI.Screens.library_screen as library_screen_module  # noqa: E402
 from tldw_chatbook.config import ConfigMutationResult  # noqa: E402
@@ -191,6 +198,106 @@ def test_workspace_transition_admission_is_exact_binding_and_idempotent(
     assert mutation is not None
     assert workspace.acquire_transition("screen") is False
     mutation.release()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_root", [False, True])
+async def test_runtime_completion_during_descendant_unmount_keeps_owned_replica(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_root: bool,
+) -> None:
+    """Initialization finishes while descendants are gone but Unmount is pending."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "retained.md").write_text("Retained runtime", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root if with_root else None,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+    )
+    runtime_started = threading.Event()
+    release_runtime = threading.Event()
+    runtime_done = asyncio.Event()
+    teardown_seen = asyncio.Event()
+    original_build = LibraryFileNotesWorkspace._build_runtime
+    original_initialize = LibraryFileNotesWorkspace._initialize
+    original_unmount = getattr(Static, "on_unmount", None)
+    original_close = FileNotesReplica.close
+    runtime_results = []
+    closed = []
+    root_status = None
+
+    def gated_build(self, *args, **kwargs):
+        result = original_build(self, *args, **kwargs)
+        if self is workspace:
+            runtime_results.append(result)
+            runtime_started.set()
+            assert release_runtime.wait(5), "runtime result was not released"
+        return result
+
+    async def observed_initialize(self):
+        try:
+            return await original_initialize(self)
+        finally:
+            if self is workspace:
+                runtime_done.set()
+
+    async def gated_unmount(self):
+        if self is root_status:
+            for _ in range(2000):
+                if not workspace.query("#file-notes-path-label"):
+                    break
+                await asyncio.sleep(0.001)
+            assert not workspace.query("#file-notes-path-label")
+            assert workspace._active and workspace.is_mounted and workspace.is_attached
+            assert not workspace.is_running
+            teardown_seen.set()
+            release_runtime.set()
+            await asyncio.wait_for(runtime_done.wait(), 5)
+        if original_unmount is not None:
+            result = original_unmount(self)
+            if hasattr(result, "__await__"):
+                await result
+
+    def observed_close(self):
+        if runtime_results and self is runtime_results[0][1]:
+            closed.append(self)
+        return original_close(self)
+
+    monkeypatch.setattr(LibraryFileNotesWorkspace, "_build_runtime", gated_build)
+    monkeypatch.setattr(LibraryFileNotesWorkspace, "_initialize", observed_initialize)
+    monkeypatch.setattr(Static, "on_unmount", gated_unmount, raising=False)
+    monkeypatch.setattr(FileNotesReplica, "close", observed_close)
+    try:
+        async with _WorkspaceHarness(workspace).run_test() as pilot:
+            await _wait_until(pilot, runtime_started.is_set, "runtime did not start")
+            root_status = workspace.query_one("#file-notes-root-status", Static)
+            await workspace.remove()
+            assert teardown_seen.is_set() and runtime_done.is_set()
+            owned_replica = runtime_results[0][1]
+            assert owned_replica is not None
+            assert workspace._replica is owned_replica
+            assert closed == []
+            await pilot.app.mount(workspace)
+            await _wait_until(
+                pilot,
+                lambda: len(runtime_results) == 2 and workspace.initialized,
+                "retained workspace did not resume initialization",
+            )
+            assert workspace.is_running and workspace.is_attached
+            assert runtime_results[1][1] is owned_replica
+            assert runtime_results[1][2] is runtime_results[0][2]
+            if with_root:
+                assert set(workspace.entries) == {"retained.md"}
+            assert closed == []
+        await workspace.shutdown()
+        await workspace.shutdown()
+        assert closed == [owned_replica]
+        assert workspace._replica is None
+    finally:
+        release_runtime.set()
+        await workspace.shutdown()
 
 
 def test_reconcile_tolerates_projection_disappearing_during_unmount(
@@ -1019,6 +1126,7 @@ async def test_folder_files_forced_recompose_recovers_inflight_autosave_once(
 @pytest.mark.asyncio
 async def test_notes_authority_round_trip_retains_both_workspaces(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -1061,6 +1169,17 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         )
         database_id = screen._notes_state.selected_note_id
         database_editor = screen.query_one("#library-note-body", TextArea)
+        work_recomposes = 0
+        work_pane = screen.query_one("#library-note-work-pane")
+        original_refresh = work_pane.refresh
+
+        def record_refresh(*args, **kwargs):
+            nonlocal work_recomposes
+            if kwargs.get("recompose"):
+                work_recomposes += 1
+            return original_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(work_pane, "refresh", record_refresh)
         _replace_editor_text(
             database_editor,
             "database draft\n" + "database scroll line\n" * 80,
@@ -1083,6 +1202,8 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
             "Folder Files did not mount",
         )
         assert await workspace.open_path("folder/file.md")
+        assert work_recomposes == 0
+        assert screen.query_one("#library-note-body", TextArea) is database_editor
         folder_editor = workspace.query_one("#file-notes-editor", TextArea)
         _replace_editor_text(folder_editor, "folder draft")
         await pilot.pause()
@@ -1146,9 +1267,9 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
         )
 
         assert await workspace.flush_pending_work()
-        task_return = screen.query_one("#library-notes-task-return", Button)
-        assert task_return.display
-        await pilot.click("#library-notes-task-return")
+        source_button = screen.query_one("#library-notes-source-database", Button)
+        assert source_button.display
+        await pilot.click("#library-notes-source-database")
         await _wait_until(
             pilot,
             lambda: screen._notes_state.source == "database",
@@ -1448,7 +1569,7 @@ async def test_folder_files_low_height_rail_scrolls_to_last_action(
 @pytest.mark.parametrize(
     ("return_path", "size"),
     (
-        ("task-return", (160, 45)),
+        ("source-button", (160, 45)),
         ("source-button", (100, 35)),
         ("escape", (160, 45)),
     ),
@@ -1535,10 +1656,7 @@ async def test_notes_authority_switch_restores_visible_focus_and_typing_owner(
         screen.set_focus(folder_editor)
         await pilot.pause()
 
-        if return_path == "task-return":
-            assert screen.query_one("#library-notes-task-return", Button).display
-            await pilot.click("#library-notes-task-return")
-        elif return_path == "source-button":
+        if return_path == "source-button":
             database_source = screen.query_one("#library-notes-source-database", Button)
             assert database_source.display
             await pilot.click("#library-notes-source-database")
@@ -2657,7 +2775,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             message="Folder work session did not activate",
         )
 
-        await pilot.click("#library-notes-task-return")
+        await pilot.click("#library-notes-source-database")
         await _wait_for_condition(
             pilot,
             lambda: screen._notes_state.source == "database",
@@ -3651,7 +3769,7 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
 
 
 @pytest.mark.asyncio
-async def test_wide_files_task_return_restores_database_browse_receipt() -> None:
+async def test_wide_files_source_switch_restores_database_browse_receipt() -> None:
     """Files returns to the prior Database row and both independent scroll owners."""
     notes = [
         {
@@ -3684,17 +3802,25 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         # already deterministic at whatever Sort holds -- the receipt this
         # test is about does not depend on which order that is, and the
         # sort key itself is pinned at the end of the test.
+        await _wait_until(
+            pilot,
+            lambda: screen.query_one("#library-notes-list").max_scroll_y >= 5,
+            "Notes list did not acquire scrollable layout.",
+        )
         row = list(screen.query(".library-notes-row"))[18]
         note_id = str(row.note_id)
         notes_list = screen.query_one("#library-notes-list")
         rail = screen.query_one("#library-rail")
-        notes_list.scroll_to(y=7, animate=False, force=True, immediate=True)
+        # Keep the receipt below both layouts' scroll maxima: the compact
+        # resize can legitimately clamp an end-of-list offset before capture.
+        notes_list.scroll_to(y=5, animate=False, force=True, immediate=True)
         rail.scroll_to(y=2, animate=False, force=True, immediate=True)
         screen._mark_library_notes_user_interaction()
         row.focus(scroll_visible=False)
         await pilot.pause()
         before_list_scroll = int(notes_list.scroll_y)
         before_rail_scroll = int(rail.scroll_y)
+        assert before_list_scroll == 5
         await pilot.resize_terminal(100, 30)
         await _wait_until(
             pilot,
@@ -3710,6 +3836,7 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
         )
         browse_receipt = screen._notes_state.browse_return_receipt
         assert browse_receipt is not None
+        assert browse_receipt.scroll_offset == (0, before_list_scroll)
         assert screen._notes_state.browse_return_receipt is browse_receipt
         await pilot.resize_terminal(170, 24)
         await _wait_until(
@@ -3717,7 +3844,7 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
             lambda: not screen._notes_state.compact,
             "Notes did not return to the wide presentation.",
         )
-        screen.query_one("#library-notes-task-return", Button).press()
+        screen.query_one("#library-notes-source-database", Button).press()
         await _wait_until(
             pilot,
             lambda: (
@@ -6186,15 +6313,17 @@ async def test_high_stakes_file_notes_states_are_legible_in_shipped_themes(
     async with _CssTrueWorkspaceHarness(workspace).run_test(size=size) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("state.md")
+        # Theme characterization seeds states directly; a real filesystem poll
+        # must not replace them while the complete shipped-theme census runs.
+        assert workspace._poll_timer is not None
+        workspace._poll_timer.stop()
         workspace._narrow_view = "editor"
         workspace._apply_responsive_layout(workspace.size.width)
         root_status = workspace.query_one("#file-notes-root-status")
         save_status = workspace.query_one("#file-notes-save-status")
 
-        for theme_name in (
-            "textual-dark",
-            "textual-light",
-            "high_contrast_yellow_black",
+        for theme_name in dict.fromkeys(
+            ("textual-dark", "textual-light", *(theme.name for theme in ALL_THEMES))
         ):
             pilot.app.theme = theme_name
             workspace._root_offline = True
@@ -8272,6 +8401,13 @@ async def test_production_compact_folder_files_disclosure_and_states_are_painted
         await pilot.pause()
         export.focus()
         await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: "Export exact copy" in _painted_text_in_region(
+                pilot.app, export.region
+            ),
+            "compact exact-export action did not finish painting after disclosure change",
+        )
         assert export.display and not export.disabled and export.has_focus
         assert "Export exact copy" in _painted_text_in_region(
             pilot.app,

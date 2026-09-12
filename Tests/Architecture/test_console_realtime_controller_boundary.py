@@ -58,7 +58,7 @@ REALTIME_CONTROLLER_LAMBDA_TEMPLATES = {
     "chat_store_accessor": "lambda: screen._ensure_console_chat_store()",
     "runtime_accessor": "lambda: screen._console_runtime()",
     "dictation_state_accessor": "lambda: screen._console_dictation_state",
-    "request_dictation_stop": "lambda: screen._request_console_dictation_stop()",
+    "request_dictation_stop": "lambda: screen._dictation._request_console_dictation_stop()",
     "pipeline_blocker": "lambda: screen._hands_free._console_pipeline_hands_free_blocker()",
     "enter_pipeline_loop": "lambda capture_live: screen._hands_free._enter_console_hands_free_pipeline_loop(capture_live=capture_live)",
     "recorder_factory_accessor": 'lambda: getattr(screen.app_instance, "console_realtime_recorder_factory", None)',

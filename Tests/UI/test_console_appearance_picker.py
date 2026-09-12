@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import App
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 import tldw_chatbook.Widgets.Console.console_appearance_picker_modal as modal_module
 from tldw_chatbook.Chat.console_appearance import ConsoleConversationAppearance
@@ -58,7 +60,7 @@ def test_constructor_rejects_foreign_values() -> None:
     assert modal._selected_color is None
 
 
-class PickerHarness(App[None]):
+class PickerHarness(ConsolidatedCSSApp):
     def __init__(self, **kwargs) -> None:
         super().__init__()
         self._kwargs = kwargs

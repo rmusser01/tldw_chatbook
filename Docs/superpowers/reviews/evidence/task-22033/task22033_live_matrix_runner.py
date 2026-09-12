@@ -260,7 +260,7 @@ async def preservation_history_and_validation(summary: dict[str, object]) -> Non
                 f"conflict={screen._library_prompt_conflict_snapshot is not None!r}, "
                 f"version={screen._library_prompt_version!r}, "
                 f"can_update={screen._library_prompt_can_update_original()!r}, "
-                f"reason={screen._library_prompt_basic_unavailable_reason(screen._current_library_prompt_editor_state())!r}"
+                f"reason={screen._prompts_controller._library_prompt_basic_unavailable_reason(screen._current_library_prompt_editor_state())!r}"
             ),
         )
         persisted = db.fetch_prompt_details(prompt_id)

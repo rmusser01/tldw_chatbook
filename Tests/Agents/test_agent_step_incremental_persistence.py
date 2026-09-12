@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +20,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, safe_utc_timestamp
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 import tldw_chatbook.DB.AgentRuns_DB as agent_runs_db_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -29,6 +32,7 @@ def _reply(text: str = "done") -> dict:
 
 def _service(db: AgentRunsDB, **kwargs) -> AgentService:
     chat_call = kwargs.pop("chat_call", lambda **_kwargs: _reply())
+    kwargs.setdefault("run_log_writer", RunLogWriter(root=Path(db.db_path).parent))
     return AgentService(
         db,
         ToolCatalogRegistry(),
@@ -47,8 +51,20 @@ def _run(service: AgentService):
 
 
 @pytest.fixture()
-def db(tmp_path) -> AgentRunsDB:
-    return AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+def db(tmp_path: Path) -> Iterator[AgentRunsDB]:
+    """Own a temporary agent database and close it after the test.
+
+    Args:
+        tmp_path: Test-owned temporary directory for the database file.
+
+    Yields:
+        The database managed by this fixture's finally-close boundary.
+    """
+    database = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 def test_first_step_is_durable_before_run_finalization(db: AgentRunsDB) -> None:

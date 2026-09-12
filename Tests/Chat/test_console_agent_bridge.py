@@ -172,9 +172,32 @@ from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapt
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Tools import workspace_file_roots as wfr
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.app_thread_resource_fixtures import OwnedAppExecutor
 from Tests.console_provider_doubles import provider_resolution
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
+
+@pytest.fixture(autouse=True)
+async def _owned_workspace_registry(
+    monkeypatch, tmp_path, close_owned_console_resources
+):
+    """Own real workspace lookups and close worker handles on their creator thread."""
+    database = WorkspaceDB(tmp_path / "workspace.sqlite", client_id="bridge-tests")
+    close_owned_console_resources.callback(database.close)
+    registry = LocalWorkspaceRegistryService(database)
+    registry.ensure_default_workspace()
+    executor = OwnedAppExecutor([database])
+    asyncio.get_running_loop().set_default_executor(executor)
+    close_owned_console_resources.before_close.append(executor.drain)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    yield registry
 
 
 class _InProcessWorkspaceExecutor:
@@ -1587,22 +1610,14 @@ class _RecordingGateway:
 
 
 def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
-    tmp_path, monkeypatch
+    tmp_path, _owned_workspace_registry
 ):
     """A session bound to a non-default workspace must carry the workspace
     note into the primary agent's system prompt -- even on the fast path with
     no builtin_gate, since run_reply resolves the workspace up front rather
     than only inside the provider-gated branch."""
-    from tldw_chatbook.Tools import workspace_file_roots as wfr
-    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-
-    ws_registry = LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "ws.sqlite", client_id="bridge-note-test")
-    )
-    ws_registry.ensure_default_workspace()
+    ws_registry = _owned_workspace_registry
     ws_registry.create_workspace(workspace_id="ws-note-1", name="Notes Workspace")
-    monkeypatch.setattr(wfr, "_registry_factory", lambda: ws_registry)
 
     gateway = _RecordingGateway()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
@@ -3979,14 +3994,14 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
 
 
 @pytest.mark.parametrize(
-    "content",
+    ("content", "redacted"),
     [
-        "ERROR: harmless successful payload",
-        CONTROLLER_USER_DENIED_REFUSAL.format(name="collision_tool"),
+        ("ERROR: harmless successful payload", False),
+        (CONTROLLER_USER_DENIED_REFUSAL.format(name="collision_tool"), True),
     ],
 )
 def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
-    tmp_path, content: str
+    tmp_path, content: str, redacted: bool
 ) -> None:
     scripts = [
         [_fence("collision_tool", {})],
@@ -4014,10 +4029,19 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
     assert persisted_step["tool_outcome"] == "success"
     assert live[-1].activity_presentation.status == "success"
     assert resumed[-1].activity_presentation == live[-1].activity_presentation
-    if content.startswith("tool call denied"):
-        assert "***REDACTED***" in resumed[-1].content
-        assert resumed[-1].tool_output_full is None
+    if redacted:
+        assert live[-1].tool_output_full == content
+        # Durable privacy sanitization must not change the structured outcome.
+        assert _activity_marker_signature(resumed) == [
+            (
+                "⚙ collision_tool → tool call denied by the user: ***REDACTED***",
+                ConsoleActivityPresentation("tool", "collision_tool", "success"),
+                None,
+            )
+        ]
     else:
+        assert live[-1].content == "⚙ collision_tool → ERROR: harmless successful payload"
+        assert live[-1].tool_output_full is None
         assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
@@ -7033,15 +7057,26 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     ]
     assert live[0].content == "I will request approval for this calculation."
     assert any("denied" in row.content.lower() for row in live)
-    # task-32279: the hook returned the Console review hook's USER-denial
-    # copy, so the marker names the user, not a policy.
+    # User denial remains distinct from policy refusal, including on resume.
     assert live[1].activity_presentation.status == "denied"
     assert [row.activity_presentation for row in resumed] == [
         row.activity_presentation for row in live
     ]
-    assert resumed[0].content == live[0].content
-    assert "***REDACTED***" in resumed[1].content
-    assert resumed[1].tool_output_full is None
+    assert live[1].tool_output_full == CONTROLLER_USER_DENIED_REFUSAL.format(
+        name="calculator"
+    )
+    assert _activity_marker_signature(resumed) == [
+        (
+            "I will request approval for this calculation.",
+            live[0].activity_presentation,
+            None,
+        ),
+        (
+            "⚙ calculator → tool call denied by the user: ***REDACTED***",
+            ConsoleActivityPresentation("tool", "calculator", "denied"),
+            None,
+        ),
+    ]
 
 
 def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(

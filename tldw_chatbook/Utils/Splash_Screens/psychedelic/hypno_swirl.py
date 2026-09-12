@@ -1,5 +1,6 @@
 """HypnoSwirl splash screen effect."""
 
+import colorsys
 import math
 from typing import Optional, Any
 
@@ -35,7 +36,8 @@ class HypnoSwirlEffect(BaseEffect):
                     char_index = min(len(self.chars) - 1, int((v - 0.5) * 5))
                     grid[y][x] = self.chars[char_index]
                     hue = int((angle * 180 / math.pi)) % 360
-                    styles[y][x] = f"hsv({hue},1,1)"
+                    red, green, blue = colorsys.hsv_to_rgb(hue / 360, 1, 1)
+                    styles[y][x] = f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
         self._add_centered_text(
             grid, styles, self.title, self.height // 2, "bold black"

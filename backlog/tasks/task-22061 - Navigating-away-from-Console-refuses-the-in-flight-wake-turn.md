@@ -1,5 +1,5 @@
 ---
-id: task-22061
+id: TASK-22061
 title: Navigating away from Console refuses the in-flight wake turn
 status: In Progress
 assignee:

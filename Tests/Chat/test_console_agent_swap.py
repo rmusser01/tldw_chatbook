@@ -4,6 +4,8 @@ import asyncio
 import functools
 import json
 import threading
+from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +25,10 @@ from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
 from tldw_chatbook.Chat.console_provider_gateway import (
     NO_PROVIDER_CONTENT_COPY,
     ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -115,6 +121,152 @@ def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
 
     assert events[:3] == ["scratch-close", "authority-forget", "store-close"]
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
+
+
+@pytest.fixture(autouse=True)
+async def _close_owned_agent_swap_resources(
+    monkeypatch, tmp_path, cleanup_file_descriptors
+):
+    """Retire fixture owners before the existing test-wide cleanup pass.
+
+    Keep canonical classes and constructors; collect only instances created
+    during this test, and only database files beneath its own temporary root.
+    The cleanup dependency orders teardown, without requesting another GC pass.
+    """
+    controllers, chat_databases, run_databases = [], [], []
+    for cls, instances in (
+        (ConsoleChatController, controllers),
+        (CharactersRAGDB, chat_databases),
+        (AgentRunsDB, run_databases),
+    ):
+        original_init = cls.__init__
+
+        def record_instance(
+            instance, *args, _initialize=original_init, _instances=instances, **kwargs
+        ):
+            _initialize(instance, *args, **kwargs)
+            if _instances is controllers or Path(str(instance.db_path)).is_relative_to(
+                tmp_path
+            ):
+                _instances.append(instance)
+
+        monkeypatch.setattr(cls, "__init__", record_instance)
+
+    yield
+
+    errors: list[BaseException] = []
+    try:
+        for controller in reversed(controllers):
+            try:
+                await controller.shutdown()
+            except BaseException as exc:
+                errors.append(exc)
+        for database in reversed(chat_databases):
+            try:
+                with database.quiesce_connections(timeout_seconds=2.0):
+                    pass
+                # Prove closure before the existing collection fixture runs:
+                # close() alone misses the agent worker's registered connection.
+                assert database.registered_connection_count() == 0
+            except BaseException as exc:
+                errors.append(exc)
+        for database in reversed(run_databases):
+            try:
+                database.close()
+            except BaseException as exc:
+                errors.append(exc)
+    finally:
+        controllers.clear()
+        chat_databases.clear()
+        run_databases.clear()
+    if errors:
+        raise BaseExceptionGroup("Agent swap resource cleanup failed", errors)
+
+
+@pytest.mark.parametrize(
+    "shutdown_error",
+    [
+        RuntimeError("shutdown failed"),
+        asyncio.CancelledError("shutdown cancelled"),
+    ],
+    ids=("error", "cancelled"),
+)
+async def test_agent_swap_cleanup_continues_after_controller_failure(
+    monkeypatch, tmp_path, shutdown_error
+):
+    """Every later owner is retired before a shutdown failure is reported."""
+    events = []
+
+    class Controller:
+        def __init__(self, name):
+            self.name = name
+
+        async def shutdown(self):
+            events.append(("shutdown", self.name))
+            if self.name == "second":
+                raise shutdown_error
+
+    class ChatDatabase:
+        def __init__(self, path, name):
+            self.db_path = path
+            self.name = name
+
+        @contextmanager
+        def quiesce_connections(self, *, timeout_seconds):
+            assert timeout_seconds == 2.0
+            events.append(("quiesce", self.name))
+            yield
+
+        def registered_connection_count(self):
+            events.append(("count", self.name))
+            return 0
+
+    class RunDatabase:
+        def __init__(self, path, name):
+            self.db_path = path
+            self.name = name
+
+        def close(self):
+            events.append(("close", self.name))
+
+    monkeypatch.setattr(
+        "Tests.Chat.test_console_agent_swap.ConsoleChatController", Controller
+    )
+    monkeypatch.setattr(
+        "Tests.Chat.test_console_agent_swap.CharactersRAGDB", ChatDatabase
+    )
+    monkeypatch.setattr("Tests.Chat.test_console_agent_swap.AgentRunsDB", RunDatabase)
+    fixture = _close_owned_agent_swap_resources.__wrapped__(monkeypatch, tmp_path, None)
+    await anext(fixture)
+    Controller("first")
+    Controller("second")
+    ChatDatabase(tmp_path / "chat-first.db", "chat-first")
+    ChatDatabase(tmp_path / "chat-second.db", "chat-second")
+    RunDatabase(tmp_path / "run-first.db", "run-first")
+    RunDatabase(tmp_path / "run-second.db", "run-second")
+
+    caught = None
+    try:
+        await anext(fixture)
+    except StopAsyncIteration:
+        pass
+    except BaseException as exc:
+        caught = exc
+    finally:
+        await fixture.aclose()
+
+    assert events == [
+        ("shutdown", "second"),
+        ("shutdown", "first"),
+        ("quiesce", "chat-second"),
+        ("count", "chat-second"),
+        ("quiesce", "chat-first"),
+        ("count", "chat-first"),
+        ("close", "run-second"),
+        ("close", "run-first"),
+    ]
+    assert isinstance(caught, BaseExceptionGroup)
+    assert caught.exceptions == (shutdown_error,)
 
 
 @pytest.fixture(autouse=True)
@@ -233,7 +385,22 @@ class _SignalGateway:
     async def resolve_for_send(self, _selection):
         return self.resolution
 
-    async def stream_chat(self, resolution, messages, tools=None, signals=None, **_route):
+    async def stream_chat(
+        self,
+        resolution,
+        messages,
+        tools=None,
+        signals=None,
+        *,
+        route=None,
+        route_actor_id=None,
+        route_chain_id=None,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
+        ephemeral=False,
+        before_provider_dispatch=None,
+        dispatch_purpose=None,
+        provisional_trace_attempt=None,
+    ):
         system = str(messages[0].get("content", "")) if messages else ""
         is_child = system.startswith(SUBAGENT_PROMPT_PREFIX)
         self.calls.append(
@@ -242,6 +409,10 @@ class _SignalGateway:
                 "messages": messages,
                 "tools": tools,
                 "signals": signals,
+                "route": route,
+                "route_actor_id": route_actor_id,
+                "route_chain_id": route_chain_id,
+                "capture_mode": capture_mode,
             }
         )
         if is_child:
@@ -470,6 +641,14 @@ async def test_citation_repair_agent_shared_fallback_signal_bypasses_after_any_e
     # The repair turn (the last parent script) is bypassed, which is the
     # whole point -- so the run stops one parent turn short.
     assert len(gateway.calls) == expected_calls
+    assert gateway.calls[0]["route"] is ConsoleRequestRoute.AGENT_FIRST
+    assert all(
+        call["route_actor_id"] and call["route_chain_id"] for call in gateway.calls
+    )
+    assert all(
+        call["capture_mode"] is ConsoleTraceCaptureMode.CAPTURE_OFF
+        for call in gateway.calls
+    )
     signals = [call["signals"] for call in gateway.calls]
     assert signals[0] is not None
     assert all(signal is signals[0] for signal in signals)
@@ -496,6 +675,14 @@ async def test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass(
     )
     assert result.visible_copy == assistant.content == repaired
     assert len(gateway.calls) == 2
+    assert [call["route"] for call in gateway.calls] == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.CITATION_REPAIR,
+    ]
+    assert gateway.calls[0]["route_actor_id"]
+    assert gateway.calls[0]["route_chain_id"]
+    assert gateway.calls[1]["route_actor_id"] is None
+    assert gateway.calls[1]["route_chain_id"] is None
     assert gateway.calls[0]["signals"] is gateway.calls[1]["signals"]
     assert gateway.calls[0]["signals"].synthetic_fallback_emitted is False
 
@@ -1330,7 +1517,11 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp_path):
+@pytest.mark.parametrize("partial_reply", ["", "a bad partial regenerate"])
+async def test_run_error_via_regenerate_preserves_original_answer_and_status(
+    tmp_path,
+    partial_reply,
+):
     controller, store, _db = _controller(tmp_path, [["unused"]])
 
     def good_run_reply(*, assistant_message_id, **_kwargs):
@@ -1355,7 +1546,8 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
     assert assistant.status == "complete"
 
     def erroring_run_reply(*, assistant_message_id, **_kwargs):
-        store.append_stream_chunk(assistant_message_id, "a bad partial regenerate")
+        if partial_reply:
+            store.append_stream_chunk(assistant_message_id, partial_reply)
         return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[AgentStep(index=0, kind=STEP_ERROR, summary="regenerate exploded")],
@@ -1376,7 +1568,31 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
         for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.SYSTEM
     ]
-    assert system_rows and "regenerate exploded" in system_rows[-1].content
+    assert len(system_rows) == 1
+    assert system_rows[0].content == "Agent run failed: regenerate exploded."
+    assert system_rows[0].persisted_message_id is None
+    assert store.active_leaf(session_id) == system_rows[0].id
+    assert store.active_path_message_ids(session_id)[-2:] == [
+        assistant.id,
+        system_rows[0].id,
+    ]
+    siblings, _index, count = store.siblings_at(assistant.id)
+    assert count == 2
+    failed_sibling = next(row for row in siblings if row.id != assistant.id)
+    assert failed_sibling.status == "failed"
+    assert failed_sibling.content == partial_reply
+    if partial_reply:
+        _assert_durable_row(store, failed_sibling.persisted_message_id)
+    else:
+        # Empty assistants retain their native retry node; durable creation
+        # is deferred until there is terminal content to persist.
+        assert failed_sibling.persisted_message_id is None
+    provider_messages = controller._provider_messages_for_session(session_id)
+    assert provider_messages[-1] == {
+        "role": "assistant",
+        "content": "good original answer.",
+    }
+    assert not any("regenerate exploded" in str(row) for row in provider_messages)
 
 
 # -- Blind spot: retry/continue/regenerate must also run through the agent path --
@@ -1751,8 +1967,8 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
     # unchanged, since the real factory builds a fresh gate per call.
     factory_calls = []
 
-    def _single_call_factory(service=None, **_policy):
-        factory_calls.append(service)
+    def _single_call_factory(service=None, *, profile_id):
+        factory_calls.append((service, profile_id))
         if len(factory_calls) > 1:
             raise AssertionError(
                 f"build_builtin_gate was called {len(factory_calls)}x for "
@@ -1767,6 +1983,7 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
     assert result.accepted is True
     assert len(factory_calls) == 1
     assert captured[0]["builtin_gate"] is sentinel
+    assert factory_calls == [(None, "default")]
 
     review_hook = captured[0]["review_tool_calls"]
     assert sentinel.begin_turn_calls == 0
@@ -1822,14 +2039,21 @@ async def test_review_precheck_and_dispatch_share_captured_scratch(
         row.call_id or row.llm_name: "approve_once" for row in pending
     }
     gate = ScratchReviewGate()
+    gate_calls = []
+
+    def build_gate(service=None, *, profile_id):
+        gate_calls.append((service, profile_id))
+        return gate
+
     monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
-    monkeypatch.setattr(controller_module, "build_builtin_gate", lambda _=None, **_policy: gate)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", build_gate)
     monkeypatch.setattr(controller_module, "path_precheck_failed", record_precheck)
 
     result = await controller.submit_draft("hi")
 
     assert result.accepted is True
     dispatch_root = captured[0]["scratch_root"]
+    assert gate_calls == [(None, "default")]
     dispatch_lease = captured[0]["scratch_lease"]
     with dispatch_lease() as leased_root:
         assert leased_root == dispatch_root

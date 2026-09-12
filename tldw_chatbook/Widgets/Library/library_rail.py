@@ -739,6 +739,8 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         query: str = "",
         lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED,
         onboarding_all_empty: bool = False,
+        workspace_handoff_action: tuple[bool, str] | None = None,
+        workspace_handoff_summary: str | None = None,
     ) -> None:
         """Refresh the rail from new state.
 
@@ -754,6 +756,10 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             query: Latest search box text.
             lifecycle: Current progressive-disclosure lifecycle.
             onboarding_all_empty: Whether one fresh evidence generation was empty.
+            workspace_handoff_action: Current blocked flag and tooltip for the
+                retained workspace handoff action, derived by its policy owner.
+            workspace_handoff_summary: Owner-formatted Handoff summary; None
+                leaves the optional retained label unchanged.
 
         Returns:
             None.
@@ -838,6 +844,25 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
                 button.styles.min_height = 1
 
         details_lines = shell.details_lines
+        if workspace_handoff_action is not None:
+            try:
+                handoff = self.query_one("#library-use-in-console", Button)
+            except NoMatches:
+                pass  # Workspace actions are optional for standalone rails.
+            else:
+                blocked, tooltip = workspace_handoff_action
+                handoff.tooltip = tooltip
+                handoff.disabled = False  # The press handler explains the block.
+                handoff.set_class(blocked, "library-source-action-blocked")
+        if workspace_handoff_summary is not None:
+            try:
+                summary = self.query_one("#library-workspaces-handoff", Static)
+            except NoMatches:
+                pass  # Optional for standalone rails.
+            else:
+                summary.update(
+                    library_dim_label_text("Handoff", workspace_handoff_summary)
+                )
         try:
             self.query_one("#library-details-runtime", Static).update(
                 library_dim_label_text(
@@ -1092,6 +1117,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
             # empty it -- the next keystroke replaced it, but a reader looking
             # at a stale query had no affordance at all.
             clear = Button("x", id="library-search-clear", compact=True)
+            clear.styles.line_pad = 0
             clear.tooltip = "Clear the Library search box"
             # task-32212 (critique #9 row 9): MEASURED, not inferred. Every
             # region already sat inside the rail; what overflowed was this

@@ -1,131 +1,45 @@
 """Library Notes canvas controller.
 
-Controller PR of the Notes extraction series (wave-8 task 2 of
-``.superpowers/sdd/2026-09-08-library-decomposition-wave8-notes``; notes
-series 2/N; recipe: ``backlog/docs/library-decomposition-recipe.md``;
-``library_media_controller.py`` -- the newest and largest prior
-single-cluster move -- is the template this mirrors in shape). Owns the
-Notes cluster: the database-notes list canvas and its editor/work pane, the
-Folder-Files workspace seams the screen owns, the note-import canvas, the
-lasting-sync ("Add from files" / sync roots) canvases, the notes footer and
-stage/responsive presentation, and the notes focus/scroll restore
-machinery. This is the FINAL controller move of the eight-wave Library
-decomposition program.
+Wave-8 task 2: ``.superpowers/sdd/2026-09-08-library-decomposition-wave8-notes``.
+Follows ``backlog/docs/library-decomposition-recipe.md`` and the Media controller.
+Final Library move: Database Notes list/editor, screen-owned Folder-Files seams,
+note import, lasting sync, footer, responsive stages and focus/scroll restoration.
 
-**Cluster derivation.** An ``ast`` census of every ``LibraryScreen``
-class-body method whose name contains ``"note"`` (case-insensitive), run
-fresh at this task's own execution time (the recipe's "never trust a
-carried-over count" rule, SS6): **291 raw ``FunctionDef`` matches, 285
-unique names**. The 6-name gap is NOT a property/setter pair, as in every
-prior series -- it is a **byte-identical DUPLICATE block dev shipped twice**
-(see the duplicate-block paragraph below). Of the 285, 93 carry an ``@on``
-decorator, 6 are ``action_*``, 7 are ``@staticmethod``, 5 are ``@property``,
-and **0 are ``@work``**.
+**Historical census.** SS6 found 291 raw notes-named definitions, 285 unique:
+93 ``@on``, 6 ``action_*``, 7 static methods, 5 properties, and no ``@work``.
+The six duplicate names below, not property/setter pairs, explain the gap.
+**No notes handlers use Textual name dispatch.** The 93 decorated handlers
+have 63 selector-bound and 36 Message-typed decorators (35 method names;
+``handle_library_notes_lasting_back`` has two). None of those Message classes'
+actual ``handler_name`` values matches its decorated method. The reverse census
+of 113 widget Message handler names finds only 4 Textual builtins and 7 prompt
+handlers on the Screen; its 17 ``on_*`` methods are 10 lifecycle hooks plus
+those 7. ``test_no_notes_handler_is_name_dispatched_by_textual`` pins both scans.
+Completeness checks found one non-notes selector false positive (Collections'
+``set_library_collection_capture_mode``) and six general shell helpers, not movers:
+``_apply_library_emergency_geometry``, ``_capture_library_emergency_restore_receipt``,
+``_restore_library_emergency_receipt``, ``_library_compose_scoped_ref``,
+``_library_landing_control_row_id``, and ``_library_landing_focus_control_id``.
+The emergency helper used by ``_apply_library_notes_stage_legs`` stays late-bound.
 
-**Recipe SS4's third whitelist member -- ``on_<message>`` NAME-dispatched
-handlers -- is INERT for notes, and this is the first series to resolve it
-rather than assume it.** The wave-8 plan predicted the opposite ("notes
-likely OWNS name-dispatched handlers... the census must enumerate them
-explicitly and the prune whitelist must be exercised with evidence"), and
-task 1's own hand-off repeated the prediction. Both are wrong, and the
-evidence is mechanical: the 93 ``@on``-decorated notes handlers split **63
-selector-bound decorators / 36 Message-typed decorators (35 unique method
-names**, because ``handle_library_notes_lasting_back`` carries two). Every
-one of those 36 Message classes was imported and its ``handler_name``
-READ -- ``LibraryNoteImportCanvas.ImportRequested`` computes
-``on_library_note_import_canvas_import_requested``,
-``LibraryNoteWorkPane.EditorReady`` computes
-``on_library_note_work_pane_editor_ready``, and so on -- and **not one
-matches the name of the method decorated with it**. Run the other way, over
-every ``Message`` subclass in ``Widgets/Library`` (113 distinct
-``handler_name``s), the only ones that ARE ``LibraryScreen`` methods are 4
-Textual builtins (``on_resize``, ``on_key``, ``on_mouse_down``,
-``on_descendant_focus``) and the 7 prompts-owned
-``on_prompt_block_editor_*``. ``LibraryScreen`` carries **17** ``on_*``
-methods in total: 10 lifecycle hooks and those 7. Zero are notes-owned.
-``test_no_notes_handler_is_name_dispatched_by_textual`` pins both directions
-so a later notes widget that DOES introduce a name-dispatched handler fails
-loudly instead of being pruned silently.
+**Duplicate provenance.** Parent ``2641ff0a0`` has identical 106-line blocks at
+``library_screen.py:6557-6662`` and ``:6663-6768``, from ``7cf89de6c`` and
+``fd505637f`` respectively. They define ``_library_notes_work_session_reader_width``,
+``_dispatch_library_notes_work_session``, ``_library_notes_work_first_preferences``,
+``_set_library_notes_source``, ``_dispatch_database_note_identity_cleared``, and
+``_activate_database_note_work_session`` twice. The second definitions won; the
+move retained each identical body once. Duplicate removal explains the 100-line
+difference between 4,034 Screen lines removed and 3,934 controller-body lines.
 
-Two completeness checks ran alongside the census:
-
-- a decorator scan for any NON-notes-named method carrying a
-  ``#library-note*``/``.library-note*``/``*Note*`` ``@on`` selector: **one
-  hit, a false positive** -- ``set_library_collection_capture_mode``'s
-  four-selector list includes ``#library-collections-mode-notes``, a
-  Collections button;
-- a reverse call-graph fixpoint for NON-notes-named methods whose every
-  in-class caller is (transitively) notes-named -- the "bare-named cluster
-  member" shape the conversations exemplar's own ``_conversation_records``
-  miss made the recipe warn about. It returns **6 names**, every one
-  SHELL-named and none moved: ``_apply_library_emergency_geometry`` with its
-  two helpers ``_capture_library_emergency_restore_receipt`` and
-  ``_restore_library_emergency_receipt`` (the emergency-geometry family),
-  ``_library_compose_scoped_ref``, ``_library_landing_control_row_id`` and
-  ``_library_landing_focus_control_id`` (landing/compose shell helpers).
-  Each is a general shell primitive that happens to have only one live
-  caller today; moving them would relocate shell infrastructure into a
-  subsystem controller, which is the One Home Rule violation the media
-  series' review-set ruling refused at the same shape. The one a mover calls
-  (``_apply_library_emergency_geometry``, from
-  ``_apply_library_notes_stage_legs``) is bound as a named late-binding
-  dependency instead.
-
-**The duplicate block, disclosed rather than tidied away.** Six notes
-methods were defined TWICE on ``LibraryScreen`` at the parent
-(``2641ff0a0``): ``_library_notes_work_session_reader_width``,
-``_dispatch_library_notes_work_session``,
-``_library_notes_work_first_preferences``, ``_set_library_notes_source``,
-``_dispatch_database_note_identity_cleared`` and
-``_activate_database_note_work_session``, at ``library_screen.py``
-``:6557-6662`` and ``:6663-6768``. The two 106-line blocks are **byte-for-byte
-identical** (verified by string comparison, not by eye), so the second
-definition silently won at class creation and behaviour never depended on
-which. It is a dev-side merge artefact, not this program's: ``git log -L``
-attributes the first block to ``7cf89de6c`` ("consolidate long-lived branch
-changes") and the second to ``fd505637f`` ("apply work-first Notes
-sessions"). A move cannot preserve it -- two delegators cannot share one
-name -- so **both copies are removed and ONE delegator per name is
-installed**; the definition that lands on this controller is byte-identical
-to both. That is why this commit removes 4,034 source lines from the screen
-for 3,934 lines of controller body: the 100-line difference is the duplicate
-block plus its own blank lines, and it is stated here so a reviewer reading
-the two numbers does not have to reconstruct why they differ.
-
-**Single vs. split controller: SINGLE, decided by connected components, not
-by feel.** The decision was taken at the point the split had to be made --
-over the **196-name candidate MOVE set as it stood then**, before the later
-hazard classes (2/3's ``LibraryScreen.<x>(self)`` family and everything after
-it) trimmed it to 185. Building the ``self.<name>`` reference graph over
-those 196 yields **one connected component of 135 names, one of 9 (the
-note-import canvas handlers), one of 2, and 50 isolated singletons**
-(135+9+2+50 = 196); adding an edge between any two of them that touch the
-same ``LibraryNotesState`` field collapses that to **one component of 154
-plus one of 9, one of 2 and 31 singletons** (154+9+2+31 = 196).
-
-**Re-derived over the FINAL 185 movers with the identical instrument** (a
-``self.<attr>`` walk PLUS the ``getattr(self, "<literal>")`` spelling, since
-that is the same spelling the binding census has to honour): **126 + 9 + 2 +
-48 singletons**, and **146 + 9 + 2 + 28** once shared-field edges are added.
-An independent re-derivation that counts only plain ``self.<attr>`` edges,
-without the literal-``getattr`` spelling, measures **142 + 9 + 3 + 2 + 29**;
-both are recorded because the difference is entirely that one spelling, and
-both say the same thing about the seam. **The verdict is unaffected by which
-set or which instrument is used** -- every profile is one dominant component,
-the same 9-member note-import group, one 2-member pair, and singletons. The
-only candidate seam of any size is that 9-member
-note-import group -- but four of the five ``LibraryNoteImportCanvas``
-handlers outside it (``...add_source``, ``...cancel``, ``...collision_name``,
-``...page``) are singletons only because they touch nothing else, and every
-one of the nine reaches the same ``_library_note_import_controller`` WIRING
-instance and the same ``_library_note_import_*`` state fields, so splitting
-them out would produce a second controller of ~13 methods sharing a wiring
-handle and a state object with the first. That buys nothing the ratchet's
-per-file governance (SS17) does not already give. The feared size did not
-materialise either: the hazard exclusions below remove 100 of the 285
-candidates, so the 185 that move carry **3,934 source lines** of body,
-putting this file within a few hundred lines of
-``library_media_controller.py``'s 4,630.
+**Single-owner decision.** The initial 196-candidate reference graph had components
+135 + 9 + 2 + 50 singletons; shared-state edges produced 154 + 9 + 2 + 31.
+For the final 185 movers, including literal ``getattr`` references, these became
+126 + 9 + 2 + 48 and 146 + 9 + 2 + 28. A plain-attribute-only re-derivation gave
+142 + 9 + 3 + 2 + 29; that spelling difference does not change the verdict.
+The nine import handlers and four singleton handlers (add-source, cancel,
+collision-name, page) share one import coordinator and state. Splitting this
+roughly 13-method group would duplicate ownership, not isolate it. The 100 hazard
+exclusions leave 185 movers/3,934 body lines, versus Media's 4,630, under SS17.
 
 **100 of the 285 candidates excluded, not moved (185 move).** Counted as
 DISJOINT classes, in the order applied, so the numbers sum. Classes 1-9
@@ -348,31 +262,12 @@ the RED tuple"):
     for a later series once those fixtures retarget, exactly as the media
     series disclosed for 7 of its own 16.
 
-    **CORRECTION, review round -- the reason this exclusion originally
-    carried was WRONG, and recipe SS3's "a wrong reason is worse than a thin
-    one" is why it is rewritten here rather than quietly left standing.**
-    The draft justified it as recipe SS3's TENTH shape (the media series'
-    Form E, callback identity): that
-    ``Tests/UI/test_screen_navigation.py:3225``'s ``focus_calls == [screen.
-    _restore_library_notes_focus_identity]`` would compare against a
-    CONTROLLER-bound method once the scheduling body moved. **It would not.**
-    Read at the tree rather than inferred from the assertion text, the
-    callback that assertion actually receives is ``finish_list_projection``
-    -- a CLOSURE defined inside ``_exit_library_note_editor_guarded`` -- so
-    the comparison never involved a bound method of anything, and no move
-    could have changed which object it captures. **And the test is RED at the
-    parent, on that exact assertion**, byte-identically (verified in an
-    isolated worktree at ``afaf2320c``: ``At index 0 diff: <function
-    LibraryScreen._exit_library_note_editor_guarded.<locals>.finish_list_
-    projection> != <bound method ...._restore_library_notes_focus_
-    identity>``). ``test_screen_navigation.py`` is on recipe SS7's documented
-    list with a stable 32-name failure set across trees, so this red was
-    never evidence about this move at all. The exclusion is retained -- on
-    the rule above, which does govern -- and the Form-E mechanism claim is
-    withdrawn. **Notes has ZERO Form-E callback-identity carriers**; the
-    census that would find one (a test comparing a captured callback against
-    ``<receiver>.<cluster-name>`` as a bare attribute) returned exactly this
-    one candidate, and reading it disqualified it.
+    **Withdrawn Form-E rationale.** The sole callback-identity candidate,
+    ``test_screen_navigation.py:3225``, actually receives the local
+    ``finish_list_projection`` closure, not a bound restore method. Its mismatch
+    was already RED at ``afaf2320c`` (SS7's stable 32-name failure set), not caused
+    by this move. Notes therefore has zero Form-E carriers; the conservative
+    real-screen binding/capture exclusion above remains the valid reason.
 
 **The bare-``self`` census, both figures.** Recipe SS3's standing correction
 after the media series' ``ancestors`` incident is to census EVERY bare
@@ -568,6 +463,7 @@ from ...Utils.adaptive_reader_state import (
     resolve_adaptive_reader_layout,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     LibraryAdaptiveReaderShell,
     LibraryMediaCanvas,
     LibraryNoteWorkPane,
@@ -615,6 +511,7 @@ from .screen_support_types import (
 )
 
 if TYPE_CHECKING:
+    from ...Notes.note_import_executor import NoteImportExecutor
     from ...Notes.note_import_receipts import NoteImportReceiptRepository
     from ..Screens.library_screen import LibraryScreen
 
@@ -630,13 +527,8 @@ LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
 
-    Holds no state of its own beyond what it reads and writes through
-    ``LibraryNotesState`` (via the injected accessor) and the shared
-    shell/framework/wiring bindings below. ``LibraryScreen`` constructs
-    exactly one of these, in ``__init__`` right after
-    ``self._media_controller``, and keeps a one-line delegator for every one
-    of the 185 original names this cluster moved -- task 3 (the cleanup PR,
-    notes series 3/N) prunes the ones nothing external reaches.
+    Uses injected NotesState and named shell/framework bindings. LibraryScreen
+    constructs one after MediaController; externally used delegators remain.
     """
 
     def __init__(
@@ -2065,36 +1957,30 @@ class LibraryNotesController:
             self._library_notes_pending_focus_generation = None
         return restored_exact_target
     def _restore_library_notes_after_targeted_sync(
-        self, identity: LibraryNotesFocusIdentity
+        self,
+        identity: LibraryNotesFocusIdentity,
+        guard: _LibraryNotesRestoreGuard | None = None,
     ) -> None:
-        """Restore portable Notes focus + scroll after a canvas-scoped sync.
+        """Recover Notes focus after queued recompose unless a live owner claimed it.
 
-        task-15457 review round 1. The whole-screen seam does this through
-        ``_rehydrate_library_notes_after_recompose``; a canvas-scoped sync
-        never reaches ``LibraryScreen.refresh``, so it needs its own entry
-        into the same restore. No ``_LibraryNotesRestoreGuard`` is passed:
-        the guard exists to invalidate a DEFERRED restore that a newer
-        navigation intent has superseded, and this one runs synchronously
-        from the canvas's own ``recompose``, against the state that was
-        captured moments earlier in the same handler.
-
+        Explicit action callbacks still run afterward at the canvas sync seam.
         Args:
             identity: The portable identity captured before the sync.
 
-        Returns:
-            None.
         """
-        # task-32052 AC#1: never replay an identity captured on a DIFFERENT
-        # surface. ``_sync_library_canvas``'s own skip only watches the WORK
-        # pane's mode, so a list -> create switch slipped through and the
-        # navigator identity was replayed over the create canvas (Ctrl+N
-        # landed on a notes-tree row, not Blank note).
+        # task-32052: canvas sync's work-pane-only gate misses list -> create.
+        # Reject the old navigator identity so Ctrl+N stays on Blank note.
         if identity.region and identity.region != self._library_notes_focus_region():
+            return
+        focused = self.focused
+        if focused is not None and focused.is_mounted and not focused.has_class(
+            LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+        ):
             return
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which
         # it could be seen sitting outside the canvas.
-        self._restore_library_notes_focus_identity(identity)
+        self._restore_library_notes_focus_identity(identity, guard)
         # Scroll SECOND and deferred. The restore above already attempts it,
         # but at this point the freshly mounted children have not been laid
         # out yet -- the container's max scroll is still 0, so ``scroll_to``
@@ -2103,7 +1989,9 @@ class LibraryNotesController:
         # ``call_after_refresh``, i.e. after a display refresh; re-applying
         # from the same primitive here gives the offset a laid-out container
         # to land in. Idempotent, so the earlier attempt costs nothing.
-        self.call_after_refresh(self._restore_library_notes_scroll_offset, identity)
+        self.call_after_refresh(
+            self._restore_library_notes_scroll_offset, identity, guard
+        )
     def _restore_library_notes_scroll_offset(
         self,
         identity: LibraryNotesFocusIdentity,
@@ -2834,7 +2722,6 @@ class LibraryNotesController:
         # and skip the no-op display writes.
         for selector in (
             "#footer-word-count",
-            "#footer-token-count",
             "#internal-db-size-indicator",
         ):
             indicator = self._library_layout_ref(selector)
@@ -3750,77 +3637,75 @@ class LibraryNotesController:
             self._library_note_preview = False
         self._update_library_note_meta_static(content=snapshot.body)
         self._focus_library_note_validation_field(validation_field)
-    async def _gc_pending_blank_note(self) -> None:
-        """Delete this session's now-empty "Blank note" row before it is left behind (LIB-14).
+    async def _gc_pending_blank_note(self) -> bool:
+        """Settle saves and revalidate this session's silent-GC exception.
 
-        "Blank note" still commits its DB row immediately on click (the
-        create-note seam has no create-on-first-edit branch -- see the
-        AC#5 decision recorded on task-2858); this is the smaller-diff
-        alternative the task allows instead: whenever the editor is left
-        with this session's blank note in an effectively-empty final state
-        (title/body/keywords all blank -- see the caller,
-        ``_flush_library_note_save``, which covers both "never touched"
-        and "typed then deleted everything"), the row is quietly removed
-        here rather than surviving as a permanent literal "Untitled" row
-        the user has to find and delete by hand.
+        ADR-055 permits best-effort cleanup only while the canonical draft
+        remains empty and its title retains blank-seed provenance. Admission
+        waits for coalesced saves and fences further edits; its version is the
+        accepted save version, never a freshly fetched external row version.
+        Recheck eligibility after that wait, including explicit Save exemptions.
 
-        Reads ``_library_note_session_blank_id`` (not the narrower,
-        edit-cleared ``_library_note_pending_blank_gc_id``) so this still
-        fires after the note was typed into and then emptied out again --
-        which, unlike the "never touched" case, may well have gone
-        through one or more real autosaves in between (deliberately: see
-        that flag's own docstring on why autosave alone must not exempt a
-        session blank from GC). Each of those autosaves bumps the row's
-        real DB version, so the delete below sends
-        ``self._library_note_version`` (the screen's own up-to-date
-        tracking of it, updated by every successful save) rather than a
-        hardcoded 1 -- an earlier version of this fix hardcoded 1 and the
-        delete silently failed on a version mismatch whenever a
-        mid-session autosave had already bumped the row past v1 (found by
-        the dedicated autosave-then-empty test). Falls back to 1 only for
-        the genuinely-never-saved case, where ``_library_note_version`` is
-        still ``None``. Best-effort: any failure (including a version
-        conflict from a still-possible concurrent EXTERNAL change) is
-        swallowed -- GC must never block the exit it runs inside, and the
-        worst case on failure is the pre-existing behavior (the row
-        survives), not a new regression. On success, patches the same cached
-        Notes rows/count used by visible Delete, Undo, and Create while their
-        one shared mutation interlock is held.
-
-        Also clears ``_library_note_dirty`` unconditionally (review round
-        1 fix): the caller, ``_flush_library_note_save``, is reached via
-        the "typed then deleted everything" path with ``_library_note_
-        dirty`` still ``True`` -- every exit seam (e.g.
-        ``_exit_library_note_editor_guarded``) vetoes on that flag, so
-        without clearing it here a successful GC would still leave the
-        editor stuck open. Cleared regardless of whether the delete call
-        itself succeeds, matching "GC must never block the exit it runs
-        inside": on the rare failure path the row survives with its
-        pre-exit content (the emptied edit is not separately persisted
-        either), but the user is never trapped in the editor over it.
+        Returns:
+            Whether the still-blank exit was handled (even if cleanup failed).
+            False sends an intervening authored draft through normal flushing.
         """
         note_id = self._library_note_session_blank_id
-        # The row's current version -- NOT hardcoded to 1 -- since a
-        # mid-session autosave (deliberately still possible before GC;
-        # see the docstring above) may already have bumped it past its
-        # initial create-time version.
-        current_version = self._library_note_version or 1
+        session = self._library_note_session
+        snapshot = session.snapshot
+        if not note_id or snapshot is None or self._library_notes_mutation_in_flight:
+            return False
+        outcome = await session.request_destructive_admission(
+            DestructiveKind.DELETE,
+            note_id=note_id,
+            session_generation=snapshot.session_generation,
+            expected_version=snapshot.version,
+        )
+        admission = outcome.admission
+        current = session.snapshot
+        fields = self._read_library_note_editor_fields()
+        still_blank = (
+            current is not None
+            and current.session_generation == snapshot.session_generation
+            and current.note_id == note_id == self._selected_note_id
+            and self._library_note_session_blank_id == note_id
+            and fields is not None
+            and (
+                not fields[0].strip()
+                or (
+                    fields[0] == LIBRARY_NOTE_BLANK_SEED_TITLE
+                    and not self._library_note_title_user_edited
+                )
+            )
+            and not any(value.strip() for value in fields[1:])
+        )
+        if not still_blank:
+            if admission is not None:
+                session.cancel_destructive(admission)
+            return False
         self._library_note_session_blank_id = None
         self._library_note_pending_blank_gc_id = None
-        if not note_id or self._library_notes_mutation_in_flight:
-            return
-        self._library_notes_mutation_in_flight = True
+        if admission is None:
+            return (
+                not session.destructive_running
+                and session.destructive_admission is None
+            )
         service = getattr(self.app_instance, "notes_scope_service", None)
         delete_note = getattr(service, "delete_note", None)
         if not callable(delete_note):
-            self._library_notes_mutation_in_flight = False
-            return
+            session.cancel_destructive(admission)
+            return True
+        if not session.mark_destructive_running(admission):
+            session.cancel_destructive(admission)
+            return False
+        self._library_notes_mutation_in_flight = True
+        deleted = False
         try:
             deleted = await self._run_library_service_call(
                 delete_note,
                 scope="local_note",
                 note_id=note_id,
-                version=current_version,
+                version=admission.expected_version,
                 user_id=self._library_notes_user_id(),
                 isolate_in_worker=True,
             )
@@ -3830,9 +3715,10 @@ class LibraryNotesController:
             logger.opt(exception=True).debug(
                 f"Could not GC untouched blank note {note_id!r}; leaving it in place."
             )
-            return
         finally:
+            session.finish_destructive(admission, success=bool(deleted))
             self._library_notes_mutation_in_flight = False
+        return True
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
         """Resolve a conflict through the coordinator's token-gated action.
 
@@ -4288,7 +4174,7 @@ class LibraryNotesController:
         # as pressing Dismiss would.
         self._library_note_delete_receipt = None
         self._evacuate_library_notes_authority_focus("database")
-        self._supersede_library_notes_navigation()
+        self._supersede_library_notes_navigation(render=False)
         # Database Notes and Folder Files are independent retained authorities.
         # The database coordinator has already flushed above; keep its loaded
         # selection/editor projection so returning from Folder Files resumes it.
@@ -5644,6 +5530,30 @@ class LibraryNotesController:
 
             if restored_record is not None:
                 self._append_library_note_source_record(restored_record)
+                # task-32124: the folder tree is projected from paged
+                # branch state, not from the flat source records the
+                # restore just patched, so re-syncing the canvas alone
+                # brought the rail count back without the row. Reuse the
+                # seam a create already commits through -- a restore is
+                # "this note exists again" -- rather than adding a second
+                # refresh mechanism. It reloads exactly the affected
+                # branches (the note's folders, plus Unfiled) and selects
+                # the restored placement.
+                #
+                # NOT the deep-link locator: repainting the canvas here
+                # removes the receipt the pressed Undo button lives in,
+                # and the focus move that follows is read as user intent
+                # (`on_descendant_focus`), which supersedes the locator's
+                # navigation before its first await returns. Proved live:
+                # the count returned to 10 and the row never came back.
+                # Reconcile once while mutation admission is still held;
+                # the final sync below only restores presentation and focus.
+                await self._reconcile_library_notes_tree_mutation(
+                    "note_create",
+                    {"note_id": receipt.note_id},
+                    before=None,
+                    result=restored_record,
+                )
                 if self._library_note_delete_receipt == receipt:
                     self._library_note_delete_receipt = None
                 # task-32144: the row has left the tombstones, so the
@@ -5659,28 +5569,6 @@ class LibraryNotesController:
             self._library_notes_mutation_in_flight = False
             if self.is_mounted:
                 if restored_record is not None:
-                    # task-32124: the folder tree is projected from paged
-                    # branch state, not from the flat source records the
-                    # restore just patched, so re-syncing the canvas alone
-                    # brought the rail count back without the row. Reuse the
-                    # seam a create already commits through -- a restore is
-                    # "this note exists again" -- rather than adding a second
-                    # refresh mechanism. It reloads exactly the affected
-                    # branches (the note's folders, plus Unfiled) and selects
-                    # the restored placement.
-                    #
-                    # NOT the deep-link locator: repainting the canvas here
-                    # removes the receipt the pressed Undo button lives in,
-                    # and the focus move that follows is read as user intent
-                    # (`on_descendant_focus`), which supersedes the locator's
-                    # navigation before its first await returns. Proved live:
-                    # the count returned to 10 and the row never came back.
-                    await self._reconcile_library_notes_tree_mutation(
-                        "note_create",
-                        {"note_id": receipt.note_id},
-                        before=None,
-                        result=restored_record,
-                    )
                     identity = LibraryNotesFocusIdentity(
                         stage="notes",
                         region="navigator",

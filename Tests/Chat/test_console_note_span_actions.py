@@ -56,7 +56,7 @@ class NoteSummaryGateway:
             resolved_destination=destination if self.ready else None,
         )
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
         self.calls += 1
         self.captured_auxiliary = request
         return AuxiliaryCompletionResult(

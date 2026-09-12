@@ -40,13 +40,13 @@ def test_sibling_nav_moves_active_leaf_between_two_siblings():
     a2 = store.create_sibling(a1.id, role=ConsoleMessageRole.ASSISTANT, content="two")
     assert store.active_leaf(session.id) == a2.id
 
-    screen._select_console_message_variant(a2.id, direction="variant-previous")
+    screen._message._select_console_message_variant(a2.id, direction="variant-previous")
 
     assert store.active_leaf(session.id) == a1.id
     _, index, count = store.siblings_at(store.active_leaf(session.id))
     assert (index, count) == (0, 2)
 
-    screen._select_console_message_variant(a1.id, direction="variant-next")
+    screen._message._select_console_message_variant(a1.id, direction="variant-next")
 
     assert store.active_leaf(session.id) == a2.id
 
@@ -70,7 +70,7 @@ def test_sibling_nav_previous_restores_deepest_descendant_of_sibling_subtree():
     a2 = store.create_sibling(a1.id, role=ConsoleMessageRole.ASSISTANT, content="two")
     assert store.active_leaf(session.id) == a2.id
 
-    screen._select_console_message_variant(a2.id, direction="variant-previous")
+    screen._message._select_console_message_variant(a2.id, direction="variant-previous")
 
     assert store.active_leaf(session.id) == a1_reply2.id
     assert store.active_path_message_ids(session.id) == [
@@ -82,7 +82,7 @@ def test_sibling_nav_previous_restores_deepest_descendant_of_sibling_subtree():
 
     # The swipe row for the fork point is still a1 (not the leaf it resolved
     # to) -- pressing variant-next there returns to a2.
-    screen._select_console_message_variant(a1.id, direction="variant-next")
+    screen._message._select_console_message_variant(a1.id, direction="variant-next")
 
     assert store.active_leaf(session.id) == a2.id
 
@@ -97,7 +97,7 @@ def test_sibling_nav_previous_is_a_noop_at_the_first_sibling():
     )
     store.create_sibling(a1.id, role=ConsoleMessageRole.ASSISTANT, content="two")
 
-    screen._select_console_message_variant(a1.id, direction="variant-previous")
+    screen._message._select_console_message_variant(a1.id, direction="variant-previous")
 
     # a1 is the FIRST sibling (index 0) -- pressing "previous" on its own row
     # must not move the active leaf (which is still a2, off a1's row).
@@ -115,7 +115,7 @@ def test_sibling_nav_next_is_a_noop_at_the_last_sibling():
     a2 = store.create_sibling(a1.id, role=ConsoleMessageRole.ASSISTANT, content="two")
     assert store.active_leaf(session.id) == a2.id
 
-    screen._select_console_message_variant(a2.id, direction="variant-next")
+    screen._message._select_console_message_variant(a2.id, direction="variant-next")
 
     assert store.active_leaf(session.id) == a2.id
 
@@ -132,8 +132,8 @@ def test_sibling_nav_is_a_noop_for_a_linear_single_child_message():
     )
     assert store.active_leaf(session.id) == a1.id
 
-    screen._select_console_message_variant(a1.id, direction="variant-previous")
+    screen._message._select_console_message_variant(a1.id, direction="variant-previous")
     assert store.active_leaf(session.id) == a1.id
 
-    screen._select_console_message_variant(a1.id, direction="variant-next")
+    screen._message._select_console_message_variant(a1.id, direction="variant-next")
     assert store.active_leaf(session.id) == a1.id

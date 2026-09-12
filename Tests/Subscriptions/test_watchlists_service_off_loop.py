@@ -45,6 +45,7 @@ take:
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from contextlib import contextmanager
 
@@ -114,9 +115,9 @@ def _spy_transaction(db: SubscriptionsDB) -> list[int]:
     real_transaction = db.transaction
 
     @contextmanager
-    def wrapper():
+    def wrapper(*args, **kwargs):
         threads.append(threading.get_ident())
-        with real_transaction() as conn:
+        with real_transaction(*args, **kwargs) as conn:
             yield conn
 
     db.transaction = wrapper
@@ -217,30 +218,49 @@ async def test_simple_db_calls_run_off_the_event_loop_thread(
 
     assert threads, f"SubscriptionsDB.{db_method_name} must have been called"
     assert all(thread_id != loop_thread for thread_id in threads), (
-        f"SubscriptionsDB.{db_method_name} ran on the event-loop thread: "
-        f"{threads}"
+        f"SubscriptionsDB.{db_method_name} ran on the event-loop thread: {threads}"
     )
 
 
 # --- multi-call methods -------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_create_source_both_db_calls_run_off_the_event_loop_thread(tmp_path):
-    """`create_source` does an INSERT then a re-read; both must hop."""
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.parametrize("existing", [False, True])
+async def test_create_source_batch_and_materialization_run_off_loop(tmp_path, existing):
+    """Exact lookup, optional insert and result materialization share one worker."""
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
+    if existing:
+        db.add_subscription(
+            name="Existing Feed", type="rss", source="https://example.com/new.xml"
+        )
     add_threads = _spy(db, "add_subscription")
-    get_threads = _spy(db, "get_subscription")
+    batch_threads = _spy(db, "create_sources_exact_batch")
+    materialize_threads = _spy(db, "_materialize_watchlist_source_result")
+    transaction_threads = _spy_transaction(db)
     loop_thread = threading.get_ident()
-
-    created = await service.create_source(
-        {"name": "New Feed", "url": "https://example.com/new.xml"}
-    )
-
-    assert created["title"] == "New Feed"
-    assert add_threads and all(t != loop_thread for t in add_threads)
-    assert get_threads and all(t != loop_thread for t in get_threads)
+    try:
+        created = await service.create_source(
+            {"name": "New Feed", "url": "https://example.com/new.xml"}
+        )
+        expected_title = "Existing Feed" if existing else "New Feed"
+        assert created["title"] == expected_title
+        assert created["creation_outcome"] == ("existing" if existing else "created")
+        for threads in (batch_threads, materialize_threads, transaction_threads):
+            assert threads and all(t != loop_thread for t in threads)
+        if existing:
+            assert add_threads == []
+        else:
+            assert add_threads and all(t != loop_thread for t in add_threads)
+        stored = db.get_subscription(created["source_id"])
+        assert stored["name"] == expected_title
+        assert stored["source"] == "https://example.com/new.xml"
+    finally:
+        # This test owns a function-scoped loop. Finish its worker threads so
+        # SQLite's thread-exit cleanup runs on each connection's owning thread.
+        await asyncio.get_running_loop().shutdown_default_executor()
+        assert db.close_all_connections() == 0
 
 
 @pytest.mark.asyncio
@@ -387,8 +407,7 @@ async def test_get_alert_rule_reads_off_the_event_loop_thread(tmp_path):
 
     assert rule_again["rule_id"] == rule["rule_id"]
     assert not loop_statements, (
-        "get_alert_rule ran SQL on the event-loop thread: "
-        f"{loop_statements[:3]}"
+        f"get_alert_rule ran SQL on the event-loop thread: {loop_statements[:3]}"
     )
 
 

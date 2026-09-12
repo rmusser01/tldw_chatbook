@@ -58,6 +58,21 @@ def _is_persistent_chroma(config: RAGConfig) -> bool:
     )
 
 
+def _close_client(client: Any) -> None:
+    """Release only this client's reference when its Chroma version supports it."""
+    try:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+    except Exception as exc:
+        from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
+
+        logger.warning(
+            "Could not close collection-index client ({})",
+            safe_metadata_token(type(exc).__name__),
+        )
+
+
 def adopt_legacy_collection(
     persist_directory, legacy_name: str, target_name: str, provenance: dict
 ) -> bool:
@@ -83,6 +98,7 @@ def adopt_legacy_collection(
     differ, e.g. after a config edit, and we must never paper over that by
     relabeling the index).
     """
+    client = None
     try:
         client = _client(persist_directory)
         existing = {c.name for c in client.list_collections()}
@@ -117,6 +133,8 @@ def adopt_legacy_collection(
         # not debug.
         logger.warning(f"Legacy collection adoption no-op (assumed lost race): {e}")
         return False
+    finally:
+        _close_client(client)
 
 
 def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
@@ -160,6 +178,7 @@ def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
 def list_indexes(persist_directory) -> list[dict]:
     """List on-disk collections with provenance + document count."""
     out: list[dict] = []
+    client = None
     try:
         client = _client(persist_directory)
         for col in client.list_collections():
@@ -172,11 +191,14 @@ def list_indexes(persist_directory) -> list[dict]:
             })
     except Exception as e:
         logger.error(f"list_indexes failed: {e}")
+    finally:
+        _close_client(client)
     return out
 
 
 def delete_index(persist_directory, name: str) -> bool:
     """Delete the collection ``name``. False when absent or on error."""
+    client = None
     try:
         client = _client(persist_directory)
         if name not in {c.name for c in client.list_collections()}:
@@ -187,6 +209,8 @@ def delete_index(persist_directory, name: str) -> bool:
     except Exception as e:
         logger.error(f"delete_index failed: {e}")
         return False
+    finally:
+        _close_client(client)
 
 
 def index_status(config: RAGConfig) -> dict:

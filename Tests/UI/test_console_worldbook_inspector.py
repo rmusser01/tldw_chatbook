@@ -220,7 +220,7 @@ async def test_console_worldbook_attach_then_detach_round_trips_through_real_db(
         )
 
         # --- Attach ---
-        await screen._console_worldbook_attach_worker()
+        await screen._retrieval._console_worldbook_attach_worker()
         await pilot.pause()
 
         attached = manager.get_world_books_for_conversation(conv_id, enabled_only=False)
@@ -230,7 +230,7 @@ async def test_console_worldbook_attach_then_detach_round_trips_through_real_db(
         assert screen._console_worldbook_dialog_active is False
 
         # --- Detach (same monkeypatched picker returns the same id) ---
-        await screen._console_worldbook_detach_worker()
+        await screen._retrieval._console_worldbook_detach_worker()
         await pilot.pause()
 
         assert (
@@ -274,7 +274,7 @@ async def test_console_worldbook_attach_notifies_and_noops_without_a_conversatio
             raising=False,
         )
 
-        await screen._console_worldbook_attach_worker()
+        await screen._retrieval._console_worldbook_attach_worker()
         await pilot.pause()
 
         assert push_calls == []  # never even opened the picker

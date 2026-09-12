@@ -454,8 +454,8 @@ _REMINDER_NOTIFICATIONS_LABEL = "Inbox + toast"
 #: -- explains the difference in the row itself rather than leaving two
 #: same-named rows silently inconsistent.
 _REMINDER_NOTIFICATIONS_TOOLTIP = (
-    "Fixed: a reminder always notifies via inbox + toast. Unlike an "
-    "automation's Notifications row, there is no per-reminder setting to "
+    "Fixed: this scheduled task always notifies via inbox + toast. Unlike an "
+    "automation's Notifications row, there is no per-task setting to "
     "turn on/off."
 )
 
@@ -797,10 +797,18 @@ class TaskDetail(Vertical):
                 # hide the row's own value Static, which the existing
                 # transfer-badge rendering pins verbatim).
                 self._runs_on_cancel_button = Button(
-                    "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning", classes="detail-owner-action-button"
+                    "Cancel transfer",
+                    id=_RUNS_ON_CANCEL_ID,
+                    variant="warning",
+                    classes="detail-owner-action-button",
+                    tooltip="Cancel this ownership transfer, if it can still be canceled.",
                 )
                 self._runs_on_retry_button = Button(
-                    "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning", classes="detail-owner-action-button"
+                    "Retry transfer",
+                    id=_RUNS_ON_RETRY_ID,
+                    variant="warning",
+                    classes="detail-owner-action-button",
+                    tooltip="Retry this failed ownership transfer.",
                 )
                 runs_on_actions = Horizontal(
                     self._runs_on_cancel_button,

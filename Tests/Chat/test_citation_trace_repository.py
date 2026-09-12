@@ -2710,15 +2710,25 @@ def test_active_lookup_verifies_body_and_preserves_historical_summary_on_mismatc
         "Answer [S1].",
         codec,
     )
+    # Model a corrupt/stale owner fingerprint. Canonical message edits now go
+    # through semantic mutation authority and invalidate the owner eagerly;
+    # this test covers the lookup's independent mismatch detection instead.
     with db.transaction() as cursor:
         cursor.execute(
-            "UPDATE messages SET content = ? WHERE id = ?",
-            ("Edited answer [S1].", "message-1"),
+            "UPDATE rag_message_trace_owners SET body_fingerprint = ? "
+            "WHERE message_id = ?",
+            (
+                codec.fingerprint(
+                    CitationFingerprintDomain.MESSAGE_BODY,
+                    "Different answer [S1].",
+                ),
+                "message-1",
+            ),
         )
     mismatch = repository.get_active_trace_for_message(
         "message-1",
         1,
-        "Edited answer [S1].",
+        "Answer [S1].",
         codec,
     )
 

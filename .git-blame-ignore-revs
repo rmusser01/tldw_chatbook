@@ -335,3 +335,7 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # lines, zero assertions touched; plus the wiring test's task-3 docstring
 # paragraph and the recipe's own record of the census hole that hid them.
 9d8244c72ef56b75b337503ba92d6ad90c772303
+
+# TASK-31932 step159: unchanged Handoff formatter body moved to existing
+# support layer; retained Screen wrapper and canonical compatibility imports.
+1d8af2c9dfa231cc6c5cc44e8fbf9d2335d0023b

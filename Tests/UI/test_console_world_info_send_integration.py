@@ -118,18 +118,16 @@ async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, mon
     gateway = _CapturingGateway()
     app.console_provider_gateway_factory = lambda: gateway
 
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 
-    real_get_cli_setting = chat_screen_module.get_cli_setting
+    real_get_cli_setting = retrieval_module.get_cli_setting
 
     def _fake_get_cli_setting(section, key, default=None):
         if section == "character_chat" and key == "enable_world_info":
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(
-        chat_screen_module, "get_cli_setting", _fake_get_cli_setting
-    )
+    monkeypatch.setattr(retrieval_module, "get_cli_setting", _fake_get_cli_setting)
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
@@ -153,18 +151,16 @@ def test_console_world_info_applier_honors_enable_world_info_setting(monkeypatch
     text unchanged, without ever reaching ``apply_world_info_to_message``,
     when ``[character_chat] enable_world_info`` is falsy."""
     from tldw_chatbook.Character_Chat import world_info_resolver
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 
-    real_get_cli_setting = chat_screen_module.get_cli_setting
+    real_get_cli_setting = retrieval_module.get_cli_setting
 
     def _fake_get_cli_setting(section, key, default=None):
         if section == "character_chat" and key == "enable_world_info":
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(
-        chat_screen_module, "get_cli_setting", _fake_get_cli_setting
-    )
+    monkeypatch.setattr(retrieval_module, "get_cli_setting", _fake_get_cli_setting)
 
     def _fail_if_called(*args, **kwargs):
         raise AssertionError(
@@ -179,12 +175,14 @@ def test_console_world_info_applier_honors_enable_world_info_setting(monkeypatch
     class _FakeApp:
         chachanotes_db = object()  # non-None so the earlier guards pass
 
-    class _FakeScreen:
+    class _FakeRetrieval:
         app_instance = _FakeApp()
 
     # Bind the real method to a lightweight stand-in with just app_instance.
-    applier = chat_screen_module.ChatScreen._console_world_info_applier.__get__(
-        _FakeScreen()
+    applier = (
+        retrieval_module.ConsoleRetrievalController._console_world_info_applier.__get__(
+            _FakeRetrieval()
+        )
     )
     result = applier("conv-1", "a dragon appears", [])
     assert result == "a dragon appears"

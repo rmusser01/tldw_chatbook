@@ -60,7 +60,11 @@ from tldw_chatbook.Canvas.gateway import (
     CanvasSourceResponse,
     ServedCanvasControlHandler,
 )
-from tldw_chatbook.Canvas.limits import CanvasLimits, sha256_utf8
+from tldw_chatbook.Canvas.limits import (
+    SUPPORTED_CANVAS_RUNTIME_PROFILE,
+    CanvasLimits,
+    sha256_utf8,
+)
 from tldw_chatbook.Canvas.models import CanvasBridgeRequest, CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
 from tldw_chatbook.Canvas.profiles import load_profile_snapshot, runtime_snapshot_id
@@ -137,7 +141,9 @@ class _MountedAuthority:
 
     async def read_source(self, scope):
         source = f"<!doctype html><h1>{scope.revision_id}</h1>"
-        return CanvasSourceResponse(source, sha256_utf8(source), "canvas-v1")
+        return CanvasSourceResponse(
+            source, sha256_utf8(source), runtime_profile=SUPPORTED_CANVAS_RUNTIME_PROFILE
+        )
 
     async def describe_selection(self, scope):
         source = f"<!doctype html><h1>{scope.revision_id}</h1>"

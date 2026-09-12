@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## Fault injection can also intercept an observation-only probe
+
+**PR #2427 / TASK-31932, 2026-09-09.** A native descriptor observer reported
+one failure in a 443-case Notes import cohort: the test intentionally replaced
+`os.fstat`, and the observer's after-call hook invoked that replacement before
+fixture teardown. The application's expected exception and exact close-set
+assertions had already passed. All 443 cases passed without the observer, as
+did the five-case isolated control; the native final inventory retained no
+SQLite or instance-lock handles. Keep the diagnostic interruption distinct
+from a product failure and from a successful native run. Do not weaken the
+fault injection or add cleanup to repair an observer's interference.
+
 Working knowledge about testing in this repo. Not decisions (see `backlog/decisions/`)
 and not point-in-time audits — these are traps that have actually cost time here, kept
 so the next person does not rediscover them.
@@ -62,6 +74,40 @@ succeeds before disposal exposed the missing cleanup. For fail-closed behavior,
 establish a successful control and exercise the production sync/async entry;
 an unrelated exception can otherwise satisfy the failure assertion.
 
+## A committed row is not an accepted editor save reply
+
+**PR #2427 / TASK-31932, 2026-09-09.** Holding a real Notes save reply after
+its SQLite commit exposed version 2 in the row while the coordinator still
+held version 1. Blank-note Back bypassed the save barrier, used the stale
+version for cleanup, and could close before a newer authored draft persisted.
+Existing destructive admission plus post-wait eligibility checks fixed that
+ordering. The original test separately edited an unfocused TextArea: a late
+save projection restored its old body before Changed consumed the empty edit.
+Focus and a canonical-draft receipt made the fixture exercise the intended GC.
+
+**What to do.** Distinguish storage commit, accepted save response, canonical
+draft receipt and final navigation. Test their boundaries with controlled real
+operations. Assert whether destructive calls occurred, not merely whether a row
+survived an optimistic-lock rejection; never infer final cleanup from a midpoint.
+
+## A headless Textual child has a second stdout forwarding path
+
+**PR #2427 / TASK-31932, 2026-09-09.** Fourteen real-app TTS shutdown tests
+failed while parsing their child phase messages. A local-variable reproduction
+showed a startup logging marker, not an empty message or a helper failure.
+Redirecting ordinary `sys.stdout` to stderr still left all fourteen failures:
+Textual had captured `sys.__stdout__` into the app's `_original_stdout` and
+forwarded headless print events there. Routing that fixture-owned stream to
+stderr before mounting, as well as ordinary stdout before imports, made all
+fourteen strict protocol/lifecycle cases pass. Explicit phase messages continued
+using the original stdout pipe; no parsing, timeout or foreign-file assertion
+was relaxed.
+
+**What to do.** For subprocess protocols, identify every framework-owned output
+path across construction and mounting. Keep diagnostics on a separate visible
+stream, preserve the exact protocol parser, and verify the mounted child rather
+than assuming a Python-level redirection covers framework forwarding.
+
 ## Cancellation waiters cannot own terminal acknowledgements
 
 **TASK-32115, Buddy/TTS integration, 2026-09-09.** Replacing a Buddy utterance
@@ -109,6 +155,30 @@ class/device and request arguments, and transcribe complete saved speech after
 real playback. Exercise installed wheels as well as editable source. Keep
 observer corrections separate from application failures, and preserve raw ASR
 differences instead of silently turning lexical mismatches into exact matches.
+## An exact-owner fixture must see every alias of the test factory
+
+**TASK-31750.2, 2026-09-06.** The complete native Console flow file passed
+349 tests but retained app/SQLite handles in 34 cases. The existing opt-in
+resource fixture wraps only the importing module's `_build_test_app`; seven
+tests called the identical factory under `_build_production_app`, bypassing
+that owner. Normalizing those calls to the same canonical name and importing
+the existing fixtures preserved every argument and assertion. The attributed
+34 cases and the complete 349-test rerun then reported no retained SQLite
+handles with the unchanged native descriptor observer.
+
+**What to do.** Before applying an exact-factory cleanup fixture, inventory
+all construction aliases and prove their identity. Route identical factories
+through the existing owner; do not replace exact ownership with global cleanup.
+
+**PR #2427 dev934 follow-up, 2026-09-11.** Imported helper functions also keep
+their defining module's globals: adding the fixture locally does not intercept
+a foreign helper's builder. Three Console test modules retained 392 SQLite and
+30 instance-lock handles through that path. Routing the snapshot helper through
+its local builder and passing undo's local builder through the existing host
+injection seam, plus importing the existing owner fixtures, preserved all 102
+test bodies. The complete 313-case Console/cleanup run passed with zero final
+SQLite or instance-lock handles. Inventory helper call chains, not only names
+bound in the importing module.
 
 ## Import deferral must pass both startup and screen-preload budgets
 
@@ -175,23 +245,22 @@ production privacy or reconstruction behavior.
 
 ---
 
-## Index-plan guards must accept the names the DDL actually uses
+## Qualify temporary filesystem metadata and use payload-specific privacy canaries
 
-**TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
-no-statistics query-plan assertions passed for the Keyword indexes, but the
-index census guard rejected every pin because its evidence extractor only
-recognized `idx_` and `uq_` names. The schema used descriptive
-`character_conversation_search_*` names. A synthetic positive/negative pair
-reproduced the missing positive pin while preserving rejection of `not in`.
-Accepting standalone identifier literals fixed the guard without changing the
-DDL or labeling new indexes as pre-convention. The same qualification found
-that the schema allowlist scanner omitted the new dedicated DDL module; the
-live-schema parity test caught all five missing tables.
+**Dev test review / TASK-31719, 2026-09-05.** A fresh pytest root under
+`/private/tmp` inherited macOS group `wheel`: Notes fixtures were UID/GID
+501:0 while the process was 501:20. The writable-file metadata guard correctly
+reported `unsupported_metadata`. Moving the pytest root to the per-user temporary
+directory produced 501:20 fixtures and all 140 Notes conflict-executor tests
+passed without a runtime change. Separately, seven import privacy tests searched
+the entire formatted traceback for the generic word `private`; they matched the
+checkout's `/private/tmp` source paths, not an exception payload.
 
-**What to do.** Run both live-schema parity and index-plan inventory checks
-when moving DDL into a dedicated module. Register its source explicitly, keep
-real query-plan assertions, and verify a guard's name recognition before
-discarding evidence or weakening its inventory policy.
+**What to do.** Check actual fixture ownership before diagnosing an authority
+guard as broken; do not weaken it to accommodate an incorrectly owned test root.
+Use an unmistakable injected payload canary for privacy assertions, including
+the full traceback. A source-path substring is neither proof of payload leakage
+nor a portable canary.
 
 ## A test counter is neither atomic publication nor completion evidence
 
@@ -217,6 +286,82 @@ the operation's actual completion signal before checking its resulting state;
 entry counts cannot prove completion. Keep malformed-state checks strict rather
 than retrying arbitrary parse failures. Here the existing rendered final-response
 token provides the ordering boundary, so no new polling protocol is needed.
+---
+
+## Populated replacement widgets are not yet layout evidence
+
+**TASK-31656, 2026-09-05.** The broad Watchlists run reached the expected
+briefing row count but failed its real-CSS placement check with a zero-width
+table. `ArtifactsPane.compose` adds rows before yielding its replacement
+`DataTable`; `_press_generate` mistook that row count for a finished repaint.
+A bounded delay of the first populated replacement's layout reproduced the
+same zero-region failure while the undelayed case passed. The full-file run
+also caught the earlier replacement phase: `query_one` raised `NoMatches`
+after the old table was removed but before its replacement mounted.
+Subsequent full-file runs exposed the identical assumption in the Cast table
+and Synthesize detail helpers; all three needed current-widget readiness.
+
+**What to do.** Before a helper hands off to geometry assertions, require the
+current replacement widget to be mounted, displayed, and have nonzero geometry
+as well as matching data. Keep the actual placement and painted-content checks:
+readiness is not proof that the layout fits the terminal. Bound the wait and fail
+explicitly if the rendered state never arrives; a temporarily absent replacement
+belongs in that same readiness poll, not an unconditional `query_one`.
+
+**Related incident, TASK-31750 residual UI qualification, 2026-09-05.** A paste
+confirmation test inserted a two-line wrapped draft while its mounted region
+still occupied one row at y=39. Pilot sampled that old origin before its internal
+pause moved the bottom-anchored draft to y=38; the click missed the intended token.
+Allowing layout before calling `pilot.click`, then checking the two-row geometry,
+restored the real confirm/click-away flow without changing coordinates or runtime
+hit testing. Widget existence and updated render text are not ready mouse geometry.
+
+## A readiness check does not survive an extra asynchronous yield
+
+**Dev test review / TASK-31733, 2026-09-05.** The combined workbench/right-rail
+run passed the Live Work geometry predicate, then failed the same assertion after
+an extra `pilot.pause()`: demand, viewport and hint were correct, but a new outer
+reconciliation was pending. The unchanged right-rail file passed in isolation.
+Injecting a real geometry reconciliation as that pause returned reproduced the
+failure in all four initial/swapped and forward/reverse cases; the two ordinary
+cases passed.
+
+**What to do.** Put optional paint pauses before the final bounded readiness
+wait, and consume its qualified state without another yield. Preserve actual
+geometry, widget identity and logical owner-pass assertions. Reproduce late work
+through the real scheduler rather than clearing its flags or extending timeouts;
+an isolated pass alone does not explain an intermittent failure.
+
+## A constructor-bypassing restore shell must not claim the live app runtime
+
+**Dev review / TASK-31750, 2026-09-05.** Assigning `_console_chat_store` on a
+`ChatScreen.__new__` restore fixture lazily attached that shell to the running
+app's Console runtime. Task-panel remount then queried its nonexistent Textual
+DOM (`_nodes`), before the restore assertions could run. The no-app variants
+instead reached missing settings-controller state during serialization.
+
+**What to do.** For direct view-state round trips, use an isolated real
+`ConsoleRuntime(None)` before assigning the store, and wire the current settings
+owner as the existing native-chat fixture does. Keep the real handoff store for
+claim/acknowledgement assertions, and verify the live runtime's view and store
+were not replaced. Do not silence the DOM error or weaken fail-loud controller
+wiring to accommodate a shell that was never mounted.
+
+## A prepended script directory cannot override an already imported sibling name
+
+**TASK-31654, 2026-09-05.** The broader test sweep failed Terminal qualification
+probe imports with `cannot import SCHEMA_VERSION from common`. The test loader
+prepended the qualification directory, but Python reused an unrelated cached
+`sys.modules["common"]`. In a clean process the loader instead left its own bare
+`common` alias behind, making test order significant in both directions.
+
+**What to do.** When loading standalone scripts in-process, temporarily bind their
+exact sibling dependency and qualified module aliases in a scoped context. Restore
+the original aliases and import path afterward. Exercise both a foreign module
+sentinel and an initially absent alias; only testing a clean interpreter misses
+the collision.
+
+---
 
 ## CSS ratchet paydown must preserve inherited subjects and specificity
 
@@ -239,6 +384,28 @@ from loading four Environment modules. First-use owner/projection construction
 restored 972/972, but required explicit first-open painting for a workspace-less
 panel (there is no worker result to paint it). Measure imports as well as I/O,
 and pair lazy-owner guards with a no-result first-use UI test.
+
+---
+
+## Mounted filesystem benchmarks must use the current authority schema and an installed worker
+
+**TASK-31767, 2026-09-05.** The three-turn benchmark granted `fs_write` using a
+standalone provider descriptor, then ran the mounted Console's ADR-102 provider.
+The latter adds `root_alias`, so the definition-hash guard correctly changed the
+old Allow grant to Ask. The unattended test timed out awaiting approval and then
+checked the obsolete private-scratch mutation path. Its explicitly bound named
+Workspace was the current structured tool's actual authority. After renewing only
+the fixture's exact admitted-root grant, execution exposed a second setup issue:
+the shared virtual environment could import the checkout during pytest, but the
+one-shot worker's `python -I -m` could not import the application at all.
+
+**What to do.** Derive benchmark authority and permission descriptors through the
+current run-admission contract. Prove stale grants still ask before renewing a
+fixture-owned exact grant; never replace the gate with an unconditional Allow.
+Check the bound mutation destination and absence of a scratch fallback. Before
+subprocess verification, confirm `python -I` imports the intended checkout from an
+installed, isolated test environment; pytest's source-path insertion is not proof
+that a separately launched worker can import it.
 
 ---
 
@@ -1158,6 +1325,14 @@ app bundle" is not the same as "I loaded what production loads"** — for any
 widget whose CSS was consolidated, inherit `ConsolidatedCSSApp`. The tell was
 the surviving mutant, not the failing test: a green geometry assertion under a
 harness that cannot see the rule looks identical to a correct one.
+
+**Recurred, TASK-31932, 2026-09-08.** The ingest harness also loaded the full
+app bundle but inherited plain `App`. Its unstyled navigation bar occupied 23
+rows instead of three; the compositor hit the docked fold hint at the visible
+Clear button's coordinates. Reusing `ConsolidatedCSSApp` restored the real
+default tier and made the original mouse click, clear-value, widget-identity
+and focus assertions pass. An added exact navigation-height control failed
+23-versus-3 before the fixture repair. The defect was not in the Clear handler.
 
 ---
 
@@ -2390,6 +2565,15 @@ workbench-contract harnesses) — per-suite green on widget-level harnesses
 says nothing about whether the sheet itself parses. Grepping the variable
 name against the theme sheets costs one second and catches the
 typo-class outright.
+
+**Dev review recurrence (2026-09-05, TASK-31750).** The Watchlists Follow button
+remained at y=48 in a 40-row terminal even after `scroll_visible`: its Inspector
+had `overflow-y: hidden`. The plain destination harness loaded lifted defaults
+but omitted the app bundle containing the existing `overflow-y: auto` rule.
+Using the existing `_CssTrueDestinationHarness` plus normal scrolling made the
+same real click and exact run/route assertions pass. Forcing a scroll through
+prohibited overflow or replacing the click with `press()` would not qualify
+the production interaction.
 
 **Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
 `.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
@@ -11834,6 +12018,52 @@ session FD warning by splitting test files, classifying descriptors with
 `lsof`, and inspecting live owners after finalizers; GC or a higher threshold
 cannot establish ownership or fix a registered worker handle.
 
+**TASK-31903, 2026-09-05.** The complete agent-swap file retained 205
+descriptors. An own-process `F_GETPATH` probe attributed five per real send to
+ChaChaNotes (two database handles, two WAL handles, one SHM handle). Explicit
+controller shutdown followed by exact-file quiescence reduced that case to zero;
+the regeneration-persistence fixture similarly fell from four to zero. The new
+async ownership fixture also had to finish before the existing cleanup fixture:
+otherwise its tracking references survived that already-scheduled collection
+pass. Express this ordering as a fixture dependency and release tracking lists
+after explicit cleanup. Assert `registered_connection_count() == 0` before the
+existing pass, so GC cannot conceal the database defect. No additional GC call or
+threshold change was needed; all 47 agent-swap tests passed without the FD warning.
+
+**TASK-31923 / TASK-31814, 2026-09-06.** The rewind, durable/recovery and
+first-send boundary selections reproduced 209, 378 and 234 surviving descriptors
+respectively even though every test body passed. Explicitly imported owner
+tracking, controller shutdown and same-file quiescence eliminated the native
+post-finalizer SQLite/WAL/SHM evidence across the combined 245-test selection.
+One agent-only summary fixture also needed an explicitly owned real workspace
+registry: otherwise it created a process-global default registry and retained
+its database outside the test's ChaChaNotes lifecycle. Review caught another
+trap in the cleanup itself: the first shutdown/quiescence/count exception skipped
+later owners. Four fault variants failed before per-owner error collection;
+all five controls passed after all independent cleanup was attempted in lifecycle
+order and errors were re-raised together. Do not suppress teardown failures or
+force-close busy handles to make the resource report green.
+The subsequent cancellation check exposed the same skip with CancelledError,
+which is a BaseException rather than Exception. Two new RED controls required
+BaseExceptionGroup reporting after cleanup; all 247 final cases then passed with
+zero retained SQLite descriptor evidence. Preserve cancellation, do not swallow it.
+
+## A deliberately short failure deadline must not also time unrelated setup
+
+**TASK-31924 / TASK-31925, 2026-09-06.** Qwen's retry probe intended two 50ms
+read timeouts but used a scalar requests timeout that also constrained connect.
+A real ConnectTimeout consumed one attempt before the scripted server action,
+so the three-attempt budget never reached success. Splitting the test-only
+connect allowance from its unchanged read deadline, and asserting actual
+ReadTimeoutError causes, produced 150 passing tests; widening the read deadline
+failed the new phase assertion. Separately, MCP's real-child retry test allowed
+only 10ms to receive a reap result. Delaying the actual child.wait result by 20ms
+reproduced the failure, while a test-only 250ms reap allowance passed both
+variants and all 145 file cases. The hanging-session-close allowance stayed
+10ms. Keep each intentional fault deadline narrow, give unrelated scheduling a
+bounded allowance, and verify the actual fault/reap phase rather than making
+every timeout larger. Neither repair changed production deadlines.
+
 ## Lifecycle relocation tests must include production change notifications
 
 **TASK-21123, 2026-09-04.** Moving Buddy ownership to the app initially passed
@@ -12000,6 +12230,19 @@ have turned `test_screen_still_re_exports_every_moved_name` red. The re-check
 **What to do.** "Check against `_SURFACE`" means resolve each candidate NAME
 against the contract, one at a time. A grep for the subsystem word is a
 different, weaker question, and it answers "no" for the wrong reason.
+## Screen reuse bypasses compose-time handoff consumption
+
+**TASK-31750, 2026-09-06 dev review.** The real stage/leave/restage test
+reached Library and returned to the same installed Console with launch A still
+resident and launch B still pending. TASK-31520's screen reuse meant compose
+never ran again; adding navigation delays could not repair that lifecycle gap.
+Both resident and initially empty Console returns failed with a new handoff,
+while no-new-handoff controls passed. Reusing the existing claim-and-refresh
+routine on ordinary warm resume made all four cases pass. Qualify the actual
+intermediate destination and instance identity, then assert mounted evidence,
+notice preservation/clearing and settled claims; a fresh-screen restore test
+alone does not cover cached-screen return.
+
 ## Stop must drain an offloaded dispatch CAS before terminal settlement
 
 **TASK-31585, 2026-09-05.** Real DeepSeek UAT requested Stop as soon as the
@@ -13567,3 +13810,336 @@ derivation), the landing pass runs the pin files of every sibling group that
 also touched it in the same wave — `git log -S'<function>' --oneline` on the
 wave's branches names them — not only your own. A contradiction between two
 pins is a product ruling to record in both task files, not a merge fix.
+
+## An isolated helper can execute the editable install's other checkout
+
+**TASK-31772, 2026-09-05.** The stale-write and agent-worktree tests passed in
+the repository's installed checkout but returned `worker_crashed` from an
+isolated `python -I -m ...` workspace helper in a linked review worktree. The
+helper intentionally strips `PYTHONPATH`; the environment's editable install
+therefore resolved the original checkout rather than the worktree under test.
+The provider translated that crash into its correct fail-closed private-scratch
+refusal, which made 20 filesystem assertions look like an authority regression.
+Replacing only the test execution seam with the existing in-process protocol
+harness made the same requests exercise the current worktree and exposed one
+order-sensitive dynamic-worktree executor gap, fixed by routing admitted roots
+through that harness too.
+
+**What to do.** For branch or linked-worktree verification, first prove which
+source tree a spawned isolated Python helper imports. If isolation deliberately
+removes checkout paths, use a test-only in-process protocol harness for behavior
+tests and keep separate executor-containment tests for the subprocess boundary;
+otherwise a green or red result may describe another checkout's code.
+
+## Release a debounced fake request only after that request starts
+
+**TASK-31649, 2026-09-05.** Before the Reader extraction, both no-change
+image traversal probes reached row five but never settled its detail. The
+instrumented baseline showed focus and `selected_id` advancing correctly while
+the controlled service's release table contained only earlier rows: the final
+debounced request had not started. Releasing every currently known request
+therefore missed the final one forever; one probe spent its full 180-second
+timeout waiting for an event the harness never released.
+
+The test-only repair awaits the existing `_wait_for_detail_call` for the final
+backing id before releasing requests. The complete no-change/match-navigation
+files and Reader handoff node then passed together (13 tests); performance and
+content assertions stayed unchanged. A selected UI identity proves intent, not
+that its asynchronous request has reached a controlled fake's release boundary.
+
+## Index-plan guards must accept the names the DDL actually uses
+
+**TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,
+no-statistics query-plan assertions passed for the Keyword indexes, but the
+index census guard rejected every pin because its evidence extractor only
+recognized `idx_` and `uq_` names. The schema used descriptive
+`character_conversation_search_*` names. A synthetic positive/negative pair
+reproduced the missing positive pin while preserving rejection of `not in`.
+Accepting standalone identifier literals fixed the guard without changing the
+DDL or labeling new indexes as pre-convention. The same qualification found
+that the schema allowlist scanner omitted the new dedicated DDL module; the
+live-schema parity test caught all five missing tables.
+
+**What to do.** Run both live-schema parity and index-plan inventory checks
+when moving DDL into a dedicated module. Register its source explicitly, keep
+real query-plan assertions, and verify a guard's name recognition before
+discarding evidence or weakening its inventory policy.
+
+## A stream wrapper is not its deferred dispatch boundary
+
+**TASK-31752, 2026-09-05.** Two durable-turn regressions replaced
+`_stream_assistant_response` but omitted its `before_provider_dispatch` callback.
+Their synthetic token was therefore issued outside an in-flight recovery owner,
+and their supposed unknown-delivery fault actually preceded dispatch. Invoking
+the supplied callback before the injected fault made all three original parameter
+cases pass without runtime changes. The final fixtures also assert the exact
+assistant, in-flight recovery, and `DISPATCH_STARTED` checkpoint; the complete
+25-test round-one file passed, including its 1,000-turn retention check.
+
+Inject faults after the actual boundary whose recovery semantics the test claims,
+and assert that boundary's state before throwing. Crossing this checkpoint does
+not prove gateway entry: the warned-retry regression still asserts zero gateway
+calls before explicit retry and one afterward.
+
+**TASK-31754 follow-up.** The related real checkpoint-failure test exposed a
+different bug: the direct stream handler attempted a terminal assistant write
+while the checkpoint was still `accepted` and the gateway call count was zero.
+Matching the original callback exception by identity looked sufficient until
+inspection showed the production worker sanitizes it into a new
+`ChatProviderError`. Both immediate and transformed-error regressions failed on
+the premature write; a normal post-dispatch provider-error control passed. The
+repair tracks the local callback outcome across that sanitization boundary,
+resetting it on each attempt and success, while leaving normal provider failure,
+typed exceptions, cancellation, and cleanup paths intact.
+
+## A tier-specific work counter can pass without observing any work
+
+**TASK-31776, 2026-09-05 dev review.** The cache-clear test spied only on
+`_chars_estimate`, so it failed after bundled tiktoken became the normal path.
+The neighboring growing-history guard was worse: its `count < 500` assertion
+passed with zero observations. Both now select and exercise each real tier and
+require positive, exact work (204 distinct inputs for the growing fixture).
+A process-local cache-bypass mutation made all four variants fail, with 20,400
+growing-history computations. Independent review caught a second loophole:
+`count_tokens_tiktoken` itself can silently fall back to characters. The tiktoken
+fixture now makes that fallback fail explicitly. To prove a fast path, measure
+the path that actually executes and make both no-work and fallback outcomes
+visible; an upper bound alone cannot distinguish caching from a disconnected spy.
+
+## A no-follow seam cannot reject aliases already resolved by its caller
+
+**TASK-31779, 2026-09-05 dev review.** Migrating legacy Collections recovery
+from raw SQLite to the shared read-only opener passed its source-replacement
+symlink regression and the initial 432-test selection. Independent review found
+that the constructor still called `Path.resolve()`, erasing a symlink supplied
+at construction before the opener could reject it. New public-entry tests for
+both leaf and parent aliases failed before the correction. The constructor now
+retains the lexical absolute path. When adopting a path-validation boundary,
+trace earlier canonicalization and test aliases at selection as well as later
+replacement; a safe opener cannot inspect path components it never receives.
+
+## A guarded setter does not cover its caller's remaining publication
+
+**TASK-31917, 2026-09-06 dev review.** The fork census flagged the combined
+Console settings commit even though its generation-settings setter already
+entered the canonical fork transition. A regression attempted real fork
+eligibility and fence issuance after that setter returned but before the
+context-policy publisher ran. Both success and injected-failure variants admitted
+a fork containing only half of the submitted configuration. Extending the existing
+transition around the caller's publication block fixed both while retaining
+other-session access and exception cleanup. When reviewing composed mutations,
+test the handoff after an inner guard exits; individually fenced setters do not
+make a multi-component publication atomic.
+
+## Detached-plan cleanup belongs to task completion, not an await scope
+
+**TASK-31919, 2026-09-06 dev review.** Retaining fork ownership during the
+settings display-name write exposed leaks on stale results, exceptions, and
+cancellation before the coroutine started. A coroutine-local `finally` cannot
+run in that last case; an outer `gather` `finally` can run too early if a sibling
+fails while the writer continues. Attaching exact-plan abandonment to the
+display-name task's completion handles both, because the existing serialized
+writer drains cancellation before its task can finish. Event-controlled real
+SQLite tests keep the writer blocked during delivered cancellation and sibling
+failure, verify that forks remain rejected, then release the writer and verify
+cleanup. Test the lifetime of the actual writer, not just the awaiting caller.
+
+## AST binding checks must include captures and alternative assignment syntax
+
+**TASK-31921, 2026-09-06 dev review.** Narrowing a false-positive fork mutation
+to a verified pending-work carrier initially passed 44 census tests. Review
+showed that an annotated alias could poison its lifecycle, while a `match`
+capture could bind the carrier name directly to a live session. Four additional
+mutations reproduced the misses: annotated, walrus and chained aliases plus a
+pattern capture. Checking only `Assign` and `Name(Store)` was insufficient;
+pattern and exception binding names are string fields in the AST. Keep detached
+recognition local to the proven target, reject unexpected binding forms, and
+exercise the actual classifier with poisoned bindings before trusting a pass.
+
+## A descriptor probe must detect a known open file on the host platform
+
+**TASK-31927, 2026-09-06 dev review.** A Linux-shaped probe silently skipped
+every failed `readlink(/dev/fd/N)` on macOS and reported zero growth for 25
+passing thinking/regeneration tests. Darwin `F_GETPATH` instead found retained
+SQLite/WAL/SHM handles in 12 thinking cases. A known-open-file control confirms
+that readlink fails while F_GETPATH identifies the file. Importing the existing
+exact controller/temporary-database cleanup leaves all 25 tests passing with no
+retained SQLite handles under the working probe. Validate the observer itself;
+an empty snapshot is not evidence of successful cleanup.
+
+## Forced scrolling can conceal a production action-width regression
+
+**TASK-31928, 2026-09-06 dev review.** A Stop regression passed after pre-focusing
+Stop and forcing ancestor scrolling. Review removed the force and found the
+button outside the 160-column viewport despite all production CSS being loaded.
+The hidden-overflow action row still budgeted 37 cells after a 10-cell Redirect
+control made its children require 47. The synthetic Send fixture also omitted
+normal composer focus, causing mouse-down reflow, but repairing that precondition
+alone did not fix clipping. Reject the workaround: preserve the original red
+test and fix the actual width/state contract before claiming a real click works.
+
+**Approved repair follow-up.** Containment alone still missed the click: Stop
+moved up one row between mouse-down and mouse-up because focusing it finally
+recomputed draft wrapping after run-state width changes. Reusing deferred reflow
+at that state transition stabilized the real click without pre-focusing Stop.
+
+## A claimed handoff is not an acknowledged handoff
+
+**TASK-31929, 2026-09-06 warm-Console repair.** A new real navigation regression
+created the right session, observed `has_pending() == False`, and saw another
+`claim()` return None. Review showed that all three also hold if acknowledgement
+does nothing: the first claim stays in flight and blocks another claim. Capture
+the revision returned by `stage()` and require its exact status to be `settled`.
+The tests now distinguish durable acknowledgement from merely successful work.
+
+## A covered modal, not its parent, receives the next suspension
+
+**TASK-31817, 2026-09-06 retry-audio repair.** Preserving audio when Console was
+covered by its owned retry dialog fixed the original failure, but pushing another
+screen over that dialog never suspended Console a second time. A fake dialog
+future concealed this. Real mounted overlay/navigation controls reproduced the
+leak; the owned modal now abandons its exact audio session when suspended without
+a decision. Confirm and Escape record their decision before removal, preserving
+their intended behavior. Test actual modal stacking, not only the parent hook.
+
+## Preserve callable identity when an authority uses it as a generation fence
+
+**TASK-31932, 2026-09-07 Canvas extraction.** Moving Canvas helpers into the
+existing message controller initially supplied fresh resolver lambdas each time
+the store was read. Native authority rebinding interpreted their changed identity
+as a new view generation and canceled imports before compilation. Stable bound
+controller methods preserved identity while their injected dependencies remained
+late-bound. The compiler scheduling, citation, message, and wiring files then
+passed all 159 cases. Compare callback lifetime as well as callback results when
+moving an authority boundary; a body-equivalent move can still change its fences.
+
+## A canceled asyncio wrapper is not a completed database worker
+
+**TASK-31932, 2026-09-07 resource review.** Native descriptor tracing showed a
+ChaChaNotes initializer resume seeding and reopen SQLite after fixture quiescence:
+Textual had canceled its asyncio wrapper, but the underlying thread was still
+running. The test-owned adapter now drains actual concurrent futures before DB
+teardown, closes exact newly acquired thread-local handles on their creating
+thread, and preserves borrowed connection identity (including detecting a
+replacement for an invalid borrowed handle). All 52 worker/smoke/cleanup controls
+pass without retained SQLite descriptors. Do not use wrapper cancellation as
+proof that a database owner can be safely finalized.
+
+## A network read limit is not a promise to read the complete JSON request
+
+**TASK-31932, 2026-09-07 Canvas bridge review.** An intermittent real-browser
+confirmation failure advertised 16,487 bytes but `StreamReader.read(limit + 1)`
+returned only its first 16,384 bytes. The truncated cancellation failed JSON
+decoding, leaving a pending confirmation to block the next action. Bounded
+`readexactly(limit + 1)` with the EOF partial result preserves the byte ceiling
+while waiting for complete input. Real split-stream controls also reject a valid
+JSON prefix followed by invalid content, oversized chunked bodies without EOF,
+and malformed UTF-8; cancellation still propagates. All 83 gateway controls and
+65 complete native/served browser cases pass. Do not replace this with an
+unbounded body read or a larger browser timeout.
+
+## A cancelled timer can retain a Screen outside the component under test
+
+**PR 2427 / TASK-31932, 2026-09-08.** The roleplay-writer unmount test retained
+its departed ChatScreen after 50 GC cycles even though writer callbacks and the
+runtime view had been detached. GC traversal before the failing assertion found
+an asyncio TimerHandle with `cancelled=True` and roughly 8.8 seconds left on its
+original deadline. Its Context still held Textual's `active_message_pump` pointing
+to the departed Screen; creation tracing led through `textual.timer.Timer._run`
+and `asyncio.sleep`, not the writer. The unrelated Environment poll runs every
+ten seconds. Shortening only that existing interval to 0.05 seconds made the
+unchanged collection assertion pass; the unmodified cadence still failed.
+
+The fixture keeps the real timer and explicitly checks its presence before
+departure and removal afterward. It retains all durable-repair assertions and
+the sub-0.5-second unmount bound. Production scheduling is unchanged. When a
+weakref test fails, attribute the external root before blaming an internal
+cycle or assertion rewriting. Do not purge asyncio's private timer heap or
+disable the cleanup assertion to manufacture collection.
+
+## Off the screen stack does not mean unmounted
+
+**PR 2427 / TASK-31932, 2026-09-08.** Two Console tests navigated away, asserted
+the old screen was absent from `screen_stack`, then expected cancellation and
+post-unmount refusal banking. TASK-31520 intentionally retains installed Console
+instances and their runtime attachment across suspension. Tracing showed no
+`on_unmount` until app shutdown; the retained composer restored refusals directly.
+The tests now use the existing exact-owner uninstall/removal helper when testing
+recreation, while the unchanged warm-reuse tests cover ordinary navigation. All
+31 ownership/reuse cases pass, retaining the original 45 cancellation, identity
+and draft-provenance assertions. Verify the actual lifecycle event before
+classifying a teardown failure; do not turn intentional suspension into disposal.
+
+## Exclusive-worker guards must run before dispatch to preserve active work
+
+**PR 2427 / TASK-31932, 2026-09-08.** Prompt delete confirmation resumed Library
+after mutation admission. The resume handler started a competing unfocused
+browse and source snapshot, violating exactly-once refresh and consuming the
+post-delete fault injection too early. Suppressing those reads needed an error
+settlement counterpart: failed delete/undo otherwise lost the return snapshot.
+
+A proposed retry-only argument checked inside the snapshot coroutine was rejected
+before implementation. Textual's work decorator dispatches an exclusive worker
+and cancels the previous group member before entering the coroutine body. A
+hard-error no-op would therefore cancel an explicit manual retry. The repair
+reads the Screen-owned failure state through the existing dependency pattern
+before dispatch. A real-provider regression holds manual retry open through
+failed mutation settlement, then requires the same Worker to remain uncancelled,
+finish successfully, and complete its provider read. Checking only call counts
+or whether the replacement coroutine fetched would miss the cancellation.
+
+### PR 2427: thread-local close is not cross-thread fixture cleanup
+
+On 2026-09-08, a native-observed Library shell run had 834 passing tests but
+retained 331 extra descriptors. Eleven real Notes fixtures opened cached
+same-file connections on worker threads; `close_all_user_connections()` called
+thread-local close from the teardown thread and did not retire those handles.
+A file-backed export fixture retained the same database family's worker handles.
+Use the existing same-file quiescence barrier only for the fixture's uniquely
+owned temporary database, after app/workers settle. Actual-finalizer regression
+controls must cover setup failure and worker/test failure, retain foreign-path
+usability, and have safety cleanup of their own. The repaired fourteen-case
+native cohort had zero post-test descriptor deltas across 166 observed opens;
+ordinary test success and a current-test-only midpoint sample had not established
+that outcome.
+
+### PR 2427: queued focus restoration can overwrite a successful Back
+
+On 2026-09-09, Notes Back intermittently lost its exact row and scroll even after
+the fixture waited for filtered records. A controlled projection delay proved
+those records preceded the replacement DOM and deferred focus settlement.
+Waiting for both removed that setup race, but a later run still failed. Focus
+stacks then showed Back restoring row n-18 before an older queued automatic
+callback restored the filter and zero scroll. Preserve a newer mounted non-grip
+focus owner at the automatic restoration boundary, and separately test missing
+focus and grip fallback. The deterministic late-callback control failed before
+the guard and passed afterward; a standalone successful Back was not sufficient
+evidence. Keep exact final focus and scroll assertions while fixing readiness
+and ownership independently.
+
+### PR 2427: passing Settings tests retained one-shot Chroma clients
+
+On 2026-09-09, 248 passing Settings tests reported descriptor growth of 262.
+An observation-only terminal snapshot found 82 Chroma SQLite handles and 13
+test-app database handles. Reusing the existing app-owner fixture removed only
+the latter: index-status reads bypassed the app's vector-store owner and created
+their own PersistentClient on every call. Installed Chroma 1.5.8 retains shared
+system references until exact client.close(), even when the Python local falls
+out of scope. Test disposal at the acquisition boundary, including exceptions
+and early returns, and keep another same-path client live to prove cleanup does
+not stop its system. Native all-FD identities also exposed an unlinked test-app
+lock missed by a SQLite-suffix-only scan. A passing suite, missing pathname or
+one empty SQLite snapshot does not establish that every resource was released.
+
+### PR 2427: a rebase can make a controlled timing regression vacuous
+
+On 2026-09-09, upstream correctly removed queued FTS backfill from the ordinary
+boot census's required immediate workers. The rebased delayed-recovery variant
+still passed, but now sampled before its held backfill started and no longer
+tested the bounded-wait repair. An explicit returned-start assertion failed.
+Requiring FTS only inside that controlled child's wait restored the intended
+coverage without changing the ordinary required set. Both boot files passed
+19 tests; removing only the wait loop through an in-memory test mutation failed
+the backfill assertion again. When a rebase changes a test's prerequisite set,
+prove the controlled adverse path is still observed, not merely that the test
+remains green.

@@ -5,6 +5,7 @@ import asyncio
 import dataclasses
 import queue
 import re
+import sqlite3
 import statistics
 import threading
 import time
@@ -25,7 +26,7 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import ConsolidatedCSSApp, app_css_text
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.selection import Selection
@@ -1209,7 +1210,11 @@ class _LibraryEvidenceGates:
                 ),
             )
         app.collections_capture_scope_service = SimpleNamespace(
-            get_library_user_content_evidence=self._sync_call
+            get_library_user_content_evidence=self._sync_call,
+            # The collections controller adopts the app-owned authority
+            # before deciding whether the capture reader is available.
+            # This evidence-only fake intentionally has no active backend.
+            active_authority=None,
         )
 
     def _async_call(self, owner):
@@ -2762,6 +2767,15 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
                 "#library-hub-action-import",
                 "#library-hub-action-new-note",
             )
+            await _wait_for_condition(
+                pilot,
+                lambda: all(
+                    screen.query(selector)
+                    and screen.query_one(selector) in screen._compositor.visible_widgets
+                    for selector in selectors
+                ),
+                message="settled Starter widgets did not reach the compositor",
+            )
             visible_widgets = screen._compositor.visible_widgets
             for selector in selectors:
                 widget = screen.query_one(selector)
@@ -2804,7 +2818,8 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
             # critique #8 row 3 reported (one Tab out of the New-note canvas
             # landed on Home). Tab now wraps inside ``#screen-content``; the
             # nav bar is reached with its own keys (Ctrl+digit / F-keys).
-            assert screen.focused.id == "library-open-chunking-lab"
+            # TASK-32064 moved Chunking Lab into Details, hidden in Starter.
+            assert screen.focused is first_focus
             nav_bar = screen.query_one("MainNavigationBar")
             assert nav_bar not in screen.focused.ancestors
             assert len(screen.query("#library-rail-explore-all")) == 1
@@ -2910,7 +2925,7 @@ async def test_library_real_existing_config_without_lifecycle_defaults_expanded(
 async def test_library_starter_hidden_route_focuses_compact_rail_without_search() -> (
     None
 ):
-    """Starter F6/Escape use Import, then Explore when Import is unavailable."""
+    """Starter F6/Escape enter the active Collections workbench."""
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
     app.library_new_profile_admission = False
@@ -2932,19 +2947,20 @@ async def test_library_starter_hidden_route_focuses_compact_rail_without_search(
             screen.set_focus(None)
             screen.action_focus_next_workbench_pane()
             await pilot.pause()
+            collections_filter = screen.query_one("#library-collections-filter", Input)
+            assert collections_filter.has_focus
+
+            screen.set_focus(None)
+            await pilot.press("escape")
+            await pilot.pause()
             import_button = screen.query_one(
                 f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}", Button
             )
             assert import_button.has_focus
 
-            screen.set_focus(None)
-            await pilot.press("escape")
-            await pilot.pause()
-            assert import_button.has_focus
-
             await import_button.remove()
             screen.set_focus(None)
-            screen.action_focus_next_workbench_pane()
+            await pilot.press("escape")
             await pilot.pause()
             assert screen.query_one("#library-rail-explore-all", Button).has_focus
     finally:
@@ -3088,7 +3104,7 @@ async def test_library_onboarding_back_requires_fresh_empty_evidence_and_focuses
             assert screen._library_selected_row_id == ""
             assert screen._library_footer_shortcuts_for_current_state() == (
                 ("i", "import content"),
-                ("n", "new note"),
+                ("ctrl+n", "new note"),
                 ("F6", "next pane"),
             )
             assert screen.query_one(
@@ -3816,7 +3832,9 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
         matches = list(screen.query(selector))
         if matches:
             await pilot.pause()
-            return matches[0]
+            current = list(screen.query(selector))
+            if current and current[0] is matches[0] and current[0].is_attached:
+                return current[0]
         if time.monotonic() >= deadline:
             break
         await pilot.pause(0.02)
@@ -3927,6 +3945,24 @@ async def _wait_for_condition(
         if time.monotonic() >= deadline:
             break
         await pilot.pause(interval)
+    raise AssertionError(message() if callable(message) else message)
+
+
+async def _wait_for_condition_while_worker_pending(
+    predicate, *, timeout=15.0, message, interval=0.02
+) -> None:
+    """Poll state without asking Textual to drain an intentionally pending worker."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            matched = predicate()
+        except (NoMatches, QueryError):
+            matched = False
+        if matched:
+            return
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(interval)
     raise AssertionError(message() if callable(message) else message)
 
 
@@ -4187,6 +4223,8 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             assert shell.library.styles.width.value == saved_width
             assert shell.library_grip.region.x == shell.library.region.right
 
+            # TASK-32200 restores five-cell grips on every reader. This
+            # width fits Items + Work, but not the saved Library pane too.
             await pilot.resize_terminal(115, 48)
             await _wait_for_condition(
                 pilot,
@@ -4208,9 +4246,11 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             assert shell.library.styles.width.value == 0
             assert shell.items.display
             assert shell.library_grip.display
-            assert shell.library_grip.styles.width.value == 5
+            expected_grip_width = 5
+            assert shell.effective_layout.grip_width == expected_grip_width
+            assert shell.library_grip.styles.width.value == expected_grip_width
             assert shell.items_grip.display
-            assert shell.items_grip.styles.width.value == 5
+            assert shell.items_grip.styles.width.value == expected_grip_width
 
             await pilot.resize_terminal(*LIBRARY_TEST_SIZE)
             await _wait_for_condition(
@@ -4225,8 +4265,8 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             )
             shell = screen.query_one(selector)
 
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         restored = screen.query_one("#library-rail", LibraryRail)
         await _wait_for_condition(
             pilot,
@@ -4460,10 +4500,10 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
         assert rail.display is True
         assert canvas.display is False
 
-        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}").press()
-        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SEARCH}").press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         assert screen.query_one("#library-emergency-return") is bar
-        assert screen._library_entry_canvas_owner().id == "library-collections-reader-shell"
+        assert screen._library_entry_canvas_owner().id == "library-search-rag-panel"
         assert bar.display is True
         assert rail.display is False
         assert canvas.display is True
@@ -4471,11 +4511,6 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
             canvas.region.width
             == screen.query_one("#library-shell-grid").content_region.width
         )
-
-        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_SEARCH}").press()
-        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
-        assert screen.query_one("#library-emergency-return") is bar
-        assert tuple(canvas.children) == (bar, route_host)
 
         await pilot.click("#library-emergency-return")
         await _wait_for_condition(
@@ -4502,7 +4537,6 @@ async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> Non
     host = LibraryProductionCSSHarness(app)
 
     ordinary_rows = (
-        LIBRARY_ROW_BROWSE_COLLECTIONS,
         LIBRARY_ROW_BROWSE_SEARCH,
         LIBRARY_ROW_INGEST_MEDIA,
         LIBRARY_ROW_INGEST_EXPORT,
@@ -4684,7 +4718,7 @@ async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
         assert ("width", "13fr") not in writes
         assert ("min_width", "40") not in writes
 
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
         await _wait_for_condition(
             pilot,
             lambda: screen._library_emergency_stage == "canvas-only",
@@ -5493,7 +5527,6 @@ async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() ->
         landing_width = landing_rail.region.width
         landing_edge = landing_rail.region.right
         ordinary_rows = (
-            LIBRARY_ROW_BROWSE_COLLECTIONS,
             LIBRARY_ROW_BROWSE_SEARCH,
             LIBRARY_ROW_INGEST_MEDIA,
             LIBRARY_ROW_INGEST_EXPORT,
@@ -5591,7 +5624,7 @@ def _assert_task6_production_bounds(screen: LibraryScreen, *panes) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("terminal_width", "expected_rail_width"),
-    ((100, 24), (80, 24), (60, None)),
+    ((100, 29), (80, 29), (60, None)),
 )
 async def test_library_production_width_matrix_graduated_startup_landing(
     terminal_width: int,
@@ -5639,11 +5672,11 @@ async def test_library_production_width_matrix_graduated_startup_landing(
 @pytest.mark.parametrize(
     ("terminal_width", "expected_content_width", "expected_rail_width"),
     (
-        (235, 231, 34),
-        (170, 166, 31),
-        (120, 116, 24),
-        (100, 100, 24),
-        (80, 80, 24),
+        (235, 231, 39),
+        (170, 166, 36),
+        (120, 116, 29),
+        (100, 100, 29),
+        (80, 80, 29),
         (60, 60, None),
     ),
 )
@@ -5744,7 +5777,7 @@ async def test_library_production_width_matrix_adaptive_work_owned(
 
 @pytest.mark.parametrize(
     ("raw_width", "expected_width"),
-    ((1, 24), (99, 48), ("wide", 31), (None, 31)),
+    ((1, 24), (99, 48), ("wide", 36), (None, 36)),
 )
 def test_library_production_width_matrix_normalizes_persisted_custom_widths(
     raw_width: object,
@@ -5799,10 +5832,10 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
         "neutral_items_width",
     ),
     (
-        (235, 231, (False, True), 56),
-        (170, 166, (False, True), 56),
-        (120, 116, (False, True), 56),
-        (100, 100, (False, True), 42),
+        (235, 231, (False, True), 64),
+        (170, 166, (False, True), 64),
+        (120, 116, (False, True), 58),
+        (100, 100, (False, False), 0),
         (80, 80, (False, False), 0),
         (60, 60, (False, False), 0),
     ),
@@ -5886,10 +5919,10 @@ async def test_library_production_width_matrix_custom_preferences(
         screen._sync_library_notes_reader_layout_from_shell(priority="library")
         await pilot.pause()
         priority = adaptive.effective_layout
-        if expected_content_width >= saved_width + 98:
+        if expected_content_width >= saved_width + 108:
             priority_open = (True, True)
             priority_library_width = saved_width
-            priority_items_width = 40
+            priority_items_width = 50
             expected_priority = None
         else:
             priority_open = (True, False)
@@ -6104,24 +6137,31 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
             screen._sync_library_notes_reader_layout_from_shell()
             retry.assert_not_called()
         phases = (
-            (170, (False, True, 0, 56, 100)),
-            (149, (False, True, 0, 56, 79)),
-            (153, (False, True, 0, 56, 83)),
-            (154, (False, True, 0, 56, 84)),
-            (120, (False, True, 0, 56, 50)),
-            (100, (False, True, 0, 42, 48)),
+            (170, (False, True, 0, 64, 92)),
+            (149, (False, True, 0, 64, 71)),
+            (153, (False, True, 0, 64, 75)),
+            (154, (False, True, 0, 64, 76)),
+            (120, (False, True, 0, 58, 48)),
+            # Notes reserves 10 grip cells, 50 Items cells, and 48 Work cells.
+            (108, (False, True, 0, 50, 48)),
+            (107, (False, False, 0, 0, 97)),
+            (100, (False, False, 0, 0, 90)),
             (80, (False, False, 0, 0, 70)),
             (60, (False, False, 0, 0, 50)),
             (64, (False, False, 0, 0, 54)),
             (101, (False, False, 0, 0, 91)),
-            (102, (False, True, 0, 44, 48)),
-            (153, (False, True, 0, 56, 83)),
-            (154, (False, True, 0, 56, 84)),
-            (170, (False, True, 0, 56, 100)),
+            (102, (False, False, 0, 0, 92)),
+            # Reopening requires four extra cells beyond the 108-cell floor.
+            (108, (False, False, 0, 0, 98)),
+            (111, (False, False, 0, 0, 101)),
+            (112, (False, True, 0, 54, 48)),
+            (153, (False, True, 0, 64, 75)),
+            (154, (False, True, 0, 64, 76)),
+            (170, (False, True, 0, 64, 92)),
         )
         with monkeypatch.context() as resize_patches:
             probes = _task6_install_resize_probes(
-                screen, resize_patches, "_request_library_notes_tree_refresh"
+                screen, resize_patches, "_request_library_notes_tree_initial_load"
             )
             for width, expected in phases:
                 await pilot.resize_terminal(width, 48)
@@ -6215,7 +6255,11 @@ async def test_ingest_cta_uses_one_canonical_label_everywhere():
     # Palette entry is canonical.
     from tldw_chatbook.app import LibraryIngestProvider
 
-    assert LibraryIngestProvider.COMMANDS[0][0] == "Library: Import…"
+    assert [
+        label
+        for label, action, _help in LibraryIngestProvider.COMMANDS
+        if action == "open_library_ingest"
+    ] == ["Library: Import…"]
 
     # Rendered: rail-top button and hub action row share the label.
     app = _build_test_app()
@@ -6795,20 +6839,21 @@ async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
             for banned in ("Conversa...", "Flash...", "Collect..."):
                 assert banned not in first_line, (row.id, first_line)
 
-        # ...and the count survives on the longest-titled row. The bounded
-        # fractional rail deliberately uses the semantic short title at this
-        # terminal width rather than widening the entire sidebar.
+        # ...and the count survives on the longest-titled row. The widened
+        # default rail fits its full title; semantic short titles are only
+        # used when the full title and count cannot fit.
         conv = screen.query_one("#library-row-browse-conversations", Button)
         conv_line = conv.label.plain.split("\n")[0]
         assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
-        assert "Chats" in conv_line, f"semantic short title missing: {conv_line!r}"
+        assert conv_line.strip() == "Conversations (2)"
         assert "..." not in conv_line and "…" not in conv_line, (
             f"title fits outright -- no ellipsis allowed: {conv_line!r}"
         )
 
 
 @pytest.mark.asyncio
-async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
+@pytest.mark.parametrize("size", ((100, 30), (170, 48)))
+async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30(size):
     """F-015/F-016: the full 'Search Library…' placeholder fits the box at
     100 cols, and the box carries the app's field treatment (the
     $ds-grid-line frame its sibling filters use) instead of a borderless
@@ -6817,7 +6862,7 @@ async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
 
-    async with host.run_test(size=(100, 30)) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
@@ -6831,6 +6876,33 @@ async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
         # $ds-grid-line ($surface-lighten-1), the app's field frame token --
         # not the near-invisible Textual default border (#191919).
         assert top_color.hex.lower() == "#2d2d2d"
+        clear = screen.query_one("#library-search-clear", Button)
+        assert clear in screen._compositor.visible_widgets
+        assert clear.content_region.width >= cell_len(str(clear.label))
+        assert search.region.right == clear.region.x
+        assert screen.query_one("#library-rail-search-row").content_region.contains_region(
+            clear.region
+        )
+        painted = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in screen._compositor.render_strips()
+        )
+        assert search.placeholder in painted
+        rest_background = search.styles.background
+        rest_width = search.content_region.width
+        search.focus()
+        await pilot.pause()
+        assert search.styles.border.top[1] != top_color
+        assert search.styles.background != rest_background
+        assert search.styles.border.right[0] == ""
+        assert search.content_region.width == rest_width
+        search.value = "retro"
+        await pilot.press("tab")
+        assert clear.has_focus
+        await pilot.press("enter")
+        await pilot.pause()
+        assert search.value == ""
+        assert search.has_focus
 
 
 @pytest.mark.asyncio
@@ -7041,6 +7113,12 @@ async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
 
             prompts_filter = screen.query_one("#library-prompts-filter", Input)
             rail_search = screen.query_one("#library-search-input", Input)
+            screen.query_one(f"#library-prompt-row-{prompt_id}").focus()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.query_one(f"#library-prompt-row-{prompt_id}").has_focus,
+                message="Prompt row did not take focus before the slash shortcut.",
+            )
             assert not prompts_filter.has_focus
             await pilot.press("/")
             await pilot.pause()
@@ -7264,7 +7342,7 @@ async def test_library_shell_conversation_row_switches_selection():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_open_in_console_triggers_handoff():
+async def test_library_shell_use_conversation_as_source_triggers_handoff():
     app = _build_test_app()
     _seed_conversations(
         app,
@@ -7289,9 +7367,16 @@ async def test_library_shell_open_in_console_triggers_handoff():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-conversations").press()
-        await _wait_for_selector(screen, pilot, "#library-conversation-open-console")
+        await _wait_for_selector(screen, pilot, "#library-conversation-use-source")
 
-        screen.query_one("#library-conversation-open-console").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-conversation-use-source", Button
+            ).disabled,
+            message="Conversation source handoff never became ready.",
+        )
+        screen.query_one("#library-conversation-use-source").press()
         await pilot.pause()
         await pilot.pause()
 
@@ -8257,18 +8342,21 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         # that (the pre-Task-7 bug), Run would be enabled here. It must
         # stay blocked because no credential resolves for that provider.
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        # ...and the copy must name the CREDENTIAL, not the provider (PR-T2
-        # review round 3, finding I1). This assertion previously read
-        # `"Select a provider/model" in ...` -- which was the regression:
-        # Task 7 widened this branch to cover "endpoint named, credential
-        # missing", making it the only way a user with a configured
-        # provider reaches the block, and the inherited copy then told them
-        # to select the provider they had already selected and pointed at
-        # Console controls instead of at a key.
+        # TASK-32236 keeps credential recovery actionable through Settings;
+        # environment-variable and TOML paths belong in diagnostic details.
         visible = _visible_text(screen)
         assert "Select a provider/model" not in visible
-        assert "OPENAI_API_KEY" in visible
-        assert "api_settings.openai" in visible
+        assert str(
+            screen.query_one("#library-rag-query-blocked-callout", Static).renderable
+        ) == (
+            "No analysis provider is configured · "
+            "Set one in Settings ▸ Providers & Models."
+        )
+        assert "OPENAI_API_KEY" not in visible
+        assert "api_settings.openai" not in visible
+        settings = screen.query_one("#library-rag-open-provider-settings", Button)
+        assert settings.display
+        assert not settings.disabled
 
 
 @pytest.mark.asyncio
@@ -10120,7 +10208,7 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
                 f"view={screen._media_state.view!r}"
             )
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
-        assert screen._library_media_browse_controller.applied_result is None
+        assert screen._library_media_browse_controller.state.applied_result is None
 
         # task-31272: "‹ Back" is compact-only; this drives the seam it
         # shares with Escape's compact exit.
@@ -10128,14 +10216,14 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_result is not None
-                and not screen._library_media_browse_controller.facet_loading
+                screen._library_media_browse_controller.state.applied_result is not None
+                and not screen._library_media_browse_controller.state.facet_loading
             ),
             message="Deep-link Back never loaded the Media page and facets.",
         )
 
         assert screen._media_state.view == "list"
-        assert screen._library_media_browse_controller.type_options == (
+        assert screen._library_media_browse_controller.state.type_options == (
             "audio",
             "video",
         )
@@ -10980,8 +11068,43 @@ async def _open_media_viewer(screen, pilot):
     """
     screen.query_one("#library-row-browse-media").press()
     await _wait_for_selector(screen, pilot, "#library-media-row-1")
-    screen.query_one("#library-media-row-1").press()
-    await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+    row = screen.query_one("#library-media-row-1")
+    expected_id = str(getattr(row, "media_id", "") or "")
+    row.press()
+    await _wait_for_media_reader_loaded(
+        screen,
+        pilot,
+        expected_id=expected_id,
+    )
+
+
+async def _wait_for_media_reader_loaded(
+    screen,
+    pilot,
+    *,
+    expected_id: str | None = None,
+):
+    """Wait for real Reader detail, not its permanently mounted body shell."""
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._media_state.reader_session.pending_request is None
+            and screen._media_state.reader_session.loaded_id is not None
+            and (
+                expected_id is None
+                or screen._media_state.reader_session.loaded_id == expected_id
+            )
+        ),
+        message=(
+            "Media Reader detail never settled"
+            + (f" for {expected_id}." if expected_id else ".")
+        ),
+    )
+    return await _wait_for_selector(
+        screen,
+        pilot,
+        "#library-media-viewer-title",
+    )
 
 
 async def _open_media_find(screen, pilot):
@@ -11053,15 +11176,25 @@ def _painted_label_column(host, button) -> int:
     return button.region.x + (len(painted) - len(stripped))
 
 
+_LIBRARY_ROW_FOCUS_EDGE = "█"
+
+
 def _row_is_painted_focused(host, row) -> bool:
     """Whether ``row`` really carries the media row focus cue on screen.
 
-    The label carries bold underline; the separate solid focus bar added by
-    task-31983 is not underlined. Inspect the painted content region so that
-    border glyphs do not invalidate the label's focus cue.
+    ``.library-media-row:focus`` paints the task-31983 thick-left edge plus
+    underlined content. The edge is a border cell and does not inherit the
+    content underline, so both parts of the cue are verified independently.
     """
-    cells = _painted_cells(host, row.content_region)
-    return bool(cells) and all(style.underline for _text, style in cells)
+    cells = _painted_cells(host, row.region)
+    content = [
+        (text, style) for text, style in cells if text != _LIBRARY_ROW_FOCUS_EDGE
+    ]
+    return (
+        any(text == _LIBRARY_ROW_FOCUS_EDGE for text, _style in cells)
+        and bool(content)
+        and all(style.underline for _text, style in content)
+    )
 
 
 @pytest.mark.asyncio
@@ -11432,10 +11565,13 @@ async def test_library_shell_media_viewer_inplace_search_preserves_identity_focu
 
         screen_before = screen
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
+        await _submit_content_search_query(screen, pilot, "setup")
+        # Opening the collapsed Find bar is a deliberate viewer-scoped
+        # structural recompose. Capture the persistent document after that
+        # one-time mount; submitting and walking matches must preserve it.
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
         )
-        await _submit_content_search_query(screen, pilot, "setup")
         parse_count_before_navigation = len(markdown_updates)
         next_button = screen.query_one("#library-media-content-search-next", Button)
         previous_button = screen.query_one("#library-media-content-search-prev", Button)
@@ -11649,7 +11785,7 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         # unconditional second recompose parsed all 49 KB again. Windows
         # happened to win the race the other way, which is exactly why this
         # count must be pinned rather than observed.
-        assert markdown_updates == [id(markdown_before)]
+        assert markdown_updates.count(id(markdown_before)) == 1
 
 
 @pytest.mark.asyncio
@@ -11867,7 +12003,7 @@ async def test_library_paged_empty_recovery_is_painted_and_keyboard_reachable(
             await pilot.pause()
             if row_id == LIBRARY_ROW_BROWSE_MEDIA:
                 assert (
-                    screen._library_media_browse_controller.applied_scope.media_type
+                    screen._library_media_browse_controller.state.applied_scope.media_type
                     == "video"
                 )
             elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
@@ -11902,7 +12038,14 @@ async def test_library_paged_empty_recovery_is_painted_and_keyboard_reachable(
             for selector in absent_selectors:
                 assert not screen.query(selector)
             painted = "\n".join(_painted_rows(screen))
-            assert "0 of 0" not in painted
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                assert (
+                    str(screen.query_one("#library-media-scope-line", Static).content)
+                    == "Media · 0 of 0 · all types · sort: Newest"
+                )
+                assert "Item 0-0 of 0" not in painted
+            else:
+                assert "0 of 0" not in painted
             assert "Page 1 of 1" not in painted
             assert "Nothing here to select yet." not in painted
 
@@ -12093,9 +12236,11 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
         viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
-        markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
 
         await _submit_content_search_query(screen, pilot, "budget")
+        # Find's collapsed -> mounted transition may rebuild viewer children;
+        # match navigation after the bar is open must not rebuild the document.
+        markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
         controls = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -12559,7 +12704,7 @@ async def test_library_media_exact_page_ignores_gated_failing_broad_snapshot(
                 pilot,
                 lambda: (
                     entered.is_set()
-                    and screen._library_media_browse_controller.applied_result
+                    and screen._library_media_browse_controller.state.applied_result
                     is not None
                 ),
                 message="Exact Media page did not apply ahead of broad snapshot.",
@@ -12597,8 +12742,8 @@ async def test_library_media_exact_page_owns_rows_not_broad_snapshot() -> None:
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_result is not None
-                and not screen._library_media_browse_controller.facet_loading
+                screen._library_media_browse_controller.state.applied_result is not None
+                and not screen._library_media_browse_controller.state.facet_loading
             ),
             message="Exact Media page and complete facets never settled.",
         )
@@ -12645,8 +12790,8 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_result is not None
-                and controller.applied_result.total == 45
+                controller.state.applied_result is not None
+                and controller.state.applied_result.total == 45
                 and len(screen.query(".library-media-row")) == 20
             ),
             message="Exact first Media page never reached the mounted canvas.",
@@ -12666,7 +12811,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
                 f"host={screen.query_one('#library-canvas').region!r}"
             ),
         )
-        assert canvas.pager == controller.pager
+        assert canvas.pager == controller.state.pager
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
             "Media (45)"
         )
@@ -12681,8 +12826,8 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         assert pager in host.screen._compositor.visible_widgets
         previous = screen.query_one("#library-media-previous", Button)
         assert previous.disabled is True
-        assert str(previous.tooltip) == controller.pager.previous_reason
-        assert controller.pager.previous_reason in str(
+        assert str(previous.tooltip) == controller.state.pager.previous_reason
+        assert controller.state.pager.previous_reason in str(
             screen.query_one("#library-media-disabled-reason", Static).renderable
         )
 
@@ -12703,7 +12848,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_scope == MediaBrowseScope(page=2)
+                controller.state.applied_scope == MediaBrowseScope(page=2)
                 and str(
                     screen.query_one("#library-media-page-status", Static).renderable
                 )
@@ -12722,7 +12867,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_scope == MediaBrowseScope(page=3)
+                controller.state.applied_scope == MediaBrowseScope(page=3)
                 and str(
                     screen.query_one("#library-media-page-status", Static).renderable
                 )
@@ -12739,7 +12884,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         assert len(screen.query(".library-media-row")) == 5
         next_page = screen.query_one("#library-media-next", Button)
         assert next_page.disabled is True
-        assert str(next_page.tooltip) == controller.pager.next_reason
+        assert str(next_page.tooltip) == controller.state.pager.next_reason
 
 
 @pytest.mark.asyncio
@@ -12759,13 +12904,17 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.error_copy
+                controller.state.error_copy
                 and len(screen.query("#library-media-retry")) == 1
                 # task-31632: the one Retry now mounts INSIDE the failure
                 # callout, which composes before the pager -- so the Retry
                 # no longer implies the pager's own children are mounted,
                 # and the page-status read below raced the mount.
                 and bool(screen.query("#library-media-page-status"))
+                # Facets can still replace these children after they mount.
+                and not controller.state.facet_loading
+                and not screen.query_one("#library-media-canvas")._recompose_required
+                and screen.query_one("#library-media-retry", Button).region.area > 0
             ),
             message="Initial Media error never exposed one Retry action.",
         )
@@ -12781,24 +12930,123 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
 
         retry = screen.query_one("#library-media-retry", Button)
         retry.focus()
-        retry.press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_result is not None
-                and controller.applied_result.total == 2
+                getattr(screen.focused, "id", None) == "library-media-retry"
+                and not screen._library_pending_list_entry_focus
+            ),
+            message="Mounted Retry did not take focus from initial entry.",
+        )
+        screen.query_one("#library-media-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.applied_result is not None
+                and controller.state.applied_result.total == 2
                 and not screen.query("#library-media-retry")
                 and getattr(screen.focused, "id", None) == "library-media-type-filter"
             ),
             message=lambda: (
                 "Media Retry never recovered to a bounded focus target; "
-                f"focused={getattr(screen.focused, 'id', None)!r}."
+                f"focused={getattr(screen.focused, 'id', None)!r}; "
+                f"total={getattr(controller.state.applied_result, 'total', None)!r}; "
+                f"retry_count={len(screen.query('#library-media-retry'))}; "
+                f"error={bool(controller.state.error_copy)}."
             ),
         )
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
             "Media (2)"
         )
-        screen._focus_library_media_page_control("#library-media-next")
+        screen._media_controller._focus_library_media_page_control("#library-media-next")
+        assert getattr(screen.focused, "id", None) == "library-media-type-filter"
+
+
+@pytest.mark.parametrize("invalidation", ["disarm", "superseded"])
+@pytest.mark.asyncio
+async def test_stale_media_entry_callback_cannot_steal_recovered_retry_focus(
+    monkeypatch: pytest.MonkeyPatch, invalidation: str,
+) -> None:
+    """A delayed initial-entry callback cannot reclaim newer Retry focus.
+
+    Args:
+        monkeypatch: Hold only scheduled entry callbacks until explicit release.
+        invalidation: Whether the old entry is disarmed or superseded by a new arm.
+    """
+    held = []
+    original = LibraryScreen.call_after_refresh
+
+    def hold_entry_callback(screen, callback, *args, **kwargs):
+        if getattr(callback, "__name__", None) in {
+            "_focus_library_list_entry", "_focus_library_list_entry_if_current",
+        }:
+            held.append((callback, args, kwargs))
+            return True
+        return original(screen, callback, *args, **kwargs)
+
+    monkeypatch.setattr(LibraryScreen, "call_after_refresh", hold_entry_callback)
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    app.media_reading_scope_service = FailingFirstLibraryMediaScopeService(
+        _two_media_items()
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        controller = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.error_copy
+                and bool(screen.query("#library-media-retry"))
+                and bool(screen.query("#library-media-page-status"))
+            ),
+            message="Initial Media failure did not expose Retry.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not controller.state.facet_loading
+                and not screen.query_one("#library-media-canvas")._recompose_required
+                and screen.query_one("#library-media-retry", Button).region.area > 0
+            ),
+            message="Initial failure and facet projections did not settle.",
+        )
+        assert held, "Initial entry did not schedule a focus callback."
+        stale_callbacks = tuple(held)
+        retry = screen.query_one("#library-media-retry", Button)
+        retry.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                getattr(screen.focused, "id", None) == "library-media-retry"
+                and not screen._library_pending_list_entry_focus
+            ),
+            message=lambda: (
+                "Retry did not take focus from the initial-entry request; "
+                f"focus={getattr(screen.focused, 'id', None)!r}; "
+                f"pending={screen._library_pending_list_entry_focus}."
+            ),
+        )
+        screen.query_one("#library-media-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.applied_result is not None
+                and controller.state.applied_result.total == 2
+                and not screen.query("#library-media-retry")
+                and getattr(screen.focused, "id", None) == "library-media-type-filter"
+                and not screen._library_pending_list_entry_focus
+            ),
+            message="Retry did not recover to the filter and disarm entry focus.",
+        )
+        if invalidation == "superseded":
+            screen._arm_library_list_entry_focus()
+            assert screen._library_pending_list_entry_focus
+        for callback, args, kwargs in stale_callbacks:
+            callback(*args, **kwargs)
         assert getattr(screen.focused, "id", None) == "library-media-type-filter"
 
 
@@ -12827,8 +13075,8 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                 pilot,
                 lambda: (
                     service.page_entered.is_set()
-                    and controller.loading
-                    and controller.type_options == ("ALL", "All", "all")
+                    and controller.state.loading
+                    and controller.state.type_options == ("ALL", "All", "all")
                 ),
                 message="Complete Media facets did not settle ahead of page 1.",
             )
@@ -12852,13 +13100,13 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                 await _wait_for_condition(
                     pilot,
                     lambda: (
-                        bool(controller.error_copy)
+                        bool(controller.state.error_copy)
                         and bool(screen.query("#library-media-type-filter"))
                     ),
                     message="Initial page failure never reached recovery state.",
                 )
 
-            requested_before = controller.requested_scope
+            requested_before = controller.state.requested_scope
             opener = screen.query_one("#library-media-type-filter", Button)
             opener.press()
             chooser = await _wait_for_selector(
@@ -12879,14 +13127,14 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
             chooser.highlighted = selected_index
             chooser.focus()
             await pilot.pause()
-            assert controller.requested_scope == requested_before
+            assert controller.state.requested_scope == requested_before
             assert len(service.search_calls) == 1
 
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.requested_scope
+                    controller.state.requested_scope
                     == MediaBrowseScope(media_type=requested_type)
                     and len(service.search_calls) == 2
                     and not screen.query("#library-media-type-choices")
@@ -12930,18 +13178,25 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_result is not None
+                    controller.state.applied_result is not None
                     and len(screen.query(".library-media-row")) == 20
                 ),
                 message="Initial retained Media page never rendered.",
             )
 
-            screen.query_one("#library-media-next", Button).press()
+            next_page = await _wait_for_widget_state(
+                screen,
+                pilot,
+                "#library-media-next",
+                lambda button: not button.disabled,
+                what="Initial Media Next control never settled",
+            )
+            next_page.press()
             await _wait_for_condition(
                 pilot,
                 lambda: (
                     service.page_two_entered.is_set()
-                    and controller.loading
+                    and controller.state.loading
                     and len(screen.query(".library-media-row")) == 20
                     and screen.query_one("#library-media-previous", Button).disabled
                     and screen.query_one("#library-media-next", Button).disabled
@@ -12956,7 +13211,7 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    bool(controller.error_copy)
+                    bool(controller.state.error_copy)
                     and len(screen.query("#library-media-retry")) == 1
                     # task-31632: the callout (and its Retry) composes before
                     # the row scroll; wait for the retained rows too.
@@ -12993,7 +13248,7 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.applied_result is not None
+                controller.state.applied_result is not None
                 and len(screen.query(".library-media-row")) == 20
             ),
             message="Initial Media page never rendered.",
@@ -13005,14 +13260,14 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.freshness == "stale"
+                controller.state.freshness == "stale"
                 and bool(screen.query("#library-media-retry"))
                 and bool(screen.query("#library-media-bulk-delete-undo"))
             ),
             message="External double shrink never rendered stale recovery state.",
         )
         stale_reason = "List changed while paging; retry to load a current page."
-        assert controller.stale_copy == stale_reason
+        assert controller.state.stale_copy == stale_reason
         assert not screen.query_one("#library-media-type-filter", Button).disabled
         assert not screen.query_one("#library-media-retry", Button).disabled
 
@@ -13102,8 +13357,8 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_scope == MediaBrowseScope()
-                    and bool(controller.type_options)
+                    controller.state.applied_scope == MediaBrowseScope()
+                    and bool(controller.state.type_options)
                     and bool(screen.query("#library-media-next"))
                 ),
                 message="Initial Media page and facets never settled.",
@@ -13112,7 +13367,7 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_scope == MediaBrowseScope(page=2)
+                    controller.state.applied_scope == MediaBrowseScope(page=2)
                     and len(screen.query(".library-media-row")) == 5
                 ),
                 message="Media page 2 never applied.",
@@ -13172,15 +13427,15 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 assert action.disabled, selector
                 assert str(action.label).startswith("○"), selector
                 assert str(action.tooltip) == reason, selector
-            assert controller.requested_scope == MediaBrowseScope(page=2)
-            assert controller.applied_scope == MediaBrowseScope(page=2)
+            assert controller.state.requested_scope == MediaBrowseScope(page=2)
+            assert controller.state.applied_scope == MediaBrowseScope(page=2)
 
             service.delete_release.set()
             await _wait_for_condition(
                 pilot,
                 lambda: (
                     not screen._media_state.bulk_delete_in_flight
-                    and controller.freshness == ("stale" if refresh_fails else "fresh")
+                    and controller.state.freshness == ("stale" if refresh_fails else "fresh")
                     and len(service.search_calls) == initial_searches + 1
                     and len(service.type_calls) == initial_facets + 1
                     and (
@@ -13192,14 +13447,14 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
 
             assert service.delete_calls[-1]["media_id"] == 5
             assert service.search_calls[-1]["offset"] == 20
-            assert controller.type_options == ("video",)
+            assert controller.state.type_options == ("video",)
             if refresh_fails:
                 # task-31220: the post-mutation refresh failed, and the copy
                 # says so instead of repainting the unchanged "Media changed"
                 # line that made recovery read as inert. Rows stay openable.
                 # task-31944: the mapped fallback reason, not the
                 # exception class name the reader could not act on.
-                assert controller.stale_copy == (
+                assert controller.state.stale_copy == (
                     "Couldn't retry · an unexpected error"
                 )
                 assert not screen.query_one(
@@ -13212,12 +13467,12 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 screen.query_one("#library-media-retry", Button).press()
                 await _wait_for_condition(
                     pilot,
-                    lambda: controller.freshness == "fresh",
+                    lambda: controller.state.freshness == "fresh",
                     message="Retry never cleared committed mutation staleness.",
                 )
-            assert controller.applied_scope == MediaBrowseScope(page=2)
-            assert controller.applied_result is not None
-            assert controller.applied_result.total == 24
+            assert controller.state.applied_scope == MediaBrowseScope(page=2)
+            assert controller.state.applied_result is not None
+            assert controller.state.applied_result.total == 24
     finally:
         service.delete_release.set()
 
@@ -13245,7 +13500,7 @@ async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -
         controller = screen._library_media_browse_controller
         await _wait_for_condition(
             pilot,
-            lambda: controller.type_options == ("video",),
+            lambda: controller.state.type_options == ("video",),
             message="Initial Media facet never settled.",
         )
 
@@ -13264,7 +13519,7 @@ async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -
 
         await _wait_for_condition(
             pilot,
-            lambda: controller.type_options == ("audio", "video"),
+            lambda: controller.state.type_options == ("audio", "video"),
             message="Restored Media type never reappeared in complete facets.",
         )
 
@@ -13289,8 +13544,8 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
                 message="Initial Media page/facet reads never reached their gates.",
             )
             controller = screen._library_media_browse_controller
-            assert controller.loading is True
-            assert controller.applied_result is None
+            assert controller.state.loading is True
+            assert controller.state.applied_result is None
             assert screen._build_library_media_state().rows == ()
 
             screen._request_library_media_type("audio", focus_identity=None)
@@ -13298,8 +13553,8 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    controller.applied_scope == MediaBrowseScope(media_type="audio")
-                    and controller.type_options == ("audio", "video")
+                    controller.state.applied_scope == MediaBrowseScope(media_type="audio")
+                    and controller.state.type_options == ("audio", "video")
                 ),
                 message="Newer Media page/facet generations never applied.",
             )
@@ -13308,8 +13563,8 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
             await pilot.pause()
             await pilot.pause()
 
-            assert controller.applied_scope == MediaBrowseScope(media_type="audio")
-            assert controller.type_options == ("audio", "video")
+            assert controller.state.applied_scope == MediaBrowseScope(media_type="audio")
+            assert controller.state.type_options == ("audio", "video")
     finally:
         service.page_release.set()
         service.facet_release.set()
@@ -13336,13 +13591,13 @@ async def test_library_media_unmount_fences_gated_reads_before_await() -> None:
             )
             old_controller = screen._library_media_browse_controller
             await screen.on_unmount()
-            assert old_controller.loading is False
+            assert old_controller.state.loading is False
             service.page_release.set()
             service.facet_release.set()
             await pilot.pause()
             await pilot.pause()
-            assert old_controller.applied_result is None
-            assert old_controller.type_options == ()
+            assert old_controller.state.applied_result is None
+            assert old_controller.state.type_options == ()
             assert (
                 LibraryScreen(app)._library_media_browse_controller
                 is not old_controller
@@ -13370,8 +13625,8 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_browse_controller.applied_result is not None
-                    and not screen._library_media_browse_controller.facet_loading
+                    screen._library_media_browse_controller.state.applied_result is not None
+                    and not screen._library_media_browse_controller.state.facet_loading
                 ),
                 message="Initial Media page/facets never settled.",
             )
@@ -13404,9 +13659,9 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
             await pilot.pause()
 
             assert "local:media:1" not in {
-                item["id"] for item in controller.retained_items
+                item["id"] for item in controller.state.retained_items
             }
-            assert controller.freshness == "stale"
+            assert controller.state.freshness == "stale"
             assert len(service.search_calls) == initial_searches
             assert len(service.type_calls) == initial_facets
             assert len(sync_calls) == initial_syncs
@@ -13432,20 +13687,20 @@ def test_library_media_applied_scope_restore_is_strict_and_transient_free() -> N
     )
 
     controller = screen._library_media_browse_controller
-    assert controller.requested_scope == MediaBrowseScope(
+    assert controller.state.requested_scope == MediaBrowseScope(
         query="needle", media_type="All", sort_by="title_asc", page=3
     )
-    assert controller.applied_result is None
-    assert controller.retained_items == ()
-    assert controller.loading is False
-    assert controller.error_copy == ""
+    assert controller.state.applied_result is None
+    assert controller.state.retained_items == ()
+    assert controller.state.loading is False
+    assert controller.state.error_copy == ""
 
     invalid = LibraryScreen(app)
     invalid.restore_state(
         {"library_media_scope": {"query": 7, "media_type": [], "page": True}}
     )
     assert (
-        invalid._library_media_browse_controller.requested_scope == MediaBrowseScope()
+        invalid._library_media_browse_controller.state.requested_scope == MediaBrowseScope()
     )
 
 
@@ -13467,7 +13722,7 @@ def test_library_media_restore_normalizes_only_invalid_page(page: object) -> Non
         }
     )
 
-    assert screen._library_media_browse_controller.requested_scope == MediaBrowseScope(
+    assert screen._library_media_browse_controller.state.requested_scope == MediaBrowseScope(
         query="needle",
         media_type="All",
         sort_by="title_asc",
@@ -13514,7 +13769,7 @@ async def test_library_media_mounted_type_change_clears_page_selection() -> None
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_browse_controller.applied_scope
+                screen._library_media_browse_controller.state.applied_scope
                 == MediaBrowseScope(media_type="audio")
             ),
             message="Media type scope never applied.",
@@ -13543,7 +13798,7 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
 ) -> None:
     screen = LibraryScreen(_build_test_app())
     screen._media_state.type_filter = initial
-    screen._library_media_browse_controller.type_options = ("All", "video")
+    screen._library_media_browse_controller.state.type_options = ("All", "video")
     requested: list[str | None] = []
     screen._request_library_media_type = lambda value, **_kwargs: requested.append(
         value
@@ -13752,6 +14007,7 @@ async def test_library_conversations_next_loads_second_service_page():
             "query": None,
             "limit": 20,
             "offset": 20,
+            "archive_scope": "active",
         }
         assert len(screen.query(".library-conversation-row")) == 20
         assert str(
@@ -13869,7 +14125,10 @@ async def test_library_conversations_reentry_preserves_applied_page_and_query():
         assert screen.query_one("#library-conversations-filter", Input).value == (
             "Conversation"
         )
-        assert screen.query_one("#library-conversations-next", Button).disabled is False
+        next_button = await _wait_for_selector(
+            screen, pilot, "#library-conversations-next"
+        )
+        assert next_button.disabled is False
 
 
 @pytest.mark.asyncio
@@ -14511,6 +14770,13 @@ async def test_library_conversation_disabled_reason_stale_actions_and_notice(siz
     """Stale rows are read-only while filter and mounted Retry recover them."""
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(25))
+    # Keep workspace eligibility independent from the stale browse authority.
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    registry.set_active_workspace("workspace-a")
+    registry.link_membership(
+        "workspace-a", item_type="conversation", item_id="chat-001"
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=size) as pilot:
@@ -16774,7 +17040,9 @@ async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes(
             pilot,
             lambda: screen._library_source_load_failure() is None
             and len(screen.query("#library-canvas-error")) == 1
-            and isinstance(screen.query_one("#library-canvas-error"), Static),
+            and isinstance(screen.query_one("#library-canvas-error"), Static)
+            and screen.query_one("#library-canvas-error").region.width > 0
+            and screen.query_one("#library-canvas-error").region.height > 0,
             message="The denied snapshot never remounted the bare error surface.",
         )
         node = screen.query_one("#library-canvas-error", Static)
@@ -17045,7 +17313,7 @@ def test_library_snapshot_carry_preserves_selection_without_exceeding_page_size(
     screen._selected_conversation_id = "chat-selected"
     screen._local_source_records = {"conversations": (selected,)}
 
-    merged = screen._carry_selected_conversation_into_snapshot(
+    merged = screen._conversations_controller._carry_selected_conversation_into_snapshot(
         {"conversations": incoming}
     )
 
@@ -18003,10 +18271,18 @@ async def test_library_shell_note_id_deeplink_opens_note_editor():
 
     host = LibraryHarness(app, screen=screen)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=LIBRARY_TEST_SIZE):
         screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await _wait_for_condition_while_worker_pending(
+            lambda: getattr(screen, "_library_loaded", False)
+            and bool(screen.query("#library-rail")),
+            message="Library shell never mounted during the note deep link.",
+        )
+        await _wait_for_condition_while_worker_pending(
+            lambda: bool(screen.query("#library-note-title")),
+            timeout=30.0,
+            message="Deep-linked note editor never mounted.",
+        )
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         assert screen._notes_state.selected_note_id == "n-1"
@@ -18244,14 +18520,17 @@ def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
     task-1712 fix for this same bug class on ``#settings-category-list``.
     """
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
-    for css_path in (
-        root / "components" / "_agentic_terminal.tcss",
-        root / "tldw_cli_modular.tcss",
+    for source, css in (
+        (
+            root / "components" / "_agentic_terminal.tcss",
+            (root / "components" / "_agentic_terminal.tcss").read_text(),
+        ),
+        ("generated app stylesheets", app_css_text()),
     ):
-        body = _css_rule_body(css_path.read_text(), "#library-rail")
-        assert "overflow-y: auto" in body, css_path
-        assert "scrollbar-background: $ds-surface-panel" in body, css_path
-        assert "scrollbar-color: $ds-text-muted" in body, css_path
+        body = _css_rule_body(css, "#library-rail")
+        assert "overflow-y: auto" in body, source
+        assert "scrollbar-background: $ds-surface-panel" in body, source
+        assert "scrollbar-color: $ds-text-muted" in body, source
 
 
 @pytest.mark.asyncio
@@ -18951,6 +19230,7 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
             "#library-notes-sort",
             "#library-notes-select-toggle",
         )
+        assert screen.query_one("#library-notes-sort", Button).disabled is False
         transfer_selectors = (
             "#library-notes-add-from-files",
             "#library-notes-export",
@@ -19566,8 +19846,19 @@ async def test_library_note_coordinator_pending_detail_keeps_back_action():
                 detail_service.started.is_set,
                 message="Note detail never reached its gate.",
             )
-            (await _wait_for_selector(screen, pilot, "#library-note-back")).press()
-            await _wait_for_selector(screen, pilot, "#library-notes-list")
+            await _wait_for_condition_while_worker_pending(
+                lambda: bool(screen.query("#library-note-back")),
+                message="Back did not mount while note detail was pending.",
+            )
+            screen.query_one("#library-note-back", Button).press()
+            await _wait_for_condition_while_worker_pending(
+                lambda: (
+                    screen._notes_state.view == "list"
+                    and screen._notes_state.selected_note_id == ""
+                    and screen._library_note_session.snapshot is None
+                ),
+                message="Back did not close the pending note-detail session.",
+            )
         finally:
             detail_service.release.set()
 
@@ -19595,9 +19886,19 @@ async def test_library_note_coordinator_pending_load_keeps_back_and_discards_lat
                 keywords_service.started.is_set,
                 message="Keyword enrichment never reached its gate.",
             )
-            back = await _wait_for_selector(screen, pilot, "#library-note-back")
-            back.press()
-            await _wait_for_selector(screen, pilot, "#library-notes-list")
+            await _wait_for_condition_while_worker_pending(
+                lambda: bool(screen.query("#library-note-back")),
+                message="Back did not mount while keywords were pending.",
+            )
+            screen.query_one("#library-note-back", Button).press()
+            await _wait_for_condition_while_worker_pending(
+                lambda: (
+                    screen._notes_state.view == "list"
+                    and screen._notes_state.selected_note_id == ""
+                    and screen._library_note_session.snapshot is None
+                ),
+                message="Back did not close the keyword-enrichment session.",
+            )
         finally:
             keywords_service.release.set()
 
@@ -20426,6 +20727,8 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
                 else note
                 for note in self.notes
             )
+            if isinstance(result, dict):
+                result = {**result, "last_modified": stamp}
         return result
 
 
@@ -20939,7 +21242,10 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
         # No spurious self-conflict: nobody else touched the note, so the
         # flush must not have raced its own save against the autosave with a
         # stale version.
-        assert not screen.query("#library-note-conflict-overwrite"), (
+        # Back may publish list state before removing the retained editor DOM.
+        assert not any(
+            region.display for region in screen.query("#library-note-conflict-region")
+        ), (
             "A spurious self-conflict was raised even though nobody else "
             "touched the note."
         )
@@ -22842,23 +23148,21 @@ async def test_library_shell_note_use_in_console_without_open_note_notifies():
 def test_library_note_css_bounds_editor_body_and_mutes_meta():
     """Generated-CSS presence check (house pattern: see
     ``test_library_source_actions_use_console_text_control_style``) --
-    the note editor's ``TextArea`` must never be left at Textual's default
-    ``height: 1fr`` inside the scrolling Library canvas, and the meta line
-    must use the same muted tone as the media viewer's.
+    the note editor's ``TextArea`` fills its editor region with a six-row
+    floor rather than the retired twenty-row ceiling, and the meta line
+    uses the same muted tone as the media viewer's.
     """
     source_css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
         encoding="utf-8"
     )
-    bundled_css = Path("tldw_chatbook/css/tldw_cli_modular.tcss").read_text(
-        encoding="utf-8"
-    )
+    bundled_css = app_css_text()
     for css in (source_css, bundled_css):
         assert "#library-note-body {" in css
         body_block = css[css.index("#library-note-body {") :]
         body_block = body_block[: body_block.index("}")]
-        assert "height: auto;" in body_block
-        assert "min-height: 12;" in body_block
-        assert "max-height: 20;" in body_block
+        assert "height: 1fr;" in body_block
+        assert "min-height: 6;" in body_block
+        assert "max-height: 20;" not in body_block
 
         assert "#library-note-meta {" in css
         meta_block = css[css.index("#library-note-meta {") :]
@@ -23277,7 +23581,8 @@ async def test_library_shell_create_blank_note_lands_in_editor():
         assert "(3)" in rail_label
 
 
-def _real_notes_scope_service(tmp_path):
+@pytest.fixture
+def real_notes_scope_service(tmp_path):
     """A REAL ``NotesScopeService`` over a real (temp-file) ChaChaNotes DB.
 
     Mirrors ``Tests/Notes/test_notes_scope_service_library_canvas.py``'s
@@ -23289,6 +23594,7 @@ def _real_notes_scope_service(tmp_path):
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
     from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 
     db_dir = tmp_path / "chachanotes"
@@ -23296,21 +23602,110 @@ def _real_notes_scope_service(tmp_path):
     global_db = CharactersRAGDB(
         str(db_dir / "unified.db"), client_id="library-p2-t3-app"
     )
-    interop = NotesInteropService(
-        base_db_directory=db_dir,
-        api_client_id="library-p2-t3-client",
-        global_db_to_use=global_db,
-    )
-    return NotesScopeService(
-        local_notes_service=interop,
-        server_service=None,
-        policy_enforcer=None,
-    )
+    try:
+        interop = NotesInteropService(
+            base_db_directory=db_dir,
+            api_client_id="library-p2-t3-client",
+            global_db_to_use=global_db,
+        )
+        yield NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+            policy_enforcer=None,
+            folder_repository=LocalNoteFolderRepository(global_db),
+        )
+    finally:
+        with global_db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert global_db.registered_connection_count() == 0
+
+
+def test_real_notes_scope_service_fixture_quiesces_setup_failure(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+
+    databases = []
+    original_init = CharactersRAGDB.__init__
+
+    def capture_database(database, *args, **kwargs):
+        original_init(database, *args, **kwargs)
+        databases.append(database)
+
+    def fail_interop(*_args, **_kwargs):
+        raise RuntimeError("forced notes interop setup failure")
+
+    monkeypatch.setattr(CharactersRAGDB, "__init__", capture_database)
+    monkeypatch.setattr(NotesInteropService, "__init__", fail_interop)
+
+    fixture = real_notes_scope_service.__wrapped__(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="forced notes interop setup failure"):
+            next(fixture)
+
+        assert len(databases) == 1
+        assert databases[0].registered_connection_count() == 0
+    finally:
+        try:
+            fixture.close()
+        finally:
+            for database in databases:
+                with database.quiesce_connections(timeout_seconds=2.0):
+                    pass
+
+
+def test_real_notes_scope_service_fixture_quiesces_worker_after_test_failure(
+    tmp_path,
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    fixture = real_notes_scope_service.__wrapped__(tmp_path)
+    owner = None
+    foreign = None
+    worker_connection = None
+    try:
+        service = next(fixture)
+        owner = service.local_notes_service.unified_db_template
+        foreign = CharactersRAGDB(tmp_path / "foreign.db", client_id="foreign")
+        foreign_connection = foreign.get_connection()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            worker_connection = executor.submit(
+                lambda: service.local_notes_service.notes_db(
+                    "default_user"
+                ).get_connection()
+            ).result(timeout=2.0)
+        service.local_notes_service.close_all_user_connections()
+        assert owner.registered_connection_count() > 0
+        assert worker_connection.execute("SELECT 1").fetchone()[0] == 1
+
+        primary = RuntimeError("forced test failure")
+        with pytest.raises(RuntimeError, match="forced test failure") as caught:
+            try:
+                raise primary
+            finally:
+                fixture.close()
+        assert caught.value is primary
+        assert owner.registered_connection_count() == 0
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            worker_connection.execute("SELECT 1")
+        assert foreign_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        try:
+            fixture.close()
+        finally:
+            try:
+                if owner is not None:
+                    with owner.quiesce_connections(timeout_seconds=2.0):
+                        pass
+            finally:
+                if foreign is not None:
+                    with foreign.quiesce_connections(timeout_seconds=2.0):
+                        pass
 
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """LIB-14 (AC#5b, real DB): "Blank note" still commits a row immediately
     (create-on-first-edit was rejected as the larger-diff option -- see
@@ -23319,7 +23714,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
     a permanent literal "Untitled" row behind."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23371,7 +23766,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """P0 regression: Library > Notes > New > Blank note > Escape must NOT
     crash the app.
@@ -23421,7 +23816,7 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23483,14 +23878,14 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """Contrast case for the GC test above: once the user types anything,
     leaving via Back must save (not GC) the note -- exactly one row
     remains in the real DB, carrying the typed content."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23527,7 +23922,7 @@ async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_db(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """LIB-14 review round 1 fix: typing into a Blank note and then deleting
     everything back to empty -- title AND body both end up blank -- must
@@ -23539,7 +23934,7 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
     back at 0 after Back, never sticking at 1."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -23604,8 +23999,153 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mount_id", "missing_id"),
+    [
+        ("library-note-work-pane", "library-note-title"),
+        ("library-note-context-keywords-row", "library-note-context-keywords"),
+        ("library-note-mode-controls", "library-note-edit"),
+        ("library-note-wide-utilities", "library-note-keywords"),
+        ("library-note-delete-actions", "library-note-delete-confirm"),
+    ],
+)
+async def test_library_note_backlinks_during_editor_mount_keep_latest_presentation(
+    real_notes_scope_service, monkeypatch, mount_id, missing_id
+):
+    """Backlinks can finish before either the whole or a nested subtree mounts."""
+    from textual.widget import Widget
+
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+    from tldw_chatbook.Widgets.Library.library_note_work_pane import (
+        LibraryNoteWorkPane,
+    )
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = real_notes_scope_service
+    note_id = await real_notes_scope_service.save_note(
+        scope="local_note",
+        title="Mounting note",
+        content="Original body",
+        user_id="default_user",
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    backlinks_done = asyncio.Event()
+    painted = asyncio.Event()
+    original_mount = Widget.mount_all
+    original_backlinks = LibraryNotesController._load_library_note_backlinks
+    original_post_compose = LibraryNoteWorkPane._apply_post_compose_state
+    pane = None
+    latest = None
+    ordering = []
+
+    async def gated_mount(self, widgets, **kwargs):
+        nonlocal pane
+        if (
+            self.id == mount_id
+            and not entered.is_set()
+        ):
+            candidate = screen.query_one(LibraryNoteWorkPane)
+            if candidate.mode != "editor" or candidate.presentation_state is None:
+                return await original_mount(self, widgets, **kwargs)
+            pane = candidate
+            assert self is pane or pane in self.ancestors
+            assert pane.is_mounted
+            assert not pane.query(f"#{missing_id}")
+            ordering.append("mount held")
+            entered.set()
+            await asyncio.wait_for(release.wait(), 5)
+        return await original_mount(self, widgets, **kwargs)
+
+    async def gated_backlinks(self, requested_id):
+        assert requested_id == note_id
+        await asyncio.wait_for(entered.wait(), 5)
+        try:
+            if mount_id != "library-note-work-pane":
+                async with asyncio.timeout(5):
+                    while not pane.query("#library-note-title"):
+                        await asyncio.sleep(0.001)
+                assert pane.query("#library-note-title")
+                assert any(not child.is_mounted for child in pane.children)
+            await original_backlinks(self, requested_id)
+            assert not pane.query(f"#{missing_id}")
+            ordering.append("backlinks projected")
+        finally:
+            backlinks_done.set()
+
+    def observed_post_compose(self):
+        original_post_compose(self)
+        if self is pane and latest is not None and self.presentation_state is latest:
+            assert (
+                str(self.query_one("#library-note-meta", Static).renderable)
+                == latest.metadata_line
+            )
+            if not painted.is_set():
+                ordering.append("latest painted")
+                painted.set()
+
+    monkeypatch.setattr(Widget, "mount_all", gated_mount)
+    monkeypatch.setattr(
+        LibraryNotesController, "_load_library_note_backlinks", gated_backlinks
+    )
+    monkeypatch.setattr(
+        LibraryNoteWorkPane, "_apply_post_compose_state", observed_post_compose
+    )
+    host = LibraryHarness(app)
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-notes").press()
+            row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+            row.press()
+            try:
+                await asyncio.wait_for(backlinks_done.wait(), 5)
+                assert ordering == ["mount held", "backlinks projected"]
+                assert pane.presentation_state.backlinks_status == "ready"
+                latest = dataclasses.replace(
+                    pane.presentation_state,
+                    metadata_line="Newest mounted presentation",
+                    status_line="Newest pending presentation",
+                )
+                authority = pane.query("#library-note-work-authority")
+                authority_before = (
+                    str(authority.first(Static).renderable) if authority else None
+                )
+                pane.apply_session_state(latest)
+                assert pane.presentation_state is latest
+                assert not pane.query(f"#{missing_id}")
+                if authority:
+                    assert str(authority.first(Static).renderable) == authority_before
+            finally:
+                release.set()
+            await asyncio.wait_for(painted.wait(), 5)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.editor_armed,
+                message="EditorReady did not arm dirty tracking",
+            )
+            assert ordering == ["mount held", "backlinks projected", "latest painted"]
+            body = screen.query_one("#library-note-body", TextArea)
+            body.focus()
+            await pilot.pause()
+            body.text = "Edit after mount"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_note_session.snapshot.dirty
+                and screen._library_note_session.snapshot.body == "Edit after mount",
+                message="Mounted editor did not accept the next dirty edit",
+            )
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
 async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_db(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """Scope guard for the fix above: a PRE-EXISTING note (never created
     via "Blank note" this session) that the user empties out completely is
@@ -23613,7 +24153,7 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
     save (survive) even though its final state is title="" / body=""."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     created_id = await real_service.save_note(
         scope="local_note",
@@ -23668,7 +24208,7 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back(
-    tmp_path, monkeypatch
+    real_notes_scope_service, monkeypatch
 ):
     """Documents and locks in the autosave-interaction decision: if
     autosave already persisted real content for a session-blank note
@@ -23681,7 +24221,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
     monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     host = LibraryHarness(app)
 
@@ -23697,6 +24237,9 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
         await pilot.pause()
         note_id = screen._notes_state.selected_note_id
 
+        # Focused fields own pending edits (TASK-32062); an unfocused widget
+        # may still be projected from the preceding save's canonical snapshot.
+        screen.query_one("#library-note-body", TextArea).focus()
         screen.query_one("#library-note-body", TextArea).text = "will be autosaved"
         await pilot.pause()
 
@@ -23719,7 +24262,11 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
         # Now empty it back out and exit without an explicit Save.
         screen.query_one("#library-note-body", TextArea).text = ""
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_session.snapshot.body == "",
+            message="The emptied body never reached the canonical draft.",
+        )
 
         _press_note_back(screen)
         for _ in range(150):
@@ -23740,7 +24287,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """P0 (xhigh review + live-verify round): a note the user DELIBERATELY
     titles "Untitled" must survive navigate-away, body empty or not.
@@ -23753,7 +24300,7 @@ async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     host = LibraryHarness(app)
 
@@ -23802,7 +24349,7 @@ async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
 
 @pytest.mark.asyncio
 async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_trip(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """Mutation guard for the test above: the untouched seed must STILL be
     GC'd. The user types only in the BODY (never the title), then empties
@@ -23810,7 +24357,7 @@ async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_tri
     and the abandoned row must not survive."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     host = LibraryHarness(app)
 
@@ -23849,7 +24396,7 @@ async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_tri
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """The save seam substitutes the seed title for a blank one on the
     wire, but the reply carries no title -- so the session snapshot (and
@@ -23857,7 +24404,7 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
     not have. Both sides now derive the persisted name from one helper."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    real_service = _real_notes_scope_service(tmp_path)
+    real_service = real_notes_scope_service
     app.notes_scope_service = real_service
     created_id = await real_service.save_note(
         scope="local_note",
@@ -23891,6 +24438,19 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
         else:
             raise AssertionError("The emptied title never persisted.")
 
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._notes_state.autosave_state == "saved"
+                and any(
+                    str(row.get("id")) == created_id
+                    and row.get("title") == "Untitled"
+                    for row in screen._local_source_records.get("notes", ())
+                )
+            ),
+            message="The saved outcome never patched the list cache.",
+        )
+
         rows = screen._local_source_records.get("notes", ())
         patched = [row for row in rows if str(row.get("id")) == created_id]
         assert patched, "The saved note vanished from the list cache."
@@ -23903,7 +24463,7 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_switch(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """task-4021 AC#1 (rail-switch exit path, real DB): the untouched-blank
     GC fix lives in ``_flush_library_note_save``, the one seam shared by
@@ -23915,7 +24475,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
     seams AC#1 enumerates rather than only the two most-obvious ones."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     app.media_reading_scope_service = StaticLibraryMediaScopeService(_two_media_items())
     host = LibraryHarness(app)
 
@@ -23958,7 +24518,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
 
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_screen_leave(
-    tmp_path,
+    real_notes_scope_service,
 ):
     """task-4021 AC#1 (screen-leave exit path, real DB): mirrors the
     rail-switch test above for ``flush_pending_work`` -- the app's
@@ -23968,7 +24528,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_screen_l
     either."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
-    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_notes_scope_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -24099,6 +24659,8 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     TASK-3317 resolves the remaining route fork: every Database Notes route,
     including Create, owns the one-row source-authority strip. Compact Notes
     therefore has one terminal-level allocation: 3 + 1 + 1 + 14 + 1.
+    TASK-32064 moved the later Chunking Lab strip into Details, restoring
+    the allocation to 3 + 1 + 1 + 14 + 1 without changing fixed Notes rows.
     """
     navigation = screen.query_one("MainNavigationBar")
     header = screen.query_one("#library-header-line")
@@ -24110,6 +24672,23 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     strip = screen.query_one("#library-notes-source-strip")
     strip_height = strip.region.height
     assert strip_height == 1
+    database_source = screen.query_one("#library-notes-source-database", Button)
+    files_source = screen.query_one("#library-notes-source-files", Button)
+    assert database_source.label == "Library notes"
+    assert database_source.has_class("-selected")
+    assert database_source.display is True
+    assert database_source.region.width > 0
+    assert database_source.region.height > 0
+    assert strip.content_region.contains_region(database_source.region)
+    assert screen.content_region.contains_region(database_source.region)
+    assert files_source.label == "Folder files"
+    assert not files_source.has_class("-selected")
+    assert files_source.display is True
+    assert files_source.region.width > 0
+    assert files_source.region.height > 0
+    assert strip.content_region.contains_region(files_source.region)
+    assert screen.content_region.contains_region(files_source.region)
+    assert not screen.query("#library-chunking-tools")
     shell_height = 14
 
     assert screen.region.height == 20
@@ -24128,8 +24707,12 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     assert authority.region.height == 2
     assert notes.content_region.contains_region(authority.region)
     authority_text = getattr(authority.renderable, "plain", str(authority.renderable))
-    assert "Library notes" in authority_text
-    assert "Next:" in authority_text
+    assert not authority_text.startswith("Library notes · ")
+    if notes.mode == "loading" and notes.load_state != "failed":
+        assert "Loading note…" in authority_text
+        assert "Next:" not in authority_text
+    else:
+        assert "Next:" in authority_text
     assert footer.region.height == 1
     assert (
         navigation.region.height
@@ -24199,8 +24782,13 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
         await pilot.pause()
         return
     if state == "filtered-empty":
-        screen._notes_state.filter = "[none] Ω very long filter query"
-        screen._notes_state.filter_records = []
+        notes_filter = screen.query_one("#library-notes-filter", Input)
+        notes_filter.value = "[none] Ω very long filter query"
+        notes_filter.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-notes-filter-clear")
+        await _wait_for_selector(screen, pilot, "#library-notes-empty")
+        return
     elif state == "sort-choice":
         screen._notes_state.sort_choices_visible = True
     elif state == "selection":
@@ -24228,9 +24816,10 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-header": 1,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
+                "#library-notes-browse-actions-overflow": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 7,
+                "#library-notes-list": 5,
             },
             "#library-notes-filter",
         ),
@@ -24240,9 +24829,10 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-header": 1,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
+                "#library-notes-browse-actions-overflow": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-empty": 7,
+                "#library-notes-empty": 5,
             },
             "#library-notes-filter-clear",
         ),
@@ -24254,7 +24844,7 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
                 "#library-notes-sort-choices": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 7,
+                "#library-notes-list": 6,
             },
             "#library-notes-sort-newest",
         ),
@@ -24382,19 +24972,29 @@ async def test_library_note_compact_labels_round_trip_without_recompose() -> Non
 
 
 @pytest.mark.asyncio
-async def test_library_note_database_purpose_round_trips_at_breakpoint_without_recompose() -> (
-    None
-):
-    """TASK-3317: supporting purpose copy yields only in compact Notes."""
+@pytest.mark.parametrize("navigator_state", ("normal", "selection"))
+async def test_library_note_database_purpose_round_trips_across_navigator_shapes(
+    navigator_state: str,
+) -> None:
+    """TASK-3317: supporting purpose copy follows each navigator shape.
+
+    Args:
+        navigator_state: Normal or selection-mode navigator chrome.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
+    expected_copy = (
+        "These notes live in the Library's own database — for notes "
+        "that live in a folder on disk, switch to Folder files. To copy "
+        "or keep a folder synced, choose Add from files."
+    )
 
     async with host.run_test(size=(60, 20)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
-        await _enter_task8_navigator_state(screen, pilot, "normal")
+        await _enter_task8_navigator_state(screen, pilot, navigator_state)
 
         canvas = screen.query_one("#library-notes-canvas")
         purpose = screen.query_one("#library-notes-database-purpose", Static)
@@ -24404,17 +25004,29 @@ async def test_library_note_database_purpose_round_trips_at_breakpoint_without_r
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
         assert screen.query_one("#library-notes-canvas") is canvas
-        assert screen.query_one("#library-notes-database-purpose") is purpose
-        assert purpose.display is True
-        assert purpose.region.height > 0
-        assert "Library's own database" in str(purpose.renderable)
+        wide_purpose = screen.query_one("#library-notes-database-purpose", Static)
+        if navigator_state == "normal":
+            assert purpose.is_attached is False
+            assert wide_purpose is not purpose
+        else:
+            assert wide_purpose is purpose
+        assert wide_purpose.is_attached is True
+        assert wide_purpose.display is True
+        assert wide_purpose.region.height > 0
+        assert str(wide_purpose.renderable) == expected_copy
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
         assert screen.query_one("#library-notes-canvas") is canvas
-        assert screen.query_one("#library-notes-database-purpose") is purpose
-        assert purpose.display is False
-        assert purpose.region.height == 0
+        compact_purpose = screen.query_one("#library-notes-database-purpose", Static)
+        if navigator_state == "normal":
+            assert wide_purpose.is_attached is False
+            assert compact_purpose is not wide_purpose
+        else:
+            assert compact_purpose is purpose
+        assert compact_purpose.is_attached is True
+        assert compact_purpose.display is False
+        assert compact_purpose.region.height == 0
 
 
 @pytest.mark.asyncio
@@ -24472,10 +25084,8 @@ async def test_library_note_60x20_loading_allocation_keeps_back_visible() -> Non
                 message="Detail service never entered its gated load.",
             )
             await _wait_for_selector(screen, pilot, "#library-note-load-state")
-            # task-3315: opening a note row forces a full recompose, which
-            # mounts the 1-row source strip -- the load-state root settles
-            # at 14 rows, its viewport at 12 (was 13). See
-            # _assert_task8_compact_chrome for the cause chain.
+            # Source authority remains visible while loading; TASK-32064
+            # returns the former Lab strip's row to the flexible viewport.
             _assert_task8_compact_chrome(screen)
             assert screen.query_one("#library-note-load-heading").region.height == 1
             assert screen.query_one("#library-note-loading").region.height == 1
@@ -24661,9 +25271,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "delete-confirmation",
             {
                 "#library-note-heading": 1,
-                "#library-note-title-row": 1,
-                "#library-note-body-label": 1,
-                "#library-note-body": 4,
+                "#library-note-context-region": 6,
                 "#library-note-status": 1,
                 "#library-note-delete-confirm-copy": 1,
                 "#library-note-delete-actions": 1,
@@ -24686,15 +25294,8 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "context",
             {
                 "#library-note-heading": 1,
-                # task-32177: #library-note-context-status was removed (dead
-                # duplicate of #library-note-status, task-32142 had already
-                # hidden it) -- its row-height entry is gone with it. This
-                # parametrization is pre-existing baseline-broken (stale
-                # #library-notes-row-0 selector, see task-6-report.md) and
-                # cannot currently run far enough to re-measure
-                # #library-note-context-region's own height, so that entry
-                # is left as-is rather than guessed.
-                "#library-note-context-region": 7,
+                # TASK-32177 removed the dead status row; Info gains it.
+                "#library-note-context-region": 8,
                 "#library-note-primary-actions": 2,
                 "#library-note-mode-controls": 1,
                 "#library-note-task-actions": 1,
@@ -24715,6 +25316,9 @@ async def test_library_note_60x20_editor_state_allocation(
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
         await _enter_task8_editor_state(screen, pilot, state)
+        if state == "delete-confirmation":
+            assert screen.query_one("#library-note-editor-region").display is False
+            assert screen.query_one("#library-note-context-region").display is True
 
         await _assert_task8_rows(
             screen,
@@ -25000,17 +25604,30 @@ async def test_library_shell_search_result_open_note_lands_in_editor():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_search_result_open_media_switches_to_viewer():
+@pytest.mark.parametrize("warm_browse", (False, True), ids=("cold", "warm"))
+@pytest.mark.parametrize(
+    ("source_id", "numeric_records", "detail_id"),
+    (("media-1", False, "media-1"), ("1", True, "1"), ("local:media:1", True, 1)),
+    ids=("legacy", "numeric", "canonical"),
+)
+async def test_library_shell_search_result_open_media_switches_to_viewer(
+    warm_browse, source_id, numeric_records, detail_id
+):
     """Pressing Open on a media evidence result flips the canvas to the
     in-canvas media viewer and fetches that item's detail by id.
     """
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    media_items = _two_media_items()
+    if numeric_records:
+        media_items = [
+            dict(item, id=index) for index, item in enumerate(media_items, 1)
+        ]
+    _seed_conversations(app, _two_conversations(), media=media_items)
     service = _StaticLibraryRagSearchService(
         {
             "results": [
                 {
-                    "source_id": "media-1",
+                    "source_id": source_id,
                     "title": "Interview Recording",
                     "snippet": "audio transcript",
                     "provenance": {"source_type": "media"},
@@ -25024,26 +25641,58 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        browse = screen._library_media_browse_controller
+        if warm_browse:
+            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+            await _wait_for_condition(
+                pilot,
+                lambda: browse.state.applied_result is not None and not browse.state.loading,
+                message="Warm Media page did not load.",
+            )
+            assert [item["id"] for item in browse.state.retained_items] == [
+                "local:media:2",
+                "local:media:1",
+            ]
+        else:
+            assert browse.state.applied_result is None
         await _run_library_search_and_wait_for_open_result(screen, pilot, "interview")
 
         screen.query_one("#library-rag-open-result-0").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         for _ in range(120):
             if (
-                screen._media_state.selected_media_id == "media-1"
+                screen._media_state.selected_media_id == "local:media:1"
                 and screen._media_state.view == "viewer"
+                and screen._media_state.reader_session.selected_id == "local:media:1"
+                and screen._media_state.reader_session.loaded_id == "local:media:1"
+                and browse.state.applied_result is not None
+                and not browse.state.loading
             ):
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("Open never landed on the media viewer.")
+            raise AssertionError(
+                "Open never landed on the media viewer: "
+                f"selected={screen._media_state.selected_media_id!r}, "
+                f"view={screen._media_state.view!r}, "
+                f"reader={screen._media_state.reader_session!r}"
+            )
         await pilot.pause()
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert [row.media_id for row in screen._build_library_media_state().rows] == [
+            "local:media:2",
+            "local:media:1",
+        ]
+        assert [
+            row.media_id
+            for row in screen._build_library_media_state().rows
+            if row.selected
+        ] == ["local:media:1"]
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
         assert any(
-            call["media_id"] == "media-1"
+            call["media_id"] == detail_id
             for call in app.media_reading_scope_service.detail_calls
         )
 
@@ -25400,7 +26049,7 @@ def wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
     )
 
 
-class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
+class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, ConsolidatedCSSApp):
     """Runs a real LibraryScreen against a running app mixing the real
     ingest coordinator + writer + registry + an optional real file-backed
     MediaDatabase.
@@ -25459,6 +26108,68 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
 
     async def on_mount(self) -> None:
         await self.push_screen(LibraryScreen(self))
+
+    async def on_unmount(self) -> None:
+        try:
+            teardown = self._shutdown_ingest_parse_pool()
+            if teardown is not None:
+                await asyncio.to_thread(teardown.join, 5.0)
+                assert not teardown.is_alive()
+        finally:
+            if self.media_db is not None:
+                self.media_db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "shutdown_fails", [False, True], ids=("normal", "shutdown-error")
+)
+async def test_library_ingest_harness_unmount_retires_owned_sqlite(
+    monkeypatch, tmp_path, shutdown_fails
+):
+    """Harness teardown closes its real database without hiding shutdown errors."""
+    shutdown_error = RuntimeError("shutdown failed") if shutdown_fails else None
+    database = None
+    real_shutdown = None
+    progress_thread = None
+    try:
+        database = MediaDatabase(
+            tmp_path / "harness-lifecycle.db", client_id="lifecycle"
+        )
+        harness = _LibraryIngestCanvasHarness(database)
+        saved_connection = database.get_connection()
+        real_shutdown = harness._shutdown_ingest_parse_pool
+        if shutdown_error is None:
+            harness._ensure_ingest_parse_pool()
+            progress_thread = harness._ingest_parse_progress_thread
+        else:
+
+            def fail_shutdown():
+                raise shutdown_error
+
+            monkeypatch.setattr(harness, "_shutdown_ingest_parse_pool", fail_shutdown)
+
+        caught = None
+        try:
+            await harness.on_unmount()
+        except BaseException as exc:
+            caught = exc
+
+        assert caught is shutdown_error
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            saved_connection.execute("SELECT 1")
+        if progress_thread is not None:
+            assert not progress_thread.is_alive()
+    finally:
+        try:
+            if real_shutdown is not None:
+                teardown = real_shutdown()
+                if teardown is not None:
+                    await asyncio.to_thread(teardown.join, 5.0)
+                    assert not teardown.is_alive()
+        finally:
+            if database is not None:
+                database.close_connection()
 
 
 def _library_ingest_mixin_state_reads() -> set[str]:
@@ -26878,9 +27589,9 @@ def _apply_continue_media_scope(
         },
     )
     controller = screen._library_media_browse_controller
-    controller.applied_result = result
-    controller.retained_items = result.items
-    controller.freshness = "fresh"
+    controller.state.applied_result = result
+    controller.state.retained_items = result.items
+    controller.state.freshness = "fresh"
 
 
 def _apply_continue_prompt_scope(
@@ -26983,7 +27694,7 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
 
     assert restored._library_selected_row_id == ""
     assert restored._library_continue_receipt == state["library_continue_receipt"]
-    assert restored._library_media_browse_controller.requested_scope == scope
+    assert restored._library_media_browse_controller.state.requested_scope == scope
     assert restored._media_state.view == "list"
     assert restored._media_state.selected_media_id == ""
 
@@ -27013,7 +27724,6 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
             LIBRARY_ROW_BROWSE_SKILLS,
             {"sort": "status", "filter": "python", "page": 2},
         ),
-        (LIBRARY_ROW_BROWSE_COLLECTIONS, {}),
         (
             LIBRARY_ROW_BROWSE_SEARCH,
             {
@@ -27057,8 +27767,6 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
             screen,
             SkillBrowseScope(query="python", sort="status", page=2),
         )
-    elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-        screen._collections_state.requested_page = 1
     else:
         screen._rag_search_state.query = "retrieval"
         screen._rag_search_state.searched_query = "retrieval"
@@ -27214,8 +27922,8 @@ def test_library_landing_attention_prefers_recoverable_import_and_never_persists
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_lifecycle = LibraryLifecycle.GRADUATED
-    screen._library_media_browse_controller.freshness = "stale"
-    screen._library_media_browse_controller.stale_copy = "PRIVATE MEDIA COPY"
+    screen._library_media_browse_controller.state.freshness = "stale"
+    screen._library_media_browse_controller.state.stale_copy = "PRIVATE MEDIA COPY"
     job = app.library_ingest_jobs.submit(source_path="/PRIVATE/path/report.pdf")
     app.library_ingest_jobs.mark_failed(
         job.job_id,
@@ -27346,8 +28054,8 @@ async def test_library_landing_attention_retries_stale_media_through_source_owne
     app = _build_test_app()
     _seed_conversations(app, [], media=_two_media_items())
     screen = LibraryScreen(app)
-    screen._library_media_browse_controller.freshness = "stale"
-    screen._library_media_browse_controller.stale_copy = "private stale detail"
+    screen._library_media_browse_controller.state.freshness = "stale"
+    screen._library_media_browse_controller.state.stale_copy = "private stale detail"
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -27361,7 +28069,7 @@ async def test_library_landing_attention_retries_stale_media_through_source_owne
             pilot,
             lambda: (
                 screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                and screen._library_media_browse_controller.freshness == "fresh"
+                and screen._library_media_browse_controller.state.freshness == "fresh"
             ),
             message="Landing Retry did not use the existing Media refresh path.",
         )
@@ -27794,7 +28502,7 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     # attr and into the browse controller's applied scope -- seed an applied
     # result whose scope carries the filter; save_state serializes that
     # scope and restore republishes it onto the attr.
-    original._library_media_browse_controller.applied_result = MediaBrowseResult(
+    original._library_media_browse_controller.state.applied_result = MediaBrowseResult(
         scope=MediaBrowseScope(media_type="audio"),
         items=(),
         total=0,
@@ -28163,9 +28871,8 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
 
         scope_line = str(screen.query_one("#library-export-scope-line").renderable)
         assert scope_line == screen._build_library_export_state().scope_line
-        assert all(
-            fragment in scope_line
-            for fragment in ("1 media", "1 conversations", "1 notes", "0 prompts")
+        assert scope_line == (
+            "Everything: 1 media item · 1 conversation · 1 note · 0 prompts"
         )
         # Non-empty scope + counts landed: Export is no longer stuck
         # disabled by a permanent "Counting…" (only the missing
@@ -28516,7 +29223,7 @@ async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
     render structurally different row shapes (Notes rows carry no select
     marker, unlike Media's ``▸``)."""
     app = _build_test_app()
-    app.notes_scope_service = StaticLibraryNotesListScopeService(_two_notes())
+    app.notes_scope_service = StaticLibraryNotesScopeService(_two_notes())
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     host = LibraryHarness(app)
@@ -28841,38 +29548,45 @@ async def test_library_shell_export_counts_worker_uses_real_thread_for_file_back
     chachanotes_db = CharactersRAGDB(
         tmp_path / "export-thread-ccn.db", client_id="export-pilot-thread-ccn"
     )
-    chachanotes_db.add_conversation({"title": "Conv"})
-    app.chachanotes_db = chachanotes_db
-    app.prompts_db = PromptsDatabase(
-        tmp_path / "export-thread-prompts.db",
-        client_id="export-pilot-thread-prompts",
-    )
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-
-        assert not bool(getattr(media_db, "is_memory_db", False))
-        assert not bool(getattr(chachanotes_db, "is_memory_db", False))
-
-        screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
-        await _wait_for_selector(screen, pilot, "#library-export-header")
-
-        for _ in range(150):
-            if screen._export_state.counts is not None:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Export counts never landed via the worker thread.")
-
-        screen.refresh(recompose=True)
-        await pilot.pause()
-
-        scope_line = str(screen.query_one("#library-export-scope-line").renderable)
-        assert scope_line == (
-            "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
+    try:
+        chachanotes_db.add_conversation({"title": "Conv"})
+        app.chachanotes_db = chachanotes_db
+        app.prompts_db = PromptsDatabase(
+            tmp_path / "export-thread-prompts.db",
+            client_id="export-pilot-thread-prompts",
         )
+        host = LibraryHarness(app)
+
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+
+            assert not bool(getattr(media_db, "is_memory_db", False))
+            assert not bool(getattr(chachanotes_db, "is_memory_db", False))
+
+            screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}").press()
+            await _wait_for_selector(screen, pilot, "#library-export-header")
+
+            for _ in range(150):
+                if screen._export_state.counts is not None:
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError(
+                    "Export counts never landed via the worker thread."
+                )
+
+            screen.refresh(recompose=True)
+            await pilot.pause()
+
+            scope_line = str(screen.query_one("#library-export-scope-line").renderable)
+            assert scope_line == (
+                "Everything: 1 media item · 1 conversation · 0 notes · 0 prompts"
+            )
+    finally:
+        with chachanotes_db.quiesce_connections(timeout_seconds=2.0):
+            pass
+        assert chachanotes_db.registered_connection_count() == 0
 
 
 class _GatedExportCountMediaDB:
@@ -30091,6 +30805,8 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
     async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = harness.screen_stack[-1]
         await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         await _wait_for_selector(screen, pilot, "#library-search-input")
 
         search = screen.query_one("#library-search-input", Input)
@@ -31020,6 +31736,7 @@ async def test_options_loader_never_calls_get_cli_setting_without_default(
         import unittest.mock as _mock
 
         with _mock.patch.object(screen_module, "get_cli_setting", _two_shape_stub):
+            delattr(harness, screen_module._INGEST_OPTIONS_CACHE_ATTR)
             screen._ingest_state.form = LibraryIngestFormState()
             screen._load_library_ingest_options_from_config()
 
@@ -31114,6 +31831,9 @@ async def test_clear_path_button_responds_to_mouse_click(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_library_ingest_canvas(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
+        # Production's consolidated widget defaults keep navigation compact;
+        # without them its 23 rows push Clear underneath the fold overlay.
+        assert screen.query_one("MainNavigationBar").region.height == 3
 
         path_input = screen.query_one("#library-ingest-path", Input)
         path_input.focus()
@@ -31124,7 +31844,10 @@ async def test_clear_path_button_responds_to_mouse_click(tmp_path):
         clear = screen.query_one("#library-ingest-clear-path", Button)
         assert clear.display is True and clear.region.width > 0
 
-        await pilot.click("#library-ingest-clear-path")
+        assert await pilot.click("#library-ingest-clear-path"), (
+            clear.region,
+            clear.parent.region,
+        )
         await pilot.pause()
         after = screen.query_one("#library-ingest-path", Input)
         assert after.value == ""
@@ -31805,11 +32528,26 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
     screen.apply_navigation_context(context)
     host = LibraryHarness(app, screen=screen)
 
-    async with host.run_test(size=(60, 20)) as pilot:
+    async with host.run_test(size=(60, 20)):
         screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await _wait_for_library_notes_compact(screen, pilot, True)
-        await _wait_for_selector(screen, pilot, selector)
+        await _wait_for_condition_while_worker_pending(
+            lambda: getattr(screen, "_library_loaded", False)
+            and bool(screen.query("#library-rail")),
+            message="Compact Library shell never mounted for the deep link.",
+        )
+        await _wait_for_condition_while_worker_pending(
+            lambda: (
+                screen._notes_state.compact is True
+                and bool(screen.query(selector))
+                and screen._notes_state.stage == "notes"
+                and screen._library_notes_focus_region() == expected_region
+                and screen.query_one("#library-rail").display is False
+                and screen.query_one("#library-canvas").display is items_visible
+                and screen.query_one("#library-note-work-pane").display is True
+            ),
+            timeout=30.0,
+            message=f"Deep-linked compact target {selector} never settled.",
+        )
 
         assert screen._notes_state.stage == "notes"
         assert screen._library_notes_focus_region() == expected_region
@@ -31819,7 +32557,8 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
 
 
 @pytest.mark.asyncio
-async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -> None:
+async def test_library_note_wide_deep_link_back_clears_explicit_intent() -> None:
+    """Escape returns to Library; resizing must not replay the old deep link."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     screen = LibraryScreen(app)
@@ -31832,17 +32571,30 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
         await _wait_for_library_notes_compact(screen, pilot, False)
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
-        await pilot.press("escape")
+        await screen.action_library_notes_escape()
         await pilot.pause()
         assert screen._notes_state.stage == "rail"
         assert screen._notes_state.explicit_stage_intent is False
+        assert getattr(screen.focused, "id", None) == "library-search-input"
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
         assert screen._notes_state.stage == "rail"
+        assert screen._notes_state.explicit_stage_intent is False
         assert screen.query_one("#library-rail").display is True
         assert screen.query_one("#library-canvas").display is False
-        assert getattr(screen.focused, "row_id", None) == LIBRARY_ROW_BROWSE_NOTES
+        # TASK-32233 changes the Escape hop, not the existing compact
+        # resize fallback to the selected rail row.
+        assert getattr(screen.focused, "id", None) == "library-row-browse-notes"
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.stage == "notes"
+            and screen.query_one("#library-canvas").display
+            and not screen.query_one("#library-rail").display,
+            message="Explicit Notes activation did not reenter the compact stage.",
+        )
 
 
 @pytest.mark.asyncio
@@ -31879,7 +32631,55 @@ async def test_library_note_wide_browse_collapses_library_when_work_begins() -> 
 
 
 @pytest.mark.asyncio
-async def test_library_note_editor_back_restores_exact_wide_browse_context() -> None:
+@pytest.mark.parametrize("claimed", (None, False, True))
+async def test_late_notes_sync_preserves_newer_row_focus_and_scroll(
+    claimed: bool | None,
+) -> None:
+    """Automatic restoration recovers a grip but cannot undo a newer row claim.
+
+    Args:
+        claimed: True for a newer row, False for a grip, None for missing focus.
+    """
+    app = _build_test_app()
+    notes = [dict(_two_notes()[0], id=f"claim-{i}", title=f"Claim {i:02d}") for i in range(32)]
+    _seed_conversations(app, _two_conversations(), notes=notes)
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        notes_filter = screen.query_one("#library-notes-filter", Input)
+        notes_filter.focus()
+        await pilot.pause()
+        stale = screen._capture_library_notes_focus_identity()
+        notes_list = screen.query_one("#library-notes-list")
+        target = list(screen.query(".library-notes-row"))[18]
+        if claimed:
+            notes_list.scroll_to(y=7, animate=False, force=True, immediate=True)
+            screen.set_focus(target, scroll_visible=False)
+            await pilot.pause()
+            assert notes_list.scroll_y == 7
+        elif claimed is False:
+            screen.query_one("#library-browse-items-grip", Button).focus()
+            await pilot.pause()
+        else:
+            screen.set_focus(None)
+
+        screen._restore_library_notes_after_targeted_sync(stale)
+        await pilot.pause()
+        if claimed:
+            assert screen.focused is target
+            assert notes_list.scroll_y == 7
+        else:
+            assert screen.focused is notes_filter
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delayed_filter_projection", (False, True))
+async def test_library_note_editor_back_restores_exact_wide_browse_context(
+    monkeypatch, delayed_filter_projection: bool,
+) -> None:
     """Editor Back returns to the same scope, row, and two scroll owners."""
     notes = [
         {
@@ -31894,7 +32694,10 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
     ]
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=notes)
-    host = LibraryProductionCSSHarness(app)
+    screen = LibraryScreen(app)
+    # Restore the persisted title preference before the pager's first load.
+    screen.restore_state({"library_notes_sort": "title"})
+    host = LibraryProductionCSSHarness(app, screen=screen)
 
     async with host.run_test(size=(170, 24)) as pilot:
         screen = _active_library_screen(host)
@@ -31903,23 +32706,46 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
         screen.query_one("#library-row-browse-notes").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
 
-        # This used to press #library-notes-sort ("title") for a
-        # deterministic row order. It no longer needs to: since task-32172
-        # the Sort value IS the tree's ORDER BY, applied by the pager, and
-        # the row picked below comes out of the settled filter window
-        # anyway. Sort itself is composed here (task-32172 put it back on
-        # the folder tree) and enabled while no filter is applied.
+        assert screen._notes_state.sort == "title"
         assert screen.query_one("#library-notes-sort", Button).disabled is False
+        await _wait_for_selector(screen, pilot, "#library-notes-row-19")
+        projection = screen._build_library_notes_tree_projection()
+        assert projection is not None
+        assert [row.note_id for row in projection.rows if row.kind == "note"] == [
+            f"n-{index:02d}" for index in range(20)
+        ]
+        await pilot.pause()
         notes_filter = screen.query_one("#library-notes-filter", Input)
+        unfiltered_list = screen.query_one("#library-notes-list")
         notes_filter.value = "scope"
         notes_filter.focus()
         await pilot.pause()
+        if delayed_filter_projection:
+            sync_canvas = library_screen_module._sync_library_canvas
+
+            def defer_filter_projection(owner, kind, **kwargs):
+                """Model filter results arriving before their mounted projection."""
+                then = kwargs.get("then")
+                if kind == "notes" and getattr(then, "__name__", "") == (
+                    "_focus_library_notes_filter_input"
+                ):
+                    owner.set_timer(0.5, lambda: sync_canvas(owner, kind, **kwargs))
+                    return True
+                return sync_canvas(owner, kind, **kwargs)
+
+            monkeypatch.setattr(
+                library_screen_module, "_sync_library_canvas", defer_filter_projection
+            )
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
             lambda: (
                 screen._notes_state.filter == "scope"
                 and screen._notes_state.filter_records is not None
+                and bool(screen.query("#library-notes-list"))
+                and screen.query_one("#library-notes-list") is not unfiltered_list
+                and len(screen.query(".library-notes-row")) == 20
+                and screen.query_one("#library-notes-filter", Input).has_focus
             ),
             message=lambda: (
                 "Filtered Notes scope did not settle: "
@@ -31928,8 +32754,11 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
                 f"calls={app.notes_scope_service.search_calls!r}."
             ),
         )
-        assert len(screen._notes_state.filter_records) == 32
-        assert len(screen.query(".library-notes-row")) >= 20
+        assert len(screen._notes_state.filter_records) == 20
+        assert len(screen.query(".library-notes-row")) == 20
+        assert [row.note_id for row in screen.query(".library-notes-row")] == [
+            f"n-{index:02d}" for index in range(20)
+        ]
 
         rail = screen.query_one("#library-rail")
         notes_list = screen.query_one("#library-notes-list")
@@ -31965,10 +32794,8 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
 
         assert screen._notes_state.source == "database"
         assert screen._notes_state.filter == "scope"
-        # The untouched default: the round trip must not scramble the sort
-        # key, which is all this assertion can still pin now that Sort is
-        # unreachable in tree mode (task-32175, review round 1).
-        assert screen._notes_state.sort == "newest"
+        # Preserve the persisted title sort used by this browse pager.
+        assert screen._notes_state.sort == "title"
         assert screen._notes_state.tree_selected_placement_id == placement_id
         assert screen.query_one("#library-notes-filter", Input).value == "scope"
         assert (
@@ -32160,7 +32987,7 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
         assert screen.query_one("#library-rail").display is True
         assert screen.query_one("#library-canvas").display is False
         assert screen.query_one("#library-note-work-pane").display is True
-        assert getattr(screen.focused, "row_id", None) == LIBRARY_ROW_BROWSE_NOTES
+        assert getattr(screen.focused, "id", None) == "library-search-input"
 
 
 @pytest.mark.asyncio
@@ -32230,17 +33057,33 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
+        "terminal_width",
         "region",
         "owner_selector",
         "fixed_selectors",
         "expected_fixed_heights",
-        "owner_height_at_80x24",
-        "owner_height_at_100x30",
+        "owner_height_at_24",
+        "owner_height_at_30",
     ),
     (
-        # TASK-19000 reserves two rows for authority at both compact sizes.
-        # Surplus still goes only to the named owner: +6 for +6 terminal rows.
         (
+            80,
+            "navigator",
+            "#library-notes-list",
+            (
+                "#library-notes-header",
+                "#library-notes-filter-row",
+                "#library-notes-browse-actions",
+                "#library-notes-browse-actions-overflow",
+                "#library-notes-transfer-actions",
+                "#library-notes-status-row",
+            ),
+            (1, 1, 1, 1, 1, 1),
+            9,
+            15,
+        ),
+        (
+            100,
             "navigator",
             "#library-notes-list",
             (
@@ -32251,10 +33094,11 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-notes-status-row",
             ),
             (1, 1, 1, 1, 1),
-            11,
-            17,
+            10,
+            16,
         ),
         (
+            80,
             "editor",
             "#library-note-body",
             (
@@ -32269,6 +33113,22 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
             16,
         ),
         (
+            100,
+            "editor",
+            "#library-note-body",
+            (
+                "#library-note-heading",
+                "#library-note-title-row",
+                "#library-note-body-label",
+                "#library-note-status",
+                "#library-note-primary-actions",
+            ),
+            (1, 1, 1, 1, 2),
+            10,
+            16,
+        ),
+        (
+            80,
             "context",
             "#library-note-context-region",
             (
@@ -32280,24 +33140,52 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-note-primary-actions",
             ),
             (1, 1, 2),
-            11,
-            17,
+            12,
+            18,
+        ),
+        (
+            100,
+            "context",
+            "#library-note-context-region",
+            (
+                # task-32177: #library-note-context-status was removed (dead
+                # duplicate of #library-note-status) -- dropped from the
+                # fixed-row list along with its expected-height entry below.
+                "#library-note-heading",
+                "#library-note-status",
+                "#library-note-primary-actions",
+            ),
+            (1, 1, 2),
+            12,
+            18,
         ),
     ),
 )
 async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
+    terminal_width: int,
     region: str,
     owner_selector: str,
     fixed_selectors: tuple[str, ...],
     expected_fixed_heights: tuple[int, ...],
-    owner_height_at_80x24: int,
-    owner_height_at_100x30: int,
+    owner_height_at_24: int,
+    owner_height_at_30: int,
 ) -> None:
+    """Six extra rows grow only the named owner at a fixed compact width.
+
+    Args:
+        terminal_width: Compact terminal width held constant during the resize.
+        region: Notes region to display and measure.
+        owner_selector: Selector for the region that owns surplus height.
+        fixed_selectors: Selectors for rows that must retain exact heights.
+        expected_fixed_heights: Required height for each fixed selector.
+        owner_height_at_24: Exact owner height at 24 terminal rows.
+        owner_height_at_30: Exact owner height at 30 terminal rows.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
 
-    async with host.run_test(size=(80, 24)) as pilot:
+    async with host.run_test(size=(terminal_width, 24)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
@@ -32316,19 +33204,23 @@ async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
         fixed_heights = tuple(
             screen.query_one(selector).region.height for selector in fixed_selectors
         )
+        if region == "navigator" and terminal_width == 100:
+            assert not screen.query("#library-notes-browse-actions-overflow")
 
-        await pilot.resize_terminal(100, 30)
+        await pilot.resize_terminal(terminal_width, 30)
         await _wait_for_library_notes_compact(screen, pilot, True)
         await pilot.pause()
 
-        assert owner_height == owner_height_at_80x24
+        assert owner_height == owner_height_at_24
         assert fixed_heights == expected_fixed_heights
         assert screen.query_one(owner_selector) is owner
-        assert owner.region.height == owner_height_at_100x30
+        assert owner.region.height == owner_height_at_30
         resized_fixed_heights = tuple(
             screen.query_one(selector).region.height for selector in fixed_selectors
         )
         assert resized_fixed_heights == fixed_heights
+        if region == "navigator" and terminal_width == 100:
+            assert not screen.query("#library-notes-browse-actions-overflow")
         growth_by_named_region = {
             owner_selector: owner.region.height - owner_height,
             **{
@@ -32534,7 +33426,7 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
 
             after = screen._capture_library_notes_focus_identity()
             assert after.semantic_role == semantic_role
-            assert screen.focused is screen._library_notes_role_target(before)
+            assert screen.focused is screen._notes_controller._library_notes_role_target(before)
             assert after.scroll_offset == before.scroll_offset, semantic_role
 
         rail_row = screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}")
@@ -32547,16 +33439,23 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         await round_trip("#library-notes-filter", "filter", "navigator")
         note_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        note_row_id = note_row.id
+        note_placement_id = note_row.placement_id
         # task-32175: the tree's semantic role is "note-placement:<id>"
         # (library_screen.py's focus-identity capture), not the flat
         # list's "note-row:<note_id>" this used to hardcode.
         await round_trip(
-            f"#{note_row.id}",
-            f"note-placement:{note_row.placement_id}",
+            f"#{note_row_id}",
+            f"note-placement:{note_placement_id}",
             "navigator",
         )
 
-        note_row.press()
+        current_note_row = screen.query_one(f"#{note_row_id}")
+        assert current_note_row.placement_id == note_placement_id
+        assert current_note_row.is_attached is True
+        assert current_note_row is screen.focused
+        assert note_row.is_attached is False
+        current_note_row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "\n\n".join(
@@ -32833,7 +33732,7 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
             message="User focus intent did not advance its generation.",
         )
 
-        screen._restore_library_notes_settled_focus(stale_identity, guard)
+        screen._notes_controller._restore_library_notes_settled_focus(stale_identity, guard)
         await pilot.pause()
         await pilot.pause()
 
@@ -33025,6 +33924,10 @@ async def test_library_note_local_shortcuts_are_region_scoped_and_flush_guarded(
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
 
+        # Landing intentionally offers Ctrl+N (TASK-32138). Exercise the
+        # inactive Notes shortcut on an unrelated destination instead.
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         selected_before = screen._library_selected_row_id
         await pilot.press("ctrl+n")
         await pilot.pause()
@@ -33156,9 +34059,11 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         footer.update_db_sizes_display("DB 2 MB")
         ancillary = (
             screen.query_one("#footer-word-count", Static),
-            screen.query_one("#footer-token-count", Static),
             screen.query_one("#internal-db-size-indicator", Static),
         )
+        token_indicator = screen.query_one("#footer-token-count", Static)
+        assert not token_indicator.display
+        assert str(token_indicator.renderable) == ""
         contents = tuple(
             getattr(widget.renderable, "plain", str(widget.renderable))
             for widget in ancillary
@@ -33181,6 +34086,8 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         # same tier this test already asserts once — but do not read a green
         # run of this file as having covered them.
         assert all(widget.display is True for widget in ancillary)
+        assert not token_indicator.display
+        assert str(token_indicator.renderable) == ""
         assert (
             tuple(
                 getattr(widget.renderable, "plain", str(widget.renderable))
@@ -33193,7 +34100,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         await _wait_for_library_notes_compact(screen, pilot, True)
         screen.query_one("#library-note-context-delete").press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
-        await wait_footer("enter confirm | esc cancel")
+        await wait_footer("enter cancel | tab switch | esc cancel")
         await pilot.press("escape")
         await wait_footer("enter run action | esc note")
         await pilot.press("escape")
@@ -33255,7 +34162,10 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             await _wait_for_condition(
                 pilot,
                 lambda: footer_shortcuts() == expected,
-                message=f"Footer did not settle to {expected!r}.",
+                message=lambda: (
+                    f"Footer did not settle to {expected!r}; got {footer_shortcuts()!r}; "
+                    f"focus={screen.focused!r}."
+                ),
             )
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
@@ -33294,31 +34204,109 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
             lambda: screen._notes_state.stage == "rail",
             message="Navigator Escape did not return to the Library rail.",
         )
-        await _wait_for_condition(
-            pilot,
-            # task-3315 re-pin: at the compact rail stage the footer now
-            # restores the rail-stage guidance ("/ focus search | esc focus
-            # rail") rather than the old "u use Library context in Console"
-            # hint (that hint is Search/RAG-context copy in
-            # LIBRARY_SHORTCUTS; the compact stage footers came with the
-            # notes-adaptive PR #1439 -- reproduced failing at dev base
-            # ebeae1440). The invariant kept: leaving Notes must clear the
-            # notes-local help and restore Library-level guidance.
-            lambda: (
-                "focus search" in footer_shortcuts()
-                and "esc rail" not in footer_shortcuts()
-                and "ctrl+n new" not in footer_shortcuts()
-            ),
-            message="Library footer guidance did not restore after Notes exit.",
+        # TASK-32233 lands Escape in the rail input; TASK-31223 then
+        # advertises typing, not printable shortcuts that input swallows.
+        await wait_footer(
+            "esc focus rail |  typing in field |  after esc: / focus search | "
+            "F6 next pane"
         )
+        assert screen.query_one("#library-search-input").has_focus
+        assert "esc rail" not in footer_shortcuts()
+        assert "ctrl+n new" not in footer_shortcuts()
         assert all(
             screen.query_one(selector).display is True
             for selector in (
                 "#footer-word-count",
-                "#footer-token-count",
                 "#internal-db-size-indicator",
             )
         )
+        token_indicator = screen.query_one("#footer-token-count", Static)
+        assert not token_indicator.display
+        assert str(token_indicator.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_library_note_footer_exit_keeps_token_retired_and_other_metrics() -> None:
+    """Leaving compact Notes restores live metrics without reviving tokens."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    async with LibraryHarness(app).run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(pilot.app)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, True)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        footer = screen.query_one(AppFooterStatus)
+        screen.refresh(recompose=True)
+        await _wait_for_condition(
+            pilot, lambda: screen.query_one(AppFooterStatus) is not footer,
+            message="Screen recompose did not replace the footer",
+        )
+        footer = screen.query_one(AppFooterStatus)
+        await _wait_for_condition(
+            pilot,
+            lambda: footer.shortcut_text.rsplit(" | ", 1)[0]
+            == "ctrl+n new | / find | esc rail",
+            message="Replacement footer lost its Notes registration",
+        )
+        footer.update_word_count(12)
+        footer.update_token_count("Tokens: 34")
+        footer.update_db_sizes_display("DB 2 MB")
+        metrics = [
+            screen.query_one(selector, Static)
+            for selector in ("#footer-word-count", "#internal-db-size-indicator")
+        ]
+        contents = [str(widget.renderable) for widget in metrics]
+        assert all(not widget.display for widget in metrics)
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.stage == "rail",
+            message="Notes did not exit to the rail",
+        )
+        assert all(widget.display for widget in metrics)
+        assert [str(widget.renderable) for widget in metrics] == contents
+        token = screen.query_one("#footer-token-count", Static)
+        assert not token.display
+        assert str(token.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_notes_footer_registration_preserves_media_route_typing_hints() -> None:
+    """The Notes dispatcher still delegates a real sibling route's focus changes."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        row = await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        row.focus()
+        await pilot.pause()
+        screen._register_footer_shortcuts()
+        source, shortcuts = screen._footer_shortcut_registration
+        assert source == "library"
+        assert ("/", "focus search") in shortcuts
+        assert ("s", "select") in shortcuts
+        assert ("", "typing in field") not in shortcuts
+
+        field = screen.query_one("#library-media-filter", Input)
+        field.focus()
+        await pilot.pause()
+        screen._register_footer_shortcuts()
+        assert screen._footer_shortcut_registration == (
+            "library",
+            (
+                ("", "typing in field"),
+                ("esc", "focus rail"),
+                ("", "after esc: / focus search · s select"),
+                ("F6", "next pane"),
+            ),
+        )
+        assert "typing in field" in screen.query_one(AppFooterStatus).shortcut_text
+        assert screen.focused is field and field.is_attached
+        assert host.screen is screen
 
 
 def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
@@ -33672,22 +34660,32 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         await _open_note_editor(screen, pilot)
         screen.query_one("#library-note-context").press()
         context = await _wait_for_display(screen, pilot, "#library-note-context-region")
-        screen.query_one("#library-note-context-delete").focus()
-        origin_scroll = await _scroll_task9_context_to_nonzero_offset(context, pilot)
+        await _scroll_task9_context_to_nonzero_offset(context, pilot)
+        delete_action = screen.query_one("#library-note-context-delete")
+        delete_action.focus()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: delete_action.has_focus
+            and context.content_region.contains_region(delete_action.region),
+            message="Delete did not become a visible keyboard action.",
+        )
+        await pilot.wait_for_scheduled_animations()
+        origin_scroll = context.scroll_y
+        assert origin_scroll > 0
         snapshot_before = screen._library_note_session.snapshot
         assert snapshot_before is not None
         save_calls_before = len(app.notes_scope_service.save_calls)
 
-        delete_action = screen.query_one("#library-note-context-delete")
-        delete_action.press()
+        await pilot.press("enter")
         delete_action.press()
         await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
 
         admission = screen._library_note_session.destructive_admission
         assert admission is not None
         assert screen._library_note_session.destructive_running is False
-        assert screen._notes_state.context is False
-        assert screen.query_one("#library-note-editor-region").display is True
+        assert screen._notes_state.context is True
+        assert screen.query_one("#library-note-editor-region").display is False
         delete_action.press()
         await pilot.pause()
         assert screen._library_note_session.destructive_admission == admission
@@ -33705,7 +34703,14 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         assert screen._library_note_session.snapshot == snapshot_before
 
         await pilot.press("escape")
-        await _wait_for_display(screen, pilot, "#library-note-context-region")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_note_session.destructive_admission is None
+            and not screen._notes_state.confirming_delete
+            and delete_action.has_focus,
+            message="Cancel did not restore the initiating Delete action.",
+        )
+        await pilot.wait_for_scheduled_animations()
         assert screen._library_note_session.destructive_admission is None
         assert screen._notes_state.confirming_delete is False
         assert screen._notes_state.context is True
@@ -33793,10 +34798,19 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_a
             context = await _wait_for_display(
                 screen, pilot, "#library-note-context-region"
             )
-            origin_scroll = await _scroll_task9_context_to_nonzero_offset(
-                context, pilot
+            await _scroll_task9_context_to_nonzero_offset(context, pilot)
+            delete_action = screen.query_one("#library-note-context-delete")
+            delete_action.focus()
+            await pilot.pause()
+            await _wait_for_condition(
+                pilot,
+                lambda: delete_action.has_focus
+                and context.content_region.contains_region(delete_action.region),
+                message="Delete did not become a visible keyboard action.",
             )
-            screen.query_one("#library-note-context-delete").press()
+            origin_scroll = context.scroll_y
+            assert origin_scroll > 0
+            await pilot.press("enter")
             await _wait_for_display(screen, pilot, "#library-note-delete-confirmation")
             snapshot_before = screen._library_note_session.snapshot
             assert snapshot_before is not None
@@ -33834,7 +34848,13 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_a
                 assert screen._notes_state.view == "list"
                 assert screen._library_note_session.snapshot is None
             else:
-                await _wait_for_display(screen, pilot, "#library-note-context-region")
+                await _wait_for_condition(
+                    pilot,
+                    lambda: screen._library_note_session.destructive_admission is None
+                    and not screen._notes_state.confirming_delete
+                    and delete_action.has_focus,
+                    message="Failed delete did not restore the initiating action.",
+                )
                 assert screen._library_note_session.destructive_admission is None
                 assert screen._notes_state.delete_receipt is None
                 assert "(2)" in str(screen.query_one("#library-row-browse-notes").label)
@@ -34180,6 +35200,14 @@ async def test_library_note_keyboard_capability_matrix(
             # Tests/UI/test_library_notes_wave_list.py
             # ::test_sort_is_operable_by_keyboard_on_the_flat_list.
             await _task10_open_notes_navigator(screen, pilot)
+            # Pin the real paged projection before and after keyboard filtering.
+            await _wait_for_selector(screen, pilot, "#library-notes-row-1")
+            projection = screen._build_library_notes_tree_projection()
+            assert projection is not None
+            assert [row.note_id for row in projection.rows if row.kind == "note"] == [
+                "n-1", "n-2"
+            ]
+            assert screen._notes_state.sort == "newest"
             filter_input = await _task10_focus_with_keyboard(
                 screen, pilot, "#library-notes-filter"
             )
@@ -34190,6 +35218,20 @@ async def test_library_note_keyboard_capability_matrix(
                 message="Keyboard filter submit never reached search_notes.",
             )
             assert filter_input.value == "retro"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.filter_records is not None,
+                message="Keyboard filter result did not settle.",
+            )
+            projection = screen._build_library_notes_tree_projection()
+            assert projection is not None
+            assert [row.note_id for row in projection.rows if row.kind == "note"] == [
+                "n-1"
+            ]
+            assert screen._notes_state.sort == "newest"
+            assert screen._notes_state.sort_choices_visible is False
+            assert screen.query_one("#library-notes-sort", Button).disabled is True
+            assert not screen.query("#library-notes-sort-choices")
             return
 
         if capability == "create_discard":
@@ -34749,7 +35791,7 @@ async def test_library_note_fifty_same_side_resize_sequences_do_zero_notes_work(
         for name, wrapped in seams.items():
             assert wrapped.call_count == 0, name
         if expected_compact:
-            # TASK-19000 reserves two rows for pinned authority and next action.
+            # TASK-19000 authority stays fixed; TASK-32064 returned one row.
             assert screen.query_one("#library-note-body").region.height == 10
             await pilot.resize_terminal(100, 30)
             await pilot.pause()
@@ -34792,7 +35834,9 @@ async def test_library_note_stage_visibility_skips_redundant_class_work() -> Non
 async def test_library_note_media_route_switch_updates_contextual_chrome() -> None:
     """Notes-only chrome follows the route while compatible swaps stay targeted."""
     app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
     host = LibraryHarness(app)
 
     async with host.run_test(size=(120, 30)) as pilot:
@@ -34885,7 +35929,7 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         baseline_timer_ref = screen._notes_state.autosave_timer
         assert baseline_active_groups == set()
         assert baseline_timer_ref is None
-        assert screen._notes_state.auto_sync_timer is None
+        assert not hasattr(screen._notes_state, "auto_sync_timer")
         assert not hasattr(screen, "_arm_library_notes_auto_sync_timer")
 
         exercised_groups = set()
@@ -34970,13 +36014,19 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
             for note in app.notes_scope_service.notes
         )
 
+        resident_notes_canvas = screen.query_one("#library-notes-canvas")
+        mounts_before_cycles = canvas_lifecycle["mounted"]
+        removals_before_cycles = canvas_lifecycle["removed"]
         for _ in range(50):
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
             await _wait_for_selector(screen, pilot, "#library-media-list")
-            assert len(screen.query("#library-notes-canvas")) == 0
+            assert screen.query_one("#library-notes-canvas") is resident_notes_canvas
+            assert resident_notes_canvas.display is False
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             await _wait_for_selector(screen, pilot, "#library-notes-filter")
             assert len(screen.query("#library-notes-canvas")) == 1
+            assert screen.query_one("#library-notes-canvas") is resident_notes_canvas
+            assert resident_notes_canvas.display is True
 
         await screen.workers.wait_for_complete()
         await pilot.pause()
@@ -34991,7 +36041,9 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
         assert exercised_groups == note_worker_groups
         assert final_active_groups == baseline_active_groups
         assert screen._notes_state.autosave_timer is baseline_timer_ref
-        assert canvas_lifecycle["mounted"] > 100
+        # Phase C retains the list and replaces only its Work pane per visit.
+        assert canvas_lifecycle["mounted"] - mounts_before_cycles == 50
+        assert canvas_lifecycle["removed"] - removals_before_cycles == 50
         # The adaptive destination retains two LibraryNotesCanvas owners:
         # the list itself and its LibraryNoteWorkPane subclass.
         assert canvas_lifecycle["mounted"] == canvas_lifecycle["removed"] + 2
@@ -35104,7 +36156,7 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
         await pilot.pause()
         assert screen._notes_state.autosave_timer is not None
 
-        assert screen._notes_state.auto_sync_timer is None
+        assert not hasattr(screen._notes_state, "auto_sync_timer")
         assert not hasattr(screen, "_arm_library_notes_auto_sync_timer")
         screen.run_worker(asyncio.sleep(30), group="library_note_create")
         await pilot.pause()
@@ -35391,6 +36443,7 @@ async def test_background_recompose_focus_fallback_stays_inside_screen_content()
         # models the drop; Textual's own removal handler happens to fall
         # back to the row's scroll parent, which a recompose of the whole
         # subtree does not).
+        screen._disarm_library_list_entry_focus()
         await row.remove()
         screen.set_focus(None)
         await pilot.pause()
@@ -35410,18 +36463,20 @@ async def test_background_recompose_focus_fallback_stays_inside_screen_content()
 
 
 @pytest.mark.asyncio
-async def test_background_recompose_restores_focus_on_an_empty_conversations_list():
+async def test_background_recompose_restores_focus_on_an_empty_conversations_list(
+    monkeypatch,
+):
     """task-31946 (PR L review item 2): the stand-down cannot strand focus.
 
-    The seam stands down while a one-shot focus channel is armed, because
-    a foreign ``set_focus`` in that window disarms it. Conversations is
-    absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``, so the armed
-    channel lands NOTHING there -- standing down for it left a background
-    recompose inside the settle window with no restore at all, and the
-    keyboard dead for good.
+    TASK-32228 registers Conversations with the one-shot focus channel.
+    The generic seam stands down while that channel owns the window; an
+    empty list must still land focus on its attached recovery action after
+    recompose; a true empty page has no filter input.
     """
     app = _build_test_app()
     _seed_conversations(app, [])
+    open_console = Mock(wraps=app.open_console_for_live_work)
+    monkeypatch.setattr(app, "open_console_for_live_work", open_console)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -35430,17 +36485,20 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
 
         rail_row = screen.query_one("#library-row-browse-conversations")
         rail_row.press()
-        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        await _wait_for_selector(screen, pilot, "#library-conversations-empty-console")
+        open_console.assert_not_called()
+        # Route entry may replace the rail; never inject detached focus.
+        rail_row = screen.query_one("#library-row-browse-conversations")
+        assert rail_row.is_attached
         screen.set_focus(rail_row)
         await pilot.pause()
         assert screen.focused is rail_row
         assert not screen.query(".library-conversation-row"), "list must be empty"
 
-        # Inside the armed settle window: the channel owns the window on a
-        # route it can serve, and this one it cannot.
+        # The registered channel owns the armed settle window.
         screen._arm_library_list_entry_focus()
         assert screen._library_pending_list_entry_focus is True
-        assert screen._library_focus_channel_owns_this_window() is False
+        assert screen._library_focus_channel_owns_this_window() is True
 
         screen.refresh(recompose=True)
         await pilot.pause()
@@ -35452,6 +36510,88 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
             "Conversations list with no focused widget"
         )
         assert focused.is_attached, focused
+        assert focused.id == "library-conversations-empty-console"
+        assert screen.query_one("#screen-content") in focused.ancestors
+        assert host.screen is screen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+        open_console.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_conversations_filter_miss_focus_stays_on_filter() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen._start_library_conversation_page_request(1, "no-matching-conversation")
+        await _wait_for_selector(screen, pilot, "#library-conversations-empty-clear-filter")
+        assert not screen.query(".library-conversation-row")
+        rail = screen.query_one("#library-row-browse-conversations")
+        screen.set_focus(rail)
+        await pilot.pause()
+        screen._arm_library_list_entry_focus()
+        screen.refresh(recompose=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is not None and screen.focused.is_attached
+            and screen.focused.id == "library-conversations-filter",
+            message="Filtered-empty Conversations did not restore its filter",
+        )
+        assert host.screen is screen
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("end_window", ["expiry", "user_focus"])
+async def test_empty_conversations_unavailable_target_preserves_focus_window(
+    end_window,
+    monkeypatch,
+) -> None:
+    """An unavailable action retries once per chain and respects its old bounds."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    open_console = Mock(wraps=app.open_console_for_live_work)
+    monkeypatch.setattr(app, "open_console_for_live_work", open_console)
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        action = await _wait_for_selector(screen, pilot, "#library-conversations-empty-console")
+        open_console.assert_not_called()
+        action.disabled = True
+        rail = screen.query_one("#library-row-browse-conversations")
+        screen.set_focus(rail)
+        await pilot.pause()
+        screen._arm_library_list_entry_focus()
+        generation = screen._library_list_entry_focus_generation
+        screen._focus_library_list_entry_if_current(generation)
+        retry = screen._library_list_entry_focus_retry_timer
+        assert retry is not None
+        screen._focus_library_list_entry_if_current(generation)
+        assert screen._library_list_entry_focus_retry_timer is retry
+        assert screen.focused is rail
+        if end_window == "user_focus":
+            expected = screen.query_one("#library-search-input")
+            expected.focus()
+        else:
+            expected = rail
+        await _wait_for_condition(
+            pilot, lambda: not screen._library_pending_list_entry_focus,
+            message="Unavailable Conversations target outlived its focus window",
+        )
+        assert screen._library_list_entry_focus_retry_timer is None
+        assert screen._library_list_entry_focus_timer is None
+        action.disabled = False
+        screen._focus_library_list_entry_if_current(generation)
+        await pilot.pause()
+        assert screen.focused is expected and expected.is_attached
+        assert host.screen is screen
+        open_console.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -35471,9 +36611,8 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
 
     The strict "the Media channel cannot land at all" leg is now
     UNPINNED. The Conversations sibling directly above does not cover it:
-    that one stands down at ``library_screen.py``'s row-class lookup
-    (Conversations is absent from ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``),
-    a different branch from the media-specific
+    TASK-32228 registered Conversations, whose true empty page has a Console
+    recovery action, a different branch from the media-specific
     ``_library_media_empty_list_fallback_target() is None`` leg. Re-pinning
     it needs a Media page that composes no enabled fallback at all -- an
     empty list with the type or sort chooser OPEN is the remaining one,
@@ -35490,7 +36629,7 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
 
-        screen._request_library_media_filter("no-such-media-anywhere")
+        screen._media_controller._request_library_media_filter("no-such-media-anywhere")
         await _wait_for_condition(
             pilot,
             lambda: not screen.query(".library-media-row")

@@ -356,9 +356,9 @@ _SPLIT_HEADER = """/* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
  * ========================================
  * {owner}-owned rules split out of {module}
- * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
- * CSS_PATH, so these bytes are parsed on first visit instead of before
- * first paint. Edit {module} and re-run build_css.py.
+ * by build_css.py (TASK-25812/TASK-24459). Loaded at the app or owning-screen
+ * stylesheet boundary; route-owned sheets are deferred until first visit.
+ * Edit {module} and re-run build_css.py.
  * ======================================== */
 
 """
@@ -457,6 +457,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
                 "watchlists",
                 "watchlist",
                 "wl",
+                "wc",
                 "artifacts",
                 "sources",
                 "items",

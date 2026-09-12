@@ -225,7 +225,7 @@ async def test_the_menu_reads_canonical_state_not_the_row_display_copy() -> None
         db = _FakeDB(state="resolved")
         console, _notes = await _console_with_db(pilot, db)
 
-        assert console._console_conversation_state("conv-1") == "resolved"
+        assert console._row_actions._console_conversation_state("conv-1") == "resolved"
 
         from tldw_chatbook.Chat.console_conversation_actions import (
             ACTION_UNARCHIVE,
@@ -236,7 +236,7 @@ async def test_the_menu_reads_canonical_state_not_the_row_display_copy() -> None
         target = ConversationMenuTarget(
             conversation_id="conv-1",
             title="Chat 1",
-            state=console._console_conversation_state("conv-1"),
+            state=console._row_actions._console_conversation_state("conv-1"),
         )
         assert target.is_archived
         assert build_conversation_menu(target)[2].action_id == ACTION_UNARCHIVE
@@ -251,8 +251,8 @@ async def test_state_lookup_falls_back_rather_than_blocking_the_menu() -> None:
 
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         console, _notes = await _console_with_db(pilot, _FakeDB(missing=True))
-        assert console._console_conversation_state(None) == DEFAULT_CONVERSATION_STATE
-        assert console._console_conversation_state("gone") == DEFAULT_CONVERSATION_STATE
+        assert console._row_actions._console_conversation_state(None) == DEFAULT_CONVERSATION_STATE
+        assert console._row_actions._console_conversation_state("gone") == DEFAULT_CONVERSATION_STATE
 
         class _Broken:
             def get_conversation_by_id(self, conversation_id):
@@ -260,5 +260,5 @@ async def test_state_lookup_falls_back_rather_than_blocking_the_menu() -> None:
 
         console.app_instance.chachanotes_db = _Broken()
         assert (
-            console._console_conversation_state("conv-1") == DEFAULT_CONVERSATION_STATE
+            console._row_actions._console_conversation_state("conv-1") == DEFAULT_CONVERSATION_STATE
         )

@@ -1133,65 +1133,14 @@ class LibraryIngestController:
         return getattr(self.app_instance, "library_ingest_jobs", None)
 
     def _handle_library_ingest_registry_changed(self) -> None:
-        """Registry listener: live-recompose the ingest canvas + poke the
-        source snapshot when a job finishes (Task 5).
-
-        Registered against ``self.app_instance.library_ingest_jobs`` in
-        ``on_mount``, removed in ``on_unmount``. Per the registry's own
-        contract (``LibraryIngestJobRegistry._notify_listeners``), this
-        fires synchronously on the UI thread after every successful
-        ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
-        ``mark_failed``/``requeue`` -- from two different call shapes:
-
-        - **Synchronously inside a message handler.** "Start import" and
-          ordinary Library "Retry" actions mutate the registry (firing this
-          listener) before their handler's trailing dynamic-region update.
-          A Research-owned retry is scheduled through its durable operation
-          owner and fires the listener when that owner persists its replacement.
-        - **Marshaled from a background thread**, via ``call_from_thread``
-          for ``mark_parsing``/``mark_writing`` (the F3 parse-pool
-          coordinator, itself invoked from a pool callback thread) and
-          ``mark_done``/``mark_failed`` (the writer's worker thread) --
-          these land outside any message handler, as their own turn of the
-          UI event loop.
-
-        Both shapes are safe to handle with a plain, synchronous
-        ``self.refresh(recompose=True)`` call (no ``call_after_refresh``
-        indirection needed): ``Widget.refresh(recompose=True)`` never
-        recomposes inline -- it only sets ``_recompose_required = True``
-        and schedules the actual (async) ``_check_recompose`` via
-        ``call_next``, which runs on a later turn of the event loop. That
-        makes calling it redundant, or from inside another handler that
-        will also call it, harmless: the flag is idempotent and the
-        second scheduled check becomes a no-op once the first has already
-        cleared it. (Verified by reading
-        ``textual.widget.Widget.refresh``/``_check_recompose`` -- Textual
-        8.2.7.)
-
-        Behavior:
-
-        - Recomposes the canvas ONLY when the ingest canvas is the
-          currently selected rail row -- a job transition must never yank
-          a user looking at a different canvas away from it.
-        - Independently of the canvas recompose, pokes
-          ``_refresh_local_source_snapshot()`` (which updates the rail's
-          ``Media (N)`` count) whenever the registry's done-job count has
-          grown since this screen last checked -- deduped via
-          ``_library_ingest_last_done_count`` so a running/failed
-          transition (or a second notification for the same completed
-          job) never re-triggers the snapshot fetch. This fires
-          regardless of which canvas is selected, since the rail is
-          always visible.
-        - A no-op when the screen isn't mounted -- belt-and-braces
-          alongside ``on_unmount``'s removal (see that method's
-          docstring for why removal can't simply happen earlier, e.g. on
-          suspend). Note ``self.is_mounted`` never flips back to
-          ``False`` after removal in this Textual version -- it only
-          guards a callback that somehow fires before this screen's very
-          first mount -- so ``on_unmount``'s ``remove_listener`` call is
-          what actually prevents post-teardown notifications, not this
-          guard.
-        """
+        """Handle registry transitions on the UI thread (task 5).
+        Registered on mount and removed on unmount. Notifications may run inside
+        handlers or arrive via call_from_thread; refresh schedules later work and
+        coalesces repeated requests rather than recomposing inline.
+        Repaint only the active ingest canvas. Independently refresh source counts
+        when the done-job count grows, deduped by the last observed count.
+        The mounted guard prevents pre-mount work, not teardown callbacks:
+        Textual retains is_mounted after removal, so listener removal is essential."""
         if not self.is_mounted:
             return
         armed = getattr(self, "_library_ingest_start_consent", None)

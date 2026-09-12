@@ -145,10 +145,13 @@ _BUDGETS: dict[str, int] = {
     # counts (`len(path.read_text(encoding="utf-8").splitlines())`, this
     # file's own `_measure` expression), no headroom.
     "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
+    # TASK-31735 (2026-09-05): unchanged ordered construction moved out of screen.
+    "tldw_chatbook/UI/Library_Modules/wiring.py": 338,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
-    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
+    # 2026-09-06, TASK-31932: lock in the merged dev controller's measured size.
+    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1686,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -238,7 +241,10 @@ _BUDGETS: dict[str, int] = {
     # Raising it from a passing branch would launder dev-side debt behind a
     # Library merge, which this file's own guidance forbids; it needs an
     # owner on dev. Recorded in recipe §7's documented-pre-existing list.
-    "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+    # 2026-09-08, ADR-128: explicit UI-local presentation composition pays
+    # down that debt; IO/generation orchestration remains in this controller.
+    "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 323,
+    "tldw_chatbook/UI/Library_Modules/library_media_browse_state.py": 295,
     # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 140 moved methods (byte-for-byte; every one
@@ -349,7 +355,9 @@ _BUDGETS: dict[str, int] = {
     # `LibraryMediaCanvas(...)` construction site, which is what lets the
     # canvas own its sixteen canvas-origin `@on` rows without reaching back
     # through the screen. The screen shrank 63 lines in the same commit.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4670,
+    # PR-2427 retains its shorter documentation; phase-C actions wiring fits
+    # at 4646 lines, below the previously published 4669 ceiling.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4646,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -384,18 +392,9 @@ _BUDGETS: dict[str, int] = {
     # `Tests/UI/test_library_crit8_keyboard.py::
     # test_ctrl_n_into_new_note_also_focuses_blank_note` -- reverting the
     # guard reds it (focus lands on a notes-tree row, not Blank note).
-    #
-    # 2026-09-09, task-32129 (Obsidian mode for Import once): 5284 -> 5300
-    # (+16), a BEHAVIOUR ADD, not a move -- one new `@on` handler
-    # (`handle_library_note_import_obsidian_mode`) that re-runs the read-only
-    # check when the review's Obsidian-vault toggle changes. The row was
-    # already 1 line under the file when this branch started (5284 measured
-    # against a 5283 pin), so this re-pin also corrects that drift. Pinned by
-    # `Tests/UI/test_library_note_import_flow.py::
-    # test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault`
-    # -- without the handler the toggle press never re-checks and the test reds
-    # on "Turning Obsidian vault off never re-ran the check."
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5300,
+    # TASK-31932: retain that guard, but pay down redundant documentation
+    # instead of accepting the upstream ceiling increase.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 5276,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -405,20 +404,9 @@ _BUDGETS: dict[str, int] = {
     # replaced in place).
     "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 198,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
-    # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
-    # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the
-    # vault-detection flag and the two `obsidian_mode` arguments threaded
-    # through `_plan_selection`/`check`.
-    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 602,
-    # 2026-09-11, task-32243 (refused Check names its reason): 2023 -> 2024
-    # (+1), and that one line is the `check_failure_line` import. The refusal
-    # copy table and its two helpers live in
-    # `Library/library_notes_lasting_sync_state.py` with the rest of this
-    # screen's presentation state; both fallback strings moved into the helper
-    # (keyed on `root_id == ""` => setup), so each of the two Check paths
-    # spends exactly one line on it. This row was briefly pinned at 2128 with
-    # the table in the controller; that was rejected in review and reverted.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2024,
+    # TASK-31932 retains the original ceiling through Obsidian integration.
+    "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -549,7 +537,7 @@ _BUDGETS: dict[str, int] = {
     # cousin" framing (the getattr/focused escape is that shape's own
     # sub-case -- the seventh instance counted under it -- not an eighth/
     # new shape), +3 lines. Net 3140 -> 3142.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3139,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line

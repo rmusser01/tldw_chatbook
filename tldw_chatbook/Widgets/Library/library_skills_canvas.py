@@ -101,8 +101,8 @@ _TRUST_STATE_COPY = {
     "quarantined_unsupported_path": "Trust: unsupported file path",
 }
 # Exact copy pinned by the Task 4 brief -- both the canvas's initial render
-# and the screen's targeted (no-recompose) live updates
-# (``LibraryScreen._update_library_skill_warnings_static``) must agree on
+# and the controller's targeted (no-recompose) live updates
+# (``LibrarySkillsController._update_library_skill_warnings_static``) must agree on
 # this literal text, so it lives in ONE place (``skill_editor_warning_lines``
 # below), imported by both.
 _SHADOW_WARNING_TEMPLATE = (

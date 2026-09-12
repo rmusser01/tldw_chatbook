@@ -58,17 +58,19 @@ def _media_canvas(screen) -> Widget:
 #: A scroll offset deep in the wide row list and reachable at BOTH sizes these
 #: return tests use. task-31633 made a wide item two painted rows instead of
 #: three, so a 20-row page's virtual height fell from 60 to 40 and the old
-#: literal ``y=42`` is now past the end everywhere (max_scroll_y is 37 at
-#: 100x20 and 33 at 80x24) -- it clamps, which is a different settlement
+#: literal ``y=42`` is now past the end everywhere (historical max_scroll_y
+#: was 37 at 100x20 and 33 at 80x24) -- it clamps, a different settlement
 #: outcome rather than a deeper scroll.
 DEEP_ROW_SCROLL_Y = 28
 
 #: The offset ``_open_scrolled_compact_media_viewer`` leaves the compact row
 #: list at when it scrolls row 15 into view at ``COMPACT_SCROLL_SIZE``. It was
 #: 42 while a wide item painted three rows; task-31633 made it two, so the same
-#: row now sits shallower. Measured, not derived -- the helper returns the real
-#: offset and the tests below compare against that; this constant keeps the
-#: absolute number pinned so a silent clamp cannot pass as a deep scroll.
+#: row now sits shallower. TASK-32064 removed the one-row global Chunking tools
+#: strip, but TASK-32350 added the one-row applied-scope line, so the viewport
+#: remains three rows and the offset remains 29.
+#: The helper returns the real offset; this exact pin ensures a silent clamp
+#: cannot pass as a deep scroll.
 COMPACT_ROW_SCROLL_Y = 29
 
 
@@ -258,10 +260,10 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
         content_signature = screen._library_media_content_signature()
         layout_signature = screen._library_media_layout_signature()
         assert content_signature == (
-            screen._library_media_browse_controller.applied_scope,
+            screen._library_media_browse_controller.state.applied_scope,
             tuple(
                 str(item["id"])
-                for item in screen._library_media_browse_controller.retained_items
+                for item in screen._library_media_browse_controller.state.retained_items
             ),
         )
         # task-31979: the signature is derived from the canonical item-open
@@ -1692,7 +1694,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         service = app.media_reading_scope_service
         removed_id = next(
             str(item["id"])
-            for item in controller.retained_items
+            for item in controller.state.retained_items
             if str(item["id"]) != media_id
         )
         removed_backing = int(removed_id.rsplit(":", 1)[1])
@@ -1702,12 +1704,12 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
             if service._backing_id(item, index) != removed_backing
         ]
         screen._request_library_media_browse(
-            controller.mutation_refresh_scope,
+            controller.state.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: not controller.loading
+            lambda: not controller.state.loading
             and screen._library_media_content_signature()
             != old_request.content_signature,
             message="Authoritative reordered Media content never applied.",
@@ -1724,7 +1726,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
         assert request.content_signature == screen._library_media_content_signature()
         assert request.layout_signature == screen._library_media_layout_signature()
-        assert not screen._settle_library_media_return_from_geometry(
+        assert not screen._media_controller._settle_library_media_return_from_geometry(
             old_request,
             old_owner,
             old_geometry.geometry,
@@ -1887,11 +1889,11 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
 
         monkeypatch.setattr(screen, "set_focus", observe_focus)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1938,11 +1940,11 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
 
         monkeypatch.setattr(app, "notify", capture_notice)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1999,7 +2001,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
                 request,
                 request_id=request.request_id + 1,
             )
-            screen._settle_library_media_return_from_geometry(
+            screen._media_controller._settle_library_media_return_from_geometry(
                 request,
                 owner,
                 geometry.geometry,
@@ -2379,7 +2381,7 @@ async def test_another_viewer_back_request_invalidates_prior_authority(
         new_request = screen._media_state.return_settlement
         assert new_request is not None
 
-        assert not screen._settle_library_media_return_from_geometry(
+        assert not screen._media_controller._settle_library_media_return_from_geometry(
             old_request,
             old_owner,
             old_geometry.geometry,

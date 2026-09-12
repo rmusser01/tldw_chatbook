@@ -29,6 +29,8 @@ from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 #: Every keyword-only dependency of ``ConsoleMessageController.__init__``
 #: except ``app_instance`` (a plain value, not a callable).
 MESSAGE_CONTROLLER_CALLABLES = (
+    "global_chat_display_name",
+    "console_transcript_style",
     "chat_store_accessor",
     "current_chat_store_accessor",
     "ensure_console_chat_controller",

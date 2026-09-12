@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Library import library_note_import_state as state_module
 from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
@@ -16,6 +17,7 @@ from tldw_chatbook.Library.library_note_import_state import (
     begin_checking,
     begin_importing,
     begin_retry,
+    bounded_note_diff,
     initial_note_import_snapshot,
     request_import_cancellation,
     project_library_note_import_snapshot,
@@ -58,6 +60,104 @@ _APPROVAL_ID = "00000000-0000-4000-8000-000000000003"
 _PRIVATE_ROOT = Path("/private/alice/Tax records")
 _SECRET_CONTENT = "bank account 9999 and medical note"
 _SECRET_KEYWORD = "confidential-keyword"
+
+
+@pytest.mark.parametrize("title,content", [("", ""), ("Same", "Body\n")])
+def test_bounded_note_diff_equal_documents_are_empty(title: str, content: str) -> None:
+    """Keep equal bounded documents free of diff output.
+
+    Args:
+        title: Shared document title.
+        content: Shared document body.
+    """
+    assert bounded_note_diff(title, content, title, content) == ""
+
+
+@pytest.mark.parametrize(
+    "before_title,before_body,after_title,after_body,expected",
+    [
+        (
+            "Old",
+            "Old body",
+            "New",
+            "New body",
+            "--- Existing note\n+++ Imported source\n@@ -1,3 +1,3 @@\n"
+            "-Title: Old\n+Title: New\n \n-Old body\n+New body",
+        ),
+        (
+            "Café 😀",
+            "α\r\nβ\n",
+            "Café 😀",
+            "α\nγ\u2028",
+            "--- Existing note\n+++ Imported source\n@@ -2,3 +2,3 @@\n \n α\n-β\n+γ",
+        ),
+    ],
+)
+def test_bounded_note_diff_exact_hunks(
+    before_title: str,
+    before_body: str,
+    after_title: str,
+    after_body: str,
+    expected: str,
+) -> None:
+    """Preserve exact title, body, Unicode and newline formatting.
+
+    Args:
+        before_title: Existing note title.
+        before_body: Existing note body.
+        after_title: Imported title.
+        after_body: Imported body.
+        expected: Exact unified diff output.
+    """
+    assert (
+        bounded_note_diff(before_title, before_body, after_title, after_body)
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "title_length,tail",
+    [(15_990, ["", "😀"]), (15_991, [""]), (15_992, []), (15_993, []), (15_994, [])],
+)
+def test_bounded_note_diff_title_first_input_boundary(
+    title_length: int, tail: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preserve title-first slicing at the input budget boundary.
+
+    Args:
+        title_length: Number of characters in each title.
+        tail: Expected lines remaining after the bounded title.
+        monkeypatch: Fixture for observing actual diff inputs.
+    """
+    observed = []
+    real_diff = state_module.difflib.unified_diff
+
+    def observe(before, after, **kwargs):
+        observed.append((before, after))
+        return real_diff(before, after, **kwargs)
+
+    monkeypatch.setattr(state_module.difflib, "unified_diff", observe)
+    title = "界" * title_length
+    assert bounded_note_diff(title, "😀tail", title, "😀tail") == (
+        "\n… Diff preview truncated."
+    )
+    expected = ["Title: " + "界" * min(title_length, 15_993), *tail]
+    assert observed == [(expected, expected)]
+
+
+def test_bounded_note_diff_equal_overlong_bodies_still_mark_truncation() -> None:
+    """Mark input truncation even when the bounded documents are equal."""
+    assert bounded_note_diff("Same", "body\n" * 10_000, "Same", "body\n" * 10_000) == (
+        "\n… Diff preview truncated."
+    )
+
+
+def test_bounded_note_diff_huge_different_bodies_bound_output() -> None:
+    """Include the exact truncation marker within the output budget."""
+    preview = bounded_note_diff("Same", "old\n" * 100_000, "Same", "new\n" * 100_000)
+    assert preview.startswith("--- Existing note\n+++ Imported source\n@@")
+    assert preview.endswith("\n… Diff preview truncated.")
+    assert len(preview) <= 1_600
 
 
 def _bounds() -> ImportBounds:

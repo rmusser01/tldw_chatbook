@@ -20,6 +20,10 @@ import pytest
 from PIL import Image as PILImage
 from textual.widgets import Button
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -512,6 +516,9 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
             ),
             detail="enabled H3 Send button",
         )
+        # Synthetic Send must begin from the ordinary typing focus so an
+        # earlier navigation control cannot scroll the composer out of view.
+        composer.focus()
         await pilot.pause(0.1)
         send = console.query_one("#console-send-message", Button)
         send.post_message(Button.Pressed(send))
@@ -523,7 +530,21 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
             stop = console.query_one("#console-stop-generation", Button)
             assert stop.styles.display != "none"
             assert not stop.disabled
-            await asyncio.wait_for(pilot.click("#console-stop-generation"), timeout=0.5)
+            actions = composer.query_one("#console-composer-actions")
+            assert actions.content_region.contains_region(stop.region), {
+                "actions": actions.content_region,
+                "stop": stop.region,
+            }
+            assert console.region.contains_region(stop.region)
+            assert (
+                console.get_widget_at(
+                    stop.region.x + stop.region.width // 2, stop.region.y
+                )[0]
+                is stop
+            )
+            assert await asyncio.wait_for(
+                pilot.click("#console-stop-generation"), timeout=0.5
+            )
             assert operation.cancel_event.is_set()
         finally:
             release.set()
@@ -562,7 +583,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
             "/generate-image :comfyui change it"
         )
         caller = asyncio.create_task(
-            old._console_command_generate_image(
+            old._image._console_command_generate_image(
                 CommandParse(
                     kind="command", name="generate-image", args=":comfyui change it"
                 )
@@ -585,7 +606,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
         assert stop.styles.display != "none"
         assert not stop.disabled
 
-        await fresh._console_command_generate_image(
+        await fresh._image._console_command_generate_image(
             CommandParse(
                 kind="command", name="generate-image", args=":comfyui change it"
             )
@@ -708,7 +729,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             old_store.set_session_draft(session.id, "settlement draft")
             old.query_one("#console-native-composer").load_draft("settlement draft")
             caller = asyncio.create_task(
-                old._console_command_generate_image(
+                old._image._console_command_generate_image(
                     CommandParse(
                         kind="command",
                         name="generate-image",
@@ -953,7 +974,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
             )
         old.query_one("#console-native-composer").load_draft("captured failure draft")
         caller = asyncio.create_task(
-            old._console_command_generate_image(
+            old._image._console_command_generate_image(
                 CommandParse(
                     kind="command", name="generate-image", args=":comfyui change it"
                 )
@@ -1048,7 +1069,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
                 "preserved failure draft"
             )
             caller = asyncio.create_task(
-                old._console_command_generate_image(
+                old._image._console_command_generate_image(
                     CommandParse(
                         kind="command",
                         name="generate-image",

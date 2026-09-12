@@ -104,7 +104,7 @@ class ConsoleTerminalSessionModal(
     SAFE_MODAL_CONTENT = "#console-terminal-session-modal"
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleTerminalSessionModal {
         align: center middle;
     }

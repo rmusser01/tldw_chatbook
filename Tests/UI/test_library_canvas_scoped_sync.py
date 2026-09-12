@@ -416,9 +416,18 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
         is_mounted=True,
         _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_import_status="",
+        _library_skills_import_in_flight=False,
+        _library_structural_waits={},
         query_one=Mock(return_value=skill_line),
     )
     skill_screen.app = SimpleNamespace(screen=skill_screen)
+    for name in (
+        "_library_structural_wait_for",
+        "_library_skills_import_status_line",
+        "_library_skills_import_row_visible",
+        "_patch_library_skills_import_status_line",
+    ):
+        setattr(skill_screen, name, getattr(LibraryScreen, name).__get__(skill_screen))
 
     with patch.object(
         library_screen_module,

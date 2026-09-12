@@ -257,10 +257,10 @@ async def test_media_type_strip_works_in_both_layouts():
 
         async with host.run_test(size=size) as pilot:
             screen = await _open_media_list(host, pilot)
-            host_pane = screen.query_one("#library-canvas")
+            shell_grid = screen.query_one("#library-shell-grid")
             await _wait_for_condition(
                 pilot,
-                lambda: host_pane.has_class("library-notes-compact") is compact,
+                lambda: shell_grid.has_class("library-adaptive-compact") is compact,
                 message=f"compact class never reached {compact} at {size}",
             )
 
@@ -349,11 +349,11 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         controller = screen._library_media_browse_controller
         await _wait_for_condition(
             pilot,
-            lambda: len(controller.type_options) == 63,
+            lambda: len(controller.state.type_options) == 63,
             message="Complete Media facets never settled.",
         )
-        applied_before = controller.applied_scope
-        requested_before = controller.requested_scope
+        applied_before = controller.state.applied_scope
+        requested_before = controller.state.requested_scope
 
         screen.query_one("#library-media-type-filter", Button).press()
         chooser = await _wait_for_selector(
@@ -370,16 +370,16 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         assert str(chooser.get_option_at_index(0).prompt) == "█ ✓ All types"
         assert getattr(chooser.get_option_at_index(1), "choice_value") == "All"
         assert str(chooser.get_option_at_index(1).prompt) == "All"
-        assert controller.applied_scope == applied_before
-        assert controller.requested_scope == requested_before
+        assert controller.state.applied_scope == applied_before
+        assert controller.state.requested_scope == requested_before
 
         chooser.focus()
         await pilot.press("end")
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_scope is not None
-            and controller.applied_scope.media_type == "type-62",
+            lambda: controller.state.applied_scope is not None
+            and controller.state.applied_scope.media_type == "type-62",
             message="Keyboard commit never selected the final complete type.",
         )
         assert not screen.query("#library-media-type-choices")

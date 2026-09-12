@@ -118,20 +118,20 @@ LOCAL_FIRST_PACKAGE_INSTALL_COMMAND = "pip install tldw_chatbook"
 
 @dataclass(frozen=True)
 class OptionalFeatureInfo:
-    """User-facing metadata for an optional feature group.
+    """User-facing metadata for an extra or a core-backed capability.
 
     Args:
-        extra: pyproject optional dependency group.
+        extra: pyproject optional dependency group, or None for core packages.
         label: Human-readable capability label.
         feature_area: Product area used for release docs and grouping.
         capability_tier: `baseline` or `advanced` capability tier.
-        package_dependencies: Representative packages installed by the extra.
+        package_dependencies: Representative packages providing the capability.
         recovery_action: Destination or setup area that owns recovery.
-        unavailable_what: Specific workflow blocked when the extra is missing.
+        unavailable_what: Specific workflow blocked when required packages are missing.
         owner: User-facing authority owner for recovery copy.
     """
 
-    extra: str
+    extra: str | None
     label: str
     feature_area: str
     capability_tier: str
@@ -144,12 +144,16 @@ class OptionalFeatureInfo:
     def source_install_command(self) -> str:
         """Editable/source checkout install command."""
 
+        if self.extra is None:
+            return LOCAL_FIRST_BASELINE_INSTALL_COMMAND
         return f'pip install -e ".[{self.extra}]"'
 
     @property
     def package_install_command(self) -> str:
         """Installed-package recovery command."""
 
+        if self.extra is None:
+            return LOCAL_FIRST_PACKAGE_INSTALL_COMMAND
         return f'pip install "tldw_chatbook[{self.extra}]"'
 
 
@@ -278,14 +282,15 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Speaker diarization",
         OWNER_LIBRARY_MEDIA,
     ),
-    "diarization_onnx": _feature(
-        "diarization_onnx",
-        "Speaker diarization (ONNX)",
-        AREA_MEDIA,
-        ("sherpa_onnx", "numpy"),
-        "Meetings",
-        "Live speaker labels without torch",
-        OWNER_LIBRARY_MEDIA,
+    "diarization_onnx": OptionalFeatureInfo(
+        extra=None,
+        label="Speaker diarization (ONNX)",
+        feature_area=AREA_MEDIA,
+        capability_tier="baseline",
+        package_dependencies=("sherpa_onnx", "numpy"),
+        recovery_action="Meetings",
+        unavailable_what="Live speaker labels without torch",
+        owner=OWNER_LIBRARY_MEDIA,
     ),
     "ebook": _feature(
         "ebook",
@@ -569,16 +574,16 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
 
 
 def get_optional_feature_info(extra: str) -> OptionalFeatureInfo:
-    """Return recovery metadata for a pyproject optional dependency group.
+    """Return recovery metadata for an extra or core-backed capability.
 
     Args:
-        extra: Optional dependency extra name from `pyproject.toml`.
+        extra: Optional dependency extra name or core-backed capability key.
 
     Returns:
-        User-facing metadata for the optional feature group.
+        User-facing metadata for the feature.
 
     Raises:
-        KeyError: If `extra` is not a known optional dependency group.
+        KeyError: If `extra` is not a known feature key.
     """
 
     try:
@@ -588,10 +593,10 @@ def get_optional_feature_info(extra: str) -> OptionalFeatureInfo:
 
 
 def optional_feature_groups_by_area() -> dict[str, tuple[str, ...]]:
-    """Group optional dependency extras by release-facing capability area.
+    """Group feature identifiers by release-facing capability area.
 
     Returns:
-        Mapping of capability area labels to sorted optional extra names.
+        Mapping of capability area labels to sorted feature identifiers.
     """
 
     grouped: dict[str, list[str]] = {}

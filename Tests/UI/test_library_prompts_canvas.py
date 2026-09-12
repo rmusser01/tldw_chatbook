@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import threading
 import zipfile
 from collections.abc import Mapping
@@ -33,11 +34,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from loguru import logger
-from textual.app import App
+from textual.app import App, active_app
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+    app_css_text,
+)
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
 
@@ -364,7 +369,7 @@ class _CanvasHost(ConsolidatedCSSApp):
 class _StyledCanvasHost(_CanvasHost):
     """Canvas harness with the application's real layout rules loaded."""
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 class _FilterDispatchCanvasHost(_StyledCanvasHost):
@@ -671,7 +676,7 @@ def test_library_prompt_forced_advanced_does_not_change_remembered_basic():
     }
     screen._prompts_state.block_state = editor_state.block_editor_state
 
-    reason = screen._library_prompt_basic_unavailable_reason(editor_state)
+    reason = screen._prompts_controller._library_prompt_basic_unavailable_reason(editor_state)
 
     assert reason == "Recipes require Advanced view."
     assert screen._prompts_state.editor_mode == "basic"
@@ -3943,9 +3948,13 @@ async def test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed(tmp
         )
         assert screen._prompts_state.selection == captured
         assert screen._prompts_state.select_mode is True
-        app.notify.assert_not_called()
+        app.notify.assert_called_once_with(
+            "Unsaved Prompt changes — Save or Discard changes first.",
+            severity="warning",
+        )
 
         screen._prompts_state.dirty = False
+        app.notify.reset_mock()
         await screen._select_library_rail_row_after_source_admission(
             LIBRARY_ROW_BROWSE_NOTES
         )
@@ -4444,13 +4453,15 @@ async def test_library_prompts_unmount_revokes_late_apply_before_workspace_shutd
         request_token=token,
     )
 
+    active_app_token = active_app.set(app)
     unmount = asyncio.create_task(screen.on_unmount())
-    await asyncio.wait_for(started.wait(), timeout=1)
     try:
+        await asyncio.wait_for(started.wait(), timeout=1)
         late_applied = controller.apply(late_result, focus_identity=None)
     finally:
         release.set()
         await unmount
+        active_app.reset(active_app_token)
 
     assert late_applied is False
     assert controller.applied_result is None
@@ -4960,6 +4971,14 @@ async def test_library_prompts_settlement_keeps_newer_surviving_focus():
                 await pilot.pause(0.02)
             assert service.started.is_set()
 
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.focused is screen.query_one("#library-prompts-filter", Input)
+                    and screen.focused.cursor_position == 4
+                ),
+                message="loading search did not restore its current filter",
+            )
             sort = screen.query_one("#library-prompts-sort", Button)
             sort.focus()
             await pilot.pause()
@@ -5078,10 +5097,14 @@ async def test_library_prompts_live_focus_that_disappears_uses_bounded_fallback(
 
 
 @pytest.mark.asyncio
-async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret():
+async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret(
+    monkeypatch,
+):
     """A superseded settlement cannot overwrite the latest filter caret."""
     old_started = threading.Event()
     old_release = threading.Event()
+    loading_recompose_started = asyncio.Event()
+    loading_recompose_release = asyncio.Event()
 
     class HeldOldPromptService(_FakePromptScopeServiceWithList):
         async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
@@ -5107,21 +5130,37 @@ async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret()
             await _open_prompts_list(screen, pilot)
             await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
+            canvas = screen.query_one("#library-prompts-canvas")
+            recompose = canvas.recompose
+
+            async def delayed_recompose():
+                loading_recompose_started.set()
+                await loading_recompose_release.wait()
+                await recompose()
+
             prompt_filter = screen.query_one("#library-prompts-filter", Input)
             prompt_filter.focus()
             await pilot.pause()
             with prompt_filter.prevent(Input.Changed):
                 prompt_filter.value = "old prompt"
             prompt_filter.cursor_position = 3
+            monkeypatch.setattr(canvas, "recompose", delayed_recompose)
             old_scope = PromptBrowseScope(query="old prompt")
             screen._request_library_prompts_browse(old_scope)
-            for _ in range(100):
-                if old_started.is_set():
-                    break
-                await pilot.pause(0.02)
-            assert old_started.is_set()
+            assert await asyncio.to_thread(old_started.wait, 2)
 
+            await asyncio.wait_for(loading_recompose_started.wait(), 2)
+            loading_recompose_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen.focused is screen.query_one("#library-prompts-filter", Input)
+                    and screen.focused.cursor_position == 3
+                ),
+                message="old search did not restore its mounted filter caret",
+            )
             loading_filter = screen.query_one("#library-prompts-filter", Input)
+            assert screen.focused is loading_filter
             with loading_filter.prevent(Input.Changed):
                 loading_filter.value = "new prompt"
             loading_filter.cursor_position = 4
@@ -5140,6 +5179,7 @@ async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret()
             assert screen.focused is current_filter
             assert current_filter.cursor_position == 7
     finally:
+        loading_recompose_release.set()
         old_release.set()
 
 
@@ -5261,7 +5301,7 @@ def test_library_prompt_row_class_matches_notes_row_visual_parity():
     same width/height/border/background as ``.library-notes-row`` -- visual
     parity with the sibling notes list, not default auto-width Buttons."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert ".library-prompt-row {" in text
@@ -5283,7 +5323,7 @@ def test_library_prompts_header_filter_empty_have_css_blocks():
     must have stylesheet rules matching their ``#library-notes-*`` siblings,
     instead of silently falling back to unstyled defaults."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-prompts-header {" in text
@@ -5323,7 +5363,7 @@ def test_library_prompt_editor_field_css_blocks_match_notes_editor_parity():
     Inputs, system/user TextAreas, meta line, conflict/status Statics) must
     have stylesheet rules matching their ``#library-note-*`` siblings."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-prompt-name," in text
@@ -5370,7 +5410,7 @@ def test_library_prompt_field_hint_css_block_matches_field_label_parity():
     muted tier as its ``.library-prompt-field-label`` sibling -- instead of
     silently falling back to unstyled defaults."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert ".library-prompt-field-hint {" in text
@@ -5386,7 +5426,7 @@ def test_library_prompts_import_row_css_blocks_match_filter_status_parity():
     ``#library-prompts-filter``/``#library-prompt-save-status`` siblings,
     instead of silently falling back to unstyled defaults."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundled_stylesheet = app_css_text()
 
     for text in (agentic_terminal, bundled_stylesheet):
         assert "#library-prompts-import-path {" in text
@@ -5786,6 +5826,285 @@ async def test_library_prompt_bulk_delete_mixed_batch_is_atomic_and_opaque(tmp_p
             screen, pilot, "#library-prompts-delete-receipt-copy"
         )
         assert str(receipt.renderable) == "✓ deleted · 5 items"
+
+
+@pytest.fixture
+def owned_prompt_resume_scope(tmp_path, monkeypatch):
+    """Close this DB's exact handles after the controls drain their workers."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    connections = {db.get_connection()}
+    get_connection = db._get_thread_connection
+
+    def capture_connection():
+        connection = get_connection()
+        connections.add(connection)
+        return connection
+
+    monkeypatch.setattr(db, "_get_thread_connection", capture_connection)
+    try:
+        yield db, service
+    finally:
+        for connection in connections:
+            connection.close()
+        for connection in connections:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("departure", ("ordinary", "cancel-delete"))
+async def test_prompt_resume_without_mutation_keeps_browse_and_snapshot_refresh(
+    owned_prompt_resume_scope, monkeypatch, departure
+):
+    """A normal return or cancelled confirmation still refreshes both owners."""
+    from textual.screen import Screen
+
+    db, service = owned_prompt_resume_scope
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Keep on return", author="A", details="unchanged", user_prompt="body"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        try:
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompts_list(screen, pilot)
+            controller = screen._library_prompt_browse_controller
+            previous_token = controller.result.request_token
+            browse = Mock(wraps=screen._request_library_prompts_browse)
+            snapshot = Mock(wraps=screen._refresh_local_source_snapshot)
+            delete = AsyncMock(wraps=service.delete_prompts)
+            monkeypatch.setattr(screen, "_request_library_prompts_browse", browse)
+            monkeypatch.setattr(screen, "_refresh_local_source_snapshot", snapshot)
+            monkeypatch.setattr(service, "delete_prompts", delete)
+
+            if departure == "cancel-delete":
+                screen.query_one("#library-prompts-select", Button).press()
+                await _wait_for_selector(
+                    screen, pilot, "#library-prompts-delete-selected"
+                )
+                screen.query_one(f"#library-prompt-row-{prompt_id}", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        not screen.query_one(
+                            "#library-prompts-delete-selected", Button
+                        ).disabled
+                    ),
+                    message="Selected Prompt never enabled deletion.",
+                )
+                screen.query_one("#library-prompts-delete-selected", Button).press()
+                await pilot.pause()
+                assert isinstance(host.screen, PromptDeleteConfirmationModal)
+                assert screen._prompts_state.mutation_in_flight is False
+                host.screen.query_one("#prompt-delete-cancel", Button).press()
+            else:
+                await host.push_screen(Screen())
+                await pilot.pause()
+                assert screen._library_screen_suspended is True
+                await host.pop_screen()
+
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    host.screen is screen
+                    and controller.result.request_token > previous_token
+                    and controller.result.status == "ready"
+                ),
+                message="Unmutated Prompt resume did not refresh its page.",
+            )
+            await pilot.pause()
+
+            browse.assert_called_once_with(controller.scope, focus_identity=None)
+            snapshot.assert_called_once_with()
+            delete.assert_not_awaited()
+            assert screen._prompts_state.mutation_in_flight is False
+            assert screen._library_screen_suspended is False
+            assert screen._library_visit_entered is True
+            assert db.fetch_prompt_details(prompt_id)["version"] == 1
+            assert screen.query_one(f"#library-prompt-row-{prompt_id}")
+        finally:
+            await screen.workers.wait_for_complete()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "source_state", "outcome", "manual_retry"),
+    [
+        ("delete", "healthy", "success", False),
+        ("undo", "healthy", "success", False),
+        ("delete", "warning", "success", False),
+        ("undo", "warning", "success", False),
+        ("delete", "error", "success", False),
+        ("undo", "error", "success", False),
+        ("delete", "healthy", "conflict", False),
+        ("undo", "healthy", "conflict", False),
+        ("delete", "warning", "conflict", False),
+        ("undo", "warning", "conflict", False),
+        ("delete", "error", "conflict", False),
+        ("undo", "error", "conflict", False),
+        ("delete", "error", "conflict", True),
+    ],
+)
+async def test_prompt_mutation_return_settlement_preserves_source_retry_policy(
+    owned_prompt_resume_scope,
+    monkeypatch,
+    operation,
+    source_state,
+    outcome,
+    manual_retry,
+):
+    """Admitted settlement replaces a skipped return read without hard retries."""
+    from textual.screen import Screen
+
+    db, service = owned_prompt_resume_scope
+    prompt_id, _, _ = db.add_prompt(name="Settlement", author="A", details="body")
+    receipt = (
+        db.soft_delete_prompts((PromptBatchTarget(prompt_id, 1),))
+        if operation == "undo"
+        else None
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    started, release = threading.Event(), threading.Event()
+    snapshot_started, snapshot_release = threading.Event(), threading.Event()
+    snapshot_completed = threading.Event()
+    method = "delete_prompts" if operation == "delete" else "restore_deleted_prompts"
+    original_mutation = getattr(service, method)
+
+    async def held_mutation(**kwargs):
+        started.set()
+        await asyncio.to_thread(release.wait)
+        if outcome == "conflict":
+            raise ConflictError()
+        return await original_mutation(**kwargs)
+
+    monkeypatch.setattr(service, method, held_mutation)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        try:
+            await _wait_for_library_shell(screen, pilot)
+            if operation == "delete":
+                await _open_prompt_editor(screen, pilot, prompt_id)
+            else:
+                await _open_prompts_list(screen, pilot)
+                screen._prompts_state.delete_receipt = receipt
+                screen.refresh(recompose=True)
+                await _wait_for_selector(screen, pilot, "#library-prompts-delete-undo")
+            await screen.workers.wait_for_complete()
+            list_notes = app.notes_scope_service.list_notes
+            if source_state != "healthy":
+
+                def fail_source(**kwargs):
+                    raise (
+                        TimeoutError()
+                        if source_state == "warning"
+                        else OSError("source unavailable")
+                    )
+
+                monkeypatch.setattr(app.notes_scope_service, "list_notes", fail_source)
+                await screen._refresh_local_source_snapshot().wait()
+                assert screen._library_source_load_failure().severity == source_state
+            failure = screen._library_source_load_failure()
+            original_failure = screen._library_source_load_failure
+            failure_reads = []
+
+            def recording_failure():
+                failure_reads.append(None)
+                return original_failure()
+
+            monkeypatch.setattr(
+                screen, "_library_source_load_failure", recording_failure
+            )
+            source_reads = []
+
+            def recording_notes(**kwargs):
+                source_reads.append(kwargs)
+                if manual_retry:
+                    snapshot_started.set()
+                    snapshot_release.wait()
+                result = list_notes(**kwargs)
+                snapshot_completed.set()
+                return result
+
+            monkeypatch.setattr(app.notes_scope_service, "list_notes", recording_notes)
+            browse = Mock(wraps=screen._request_library_prompts_browse)
+            monkeypatch.setattr(screen, "_request_library_prompts_browse", browse)
+            if operation == "delete":
+                screen.query_one("#library-prompt-delete", Button).press()
+                await pilot.pause()
+                host.screen.query_one("#prompt-delete-confirm", Button).press()
+            else:
+                screen.query_one("#library-prompts-delete-undo", Button).press()
+            await _wait_for_condition(
+                pilot, started.is_set, message="Mutation did not start"
+            )
+            if operation == "undo":
+                await host.push_screen(Screen())
+                await pilot.pause()
+                await host.pop_screen()
+            await pilot.pause()
+            assert host.screen is screen
+            assert screen._prompts_state.mutation_in_flight is True
+            assert source_reads == []
+            assert browse.call_count == 0
+            failure_reads.clear()
+
+            if manual_retry:
+                manual_worker = screen._refresh_local_source_snapshot()
+                await _wait_for_condition(
+                    pilot,
+                    snapshot_started.is_set,
+                    message="Manual retry did not read",
+                )
+            release.set()
+            if manual_retry:
+                await _wait_for_condition(
+                    pilot,
+                    lambda: not screen._prompts_state.mutation_in_flight,
+                    message="Failed mutation did not settle during manual retry",
+                )
+                assert manual_worker.is_cancelled is False
+                assert screen._library_source_load_failure() is failure
+                snapshot_release.set()
+                await manual_worker.wait()
+                assert manual_worker.state.name == "SUCCESS"
+                assert snapshot_completed.is_set()
+            await _wait_for_prompt_mutation_settlement(screen, pilot)
+            assert len(failure_reads) == (
+                2 if manual_retry else int(outcome == "conflict")
+            )
+            expected_reads = (
+                0
+                if outcome == "conflict"
+                and source_state == "error"
+                and not manual_retry
+                else 1
+            )
+            assert len(source_reads) == expected_reads
+            assert browse.call_count == 1
+            if expected_reads == 0:
+                assert screen._library_source_load_failure() is failure
+            else:
+                assert screen._library_source_load_failure() is None
+            row = db.fetch_prompt_details(prompt_id, include_deleted=True)
+            assert row["deleted"] == int(
+                (operation == "delete" and outcome == "success")
+                or (operation == "undo" and outcome == "conflict")
+            )
+            if outcome == "conflict":
+                assert screen._prompts_state.delete_receipt is receipt
+                assert screen._prompts_state.mutation_in_flight is False
+        finally:
+            release.set()
+            snapshot_release.set()
+            await screen.workers.wait_for_complete()
 
 
 @pytest.mark.asyncio
@@ -8104,6 +8423,8 @@ async def test_library_prompt_history_retries_count_and_page_errors(tmp_path):
         retry_page = await _wait_for_selector(
             screen, pilot, "#library-prompt-history-retry-page"
         )
+        assert retry_page.is_attached
+        assert retry_page is screen.query_one("#library-prompt-history-retry-page")
         retry_page.press()
         for _ in range(150):
             if len(screen.query(".library-prompt-history-row")) == 1:
@@ -8572,8 +8893,8 @@ async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays
             assert persisted is not None and persisted["version"] == 3
             assert screen._prompts_state.version == 2
 
-            disclosure = screen.query_one(
-                "#library-prompt-history-collapsible", Collapsible
+            disclosure = await _wait_for_selector(
+                screen, pilot, "#library-prompt-history-collapsible"
             )
             disclosure.collapsed = True
             for _ in range(100):
@@ -8671,10 +8992,10 @@ async def test_library_prompt_history_no_change_keeps_selection_and_retry_availa
         )
         assert state.selected is not None
         assert state.selected.source_version == 1
-        assert (
-            screen.query_one("#library-prompt-history-restore", Button).disabled
-            is False
+        restore = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-restore"
         )
+        assert restore.disabled is False
         assert db.fetch_prompt_details(prompt_id)["version"] == 1
 
 
@@ -9120,7 +9441,12 @@ async def test_library_prompt_history_stale_conflict_reload_refreshes_and_can_re
         host.screen.query_one("#confirm-button", Button).press()
         for _ in range(200):
             detail = db.fetch_prompt_details(prompt_id)
-            if detail is not None and detail["version"] == 4:
+            if (
+                detail is not None
+                and detail["version"] == 4
+                and screen._prompts_state.version == 4
+                and host._notifications
+            ):
                 break
             await pilot.pause(0.02)
 

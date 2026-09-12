@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Chat.test_console_dispatch_recovery import _raw_semantic_corruption
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     CHECKPOINT_AUTHORITY_MAX_BYTES,
     CHECKPOINT_DESTINATION_MAX_BYTES,
@@ -499,13 +500,14 @@ def test_read_quarantines_invalid_ownership(tmp_path: Path, corruption: str) -> 
     _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
     if corruption == "bad_role":
-        connection.execute(
-            "UPDATE messages SET role = ? WHERE id = ?", ("tool", "assistant-1")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET role = ? WHERE id = ?", ("tool", "assistant-1")
         )
     elif corruption == "cross_conversation":
         other_id = db.add_conversation({"title": "other"})
         assert other_id is not None
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET conversation_id = ? WHERE id = ?",
             (other_id, "user-1"),
         )
@@ -637,7 +639,8 @@ def test_read_quarantines_malformed_or_mismatched_checkpoint_identity(
             "UPDATE console_dispatch_checkpoints SET assistant_message_id = ?",
             (malformed_id,),
         )
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET id = ? WHERE id = ?",
             (malformed_id, inserted.assistant_message_id),
         )
@@ -923,7 +926,8 @@ def test_state_cas_requires_every_expected_owner_predicate(
     )
     connection = db.get_connection()
     if mismatch == "assistant_state":
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET assistant_generation_state = ? WHERE id = ?",
             ("dispatch_started", inserted.assistant_message_id),
         )

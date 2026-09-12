@@ -431,8 +431,28 @@ _PROMPTS_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: evidence script (`Docs/superpowers/reviews/evidence/task-22033/
 #: task22033_live_matrix_runner.py`) -- a census narrowed to the two usual
 #: roots reports it as zero-referenced.
+#: TASK-31932 adds 17 private names (including step 68) after retargeting their
+#: consumers to the established owner; the deferred callbacks remain intact.
 _PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
+        # TASK-31932: remaining callers name the existing owner directly.
+        "_library_prompt_basic_unavailable_reason",
+        "_library_prompt_editor_active",
+        "_sync_library_prompt_selection",
+        "_sync_library_prompt_memberships",
+        "_stop_library_prompts_search_debounce",
+        "_capture_library_prompts_filter_cursor",
+        "_invalidate_library_prompt_detail_generation",
+        "_invalidate_library_prompt_history",
+        "_sync_library_prompt_history_region",
+        "_update_library_prompt_status_static",
+        "_notify_prompt_dirty_veto",
+        "_clear_library_prompt_delete_pending",
+        "_library_prompt_write_worker_is_active",
+        "_sync_library_prompt_mutation_presentation",
+        "_library_prompt_nearest_survivor_focus",
+        "_notify_library_prompt_delete_failure",
+        "_refocus_library_prompt_delete_action",
         "_apply_library_prompt_detail_failure",
         "_apply_library_prompt_save_outcome",
         "_await_library_prompt_durable_call",
@@ -509,6 +529,7 @@ _PROMPTS_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # task-32393: the prompt editor's dirty flip repaints its meta line
     # without a recompose, and the footer's Escape chip reads the same flag.
     "_register_footer_shortcuts",
+    "_library_source_load_failure",
     "_run_library_service_call",
     "_safe_text",
     "_sanitize_media_field",
@@ -587,8 +608,8 @@ def test_screen_delegates_prompt_handlers() -> None:
 
     Mirrors `test_screen_delegates_ingest_handlers`: a same-name forwarding
     check, not a loose "the controller is referenced somewhere" substring
-    check. Skips the 39 names in
-    `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (task 3's census) and
+    check. Skips the names in `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED`
+    (39 from task 3 plus 17 from TASK-31932's direct-owner cleanup) and
     instead asserts each such name is genuinely ABSENT from
     `LibraryScreen`, so a future accidental re-add would fail loudly here
     rather than silently reintroducing dead code.
@@ -700,8 +721,10 @@ def test_prompts_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryPromptsController,
     )
 
-    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 43, (
-        f"expected 43 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
+    # The rebase retains both task-32393's footer refresh and the review's
+    # source-load failure callback; each remains an explicitly bound property.
+    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 44, (
+        f"expected 44 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
     )
     unbound = [
         name

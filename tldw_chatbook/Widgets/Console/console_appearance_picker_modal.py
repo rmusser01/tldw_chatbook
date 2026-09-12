@@ -100,7 +100,7 @@ class ConsoleAppearancePickerModal(
 ):
     """Pick one conversation's icon glyph and palette color."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleAppearancePickerModal {
         align: center middle;
     }
@@ -185,7 +185,7 @@ class ConsoleAppearancePickerModal(
         margin-top: 1;
     }
 
-    #console-appearance-picker-actions Button {
+    #console-appearance-picker-actions Button.console-appearance-action {
         width: 1fr;
         height: 3;
         border: none;
@@ -264,9 +264,24 @@ class ConsoleAppearancePickerModal(
                 id=HEX_INPUT_ID,
             )
             with Horizontal(id="console-appearance-picker-actions"):
-                yield Button("Apply", id=APPLY_ID, compact=True)
-                yield Button("Clear", id=CLEAR_ID, compact=True)
-                yield Button("Cancel", id=CANCEL_ID, compact=True)
+                yield Button(
+                    "Apply",
+                    id=APPLY_ID,
+                    compact=True,
+                    classes="console-appearance-action",
+                )
+                yield Button(
+                    "Clear",
+                    id=CLEAR_ID,
+                    compact=True,
+                    classes="console-appearance-action",
+                )
+                yield Button(
+                    "Cancel",
+                    id=CANCEL_ID,
+                    compact=True,
+                    classes="console-appearance-action",
+                )
 
     async def on_mount(self) -> None:  # type: ignore[override]
         # EmojiGrid populates itself from its constructor list on mount;

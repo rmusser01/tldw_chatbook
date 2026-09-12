@@ -228,6 +228,39 @@
     }
 
 
+/* ===== WIDGET: SkillImportChoiceModal (UI/Library_Modules/skill_import_choice_modal.py) ===== */
+
+
+    SkillImportChoiceModal #skill-import-choice {
+        width: 88;
+        max-width: 100%;
+        height: 28;
+        max-height: 100%;
+        min-height: 14;
+        background: $panel;
+        border: round $accent;
+        padding: 1 2;
+    }
+    SkillImportChoiceModal #skill-import-choice-title,
+    SkillImportChoiceModal #skill-import-choice-help {
+        height: auto;
+    }
+    SkillImportChoiceModal #skill-import-choice-list {
+        height: 1fr;
+        min-height: 4;
+        background: $surface-darken-1;
+    }
+    SkillImportChoiceModal #skill-import-choice-actions {
+        height: 3;
+    }
+    SkillImportChoiceModal #skill-import-choice-actions Button.skill-import-choice-action {
+        width: auto;
+        min-width: 10;
+        height: 3;
+        margin-right: 1;
+    }
+
+
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
 
@@ -1969,6 +2002,80 @@
     }
 
 
+/* ===== WIDGET: AutomationDefinitionForm (UI/Screens/scheduling/forms/automation_definition_form.py) ===== */
+
+
+
+
+
+    AutomationDefinitionForm #automation-form-footer {
+        dock: bottom;
+        height: auto;
+        background: $surface;
+    }
+
+    AutomationDefinitionForm #automation-scope-sources-group,
+    AutomationDefinitionForm #automation-run-at-group,
+    AutomationDefinitionForm #automation-cron-group,
+    AutomationDefinitionForm #automation-timezone-group,
+    AutomationDefinitionForm #automation-preset-time-group,
+    AutomationDefinitionForm #automation-cron-custom-group,
+    AutomationDefinitionForm #automation-provider-group {
+        height: auto;
+    }
+
+    AutomationDefinitionForm #automation-form-errors {
+        display: none;
+    }
+
+    AutomationDefinitionForm #automation-question {
+        height: 3;
+        max-height: 5;
+    }
+
+    AutomationDefinitionForm .form-title {
+        text-style: bold;
+        text-align: center;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .form-label {
+        color: $text-muted;
+        padding: 1 0 0 0;
+    }
+
+    AutomationDefinitionForm .form-helper {
+        color: $text-muted;
+        height: auto;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .form-preview {
+        color: $text-muted;
+        height: auto;
+        min-height: 1;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .error-text {
+        color: $error;
+        text-style: bold;
+        height: auto;
+        padding: 0;
+    }
+
+    AutomationDefinitionForm .button-container {
+        align: center middle;
+        height: auto;
+        padding: 0;
+        margin-top: 1;
+    }
+
+    AutomationDefinitionForm .button-container Button.automation-form-action {
+        margin: 0 1;
+    }
+
+
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
 
@@ -2155,6 +2262,109 @@
         height: 1;
         min-height: 1;
         border: none;
+    }
+
+
+/* ===== WIDGET: ConsoleAppearancePickerModal (Widgets/Console/console_appearance_picker_modal.py) ===== */
+
+
+
+    ConsoleAppearancePickerModal #console-appearance-picker-modal {
+        width: 64;
+        max-width: 100%;
+        height: 29;
+        max-height: 100%;
+        border: tall $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-filter {
+        width: 100%;
+        height: 3;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-preview {
+        width: 100%;
+        height: 1;
+        color: $text-muted;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-emoji {
+        width: 100%;
+        height: 1fr;
+        min-height: 6;
+        background: $surface-darken-1;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-colors {
+        /* task-31209: a scrollable strip -- the 22-swatch palette (plus
+           "none") no longer fits one modal row, and shrinking swatches to
+           two cells left no content width under a selection border. */
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-hex {
+        width: 1fr;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleAppearancePickerModal .console-appearance-swatch {
+        width: 3;
+        min-width: 3;
+        max-width: 3;
+        height: 3;
+        min-height: 3;
+        margin: 0;
+        padding: 0;
+        border: none;
+        text-align: center;
+        content-align: center middle;
+    }
+
+    ConsoleAppearancePickerModal .console-appearance-swatch-selected {
+        /* Background highlight, not a border: the 2-cell swatch has no room
+           for a 2-cell border (zero content width crashed cell chopping). */
+        background: $accent 25%;
+        text-style: bold;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-swatch-none {
+        width: 5;
+        min-width: 5;
+        max-width: 5;
+    }
+
+    ConsoleAppearancePickerModal .console-appearance-emoji-selected {
+        background: $accent 25%;
+        text-style: bold;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-actions {
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-actions Button.console-appearance-action {
+        width: 1fr;
+        height: 3;
+        border: none;
+        margin: 0 1 0 0;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-apply {
+        background: $primary;
+        color: $text;
+    }
+
+    ConsoleAppearancePickerModal #console-appearance-picker-clear,
+    ConsoleAppearancePickerModal #console-appearance-picker-cancel {
+        background: $surface;
+        color: $text;
     }
 
 
@@ -2727,6 +2937,30 @@
     }
 
 
+/* ===== WIDGET: ConsoleSaveMarkdownModal (Widgets/Console/console_save_markdown_modal.py) ===== */
+
+
+    ConsoleSaveMarkdownModal #console-save-markdown-box {
+        width: 64;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    ConsoleSaveMarkdownModal #console-save-markdown-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    ConsoleSaveMarkdownModal #console-save-markdown-input {
+        width: 1fr;
+    }
+    ConsoleSaveMarkdownModal #console-save-markdown-actions {
+        height: auto;
+        align-horizontal: right;
+        margin-top: 1;
+    }
+
+
 /* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
 
 
@@ -2801,6 +3035,31 @@
     }
 
     ConsoleSummarizePreviewModal #console-summarize-preview-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: ConsoleTerminalSessionModal (Widgets/Console/console_terminal_session_modal.py) ===== */
+
+
+
+    ConsoleTerminalSessionModal #console-terminal-session-modal {
+        width: 72;
+        max-width: 94%;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    ConsoleTerminalSessionModal #console-terminal-session-error {
+        min-height: 1;
+        color: $error;
+    }
+
+    ConsoleTerminalSessionModal #console-terminal-session-actions {
         height: auto;
         margin-top: 1;
         align-horizontal: right;

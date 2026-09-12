@@ -15,6 +15,10 @@ from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -67,6 +71,7 @@ from tldw_chatbook.Widgets.Library import (
     LibrarySkillsListCanvas,
     LibraryStudyHandoffCanvas,
 )
+from tldw_chatbook.Widgets.Library.library_rail import LibraryRail, library_dim_label_text
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -646,6 +651,46 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         assert "Library tools are now available." not in canvas_line()
         assert screen.focused is not None
         assert screen.focused.id == focus.id
+
+
+@pytest.mark.asyncio
+async def test_same_route_notes_focus_restore_rejects_a_stale_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A superseded resident recompose cannot restore its captured Notes row.
+
+    Args:
+        monkeypatch: Scoped control over the resident canvas refresh.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        row = await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row.focus()
+        await pilot.pause()
+
+        canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        monkeypatch.setattr(canvas, "refresh", lambda *args, **kwargs: canvas)
+        shell = library_screen_module.build_library_shell_state(
+            screen._build_library_shell_input(),
+            selected_row_id=screen._library_selected_row_id,
+        )
+
+        assert await screen._replace_library_browse_canvas(shell) is True
+        callback = canvas._post_recompose_callback
+        assert callback is not None
+        canvas._post_recompose_callback = None
+
+        screen.set_focus(None)
+        screen._library_snapshot_state_generation += 1
+        callback()
+
+        assert screen.focused is None
 
 
 @pytest.mark.asyncio
@@ -2184,14 +2229,14 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         assert isinstance(owner, LibraryConversationsCanvas)
         owner.sync_state(screen._build_library_conversations_state())
         await pilot.pause()
-        focus = next(
-            row
-            for row in screen.query(".library-conversation-row")
-            if getattr(row, "conversation_id", "") == "chat-1"
-        )
+        # The pending locator disables conversation rows; Search remains actionable.
+        focus = screen.query_one("#library-search-input", Input)
+        assert focus.is_attached
+        assert not focus.disabled
         focus.focus()
         await pilot.pause()
 
+        assert screen.focused is focus, "Focus must be acquired before locator release."
         release.set()
         result = await await_background_task(
             task,
@@ -2874,6 +2919,80 @@ async def test_stale_landing_deferred_sync_performs_zero_dom_mutation():
 
         assert tuple(recents_owner.children) == children_before
         assert children_before[0].parent is recents_owner
+
+
+@pytest.mark.asyncio
+async def test_workspace_handoff_snapshot_sync_retains_summary_action_focus_and_scroll() -> (
+    None
+):
+    """Source arrival updates the retained Details summary at reconciliation."""
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=[], media=[])
+    # Keep preferences fixed across source arrival: toggling after mount changes
+    # the shape contract and makes the next rail sync legitimately recompose.
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "sections"
+    ] = {"details_open": True}
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 18)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-rail-section-body-details").display,
+            message="Details did not open",
+        )
+        rail = screen.query_one("#library-rail", LibraryRail)
+        summary = rail.query_one("#library-workspaces-handoff", Static)
+        button = rail.query_one("#library-use-in-console", Button)
+        before = screen._workspace_handoff_summary_label(
+            screen._library_workspace_depth_state()
+        )
+        assert summary.renderable == library_dim_label_text("Handoff", before)
+        assert "unavailable" in before
+        button.focus()
+        await pilot.pause()
+        rail.scroll_to(y=2, animate=False, force=True)
+        await pilot.pause()
+        scroll_y = rail.scroll_y
+        assert scroll_y > 0
+        assert screen.focused is button
+
+        assert _apply_changed_snapshot(
+            screen,
+            notes=(
+                {
+                    "id": "note-handoff",
+                    "title": "Retained source",
+                    "content": "Body",
+                    "last_modified": "2026-08-13T10:00:00Z",
+                },
+            ),
+        )
+        generation = screen._library_snapshot_state_generation
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_snapshot_rendered_generation == generation
+                and screen._library_entry_reconcile_pending is None
+            ),
+            message="Source snapshot did not finish reconciliation",
+        )
+        state = screen._library_workspace_depth_state()
+        expected = screen._workspace_handoff_summary_label(state)
+        assert expected != before
+        blocked, tooltip = screen._workspace_handoff_action_state(state)
+        assert button.tooltip == tooltip
+        assert button.has_class("library-source-action-blocked") is blocked
+        assert button.disabled is False
+        assert screen.query_one("#library-rail", LibraryRail) is rail
+        assert rail.query_one("#library-workspaces-handoff", Static) is summary
+        assert rail.query_one("#library-use-in-console", Button) is button
+        assert screen.focused is button
+        assert button.is_attached
+        assert rail.scroll_y == scroll_y
+        assert summary.renderable == library_dim_label_text("Handoff", expected)
 
 
 @pytest.mark.asyncio

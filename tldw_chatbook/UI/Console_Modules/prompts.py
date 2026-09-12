@@ -8,7 +8,7 @@ split its 17 nested closures into the two collaborators below), `/prompt`
 and `/system` name resolution
 and their shared refuse-a-Recipe guard, both prompt-picker launches, the
 system-prompt editor and its save-to-Library flow, the Library "Use in
-Console" staged-insert handoff, and the shared prompt-history store.
+Console" staged-insert handoff, and access to the app-owned prompt history.
 
 This module follows the SAME binding rule waves 1-2 established (see
 `dictation.py`'s `ConsoleDictationController.__init__` docstring for the
@@ -60,9 +60,6 @@ by a pre-existing test that monkeypatches or calls that exact name:
 - `_open_console_prompts_modal` -- `_handle_console_composer_menu_choice`'s
   `ACTION_PROMPTS` branch, and `test_console_composer_menu.py` replaces the
   screen attribute wholesale.
-- `_ensure_console_prompt_history` -- `_ensure_console_chat_controller` and
-  the composer's `set_prompt_history` mount wiring, plus
-  `test_console_composer_history.py`.
 - `_console_command_insert_prompt` / `_console_command_apply_system` -- the
   `/prompt` and `/system` rows of the command-handler dict, which
   `test_console_command_composer.py` replaces per-instance.
@@ -72,6 +69,10 @@ by a pre-existing test that monkeypatches or calls that exact name:
   `test_console_system_prompt.py`.
 - `_consume_pending_console_prompt_insert` -- two `set_timer` schedules
   (`on_mount`, `on_screen_resume`) plus five test sites.
+
+The composer reads `_ensure_console_prompt_history` directly from this owner;
+its named accessor resolves the runtime's shared history, including the app's
+`console_prompt_history_factory` test seam. No view-local history cache exists.
 
 The remaining moved methods (`_is_recipe_prompt_record`, `_console_prompt_
 prefix_fts_query`, `_console_prompt_search`, `_resolve_console_prompt_by_
@@ -122,7 +123,7 @@ from ...Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
-from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
+from ...Chat.prompt_history import PromptHistory
 from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
 from ...Prompt_Management.prompt_improvement_models import (
@@ -842,6 +843,7 @@ class ConsolePromptsController:
         app_instance: Any,
         composer_accessor: Callable[[], Any],
         chat_store_accessor: Callable[[], Any],
+        prompt_history_accessor: Callable[[], PromptHistory],
         ensure_active_console_session_settings: Callable[[], Any],
         apply_console_session_system_prompt: Callable[[str], None],
         sync_console_session_draft: Callable[[], None],
@@ -890,8 +892,7 @@ class ConsolePromptsController:
                 see the module docstring's "Zero DOM" section.
             app_instance: Snapshotted once, not re-read through `screen` --
                 every reference in the moved bodies is a bare-attribute
-                read (`prompt_scope_service`, `pending_handoffs`,
-                `console_prompt_history_factory`) or a `notify()` call,
+                read (`prompt_scope_service`, `pending_handoffs`) or a `notify()` call,
                 never one that could observe a later reassignment.
             composer_accessor: `ChatScreen._console_composer_or_none`, the
                 general screen helper (33 call sites screen-wide, not
@@ -899,6 +900,8 @@ class ConsolePromptsController:
             chat_store_accessor: `ChatScreen._ensure_console_chat_store`,
                 the general store accessor already shared by every other
                 controller (see `session.py`'s identical parameter).
+            prompt_history_accessor: App-owned runtime history shared by
+                the composer and accepted turns across Console views.
             ensure_active_console_session_settings: `ConsoleSession
                 Controller._ensure_active_console_session_settings` --
                 session seam, read by the modal opener (twice, inside
@@ -980,6 +983,7 @@ class ConsolePromptsController:
         self.app_instance = app_instance
         self._composer_accessor = composer_accessor
         self._chat_store_accessor = chat_store_accessor
+        self._prompt_history_accessor = prompt_history_accessor
         self._ensure_active_console_session_settings_fn = (
             ensure_active_console_session_settings
         )
@@ -1008,12 +1012,6 @@ class ConsolePromptsController:
             sync_console_system_prompt_surfaces
         )
         self._sync_console_command_popup_fn = sync_console_command_popup
-
-        # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
-        # Nothing outside this cluster ever read the attribute directly (only
-        # `_ensure_console_prompt_history()`), so `ChatScreen` keeps no proxy
-        # property for it -- unlike the message/dictation clusters.
-        self._console_prompt_history: Any | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -1126,25 +1124,8 @@ class ConsolePromptsController:
     # -- Moved bodies -------------------------------------------------------
 
     def _ensure_console_prompt_history(self) -> PromptHistory:
-        """Return the shared JSONL prompt-history store (TASK-1364).
-
-        One instance feeds both the composer (ghost text, Up/Down recall)
-        and the controller (recording accepted sends). Creation is lazy and
-        IO-free -- the store self-loads on first awaited use, and the
-        composer kicks a background `load()` on mount so ghost text works on
-        the first keystroke. `console_prompt_history_factory` on the app is
-        the test seam, mirroring `console_provider_gateway_factory`.
-        """
-        history = getattr(self, "_console_prompt_history", None)
-        if history is None:
-            factory = getattr(self.app_instance, "console_prompt_history_factory", None)
-            history = (
-                factory()
-                if callable(factory)
-                else PromptHistory(default_prompt_history_path())
-            )
-            self._console_prompt_history = history
-        return history
+        """Return the app-owned history shared across Console views."""
+        return self._prompt_history_accessor()
 
     def _restore_console_composer_focus(
         self, _result: ConsolePromptsResult | None = None

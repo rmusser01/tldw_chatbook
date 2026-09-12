@@ -1,5 +1,5 @@
 ---
-id: task-25811
+id: TASK-25811
 title: Screen switch spends 71% of its style work on the screen being left
 status: Won't Do
 assignee: []

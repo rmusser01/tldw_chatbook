@@ -81,6 +81,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _active_library_screen,
     _build_test_app,
+    _open_note_editor,
     _seed_conversations,
     _two_conversations,
     _two_notes,
@@ -142,8 +143,7 @@ async def test_work_pane_editor_ready_arms_dirty_tracking_on_the_editor_route() 
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_notes_tree(host, pilot)
-        screen.query_one("#library-notes-tree-note-1", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await _open_note_editor(screen, pilot)
         assert screen._notes_state.view == "editor"
         assert screen._notes_state.selected_note_id == "n-1"
 
@@ -169,8 +169,7 @@ async def test_work_pane_editor_ready_is_ignored_off_the_editor_route() -> None:
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _open_notes_tree(host, pilot)
-        screen.query_one("#library-notes-tree-note-1", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await _open_note_editor(screen, pilot)
 
         screen._notes_state.editor_armed = False
         screen._notes_state.view = "list"

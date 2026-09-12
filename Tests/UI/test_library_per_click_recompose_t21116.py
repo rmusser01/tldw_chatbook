@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from statistics import median
 from time import perf_counter
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual.widgets import Button
@@ -42,6 +42,7 @@ from Tests.UI.test_library_shell import (
     _two_conversations,
     _two_media_items,
     _wait_for_library_shell,
+    _wait_for_media_reader_loaded,
     _wait_for_selector,
 )
 from tldw_chatbook.Library.library_shell_state import (
@@ -49,6 +50,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_INGEST_EXPORT,
 )
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+from tldw_chatbook.UI.Library_Modules.screen_support_types import LibraryEntryReconcileResult
 from tldw_chatbook.Widgets.Library import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 
@@ -98,8 +100,12 @@ async def test_media_row_open_and_detail_arrival_are_canvas_scoped() -> None:
         rail_before = screen.query_one("#library-rail")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
-            screen.query_one("#library-media-row-0", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+            row = screen.query_one("#library-media-row-0", Button)
+            expected_id = str(getattr(row, "media_id", "") or "")
+            row.press()
+            await _wait_for_media_reader_loaded(
+                screen, pilot, expected_id=expected_id
+            )
         assert calls == []
         assert screen.query_one("#library-rail") is rail_before
         assert screen.query_one("#library-media-viewer", LibraryMediaViewer)
@@ -111,8 +117,10 @@ async def test_media_viewer_back_is_canvas_scoped_and_restores_list_focus() -> N
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
-        screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+        row = screen.query_one("#library-media-row-0", Button)
+        expected_id = str(getattr(row, "media_id", "") or "")
+        row.press()
+        await _wait_for_media_reader_loaded(screen, pilot, expected_id=expected_id)
         rail_before = screen.query_one("#library-rail")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
@@ -139,7 +147,11 @@ async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
-        screen.query_one("#library-media-row-0", Button).press()
+        row = screen.query_one("#library-media-row-0", Button)
+        expected_id = str(getattr(row, "media_id", "") or "")
+        row.press()
+        await _wait_for_media_reader_loaded(screen, pilot, expected_id=expected_id)
+        screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-edit")
         # Entering edit mode is out of this conversion's scope and may
         # rebuild the screen -- do it OUTSIDE the spy window.
@@ -164,8 +176,8 @@ async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_item_by_id_media_is_canvas_scoped() -> None:
-    """The Search/RAG-style direct media open never rebuilds the screen."""
+async def test_open_item_by_id_media_mounts_the_adaptive_shell_boundary() -> None:
+    """A cross-kind direct open performs one structural Media-shell transition."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -175,18 +187,69 @@ async def test_open_item_by_id_media_is_canvas_scoped() -> None:
         await _wait_for_selector(screen, pilot, "#library-row-browse-notes")
         # Start from a NON-media canvas so the open crosses canvas kinds
         # (the RAG "Open" shape): rail selection + canvas child must both
-        # move without a whole-screen rebuild.
+        # cross the adaptive-shell boundary exactly once.
         screen.query_one("#library-row-browse-conversations", Button).press()
         await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
         rail_before = screen.query_one("#library-rail")
-        calls, spy = _screen_recompose_spy()
-        with patch.object(BaseAppScreen, "refresh", spy):
+        calls = []
+        original_recompose = BaseAppScreen.recompose
+
+        async def spy(owner):
+            calls.append(owner)
+            return await original_recompose(owner)
+
+        refresh_calls, refresh_spy = _screen_recompose_spy()
+        with (
+            patch.object(BaseAppScreen, "recompose", spy),
+            patch.object(BaseAppScreen, "refresh", refresh_spy),
+        ):
             await screen._open_library_item_by_id("media", "media-1")
-            await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
-        assert calls == []
-        assert screen.query_one("#library-rail") is rail_before
+            await _wait_for_media_reader_loaded(
+                screen, pilot, expected_id="local:media:1"
+            )
+        assert calls == [screen]
+        assert refresh_calls == []
+        assert screen.query_one("#library-rail") is not rail_before
+        assert screen.query_one(".library-media-route")
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
         assert screen._media_state.view == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_media_direct_open_preserves_existing_items_and_reader() -> None:
+    host = _media_app_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _boot_media_library(host, pilot)
+        items = screen.query_one("#library-media-canvas")
+        reader = screen.query_one("#library-media-viewer")
+        await screen._open_library_item_by_id("media", "media-1")
+        await _wait_for_media_reader_loaded(screen, pilot, expected_id="local:media:1")
+        assert screen.query_one("#library-media-canvas") is items
+        assert screen.query_one("#library-media-viewer") is reader
+
+
+@pytest.mark.asyncio
+async def test_media_direct_open_rechecks_navigation_after_structural_mount(monkeypatch) -> None:
+    host = _media_app_host()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        original_apply = screen._apply_library_open_item_surface
+
+        async def superseded_mount(*args, **kwargs):
+            await original_apply(*args, **kwargs)
+            screen._library_navigation_context_generation += 1
+
+        detail, browse, facets = AsyncMock(), Mock(), Mock()
+        monkeypatch.setattr(screen, "_apply_library_open_item_surface", superseded_mount)
+        monkeypatch.setattr(screen, "_refresh_library_media_detail", detail)
+        monkeypatch.setattr(screen, "_request_library_media_browse", browse)
+        monkeypatch.setattr(screen, "_request_library_media_facets", facets)
+        result = await screen._open_library_item_by_id("media", "media-1")
+        assert result is LibraryEntryReconcileResult.SUPERSEDED
+        detail.assert_not_called()
+        browse.assert_not_called()
+        facets.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -232,7 +295,7 @@ async def test_open_item_by_id_notes_keeps_route_owned_source_strip() -> None:
 
 @pytest.mark.asyncio
 async def test_export_open_from_media_is_canvas_scoped() -> None:
-    """The media section "Export…" action swaps to the export canvas only."""
+    """The media section "Export…" swaps the adaptive shell without a screen rebuild."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
@@ -242,7 +305,7 @@ async def test_export_open_from_media_is_canvas_scoped() -> None:
             screen.query_one("#library-media-export", Button).press()
             await _wait_for_selector(screen, pilot, "#library-export-canvas")
         assert calls == []
-        assert screen.query_one("#library-rail") is rail_before
+        assert screen.query_one("#library-rail") is not rail_before
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
 
 
@@ -349,8 +412,12 @@ async def test_media_row_open_latency_probe() -> None:
         screen = await _boot_media_library(host, pilot)
         for _ in range(12):
             started = perf_counter()
-            screen.query_one("#library-media-row-0", Button).press()
-            await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+            row = screen.query_one("#library-media-row-0", Button)
+            expected_id = str(getattr(row, "media_id", "") or "")
+            row.press()
+            await _wait_for_media_reader_loaded(
+                screen, pilot, expected_id=expected_id
+            )
             samples.append((perf_counter() - started) * 1000.0)
             screen._exit_library_media_viewer()
             await _wait_for_selector(screen, pilot, "#library-media-row-0")

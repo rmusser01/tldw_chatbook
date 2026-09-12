@@ -5438,6 +5438,39 @@ def protocol_preflight(
     return result
 
 
+def prepare_scripted_local_tool_authority(
+    runtime: WorkspaceRuntime, session: Any
+) -> Path:
+    """Renew the fixture's exact fs_write grant for its ADR-102 binding."""
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+
+    roots = capture_run_admitted_workspace_roots(
+        session=session, registry=runtime.registry
+    )
+    if (
+        session.workspace_id != runtime.workspace_id
+        or len(roots) != 1
+        or roots[0].binding_id != runtime.binding.binding_id
+        or roots[0].root != runtime.workspace_root
+        or not roots[0].allow_write
+    ):
+        raise AssertionError(
+            "mounted sample requires its exact fixture Workspace binding"
+        )
+    provider = LocalToolProvider(workspace_root=roots[0].root, admitted_roots=roots)
+    hub = provider.hub_tool_for("fs_write")
+    # ADR-102 intentionally invalidates the standalone schema's old grant.
+    # Renew only this isolated fixture's known write using the real store.
+    runtime.control_plane.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+    gate = runtime.control_plane.gate_tool_test(hub)
+    if gate.state != "allow" or gate.config_changed:
+        raise AssertionError("mounted fs_write permission did not match its schema")
+    return roots[0].root
+
+
 async def run_scripted_mounted_sample(
     sample_root: Path,
     *,
@@ -5596,26 +5629,23 @@ async def run_scripted_mounted_sample(
                 for session in controller.store.sessions()
                 if session.id == controller.store.active_session_id
             )
-            mutation_path = (
+            scratch_mutation_path = (
                 console._console_runtime()
                 .scratch_spaces.snapshot(benchmark_session.id)
                 .root
                 / "measured/turn-two.txt"
             )
-            mutation_path.parent.mkdir(exist_ok=True)
-            if benchmark_session.workspace_id != runtime.workspace_id:
-                raise AssertionError(
-                    "mounted session selected the wrong workspace: "
-                    f"{benchmark_session.workspace_id!r} != {runtime.workspace_id!r}"
-                )
             # Project-instruction disclosure is a separate, one-time consent
-            # interaction. Disable it for benchmark-owned sessions; the
-            # explicit Console workspace_root above keeps local tools confined
-            # to this same isolated workspace without timing an unrelated
-            # unattended modal.
+            # interaction. ADR-102 admits this named Workspace's explicit rw
+            # binding even with instructions disabled; workspace_root config
+            # and private scratch do not grant structured fs_* authority.
             controller.store.set_session_project_instruction_state(
                 controller.store.active_session_id,
                 ProjectInstructionControlState.legacy_disabled(),
+            )
+            mutation_path = (
+                prepare_scripted_local_tool_authority(runtime, benchmark_session)
+                / "measured/turn-two.txt"
             )
             coordinator = controller.prompt_queue_coordinator
             original_after_turn = coordinator._after_turn
@@ -5683,9 +5713,11 @@ async def run_scripted_mounted_sample(
             ):
                 rows = store.messages_for_session(store.active_session_id)
                 raise AssertionError(
-                    "fs_write did not create the expected private-scratch mutation: "
+                    "fs_write did not create the expected Workspace mutation: "
                     f"{[(message.role.value, message.status, message.content) for message in rows]!r}"
                 )
+            if scratch_mutation_path.exists():
+                raise AssertionError("fs_write unexpectedly mutated private scratch")
             console_runtime = console._console_runtime()
             await await_owned_cleanup(console_runtime.dispose())
             console_runtime = None
@@ -5707,6 +5739,7 @@ async def run_scripted_mounted_sample(
         "third_provider_started_ns": gateway.third_provider_started_ns,
         "terminal_third_assistant": terminal,
         "mutation_verified": True,
+        "scratch_mutation_absent": True,
     }
 
 

@@ -1,0 +1,4588 @@
+# PR 2427 rebase reconciliation — 2026-09-06
+
+Tracked by TASK-31932. This is an in-progress integration record, not a merge-readiness claim.
+
+## Git state
+
+The 176 review commits were replayed onto dev `c4d45c0926580a8756cfa13c5463b1d0fc808c1a`.
+Rebased checkpoint: `7bd5b9f4a38bd988db900b6dc5faa885bb56e5e2`.
+The original pushed head `0135bc20190bba55fc2b48d3d5863ffe1ea449dc`
+is retained on `codex/dev-test-review-backup-0135bc2019`.
+The original dirty user checkout and every worktree are preserved.
+
+Conflict resolutions retain upstream Prompts state/controller ownership, Media
+path redaction/recovery callouts and speaker-rename cache, named handoff timing,
+Canvas terminal transaction contributions, locked promotion publication, and
+Buddy listening cleanup. The review's ownership and lifecycle repairs remain.
+
+After committing the reconciliation as `aab86d1b87`, the 177-commit series
+rebased cleanly onto the newer dev `c47e0da6002475416240252b2954fcf9761d4aac`,
+producing `438f6e9122188c5a92d445715d90ce36cff1b140`. The tree delta from the
+preceding checkpoint is exactly dev's six files for Persona Inspector avatar
+clearing and boot-worker warning handling. Backlog and diagnostic inventory
+checks pass again on this revision. The bounded PR Fast Lane plus those two
+newly landed test files completed with 840 passed and eight failures in 331.25s:
+all eight are the new boot-worker warning probe's premature Loguru sink lifetime.
+Evidence: `/private/tmp/pr2427-latest-dev-fast-lane.xml` and its matching log.
+
+## Review-only task renumbering
+
+The user-approved policy preserves upstream task identities even where a review
+task has the earlier creation date. The final machine census found **31**
+collisions (earlier prose counts 33/34 were counting errors). Immediately before
+allocation, a NUL-delimited prefix scan covered 1,029 refs and 319 worktrees:
+maximum 31900, with 31901–31932 unused. The CLI subsequently created TASK-31932.
+
+Only the following review-created records moved. Creation dates, completed work,
+literal XML/log paths and historical collision reports are retained. Mixed
+documents were edited by classified reference line, not by global ID replacement.
+Earlier checkpoint statements that 31714/31737/31758 remained duplicated are
+historical and are superseded by this mapping.
+
+| Former review ID | Current ID | Review task |
+| --- | --- | --- |
+| 31714 | 31901 | Preserve Loguru capture sinks across app mount |
+| 31732 | 31902 | Defer Chunking Lab action imports beyond screen preimport |
+| 31737 | 31903 | Close agent swap fixture owned runtime and database resources |
+| 31741 | 31904 | Give provider grammar adapter fixture its required assistant owner |
+| 31742 | 31905 | Align skill acceptance hook regression with published turn ownership |
+| 31743 | 31906 | Separate historical migration assertions from current schema upgrades |
+| 31744 | 31907 | Reconcile atomic promotion context policy revision ownership |
+| 31745 | 31908 | Forward Console Environment worker scheduling arguments explicitly |
+| 31746 | 31909 | Remove inert legacy Notes auto sync timer residue |
+| 31747 | 31910 | Restore readable File Notes error text across shipped themes |
+| 31748 | 31911 | Restore Skills shadow name coverage for current runtime and Console commands |
+| 31749 | 31912 | Move pure Console rewind and settings draft policy to their existing owners |
+| 31756 | 31913 | Align unified MCP fixtures with current tool and dispatcher contracts |
+| 31758 | 31914 | Watchlists failure policy test bypasses the live check coordinator |
+| 31796 | 31915 | Verify current Watchlists source creation off loop |
+| 31797 | 31916 | Avoid rewriting committed project context after promotion |
+| 31798 | 31917 | Fence combined Console settings live publication |
+| 31799 | 31918 | Reconcile reviewed fork transition route inventories |
+| 31800 | 31919 | Retain fork ownership through display name persistence |
+| 31801 | 31920 | Fence Console conversation binding publication |
+| 31808 | 31921 | Reconcile detached and delegated fork census routes |
+| 31809 | 31922 | Restore terminal exchange flush and temporary chat completion |
+| 31812 | 31923 | Close fixture owned rewind database and controller resources |
+| 31813 | 31924 | Separate connection setup from intentional Qwen retry read timeouts |
+| 31815 | 31925 | Give real MCP child reap verification a bounded scheduling allowance |
+| 31816 | 31926 | Close newly attributed Console controller and hydration fixture handles |
+| 31821 | 31927 | Close remaining inventory UI fixture owned database resources |
+| 31822 | 31928 | Repair Console Stop clipping after Redirect action was added |
+| 31823 | 31929 | Consume character Chat handoffs on cached Console resume |
+| 31824 | 31930 | Ignore late screen rebuild notifications after app stack teardown |
+| 31825 | 31931 | Classify synthesized leading system rows as rendered system trace provenance |
+
+Upstream TASK-31861's renumbering provenance refers historically to review
+TASK-31825, which now resolves to TASK-31931; its own former Canvas ID remains
+unchanged. The upstream document is preserved as historical evidence.
+
+## Fresh verification
+
+Initial six-file post-rebase selection: **356 passed, 6 failed**, 2 dependency
+warnings, 104.36s. Evidence: `/private/tmp/pr2427-rebase-initial.xml` and matching
+log. Failures: Console 17312/16811 line ceiling; Library slack; Media browse
+478/371 line ceiling; Conversations controller slack; stale Library assembly
+order; Ingest modal presenter inventory. Media behavioral cases passed.
+
+The corrected complete six-file architecture/modal/Media selection has **360
+passed, 2 failed**, 2 warnings, 98.69s. Only genuine Console 17312/16811 and Media
+browse 478/371 size failures remain. Library and Conversations budgets were
+tightened to measured reductions; neither failing ceiling was raised. The
+assembly assertion now covers dev's Prompts construction order, and the Ingest
+modal edge points to its actual controller. Evidence:
+`/private/tmp/pr2427-rebase-inventory-qualified.xml` and matching log.
+
+The complete Canvas, dispatch recovery, roleplay, dictation, and character
+navigation selection has **138 passed**, 6 warnings, 135.88s. The first run's
+40 missing-html5lib failures were isolated-environment setup: the declared
+dependency is now installed in that temporary environment, without dependency
+or original-checkout changes. The new dictation regression calls the existing
+dictation owner instead of retired private screen delegates. Native attribution
+still found seven character-navigation cases retaining fixture-owned SQLite
+handles, so passing behavior alone did not qualify resource cleanup. Evidence:
+`/private/tmp/pr2427-rebase-behavior-qualified.xml` and matching log.
+
+The complete agent-loop, Prompts state/seam/wiring/characterization, and durable
+turn acceptance files have **247 passed**, 3 warnings, 29.28s, with no
+`FD_RETAINED` entries. Evidence: `/private/tmp/pr2427-rebase-owner-contracts.xml`
+and matching log.
+
+CSS bundle reproduction, profile-owned path census, 113-table allowlist and
+281-index decision census pass. Backlog Guard passes across 3,538 records after
+the 31 renumbers and new reconciliation task. The diagnostic manifest was
+regenerated only after reviewing 49 Console and four Library statements moving
+to their existing controller owners: 48 Console and all four Library statements
+match exactly; the remaining watchdog warning retains its copy and level with
+the owner-injected timeout argument. No diagnostic statements were added to
+either screen and sink topology is unchanged. The refreshed inventory verifies
+596 owners and 12 sink files.
+
+Duplicate constructor imports have been removed; undefined/redefined-name
+checks across affected runtime owners and scoped full lint checks pass. Existing
+canonical Library screen re-export imports remain intact. No full-repository
+sweep was requested or run.
+
+The new character-navigation file now opts into the same exact-owner real-app
+fixture adapter as adjacent reuse tests. Its three constructors use the existing
+builder; no behavior assertions or shared fixture internals changed. The complete
+file and shared cleanup fault controls have **20 passed**, 3 warnings, 51.53s,
+with zero `FD_RETAINED` entries.
+Evidence: `/private/tmp/pr2427-rebase-character-resources.xml` and matching log.
+
+## Integration gates
+
+Do not merge until required checks pass and Qodo has reviewed the final revision.
+Absence of Qodo comments and the draft-skipped CodeRabbit check are not review
+approval. A thread heartbeat watches PR 2427; pause it after confirmed normal merge.
+
+The Console Canvas/citation ownership cleanup still awaits the user's design
+approval. Media browse remains 107 lines over its unchanged ceiling; its recovery
+and independent page/facet fences must be preserved in any separately reviewed
+ownership reduction. Publication is a progress/review checkpoint, not permission
+to merge with these failures.
+
+## First published review follow-up
+
+Checkpoint `71389e02b13644654fe1a131d04c1a7027b2ed6e` was published with the exact
+lease on the former PR head, and PR 2427 was opened for normal review. Qodo
+posted five findings on that revision. CodeRabbit's success status is a skipped
+review because the base is not the default branch; it is not an approval.
+
+The new boot-worker capture repeats the already repaired TASK-31901 lifecycle
+bug: app startup removes the sink installed before mount. It now captures only
+inside the mounted observation window, preserving all three worker state probes
+and the positive unknown-worker control. Worker factory imports are hoisted to
+module scope so existing exact-app cleanup adapters can capture their products.
+The unmounted smoke app remains a real TldwCli constructor and additionally
+registers its exact prompts/media handles for current-thread close. The complete
+worker/smoke files plus shared fault controls pass **42 tests**, 3 warnings,
+33.96s (`/private/tmp/pr2427-worker-smoke-resources.xml` and matching log).
+
+Resource qualification is **not complete**: the same log still attributes
+workspace/collections handles to 12 worker cases and prompts/media handles to
+smoke initialization. Existing callbacks removed the other auxiliaries. The DB
+APIs close only the caller thread's connection; app initialization opens the
+smoke databases in its own thread pool, and mounted workers also acquire
+thread-local connections. No global closure, GC workaround, threshold relaxation,
+or new cross-thread lifecycle implementation was added. A separately reviewed
+owner-lifecycle solution is still required.
+
+Qodo triage:
+
+- `3944734941`: modal-transfer diagnostic context — open, needs privacy-safe
+  failure-path design and regression verification.
+- `3944734944`: settings-durability diagnostic context — open; raw exception text,
+  credentials, drafts, and user-entered provider/model labels must not be added
+  merely to satisfy a logging recommendation.
+- `3944734946`: submission import ordering — corrected to stdlib, third-party,
+  then local groups without altering imported symbols.
+- `3944734948`: app accessor documentation — added its borrowed-instance return
+  contract; runtime access remains unchanged.
+- `3944734949`: alleged historical disclosure callback slot — the suggested
+  reversal would restore the regression. Commit `8e1d9c72b6` introduced the
+  disclosure callback before the established eighth continuation slot on Aug 30;
+  its parent has `call_model_with_continuation` immediately after `clock`.
+  TASK-31765 restores that older contract while retaining keyword disclosure.
+  Do not silently undo that repair on the basis of the current-base diff alone.
+
+The complete first-review checkpoint selection (incremental agent persistence,
+tool disclosure, settings durability/navigation, dispatch recovery, worker events,
+smoke, and cleanup fault controls) has **152 passed**, 3 warnings, 47.91s.
+Evidence: `/private/tmp/pr2427-first-qodo-checkpoint.xml` and matching log.
+It verifies the positional continuation and keyword disclosure contracts and
+the non-behavioral Qodo corrections. Its native probe reports 42 retained-path
+cases: 29 incremental agent-persistence cases, 12 worker cases, and smoke
+initialization. These remain resource findings, not a resource-clean
+qualification. Agent-persistence ownership still needs targeted attribution;
+the worker/smoke cross-thread findings above have been diagnosed.
+
+## September 7 recovery and approved review repairs
+
+The former temporary worktree was removed outside this task. The published
+branch was recovered into `.worktrees/pr2427-review-recovery`; the original
+dirty checkout was not used for source edits. The 179-commit rebase onto fetched
+dev `3090013cfea4dbf6133ac43d024656e2eb3a2a56` completed locally at
+`4a74c5d7e02552a5351d59df7647ea8811526bab`. Published head remains
+`d926e3a98021431ca6cf9f4b27d24c9adf3ed0d3` until the checkpoint is pushed.
+Dev subsequently advanced to `37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`;
+that second reconciliation is pending, not covered by the evidence below.
+
+After a fresh refs/worktree task census, only the three review-created collisions
+were moved. Upstream identities and original dates/history remain intact:
+
+| Historical review ID | Current review ID | Subject |
+| --- | --- | --- |
+| TASK-31759 (intermediate TASK-32013, TASK-32040) | TASK-32110 | Assistant-turn production stylesheet harness |
+| TASK-31901 (intermediate TASK-32014, TASK-32108, TASK-32136) | TASK-32183 | Loguru capture sink lifetime |
+| TASK-31902 (intermediate TASK-32015) | TASK-32109 | Deferred Chunking Lab imports |
+
+Historical IDs and evidence paths above remain incident references, not current
+task pointers. The task identity check passes all 3,589 task records.
+
+The user approved the private Canvas/citation move into the existing message
+controller and safe diagnostic context at Qodo's five settings boundaries.
+Both changes passed independent spec and quality reviews. ChatScreen decreased
+from 18,074 lines / 531 methods to 17,521 / 520; its unchanged limits still fail
+by 710 lines / 15 methods. The four complete wiring/message/citation/compiler
+files pass 159 tests. Callback identity required a correction before those passes;
+the incident is recorded in `lessons-testing-evidence.md`.
+
+Settings diagnostics record a fixed operation/phase, exception type, validated
+canonical v4 UUID session/submission IDs, and an exact nonnegative integer
+generation. They do not attach exception text or tracebacks. Four fault paths
+plus invalid-ID controls pass all 12 cases; the prior three-complete-file settings
+selection passed 53 cases before three additional invalid-UUID controls were
+added. The real modal-transfer failure control also passes. Qodo replies on a
+published correcting SHA are still pending.
+
+Incremental agent-step persistence now yields/closes its owned DB and supplies
+the real RunLogWriter with the test-owned directory. Its complete file passes
+34 cases, with zero retained SQLite descriptors under the native F_GETPATH
+observer (`/private/tmp/pr2427-agent-final-resource.jsonl`, matching XML).
+Worker/smoke ownership is separately being finalized and reviewed; temporary
+prototype success alone is not its completion evidence.
+
+The final worker/smoke implementation subsequently passed independent spec and
+quality review. Four complete files pass **52 tests**, with zero retained SQLite
+descriptors in all 52 under the native observer:
+`/private/tmp/pr2427-thread-owner-implementation.HOSRfM/final.log` and `final.jsonl`.
+The opt-in executor closes exact new/replacement handles on their creating
+thread, preserves borrowed connection identity, and drains actual concurrent
+futures before database teardown. Smoke captures only the returned app's exact
+constructor-thread Prompts/Media connections. Ten new controls cover failure,
+cancellation, timeout, borrowed transactions, replacement handles, and ordering.
+Scoped Ruff and whitespace checks pass. This is test-only ownership repair.
+
+Reconciliation found two stale production provider-selection calls in inactive
+conversation token warmup, plus one undefined native-test factory alias. The
+calls now use the existing owner on both sides of the await. Real-store/worker
+controls verify immutable inputs and payload/provider replacement fences.
+Receiver-specific moved-seam guard checks and explicit fixture/controller calls
+remove nine false positives without exempting wrong Console calls. Five complete
+affected files pass 53 cases (`/private/tmp/pr2427-seam-green.log`).
+
+The saved-Chatbook browser roundtrip passes after that production fix. The other
+two served-browser failures were an omitted runtime profile in a fixture source
+response; a diagnostic correction passed both without changing assertions. The
+repository fixture now uses the supported profile constant. Complete native and
+browser verification is still running; do not substitute these focused passes
+for the final file results.
+
+The complete native-chat file finished **349 passed / 2 failed**. Both remaining
+fixtures constructed inactive sessions with no settings, unlike the production
+new-session path; token warmup correctly refused them. Supplying existing
+default settings makes both focused cases pass with unchanged workspace/private
+scratch assertions. The complete two-file browser selection finished **64 passed
+/ 1 failed**: all served cases pass, while a native bridge-confirmation dialog
+timed out and remains under investigation. Complete-file qualification must be
+rerun after the newest dev reconciliation.
+
+All six derived preflight checks pass after reviewing the exact diagnostic
+statement changes: the two moved statements are unchanged, and five settings
+sites delegate to one privacy-filtered helper. The manifest now has 599 owners,
+7,670 TASK-494 calls, and 12 sink files. Controller receiving pins were reconciled
+to the exact sanctioned extraction replay (analysis 873, Reader 774); screen
+limits and the genuinely overgrown browse-controller pin remain unchanged.
+
+Open merge blockers include Console/Library screen size, Media browse-controller
+size, seven added broad CSS rules (281 versus 274 on fetched dev), final complete
+verification, the newly advanced dev tip, and published final-head review/checks.
+Additional Console/Library owner moves have been proposed for user approval;
+there is no normal-merge qualification yet.
+
+Environment disclosure: verification uses the recovery worktree's ignored
+isolated Python 3.12 / Textual 8.2.8 environment with its own editable install and
+a shared-dependency path. During initial browser setup, an agent also installed
+the already-declared `html5lib==1.1` into the original checkout's `.venv`; no other
+package changed. Original source files were not modified, but that environment
+was changed and must not be described as untouched.
+
+## Latest-dev checkpoint published and transport regression qualified
+
+The second 180-commit rebase completed at
+`6a65c5b3b26a91d025a6236d5159762180900dab`, containing fetched dev
+`37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`. That checkpoint was published to
+PR 2427 using an exact lease on the former `d926e3a980` head. The two open Qodo
+diagnostic comments now have replies describing the published fixing SHA,
+privacy boundary, and bounded evidence. Final-head review and normal merge
+remain required; this is not a merge qualification.
+
+Latest dev also removed the previously reviewed Save-as-Note owner fix and its
+test. Restoring a stronger control reproduced a save under a deliberately
+different `current_user`, instead of configured `notes_user_id`. The one-line
+restoration matches the existing Library owner and received independent review.
+The complete message/settings-diagnostic files pass 33 cases. The other removed
+upstream note-settings feature and historical task files were not restored as a
+side effect of this routine ownership repair.
+
+The intermittent Canvas bridge failure was a real transport bug, not a browser
+deadline: a request advertised 16,487 bytes, but the single `StreamReader.read`
+returned its first 16,384 bytes before EOF. JSON parsing failed; a canceled
+confirmation remained pending and blocked the next request. The reader now
+uses `readexactly(existing_limit + 1)` with `IncompleteReadError.partial`, then
+applies the unchanged size/UTF-8/JSON refusal checks. No limit, authentication,
+confirmation, or cancellation policy changed (existing ADR-121).
+
+Ten deterministic real-stream controls initially had six expected failures;
+the complete gateway/control files now pass **83 tests**. Both complete Canvas
+browser files pass **65 tests**, no failures or skips, including exact draft
+confirmation, passive download, child roundtrip, and browser-profile isolation.
+Evidence: `/private/tmp/pr2427-json-final.log` and
+`/private/tmp/console-browser-gateway-repaired.log`. Independent spec and
+correctness/security reviews found no issues.
+
+New upstream appearance/workspace verification initially reported five failures
+in the controller unit harness. Fixture-local canonical provider snapshots and
+actual session settings retain real token preparation and its fences; missing
+constructor argument documentation was added. The complete controller file
+passes 115 cases, and all six appearance/workspace files pass **254 tests**:
+`/private/tmp/pr2427-workspace-fixture-reconcile.A6pcbO/group-final.log`.
+
+The latest four-file native/message/settings/token run finishes **383 passed /
+4 failed**. All four failures are native rail text expectations after upstream
+appearance controls changed label widths/wrapping; they are under investigation,
+not counted as passing from focused reruns. Evidence:
+`/private/tmp/pr2427-latest-native.log`. The structural size and broad-CSS gates
+also remain open, with additional owner moves and selector changes awaiting
+approval.
+
+All six latest-dev derived preflight checks pass. Rebase reconciliation changed
+only the manifest summary's owner count from 599 to the measured 600; its owner
+rows and sink topology already matched the current source. The Backlog identity
+census now passes 3,591 records. Evidence:
+`/private/tmp/pr2427-latest-preflight-final.log`.
+
+## Current Qodo review and remaining qualification gates
+
+Checkpoint `2ec344752d268d5ba857a851a448c89af0ab7614` was published after the
+rebase. Qodo's requested review completed against that head and added comment
+3954688544: two raw checkpoint reads in the dispatch-recovery test should use
+the database transaction manager. Both now do, retaining identical queries and
+assertions, with each context exiting before further asynchronous work. The
+complete recovery file passes **22 tests**; independent review, scoped Ruff
+checks/formatting, and diff checks pass. Evidence:
+`/private/tmp/pr2427-qodo-transaction.log`.
+
+Qodo also retained the disputed LoopDeps positional finding. Rechecking the
+parent of `8e1d9c72b6a8e6b361ea766eadbfeb0e2609e61b` confirms that the eighth
+argument was `call_model_with_continuation` before disclosure was introduced.
+Both complete agent persistence/disclosure files now pass **38 tests**,
+including the real positional continuation control. The thread was resolved
+with this evidence, not by reinstating the regressed field order. Evidence:
+`/private/tmp/pr2427-qodo-loopdeps.log`, PR reply 3954727441.
+
+The four native label controls pass in isolation after asserting exact row
+identity, full state/tooltip text, and the owning tray's actual wrap/truncation
+budget. The complete 351-test native file remains running at this checkpoint;
+focused evidence is not whole-file qualification. The generic text helpers
+were not broadened. Evidence: `/private/tmp/pr2427-label-focused-final.log`.
+
+Fresh architecture census: **47 passed / 3 failed**. Console is 17,534 lines
+against 16,811 (+723); Library 37,063 against 36,109 (+954); media-browse
+controller 555 against 371 (+184). Evidence:
+`/private/tmp/pr2427-size-final-census.log`. Additional ownership moves remain
+subject to the pending design approval; no limits were raised.
+
+Latest GitHub Perf Guard run 34191172522 has two real failures: **281 broad
+selectors against 274**, and **811,541 startup CSS bytes against 804,000**.
+Consolidating eight widget styles in `f99371858f` added 7,655 eager bytes;
+other drift subtracts 105, producing the 7,541-byte excess over the cap. A
+snapshot refresh alone cannot qualify this. Read-only analysis proposes using
+the existing route-owned split mechanism for Watchlists-only rules (11,203
+bytes; projected startup 800,338), keeping mixed/shared rules eager. This is
+pending user approval, actual build measurement, and navigation/visual tests.
+The seven narrow selector replacements also remain pending approval.
+
+Remote dev was checked again and remains
+`37bf45fb6232a1d4fb50fdba8f3c19c856ae7664`, already contained in this branch.
+Final-head verification/review and normal merge remain open.
+
+## Complete native-label qualification
+
+The complete native-chat file now finishes **351 passed**, no failures or
+skips, in 522.77 seconds. Evidence:
+`/private/tmp/pr2427-native-label-complete.log`. This supersedes the running
+status above and the earlier 383/4 group result for the four repaired native
+assertions; it does not imply the independent architecture/CSS gates pass.
+Only the four tests and their wrap/truncation imports changed. Full titles
+remain checked in normalized state and tooltips, actual labels against the
+row's ancestor tray budget, and existing persistence/selection/service/resume
+assertions remain intact. Scoped Ruff checks, formatting of changed ranges,
+diff checks, and independent review pass. Unrelated formatter changes were
+removed rather than expanding this test-only patch.
+
+The ownership-sensitive fixture detail is that the mounted Console contains
+multiple context trays. A first-tray query measures a hidden tray's fallback
+budget (10), not the displayed row owner's budget (13). The assertions use
+`row.query_ancestor(ConsoleWorkspaceContextTray)` to avoid that mismatch.
+This validates label generation, not compositor-level painted-text fit: a
+read-only probe also noted an older action-control/chrome discrepancy between
+a 13-cell label budget and 11-cell content region, requiring separate visual
+verification with the pending appearance work.
+
+The Qodo transaction repair was published as
+`1eab524d523b093d4efa471c99e12f9f96f6dc21`; reply 3954746315 records the
+complete 22-test evidence. Both that thread and the historically inapplicable
+LoopDeps thread are resolved. Additional commits still require final-head
+review. No merge or gate bypass has been performed.
+
+## Approved owner paydown: Console connection probe
+
+The user approved the existing-owner Console/Library moves and scoped CSS
+paydown. Plans were recorded at `72cbe56243`. Console plan Task3 now moves
+the bounded connection probe to the existing settings-navigation controller,
+removing its superseded constructor argument and screen wiring. The method
+is source-identical except for its relative import; the imported endpoint
+probe remains lazy. Two private test receivers were retargeted without
+changing their request/result assertions, and production modal opening now
+checks callback identity for both the original and a post-construction
+replacement. No numeric cap or UI contract changed.
+
+Evidence: the original focused test passed; the retargeted test failed for
+the absent owner method, then passed after the move. The complete endpoint
+probe, UI session settings, Chat session settings, and controller wiring
+files pass **750 tests** in 343.78 seconds, including the real loopback model
+endpoint. The complete private-delegate architecture file passes **66 tests**.
+Independent spec and correctness reviews, changed-range formatting, scoped
+Ruff, and diff checks pass. Logs:
+`/private/tmp/pr2427-probe-{baseline,owner-red,owner-green,owner-complete,architecture}.log`.
+ChatScreen loses 22 lines and one method; this is one completed cluster, not
+qualification of the remaining screen-size excess.
+
+All six derived-artifact preflight checks pass on this local checkpoint,
+including concurrently regenerated narrow-selector stylesheets. Evidence:
+`/private/tmp/pr2427-css-probe-preflight.log`. CSS appearance qualification
+and other owner clusters remain open. The latest remote inspection found
+dev at `c37d611368b2c1ac0f137db54085de032fb12b89`; a new rebase remains
+required after saving qualified work. Published head `c27723b623` still fails
+only the two previously identified CSS budget cases in its Perf Guard job
+34192417774, while derived-artifact checks pass. No newly posted inline
+review comments appeared after 05:55 UTC in that inspection. No merge was
+attempted.
+
+## Approved CSS subject-key paydown
+
+Seven rules now use dedicated classes on their existing Button/VerticalScroll
+subjects while retaining owner ancestry and type matching. IDs, labels,
+variants, nesting and callbacks are unchanged. The builder regenerated only
+the two widget-default sheets. The complete fastpath file passes **5 tests**;
+the parsed ancestor-scoped bare-type census is **274**, at the unchanged cap
+(Button181, VerticalScroll4). Evidence:
+`/private/tmp/css-paydown-final-fastpath.log`.
+
+The complete parity file passes **27 tests**, including ten paired compact
+and wide cases. Both arms load the full app stylesheet union; the baseline
+arm restores only the old six generated selectors and provider callout
+DEFAULT_CSS in memory. Computed styles, container/button regions,
+normal/disabled/focused visual styles, compositor paint/hit ownership, and
+complete painted frames match exactly. Two repeated paired runs pass all ten
+cases. Evidence: `/private/tmp/css-paydown-final27.log` and
+`/private/tmp/css-paydown-paired-fulltier-stable{1,2}.log`.
+
+Review caught that the first harness omitted app-tier sheets: it incorrectly
+treated NewTaskChoice/provider buttons as three rows, whereas app overrides
+make them one row. The corrected full-tier paired controls now pin this
+incumbent behavior. Both independent reviews and scoped static checks pass.
+
+Complete affected non-Scheduling files pass 289 tests. The Scheduling batch
+passes 331/333, exposing an old overflow viewport invalidated by TASK-31712's
+intentional padding reduction and its tooltip's internal reminder noun.
+Separate reconciliation is underway under TASK-31932 plan15. Widget
+consolidation passes 32/33; four DEFAULT_CSS declarations already present at
+`c27723b623` remain outside its allowlist (LibraryCharacterRepairDialog,
+RoleplayDraftNavigationDialog, RoleplayDraftRecoveryDialog,
+ConsoleAppearancePickerModal). No allowlist or cap was relaxed. Watchlists
+stylesheet deferral, this consolidation debt, and screen-size gates remain
+open; this checkpoint does not make the PR merge-ready.
+
+## Approved owner paydown: message presentation
+
+The active-session presentation/context bodies now live in the existing
+ConsoleMessageController. The existing live session/store ports and two
+named global-name/transcript-style callables preserve current values without
+reaching through the controller's screen handle. Screen appearance refresh
+and transcript rendering hooks remain screen-owned. The new regression
+fails before extraction and passes afterward while replacing app, session,
+and style dependencies after construction and making the controller's
+framework screen handle unusable.
+
+Exact private test seams and required constructor fixtures were retargeted.
+The first complete group exposed fifteen generation-fixture failures because
+its now-used active-session port had been deliberately unwired. Wiring that
+port and the two new ports to their actual existing sources restores the
+complete 40-test file, without swallowing errors or adding defaults.
+
+Two independent native-transcript assertions also predated TASK-31759's
+summary/transcript note actions. The plain transcript harness does not use
+ChatScreen presentation; its menu, transcript and action-service production
+sources are unchanged by this move. Both failures were reproduced separately.
+The exact ordered-label assertion now includes all six actions, and keyboard
+coverage explicitly visits all six and wraps in both directions. Captured
+message, menu-dismissal and selection checks remain intact.
+
+Final complete seven-file group: **435 passed** in 150.17 seconds. Complete
+native Console file: **351 passed** in 503.58 seconds. Independent spec and
+correctness reviews, changed-range formatting, scoped Ruff and diff checks
+pass. Evidence: `/private/tmp/pr2427-presentation-complete-final.log`,
+`/private/tmp/pr2427-presentation-native.log`,
+`/private/tmp/pr2427-presentation-owner-{red,green}.log`, and
+`/private/tmp/pr2427-more-menu-baseline.log`. The final screen measures
+17,489 lines / 517 methods; the unchanged 16,811 / 505 limits still require
+the remaining approved durability and handoff owner moves.
+
+## Scheduling fixture and terminology reconciliation
+
+The three complete affected Scheduling files now pass **214 tests** in
+130.25 seconds. TASK-31712 intentionally removed five blank rows from each
+expanded DetailGroup, so the old 235x52 History-overflow precondition no
+longer held. Only that test now uses a genuinely overflowing 235x40 docked
+viewport; its no-History-before-scroll and painted-History-after-scroll
+assertions are unchanged, and the separate 235x52 lifecycle check remains.
+The diagnostic probe measured History outside the viewport at y38 before
+scrolling and painted at y18 afterward, with a 20-row scroll range.
+
+The notification tooltip now uses TASK-23106's scheduled-task vocabulary,
+preserving the explanation that inbox/toast delivery is fixed while an
+automation's notification setting is editable. Its dedicated test checks
+both the canonical noun and the absence of a per-task setting. Independent
+spec and correctness reviews, scoped Ruff, changed-range formatting, and
+diff checks pass. Evidence:
+`/private/tmp/pr2427-scheduling-reconcile-final.log`. The intermediate
+213/1 result was its old literal `per-reminder` assertion, subsequently
+reconciled; no production notification policy changed.
+
+## Watchlists stylesheet deferral and modal consolidation qualification
+
+The exact Watchlists-only partition moves 12,771 source bytes, including six
+older `wl`/`wc`/`overview` units whose consumers were confirmed exclusively in
+Watchlists. Mixed/shared selectors remain eager. The existing app route map
+loads the sheet; no screen CSS_PATH or loading framework was added. Actual
+startup cost after this split was **798,906 / 804,000 bytes**. Real first entry,
+repeat entry (one parse), initial-route startup, lossless partition and bundle
+reproduction controls pass. Removing the route entry in an isolated in-memory
+negative control fails the route guard as intended.
+
+The complete CSS integrity/budget/ratchet-message and File Notes group passed
+**203 tests** in 521.28 seconds. Its initially failing Save-error expectations
+predated TASK-31910's contrast repair; only those two expectations now match
+the already-shipped `$ds-text-primary` / `$surface` pair. Git error styling and
+disabled opacity checks remain unchanged. Evidence:
+`/private/tmp/pr2427-watchlists-css-notes.log`.
+
+The first complete five-file Watchlists group recorded **201 passed / 7 failed**.
+Four failures disappeared when the full-app fixtures loaded the route-owned
+sheet before their direct screen push. Three new mount-boundary controls went
+RED before this fixture correction and pass afterward, including painted and
+hit-tested primary controls at 160x45, 235x52 and 80x24. The remaining three
+failures reproduce identically using the exact pre-split 875936d66f eager CSS
+in memory; they are not split regressions. The stale filter fixture now seeds
+the real local database, waits for the genuine reload and checks the exact
+canonical fresh-row ID (focused test passes). Two compact-Select focus contrast
+failures remain **open**, at 1.8811:1 and 1.5348:1 against the unchanged 2.0:1
+floor. They trace to the upstream theme-token change; the old token makes both
+unchanged tests pass in a diagnostic arm. A separate visible-cue repair was
+requested for approval; neither the global token nor the thresholds were
+changed. Complete affected-file requalification remains in progress.
+
+Four independently failing modal DEFAULT_CSS declarations were reconciled via
+the existing default-tier consolidation: three effective blocks now use
+BUNDLED_CSS with dedicated classes on the same subjects; Recovery's genuinely
+inert Navigation alias was removed. Exact original class declarations are
+retained as test fixtures. Paired compact/wide arms compare every mounted
+widget's computed geometry, full compositor text-and-style output, selected
+emoji/swatch, and action-button normal/disabled/focus paint and hit targets.
+They include both Clear and Cancel and prove the original arm removes the
+migrated generated blocks. Exact standalone modal harnesses retain the same
+default tier through ConsolidatedCSSApp.
+
+The consolidation/parity/fastpath/byte group passed **51 tests**; the final
+complete four-file modal/navigation group passed **47 tests** in 69.59 seconds.
+The combined measured startup cost is **803,081 / 804,000 bytes**, with a
+**273 / 274** selector census. The approved snapshot writer refreshed only
+the CSS snapshot after the under-cap measurement, without force or a cap
+change. Evidence: `/private/tmp/pr2427-modal-green.log`,
+`/private/tmp/pr2427-modal-complete-final.log`, and
+`/private/tmp/pr2427-css-snapshot.log`. Independent final reviews are pending;
+this section is progress evidence, not merge clearance.
+
+Both independent CSS reviews subsequently passed. A documentation-only follow-up
+corrected the shared generated split header's obsolete CSS_PATH wording to name
+the app/owning-screen stylesheet boundary. No selector or declaration changed;
+the final snapshot is **803,075 / 804,000 bytes** (925 bytes headroom).
+The frozen-input complete CSS/route/budget group then passed **43 tests** in
+22.82 seconds (`/private/tmp/pr2427-css-frozen-final.log`), and the final
+parity/fastpath/byte group passed **19 tests**. The combined long Watchlists/CSS
+run recorded 248 passed/6 failed: its two known focus failures plus four generator
+comparisons that still held the imported pre-edit header while generated files
+had the corrected comment. The fresh complete 43-test group eliminates
+that stale-input discrepancy; no CSS assertion was changed. Across the complete
+Watchlists/context cohort, only the two qualified focus failures remain open.
+
+## Console durability owner checkpoint (qualification remains open)
+
+The existing durability controller now owns the twelve approved methods,
+three completion/repair helpers and ten original state initializers. The audit
+matches every body after only the two named provider/self-owner substitutions,
+and matches all initializer ASTs/order. Named ports remain live; inspection of
+the current store does not create it. The thin dynamic repair hook and writable
+Screen state compatibility remain. Screen size is **16,973 lines / 506 methods**,
+still above the unchanged 16,811 / 505 limits pending the handoff move.
+
+Independent spec and source-correctness reviews pass for checkpoint only.
+Fresh owner controls: **16 passed**. The exact generation fixture now builds
+the existing settings owner before its genuinely used callbacks: complete
+file **40 passed**. The interim 949-test group was compiled before that fixture
+correction and two callback late-binding changes; it recorded **909 passed /
+40 failed**, all failures in the subsequently corrected generation file. An
+attempted stdin interruption also produced an ignored KeyboardInterrupt warning
+in that interim run; this is not a clean final-head aggregate pass.
+
+Fresh runtime compatibility group: **109 passed / 4 failed**. All four failures
+reproduce on the baseline: shutdown-event expectation, raw-refusal restoration,
+eager Canvas-controller expectation, and old resume-timer receiver strings.
+The isolated retired-screen weakref assertion also fails against the properly
+assertion-rewritten baseline. An earlier non-rewritten baseline pass was not
+valid evidence of a new leak; a later current plain-assert run also failed,
+so rewriting alone is not a proven cause. The lifecycle/test retention issue
+remains open. No production workaround or weakened assertion was introduced.
+
+Evidence: `/private/tmp/pr2427-durability-body-audit.log`,
+`/private/tmp/pr2427-durability-runtime-final.log`,
+`/private/tmp/pr2427-durability-baseline-rewritten.log`,
+`/private/tmp/pr2427-durability-generation-green.log`, and
+`/private/tmp/pr2427-durability-complete.log`.
+
+The diagnostic inventory review found exactly three removed Screen statements
+and the same three added durability-owner statements, with identical digests
+6d15da687ae8593e, f9cb8d1a5b6887c4, and 437b59c84df2e755. Logger binding and
+arguments are unchanged; this is relocation, not new privacy clearance for
+incumbent exception diagnostics. No sink topology or inventory policy changed.
+The inventory is refreshed only for those two owner rows after this review.
+
+Fresh pre-checkpoint verification of the two complete owner/generation files:
+**56 passed** in 6.29 seconds (`/private/tmp/pr2427-durability-checkpoint.log`).
+
+## 2026-09-08 Wave7 rebase checkpoint (not merge-ready)
+
+Replayed the branch onto dev `0fa35d00e8189b6c5404eaca2d6b401ec252ec71`
+at `cc0a5bd5370856b24936abe609393c29210fa4fe`. The prior head remains
+recoverable through `codex/pr2427-before-rebase-20260908`. Upstream's
+LibraryMediaState/LibraryMediaController supersede the older review-only
+Analysis/Reader extractions. Preserve the upstream scroll-settle fix, all real
+Screen patch seams, and the independent entry-focus cleanup. Retain the six
+unrelated controller assembly and the credential-metadata privacy repair.
+Independent production/body audits pass; no numeric limit was raised.
+
+Complete targeted evidence: assembly/wiring/import group 29 passed; provider
+grammar 32 passed; trace final-values/execution-context 53 passed. The larger
+Library group completed with **359 passed, 18 failed** in 388.83 seconds
+(`/private/tmp/pr2427-rebased-library.log`). Failures include two stale removed
+Screen-state references and unresolved painted focus/layout/action-label cases.
+The two complete size-ratchet files report **43 passed, 5 failed**, including
+Console, Library, CharacterRepair and MediaBrowse overages and Library pin slack.
+These are open gates, not waived baseline failures.
+
+The official diagnostic writer changed only owner_files 591 to 599; all
+statement rows/digests and sink topology already match. A new fetched dev head,
+`603812300f18562c1906ac837a8098a0a6cbff23`, requires another reconciliation,
+preserving its scoped Media fault history, resume-cache reset and Copy selection.
+
+Fresh census covered 985 refs and 324 registered worktrees. Only the review-owned
+Assistant stylesheet task collided again: intermediate TASK-32013 is now
+TASK-32040, preserving upstream Media debt TASK-32013 and all earlier provenance.
+The identity guard passes 3,595 task files. No final-head review or merge claimed.
+
+### Latest fetched-dev integration
+
+Second rebase completed at `b8190be4fbf18dcf2a47ff193ab8771aa0366a7c`,
+containing dev `603812300f18562c1906ac837a8098a0a6cbff23`. The two conflicts
+retain dev's precise split-Library stylesheet assertions and facet-context reset,
+alongside the PR's live `_sync_view` callback. Independent AST comparison verifies
+all scoped fault-history/resume-cache changes; both Copy selection production
+files and adaptive-reader validation are byte-identical to dev.
+
+Retargeted nine test-only references from removed Screen Media fields to
+`screen._media_state`, keeping predicates and scroll assertions unchanged.
+Complete scroller, Reader/Analysis characterization and entry-focus files:
+**13 passed** in 12.78 seconds (`/private/tmp/pr2427-media-state-retarget.log`).
+Remaining visual failures and size gates are still open. This is a progress
+checkpoint, not merge qualification.
+
+### Existing-owner and fixture repairs after the published checkpoint
+
+Character Repair local deduplication reduces 518 to 499 lines under its unchanged
+502 ceiling. Nine repeated status updates use a fresh-query helper; three buttons
+retain exact types, labels, IDs, classes, order and parentage through an ordered
+loop. Existing controller logic and assertions are unchanged. Complete repair
+and CSS-parity group: **57 passed**, including new DOM and widget-replacement
+controls (`/private/tmp/pr2427-character-complete.log`); Ruff/format checks pass.
+
+The approved Session handoff move places claim/release/acknowledgement and staged
+evidence construction in the existing owner, retaining the composer DOM hook and
+named live ports. Source is 16,742 lines / 505 methods under 16,811 / 505.
+Independent root review confirms the ordering, sanitization, callback identity
+and existing ownership. Owner/production handoff group **63 passed**, native
+handoff selection **46 passed**, and boundary/registration group **78 passed**.
+The frozen broader group was **296 passed / 15 failed**, not a full success:
+14 inherited live-work failures plus a Message-test receiver alias guard.
+
+Diagnostic statement review found precisely five identical warning statements
+moved Screen to Session: 94270dbc2da185bc, 7bf3d873d385cf18,
+69ab88068ad33952, d1aa7e16248a9dbc, 2c56fe86128ca98f. No content, arguments,
+logger binding or sink topology changed. The official writer updates those two
+owner rows only (`/private/tmp/pr2427-handoff-diagnostic-statements.log`).
+
+The retired-Screen weakref failure was traced to a cancelled Environment-poll
+TimerHandle's saved async Context, with 8.8 seconds left on its original deadline.
+Keeping the real timer but shortening only that unrelated fixture cadence to
+0.05 seconds restores collection; explicit before/after timer-lifecycle assertions
+were added. Production code and the writer/unmount/durable-repair assertions are
+unchanged. The weakref case plus complete Message and moved-seam guard files:
+**32 passed** (`/private/tmp/pr2427-cleanup-fixture-green.log`). Full settings-file
+qualification remains open. See the incident in lessons-testing-evidence.md.
+
+The live-work harness lacked the app bundle at the app-CSS tier. A RED-first
+exact `host.css_path == app.css_path` control now proves the production Console
+boot stack, using the existing ConsolidatedCSSApp bracketing rather than loading
+unrelated routes. All 13 zero-width paint/readiness/evidence failures pass with
+their original assertions; the complete live-work file is **69 passed / 1 failed**
+(`/private/tmp/pr2427-task4-live-complete.log`). The remaining Watchlists
+latest-active-run mock failure is independent and still under investigation.
+
+Full settings-file qualification now passes **417/417** in 247.73 seconds
+(`/private/tmp/pr2427-settings-full.log`), including the uninstrumented retired
+Screen collection test with the isolated real poll timer. Independent review
+confirms that a retained application-owned writer/controller reference would
+still fail the unchanged weakref assertion. This closes that recorded cleanup
+failure; it does not qualify the separate outstanding Library/Watchlists gates.
+
+The remaining live-work routing failure was a fixture bypass of production's
+Watchlists route-stylesheet loader. Reusing `FullAppDestinationContext` for that
+single case restores the real application lifecycle; a new click-hit assertion
+confirms that the compositor reaches the intended button. All original route,
+target, label and status assertions remain. The complete live-work file now
+passes **70/70** in 72.27 seconds
+(`/private/tmp/pr2427-watch-route-complete.log`); scoped Ruff and diff checks pass.
+No production code or stylesheet changed in this repair.
+
+### Complete-inventory follow-up
+
+The four-file Library inventory finished **968 passed / 31 failed** in 1775.21
+seconds (`/private/tmp/pr2427-fixture-complete.log`). This is retained as a
+non-green result. The six render failures subsequently pass in the complete
+render/side-by-side/focus-cue group: **162 passed** in 198.28 seconds
+(`/private/tmp/pr2427-fixture-final.log`). Metadata normalization preserves
+title-slot coordinates, wide empty-Reader geometry is exactly Items 145 /
+Reader 46, and the two-cell destructive gap retains complete action labels.
+
+The shell reconciliation cohort passes **25/27** in 105.45 seconds
+(`/private/tmp/pr2427-shell-cohort.log`). Exact compact Notes geometry now
+includes TASK-31645's one-row Lab strip, preserving fixed controls, focus,
+identity and six-row surplus growth. Import is located by stable action;
+grip collapse and width assertions follow TASK-31633/31951/31952. Independent
+review found no weakened contracts. Its two remaining failures were attributed
+separately: a real canonical Media deep-link selection mismatch, and an ingest
+fixture missing production consolidated defaults. The latter's real compositor
+hit the fold hint over Clear after an unstyled 23-row navigation bar; using the
+existing ConsolidatedCSSApp passes the original click/clear/focus/identity test
+and a new three-row navigation assertion (RED/GREEN logs:
+`/private/tmp/pr2427-clear-{red,green}.log`). Broader requalification is pending.
+
+The old Console unmount expectations now explicitly use the existing exact-owner
+Textual removal helper after real navigation. TASK-31520 deliberately keeps a
+normally suspended Console attached; its warm-reuse coverage remains unchanged.
+All 45 original cancellation/identity/raw-draft assertions survive, plus a
+single-production-Console control. The Canvas watcher case retains gateway
+absence, watcher identity, disable latching and disposal while asserting the
+existing shared store/controller identity. Complete ownership and screen-reuse
+files: **31 passed** in 58.87 seconds (`/private/tmp/pr2427-compat-final.log`).
+
+Existing-owner private cleanup removes exactly 22 Screen wrappers and retargets
+their direct consumers; two constructor lambdas retain late owner binding.
+Module AST comparison shows no unrelated logic change. New replacement-owner
+controls and complete wiring files pass **24 tests**
+(`/private/tmp/pr2427-private-cleanup-green.log`). LibraryScreen is now 35,393
+lines / 1,260 methods; its line pin was lowered from 35,777, not raised.
+The complete Screen/module ratchets are **47 passed / 1 failed**: only Media
+Browse remains over its unchanged limit, **589 / 371**. Its proposed state
+separation and the two Watchlists focus-cue repairs still await approval.
+
+Current CSS qualification: **17 passed**, 803,101 / 804,000 boot bytes and
+273 / 274 broad subjects. All six local derived-artifact checks pass (599
+diagnostic owners, 3,597 unique task records, 113 schema tables, 281 index pins).
+Qodo reports zero active findings on published 3b40d68710 and all six inline
+threads are resolved; these are checkpoint observations, not final-head merge
+qualification.
+
+The Media deep-link fix now derives the requested Items identity from the
+existing local Reader only in viewer mode. Both pure builders retain page
+membership fallback; list mode, external detail and an empty Reader retain
+their existing anchor. No new owner, mutation or scheduling was introduced.
+Nine direct controls and six cold/warm RAG variants (legacy, numeric and
+canonical IDs) pass **15/15** after RED reproduction; the target is explicitly
+the non-first row, with exact Items/Reader identity, title and detail-call
+checks. Independent correctness review found no issues.
+
+The combined complete-file/consumer qualification is **887 passed / 15 failed**
+in 694.24 seconds (`/private/tmp/pr2427-library-qualified.log`). It includes
+complete Prompts/Skills canvas, characterization and Reader files; complete
+Media state, Reader state/flow, browse, wiring, deep-link and new projection
+files; every one of the 56 direct ingest-harness consumers; and all six RAG
+variants. All Media and ingest selections pass. Seven Prompt and eight Skills
+failures remain under investigation; exactly-once refresh, stale-page, hit-test,
+priority-pane and dirty-draft assertions have not been waived. This checkpoint
+is not merge-ready and does not claim the full Library shell file is green.
+
+## 2026-09-08 checkpoint rebase and canvas failure attribution
+
+Saved the preceding work at 4407a89b71, then rebased all 198 branch commits onto
+dev 5aeac5ab221958ae612dd84ff47e047b23cd3f5d. The final tree differs from 4407
+only by upstream's 59-line critique document; executable sources are unchanged.
+Published f755da2daf631899dc3a4f394ec064ce3dbdfc4d with an exact lease against
+remote 3b40d6871021b6c8b9d304486a45003828a01961. Qodo's updated checkpoint
+comment reports zero active bugs/rules and all six inline threads are resolved;
+fresh CI is running. This remains a progress checkpoint, not merge approval.
+
+The seven Prompts failures separate into one obsolete version-field assertion
+and six cases of competing resume/mutation reads. A read-only observer records
+delete admission, then ScreenResume's snapshot and unfocused browse while
+mutation_in_flight is true, then deletion's own focused browse and snapshot.
+The extra read also consumes the injected post-delete refresh failure. The
+relevant Screen bodies match pre-cleanup source after receiver normalization;
+PromptsController is byte-identical. Evidence:
+`/private/tmp/pr2427-prompt-origin.log`. Step 25 records a narrow admission guard
+and ordinary/cancelled-modal negative controls; existing exactly-once and stale
+page assertions stay intact.
+
+The eight Skills failures are fixture drift: five bundle-only CSS pins omit
+the Library-owned sheet; the isolated editor similarly loads only boot CSS;
+the manual Items test uses 80 columns below the existing 82-column floor; and
+the dirty-exit double omits the focus surface its real entry-focus method reads.
+Step 26 retains real hit-testing, exact CSS/geometry contracts, a genuinely
+manual closed-to-open transition and dirty-veto behavior. No production Skills
+or CSS repair is proposed for these eight failures.
+
+Skills fixture repair: the exact eight previously failing cases pass in 3.78s.
+The dirty-exit fake additionally needed the existing non-Media return-candidate
+seam after the focus read; actual entry-focus code remains active. Independent
+spec/quality review passes, including the genuine closed-to-open transition,
+real compositor checks and unchanged CSS property assertions. Complete-file
+qualification remains pending (`/private/tmp/pr2427-skills-fixture-report.md`).
+
+The first Prompt repair passes nine focused cases, but review is not yet clear:
+failed delete/undo settlement refreshed only browse and would lose the suppressed
+source snapshot. Before implementing a proposed retry-only worker argument,
+Textual's wrapper was checked: exclusive cancellation happens before the worker
+body, so that alternative could cancel an active manual retry. It was rejected
+without source changes. The recorded fix uses the existing explicit dependency
+pattern to check Screen-owned failure state before worker dispatch, with real
+provider-read and manual-retry controls. No automatic retry of hard failures,
+new state owner, or worker-signature change is authorized.
+
+Fresh post-rebase derived-artifact preflight passes all six checks
+(`/private/tmp/pr2427-preflight-post-rebase.log`). Fresh ratchets are **46 passed /
+2 failed**, not the earlier 47/1: the eight-line Media deep-link repair landed
+after that previous measurement and now measures 4,638 / 4,630. Its recorded
+follow-up is documentation-only reduction with executable AST identity, not a
+cap increase. Media Browse still measures 589 / 371 pending its separate design.
+
+The corrected Prompt error settlement passes **23 focused checks** in 35.47s,
+including real provider reads and an uncancelled manual Worker that completes
+successfully. Independent re-review marks the lost-snapshot finding addressed,
+with no new production findings. Media's documentation-only reduction reaches
+4,630 lines with unchanged executable AST; Prompts reaches 4,997 / 4,998 and
+Screen 35,392 / 35,393 lines, still 1,260 methods.
+
+The first 677-case complete verification run was deliberately stopped near 31%
+after an exact-resource check found the two new ordinary/cancel controls did not
+finalize their separate Prompt DB. It is not qualifying evidence. SIGINT did not
+finish teardown; the exact owned process was terminated (exit 143), and its log
+is preserved at `/private/tmp/pr2427-canvas-complete.log`. Finalize only the new
+controls' exact resources before restarting the complete selection; no process
+termination or test-interruption result counts as a cleanup pass.
+
+The finalized opt-in resource fixture now supplies all 15 new controls, closes
+only its DB instance's captured main/thread handles after workers drain and the
+harness exits, and verifies every handle rejects a query as closed. All 15 pass;
+independent cleanup review passes without changed behavioral assertions.
+
+The restarted nine-file qualification finishes **678 passed / 2 failed** in
+525.15s (`/private/tmp/pr2427-canvas-final.log`). Both complete canvas files,
+Prompts characterization/wiring/private-owner checks and entry-compose tests
+pass. Remaining failures are the known Media Browse size and the isolated
+Library suspend fixture, whose `__new__` bypass omits `_unavailable_navigation`.
+Four export cases additionally surface an unawaited Textual callback warning
+from the RAG indexing-guidance path (`app.py:11567`); those require attribution,
+not a warning filter. Fresh final-source preflight passes all six checks
+(`/private/tmp/pr2427-preflight-final-canvas.log`). The branch is not merge-ready.
+
+The isolated suspend fixture now exercises the actual unavailable-navigation
+cleanup, with its constructor-owned state and a scoped non-modal app context.
+All original seven-timer stop/clear assertions remain; new assertions require
+cleared return admissions, advanced generation and a hidden return control.
+Its complete four-case file passed in 15.40s before the indexing cleanup below
+(`/private/tmp/pr2427-reuse-fixture.log`).
+
+The warning observer identifies the two raw reuse-app tests as producers:
+their real Media DB initialization installs global ingest callbacks and an
+indexer notifier bound to an app whose loop is later closed. The later Export
+fixture dispatches that same callback. An opt-in fixture now restores only each
+producer's exact registrations, preserves borrowed/transferred services, and
+stops only a captured newly owned worker while the pytest loop can service its
+callbacks. Review rejected a global reset dispatched through `to_thread`: a
+replacement may arrive before execution. The final local helper rechecks
+identity and notifier ownership under the existing locks before exact-object
+stop. A deterministic replacement control fails against the old reset arm and
+passes with this fix. Four ownership controls and both real producers followed
+by an Export consumer pass (seven cases, 18.43s, only three baseline dependency
+warnings; `/private/tmp/pr2427-indexer-fixture-report.md`). No production
+indexing, configuration or warning-filter changes were made.
+
+Fresh checkpoint preflight passes all six checks
+(`/private/tmp/pr2427-preflight-checkpoint.log`). Scoped Ruff passes on the
+Prompts owner and affected test files. MediaController's seven and Screen's
+50 baseline Ruff code/message findings are unchanged; this is not a whole-file
+lint-clean claim. The fresh remote still has PR head `f755da2daf` and dev
+`5aeac5ab22`; all required CI checks pass on that published checkpoint, and
+Qodo reports zero active findings there. Unpublished repairs require their own
+review/checkpoint; the Media Browse and Watchlists design gates remain open.
+
+Independent review passes the combined suspend/indexer fixture changes and
+confirms every original assertion remains. The first complete two-file run
+finished 99 passed / three baseline dependency warnings in 83.58s, but a
+post-freeze fixture edit overlapped it. It is not final qualification evidence
+(`/private/tmp/pr2427-reuse-entry-final.log`). The unreviewed edit was restored;
+the reviewed reuse file has git blob hash
+`1b5e9dca67e9a5c0e66861f0e5d8ef7fa802e1f4`. A fresh frozen-source run is required.
+
+That fresh complete reuse + entry-compose run passes **99 tests in 81.27s**,
+process exit 0 (`/private/tmp/pr2427-reuse-entry-qualified.log`). The reuse
+file's hash is unchanged before/after and matches independent review. The four
+unawaited-callback warnings are absent, with no warning filters; only the three
+existing requests/pydub/webrtcvad dependency warnings remain. The entire
+entry-compose file is unchanged. Combined with the prior complete canvas and
+Prompts qualification, this closes the attributed canvas/suspend/indexer-fixture
+failures, not the Media Browse size or Watchlists focus gates. The complete
+Library shell rerun and final revision's external review/CI remain required.
+
+## September 8 approved final gates and Qodo round 3
+
+The user approved the UI-local Media Browse state separation with ADR and the
+theme-aware Watchlists focus repair after checkpoint `98a9aeeb85`. ADR-128 and
+the exact whole-pure-member extraction plan are committed at `839c07ea56`.
+The requested repair retains the controller's generation/worker boundary and
+all existing size/CSS/focus limits. New dev `1c022378cb` adds only six Backlog
+documents (TASK-32041–32046); it will be incorporated after source freeze.
+
+Qodo's new comments 3957095884/3957095896/3957095903 are verified and repaired:
+historical/current authority and retention proof reads now use each database's
+transaction cursor; the UI workflow keeps one documented editable install.
+All 22 affected DB assertions remain equivalent under cursor normalization.
+The strengthened CI test fails with two installs before deletion and passes
+with one afterward. All three complete test files pass **78 tests in 23.81s**
+with only two existing dependency warnings
+(`/private/tmp/pr2427-qodo-round3-complete.log`). Independent spec/correctness
+review passes; scoped lint and diff-check pass. Production database behavior,
+standalone SQLite bootstrap fixtures and dependency choices are unchanged.
+
+Checkpoint `9c6a003fc6` publishes those three fixes and their inline replies.
+GitHub reports all nine review threads resolved; the new revision's Fast Lane
+was still running at inspection, so this is not final-head CI qualification.
+
+The approved Watchlists repair remains scoped to the two exact Select IDs.
+The conservative CSS splitter leaves their mixed-prefix rule in the generated
+boot bundle. This small measured eager cost is preferable to broadening the
+rule to every Select in ArticleListPane merely to force lazy classification.
+The existing 804,000-byte and 274-subject caps are unchanged; snapshot refresh
+and rendered-theme qualification must follow an under-cap measurement.
+
+The Media state extraction's frozen focused qualification passes **410 tests
+in 42.80s** across eleven complete files, with the three existing dependency
+warnings (`/private/tmp/pr2427-media-state-final-focused.log`). The controller
+pin falls from 371 to its measured 323 lines; the new state is pinned at 295.
+All 19 initial values and five constructor ports are preserved. The ten moved
+pure methods and two helpers are text-identical; thirteen runtime methods and
+all eighteen existing consumer files are AST-identical after receiver/fake
+normalization, preserving 6,768 assertions. Independent review passes the
+extraction and final exact-ID Watchlists nested-painter rule. Complete mounted
+Library qualification is still pending.
+
+The separate complete packaging guard fails because Screen still eagerly
+re-exports Conversation Reader. History proves the original assembly test
+looked up that alias, but the rebase changed the test to canonical class
+imports without deleting the now-unused re-export. The three-line import is
+identical at 9c6a003fc6 and is not introduced by Media state. Task step 32
+records its narrow removal before implementation, with unchanged packaging,
+assembly, wiring and Screen-size checks. The pre-import payload guard itself
+passes at 497/500 modules; all six derived-artifact checks also pass at this
+checkpoint. Neither result overrides the failed deferred-import contract.
+
+Removing that exact stale re-export makes all four complete packaging/assembly/
+conversations-wiring/Screen-size files pass **22 tests in 3.49s** (two existing
+dependency warnings; `/private/tmp/pr2427-reader-import-final.log`). Independent
+review passes. Screen is now 35,389 lines / 1,260 methods; the separate import
+cleanup is explicitly excluded from the pure Media receiver-equivalence audit.
+
+Before long qualification completed, dev advanced to `9a54013f07` with the
+TASK-32046 canvas-filter keyboard repair and four shell tests. Root interrupted
+only its own two fresh pytest processes with SIGINT and observed both exit 2:
+119 and 82 cases had passed, respectively, with no failures. Those interrupted
+runs are not complete-file qualification. Reviewed fixes will be checkpointed
+and rebased before restarting all affected complete mounted files on new dev.
+
+The Watchlists fix now paints both the SelectCurrent background and its nested
+Static value/arrow foreground through theme tokens, scoped to the same two IDs.
+The intermediate current-only foreground failed all six label-contrast checks;
+the final six control/theme cases pass. The complete overlay file passes **15
+tests in 73.95s** and the four complete CSS guard files pass **70 tests in
+77.14s**, with existing dependency warnings only. Independent final review
+passes. The measured budget is **803,658/804,000 bytes**, and the broad-subject
+census is **274/274**; the exact-ID Static descendant adds one subject. The
+approved snapshot writer independently measures that under-cap total and
+refreshes only the CSS snapshot without force. Its diff includes the already
+present 26-byte ConsoleSelectionMenu drift plus the 557-byte Watchlists rule;
+neither is a cap increase or hidden stylesheet change.
+
+The 203-commit rebase onto `9a54013f07` completed without conflicts at
+`957da1ba0e`; the saved pre-rebase checkpoint remains at
+`codex/pr2427-before-keyboard-rebase-20260908`. Comparing saved and rebased trees
+shows only upstream keyboard code/tests and documentation additions. Its
+23-line handler addition reproduces a 35,412/35,393 Screen breach. Step 33
+shortens only the existing on_key docstring by 21 lines, retaining its task and
+keyboard/focus facts. The full Screen AST is identical after removing that one
+docstring; Screen is 35,391 lines / 1,260 methods with unchanged ceilings.
+
+Post-rebase complete size/module/assembly/packaging/pre-import/UI-ready checks
+pass **65 tests in 14.98s** (`/private/tmp/pr2427-rebased-guards.log`). UI-ready
+is 973/973 modules; pre-import is 496/500 modules and 362,737/378,740 lines.
+All six derived-artifact checks pass, including all 3,603 Backlog task records
+(`/private/tmp/pr2427-keyboard-rebase-preflight.log`). The full rebased shell
+and fourteen-file mounted cohort are running on frozen sources; they remain
+required before a merge-ready claim.
+
+## September 8 mounted qualification and Qodo round 4
+
+On published `91f4122884`, the complete Library shell passes **846 tests in
+1,579.00s**, but its unchanged descriptor sentinel reports **12 to 475 handles
+(+463, limit 200)**. This is functional coverage, not resource clearance;
+native-owner attribution remains open. The fourteen-file mounted cohort finishes
+**681 passed / 10 failed in 912.39s**. Logs are
+`/private/tmp/pr2427-shell-rebased-final.log` and
+`/private/tmp/pr2427-mounted-rebased-final.log`. No warnings are suppressed.
+
+The four navigation failures assumed every visit constructed a fresh Screen,
+contrary to accepted installed-screen reuse. Step 35 preserves the cold-path
+assertions with scoped route metadata and adds default warm-path identity,
+retained-input/typing and full staged-launch payload checks. All 134 unrelated
+functions remain AST-identical and all 27 old mounted-journey assertions remain.
+The complete navigation and three reuse files pass **162 tests in 164.74s**;
+independent review passes. The Reader filter failure observed settled domain
+state before its Clear button's recompose settled. The existing stable-selector
+wait immediately precedes the unchanged lookup and real press. Its complete
+file passes **84 tests in 88.51s**, and independent review passes.
+
+Qodo round 4's four verified findings are repaired in tests only: transaction
+cursors for proof reads, cold-restart cleanup on early failure, exhaustive
+agent-swap owner cleanup with error aggregation, and real SQLite evidence
+complementing the unchanged synthetic fault matrix. Four complete files pass
+**115 tests in 50.55s**. Independent review then found a missing early-failure
+cleanup guard in the new real-SQLite control. A forced failure reproduces it;
+the corrected complete resource-fixture file passes **15 tests in 2.11s**,
+including that new control. The other three files remain unchanged. All
+pre-existing assertions are retained, scoped Ruff checks pass, and independent
+review passes the corrective increment. These findings still require published
+inline responses and final-revision review.
+
+Four Trash focus/layout failures and the descriptor warning remain open. The
+Live Trash walkthrough's startup resets its preinstalled logging sinks; fixing
+capture/cleanup exposes a previously masked Items-pane toggle failure. Its
+latest complete run is **4 passed / 1 failed**, not qualification. Task step 37
+records the capture repair and non-vacuous privacy requirements. New dev
+`e38b44acee` also requires reconciliation; its two review-created Backlog ID
+collisions need the requested user exception before renumbering. No merge-ready
+claim is made at this checkpoint.
+
+Checkpoint `8fe8c40e79` publishes the reviewed Qodo/navigation/Reader fixes.
+Qodo comments 3959841194/3959841197/3959841205/3959841211 now have inline
+implementation and test evidence; their four threads are resolved. Latest dev
+has since advanced to `2c6a7de490` (ONNX diarization, bulk-reader pilot and the
+Media zero-selection explanation); final rebase and shared guards remain open.
+
+Native shell attribution narrows the resource leak to the test-only
+_LibraryIngestCanvasHarness: two passing ingest pilots retain thirteen regular
+SQLite/WAL/SHM descriptors and a progress-drain thread. Temporary exact-owner
+unmount cleanup reduces their process to zero regular DB descriptors and only
+MainThread alive. The harness omitted its inherited ingest shutdown and
+main-thread database close. Step 42 records the permanent scoped repair and
+real-SQLite error-path control; the full shell still requires a native-observed
+rerun after final source freeze. See
+`/private/tmp/pr2427-library-shell-fd-attribution.md`.
+
+The three Trash initial-focus failures reproduce with correct existing
+assertions. Both immediate and fast-result publication precede destination
+canvas mount; the ensuing fallback recomposes lose the focus settlement.
+Steps 38–39 prime the initial loading state, await recompose before the one
+guarded request, and scale the fold test's message from actual mounted width.
+Focused RED is **4 failed / 1 passed**; GREEN is **6 passed**, including direct
+loading-before-mount/request-after-mount ordering. Independent review passes;
+Screen remains exactly **35,393 lines**, with no cap increase. Complete Trash,
+Reader and local Live qualification is running on frozen production sources.
+
+The Live harness separately needed keyboard-focus settlement (native observer
+proved the queued page update steals focus before Enter) and separate capture
+buffers for direct Loguru versus production's stdlib forwarding. Exact mutation
+event counts are required independently in both channels, with canaries and all
+privacy assertions retained. These fixes are not yet declared passing; see
+`/private/tmp/pr2427-live-harness-report.md` for intermediate failure evidence.
+
+The complete Reader/Trash/Live group finishes **180 passed / 1 failed in
+187.93s**: all 84 Reader and 92 Trash cases pass, as do the four pure Live
+controls. Its only failure is an obsolete Live expectation that normal Media
+stays stale after Restore. TASK-31275 deliberately replaced that manual-Retry
+policy with an authoritative page refresh. Step 44 compares the real page-2
+service result, exact count/membership, new result identity and retained
+selection, then preserves every Back/scroll/focus assertion. The corrected
+160x50 walkthrough now passes its full privacy/path/zero-DB-handle proof.
+The complete Live file still fails at the next 120x35 posture oracle (expects
+compact, runtime reports wide), so it is explicitly **not** final qualification
+(`/private/tmp/pr2427-live-qualified.log`: 4 passed / 1 failed in 28.01s).
+
+The permanent ingest-harness cleanup and its error-path control pass four
+focused native-observed cases in **3.91s**. Only the expected one-time FIFO and
+socket pair remain (5 to 8 descriptors); zero regular SQLite descriptors and
+only MainThread remain. Independent review passes the control's corrected
+setup/fallback cleanup boundary. The final diff adds 63 lines and changes no
+pre-existing executable AST. The full 848-case shell remains pending. These
+reviewed fixes are checkpointed before the latest-dev rebase; incomplete Live
+posture and final resource/CI/review gates remain open.
+
+### Latest-dev qualification checkpoint — 2026-09-08
+
+The reviewed checkpoint was rebased successfully onto dev `2c6a7de490` at
+local head `5020cdebb9`; remote PR head remains `8fe8c40e79` pending the
+lease-protected publication. Both appended lessons were preserved and the
+diagnostic inventory regenerated after inspecting the incoming exception-type
+log statements. Six complete architecture/import/UI-ready guard files pass
+**65 tests in 11.89s**, with all limits unchanged. Eight complete incoming
+Agents/Chat/ZAI files pass **420 tests in 65.55s**. Preflight passes five of
+six checks; the only failure is the two explicitly pending review-only task
+identity collisions, TASK-32014/32015. No renumbering exception is inferred.
+
+The seven-file Live/settings/Media/selection/recompose/Skills cohort finishes
+**411 passed / 3 failed in 350.95s**. The complete Live walkthrough now passes
+all four sizes, including 120 columns, with the authoritative post-Restore
+page, independent logging channels, privacy, keyboard and zero-owned-handle
+assertions intact. Two failures are attributed selection-fixture mismatches:
+source-order row identity and an absent optional-query interface. Step 47
+repairs only those fixtures; the complete selection file then passes **7 tests
+in 7.50s**, with independent review and scoped Ruff passing. The third failure
+is the inherited whole-Library recompose census, **66 against the unchanged
+63 cap**; attribution remains open and the cap is not raised.
+
+The complete 15-file non-live Audio increment initially reports **544 passed,
+1 failed, 8 setup errors**. All eight errors are the sandbox's loopback-bind
+restriction; rerunning the complete ONNX file with the approved local-server
+permission gives **47 passed**, accounting for **552 of 553** unique cases
+passing. The sole real failure is a phantom optional extra: accepted
+TASK-31827 moved sherpa-onnx/numpy into core while retaining its named readiness
+capability. Step 46's stronger metadata/consumer controls reproduce **4 failed
+/ 4 passed** before any production edit. No models, device tests, external
+services or package installations are used as qualification.
+
+The full 848-case Library shell native-observed run remains active on frozen
+runtime sources. Its late native sample shows retained Notes/export database
+paths from earlier tests, unlike the current-test-only sample at 50%; those
+handles require separate exact-owner attribution before declaring cleanup
+complete. The successful focused ingest cleanup is not evidence that every
+other harness owner closes.
+
+A fresh remote check now finds dev `a59536eb70` (Console trace source-pin
+migration, Kokoro recovery and Media flag-width correction). It is fetched,
+not yet integrated at this checkpoint. Final rebase, affected verification,
+final-head Qodo/checks and normal merge remain open.
+
+The diagnostic shell run was deliberately interrupted after native evidence
+proved the separate owner leak: **834 passed / 11 warnings in 1412.69s**, exit
+2, not a complete-file pass. Its session sentinel independently reports
+**331 additional descriptors (12 to 343)**. The late native snapshot attributes
+the retained Notes paths to all eleven real-service callers and the remaining
+export handles to the file-backed ChaChaNotes owner. Step 48 uses opt-in fixture
+finalizers and the existing same-file quiescence barrier; failure-path controls
+must exercise those actual finalizers, retain foreign-path usability, and prove
+the cached worker handles close. A clean complete-file rerun remains required.
+
+The recompose history is now exact: four accepted ADR-120 character-navigation
+structural sites, offset by one existing Media fallback consolidation, account
+for the net three-site breach. Step 49 leaves those navigation barriers intact
+and routes three older Media viewer-substate updates through the already
+sanctioned targeted sync seam, including its existing missing-viewer fallback.
+The 63-site ceiling is unchanged; RED/GREEN and mounted qualification are open.
+
+Step 46 is now independently reviewed and frozen: the complete optional-deps,
+meeting-owner and ingestion-capability files pass **285 tests / 10 warnings
+in 26.89s**. The focused controls transition from four expected metadata
+failures to **8 passed**. All 37 capability keys remain; only ONNX becomes
+core-backed, and every genuine extra retains its original install commands.
+Source/Utils/Library Ruff checks pass; the Audio file has exactly its five
+pre-existing findings, checked against HEAD, with no new finding. Changed
+functions are formatted without unrelated whole-file reformatting. Evidence:
+`/private/tmp/pr2427-core-metadata-report.md`.
+
+Step 48's valid-fixture RED controls reproduce one retained setup handle and
+two retained worker/test-failure handles. After the exact finalizers, both
+controls pass; the native-observed group of both controls, all eleven Notes
+callers and the file-backed export case passes **14 tests in 25.58s**. All
+fourteen post-test descriptor deltas are empty despite 166 observed
+CharactersRAGDB opens. The actual fixture finalizer preserves the primary
+error and leaves the foreign-path connection usable; outer safety cleanup also
+protects intentionally failing regression runs. Independent review, Ruff and
+diff checks pass. Final complete shell qualification is still required.
+
+Step 49 passes independent review: exactly three direct Media recomposes now
+use the existing viewer sync seam. Focused controls transition from three
+expected failures to three passes. The two complete Reader/render files pass
+**208 tests in 240.14s**; census, wiring, assembly and size guards pass
+**77 tests in 22.33s**. The whole-Library census is restored to **63/63**, without
+changing its pin. Existing mounted shell highlight add/delete and analysis-save
+tests remain part of the pending final complete Library run. All implementation
+files are frozen for checkpoint and latest-dev integration.
+
+### Published final-code checkpoint — 2026-09-08
+
+Checkpoint `ed42fc8c27` is preserved by
+`codex/pr2427-before-trace69-rebase-20260908`. Its rebase onto dev
+`a59536eb70` completed at **`8efe3b03823c5cfdde6cb001ea1386fe829c4c76`**,
+published with the exact old-head lease against `8fe8c40e79`. Source provenance
+and shell/selection/optional-deps hashes remain unchanged across rebase.
+The Console conflict retains both upstream current-turn derived provenance and
+the reviewed contiguous-prefix rendered-system classification; independent
+review confirms saved/derived owners take precedence. Both appended lessons
+remain, and the reviewed TTS diagnostic changes are reflected in the rebuilt
+inventory (599 owners, 1348 TASK-492 calls, 55 TASK-31551 calls, 7675 TASK-494
+calls, 12 sinks).
+
+Fresh post-rebase complete-file evidence:
+
+- Eight architecture/import/UI-ready/CSS guard files: **73 passed, 6 warnings,
+  22.33s**. The runner's later default-temp garbage-cleanup warnings are separate
+  from that successful test verdict; subsequent cohorts use explicit unique
+  basetemps.
+- Ten incoming Chat files, three migration files, agent bridge and connection
+  quiescence: **647 passed, 2 warnings, 220.26s**. Qodo's transaction reads and
+  cold-restart owner cleanup remain intact.
+- Six offline TTS/Settings/Speech files: **102 passed, 3 warnings, 9.95s**.
+  Synthetic-buffer codecs run locally; no model downloads, device playback or
+  dependency installs.
+- Media state/render and complete four-size Live walkthrough: **218 passed,
+  7 warnings, 227.65s**. The real walkthrough itself takes 61.25s.
+
+The final **850-case** shell run uses the existing native per-test descriptor
+snapshots without the earlier diagnostic connection monkeypatches, plus an
+explicit end-of-pytest snapshot. At 84%, native inspection finds only the current
+test's constructor quartet and no old Notes/export/ingest paths. Completion and
+the end snapshot are still pending at this checkpoint.
+
+Qodo confirms review through exact head `8efe3b0382` on 2026-09-08 at 17:49 UTC:
+**0 open bugs, 0 rule violations, 0 skill insights**; all thirteen historical
+findings are resolved or previously dismissed. GitHub's PR Fast Lane reports
+**754 passed / 2 failed**: both failures are Backlog uniqueness assertions, not
+additional runtime failures. Preflight likewise passes every check except IDs.
+The latest dev adds a third collision, review TASK-32040 versus upstream private
+trace-history ownership, alongside review TASK-32014/32015. The user has been
+asked for the precise three-review-task exception; no upstream or review ID is
+silently reassigned. Final merge remains blocked on that approval, corrected
+identity gates and completed shell evidence.
+
+### Final Library verification completed — 2026-09-08
+
+The complete frozen-head Library run finishes **850 passed, 10 known
+dependency/deprecation warnings in 1482.71s (24m42s), exit 0**. The shell source
+hash remains `3bb2b963f8dacbdc5647911786fdb97d049ce8d5feab3763fcf76dead9c5265d`
+at published code head `8efe3b03823c5cfdde6cb001ea1386fe829c4c76`.
+The final native observer record is exactly `exit_code: 0, sqlite_paths: []`;
+the session FD-growth sentinel emits no warning. The late native sample showed
+only the current test's constructor databases, with no persistent Notes,
+export, Media or ingest paths. Immediate per-test deltas are not conflated with
+persistent leaks: 59 of 850 snapshots had transient additions, but the late
+sample and final empty snapshot establish retirement.
+
+Evidence: `/private/tmp/pr2427-shell-850-native.log`,
+`/private/tmp/pr2427-shell-850-resource.GQt7OZ`, and the independent audit
+`/private/tmp/pr2427-shell-850-final-native-audit.md`. This completes the pending
+full affected-file cleanup qualification without a full-repository sweep or
+any warning/descriptor-limit relaxation.
+
+The remaining merge blocker is the explicit exception for renumbering only
+review-created TASK-32014, TASK-32015 and TASK-32040 while preserving upstream
+IDs and historical references. Approval has not arrived; no IDs were changed.
+The follow-up is paused rather than repeatedly polling this user decision.
+After approval, revalidate free IDs/references, perform the narrow renumbering,
+publish, and obtain green identity/final-head checks before normal merge.
+
+### 2026-09-08: approved three-record identity repair
+
+The user's subsequent `yes` explicitly authorizes the three-record exception
+above. A fresh fetched-ref and registered-worktree census found maximum
+TASK-32107. Only review records moved: Loguru 32014 to 32108, deferred Chunking
+Lab 32015 to 32109, and Assistant stylesheet harness 32040 to 32110. Upstream
+Meetings and private trace-history IDs and references remain unchanged. Active
+review references use the new IDs; historical mappings, creation dates,
+implementation notes, and literal evidence paths remain intact.
+
+Verification on the identity-only change: all three complete-file identity tests
+pass (two existing dependency warnings); the shared guard reports 3,615 unique,
+Windows-compatible records; Backlog CLI resolves all three exact new paths and
+retains their Done status. All six derived-artifact preflight checks and
+`git diff --check` pass. No runtime or test source changed in this repair.
+
+The refreshed dev ref is now 7e81ed55db, beyond the previously qualified
+a59536eb70 base, with Notes decomposition and TTS/trace/Media changes. Rebase and
+affected-file verification remain required before final-head review and normal
+merge. The earlier 850-case native result remains evidence for its recorded
+source, not for this incoming runtime delta.
+
+## 2026-09-08 wave-8 reconciliation and startup paydown
+
+The 209-commit rebase onto dev `7e81ed55db` completed at `c646154a61`.
+The published lease is still `fc4ea45cef651a320868ecc91c1de4c79456e646`;
+`codex/pr2427-before-wave8-rebase-20260908` preserves that checkpoint.
+The three approved ID moves are complete, not awaiting further approval.
+The post-rebase guard reports 3,626 unique Windows-compatible task records.
+
+Task 31932 steps 52–60 record the qualification repairs before implementation:
+
+- Preserve wave-8 Notes ownership: pass Undo tree reconciliation through a named
+  late-bound port, retain Files admission's `render=False`, remove the obsolete
+  unreachable placement patch, and retarget retired Notes fields. NotesState has
+  99 fields after the already-reviewed inert timer removal. The Notes controller
+  stays within its unchanged 5,276-line ceiling; LibraryScreen tightens to
+  31,901 lines / 1,229 methods.
+- Correct the overlapping Media zero-result branch's stale `controller` local
+  to `browse`. Retarget 17 incoming test reads to the ADR-128 browse-state owner,
+  retaining exact empty-list, Reader placeholder and hidden bulk-reason checks.
+- Attribute the 973/974/975 readiness variation to the existing scheduler's
+  first-tick imports of `emergency_stop` and `scheduler_heartbeat`. Defer settings
+  diagnostics to the same five failure branches and cache the real row-action
+  controller on first use via stdlib `cached_property`. No scheduler delay,
+  readiness timing change, custom proxy or raised cap. Both cold-import controls
+  fail before the change; complete first-use/wiring/failure/ownership guards pass.
+- Bring fixtures into parity with real lifecycle/state: seed provider settings
+  for a manually created inactive chat; discover controller mock slots across
+  sibling wiring builders; drive flat Notes fixtures through their existing
+  editor helper; wait for exact compact File Notes paint after layout changes;
+  treat hidden retained conflict UI as hidden while preserving exact autosave
+  state, one-save and stored-version assertions.
+- Move the metadata-only Undo diagnostic pin to its new Notes-controller owner,
+  without permitting new fields or exception capture.
+
+Independent review found no actionable production/ownership/privacy issue in
+the lazy-owner, settings diagnostic, Notes and Media changes, and approved the
+row-switch, retained-conflict and responsiveness fixture repairs pending GREEN
+qualification. The prior incoming diagnostic/trace audit confirmed accepted
+TASK-32047 behavior, not a reason to reinstate the superseded logging policy.
+
+Completed evidence on the reconciled source:
+
+- Incoming non-live TTS complete files: **240 passed**, 3 existing warnings,
+  34.18 s; no inference, audio-device or model-download qualification claimed.
+- Ten complete logging/trace files: **370 passed**, 2 existing warnings,
+  119.70 s, including credential filtering and rendered/discarded trace paths.
+- Complete first-use, settings failure, controller wiring/ownership, Screen size
+  and startup cohort: **161 passed**, 4 warnings, 31.00 s. Census **971/973**.
+- Complete Reader/render/viewer/multiselect and Library guard cohort:
+  **460 passed**, 5 warnings, 326.64 s; repeated census **971/973**, boot CSS
+  **803,291/804,000**. Log: `/private/tmp/pr2427-wave8-media-guards-third.log`.
+- Complete adaptive Reader file: **14 passed**, 3 existing warnings, 55.06 s.
+  Log: `/private/tmp/pr2427-adaptive-complete-final.log`.
+- All six derived-artifact preflight checks pass: diagnostic summary is 600
+  owners / 7,667 TASK-494 calls; other reviewed diagnostic row digests are
+  unchanged. Scoped Ruff and `git diff --check` pass.
+
+The first current-source native shell run stopped at **503 passed / 1 failed**
+on the retained hidden conflict DOM assertion. It is failure evidence, not a
+clean resource qualification: its final frame still retained the failed test's
+SQLite descriptors. Log/report: `/private/tmp/pr2427-wave8-shell-native.SHQelx/`.
+The corrected full **851-case** run is now observed at
+`/private/tmp/pr2427-wave8-shell-native.bMHrar/`; its `native.jsonl` records exact
+package provenance, HEAD, diff and shell hashes, native per-test additions and
+the final exit/descriptor snapshot. The runner registers only the native
+observer, not the diagnostic helper's connection-patching fixture; it performs
+no GC, global close or descriptor-limit change. Final qualification, remaining
+Notes/navigation and diagnostic files, publication and final-head Qodo/CI review
+remain open at this checkpoint. Do not merge from the partial results above.
+
+Subsequent completed evidence: all **349** remaining Notes characterization,
+reuse, selection, modal and navigation cases pass (236.48 s; 3 warnings,
+`/private/tmp/pr2427-wave8-notes-remaining.log`); all **171** diagnostic/privacy
+and token-preparation cases pass (178.28 s; 8 warnings,
+`/private/tmp/pr2427-diagnostic-guards-final.log`); the complete responsiveness
+file plus the exact repaired autosave case pass **17** cases (5.03 s; 3 warnings,
+`/private/tmp/pr2427-final-focused-controls.log`). The prior File Notes run
+completed that entire file before stopping at the now-repaired next-file
+characterization selector; its preserved log is
+`/private/tmp/pr2427-wave8-notes-complete-third.log`.
+
+The other 21 incoming changed UI files are being qualified in two complete-file
+cohorts: **575** cases in `/private/tmp/pr2427-wave8-notes-inventory.log`, and
+**470** in `/private/tmp/pr2427-wave8-shell-inventory.log`. The real-local SQLite
+tree walkthrough and ProductionApp File Notes owner lifecycle run separately at
+`/private/tmp/pr2427-wave8-local-tree.log` and
+`/private/tmp/pr2427-wave8-file-owner.log`; independent review confirmed both are
+offline, and the ProductionApp process owns its collection-time environment
+isolation. No inference, device, download or remote Git operation is authorized
+by these runs. While these frozen-source tests execute, the shared origin/dev
+ref advanced to `565dc49921` with an eight-file TTS-only increment. Integrating
+and qualifying that accepted increment, then final-head review/CI, remains
+required after the active tests stop.
+
+The incoming inventory is now fully exercised, not wholly green: the 575-case
+Notes group has **568 passed / 7 failed** (543.26 s), and the 470-case shell group
+has **460 passed / 10 failed** (491.29 s). Exact failure lists/tracebacks are in
+the two logs above. Remaining investigation covers disabled-CSS ownership,
+visible toolbar/copy/harness expectations, one conversations fake and row-factory
+census, exact Trash return settlement, recompose/Tab query counts, two Notes
+journey paint checks, four sync-authority metadata preconditions, and the Notes
+unmount ordering guard. Existing caps and filesystem security checks stay intact.
+These are open qualification findings, not waived checks or completed work.
+
+The separate ProductionApp owner file passed **12** cases (20.94 s). Native
+observation of the passing real-local Notes walkthrough found **24** retained
+handles for its directly created database. Step 61 adds an exact-owner yielding
+fixture and failure-unwind control; independent review required unconditional
+cleanup of the manually driven control too, which is included. The final
+complete file passes **2** cases (10.75 s), with final `exit_code: 0` and
+`sqlite_paths: []` in
+`/private/tmp/pr2427-wave8-local-tree-native-final.6hMpND/native.jsonl`.
+All 37 original walkthrough assertions are preserved. The fresh 851-case shell
+run is still in progress; this checkpoint is intentionally not merge-ready.
+
+Wave 8 subsequent evidence: the complete native shell run finished **851 passed,
+10 warnings in 1540.57 seconds**, with final `exit_code: 0` and
+`sqlite_paths: []` at
+`/private/tmp/pr2427-wave8-shell-native.bMHrar/native.jsonl`. Intermediate
+factory-app auxiliary handles were released by final pytest cleanup; independent
+resource review found no persistent leak. This qualifies the source before
+step 65, not the later performance repairs. Complete Notes journey/folder files
+now pass **147** cases in 98.57 seconds using the verified per-user temporary
+root (`/private/tmp/pr2427-journey-final.log`). The honesty/multiselect/toolbar
+cohort passes 55 cases with three remaining fixture/action failures
+(`/private/tmp/pr2427-honesty-final.log`), under investigation.
+
+Step 65 independently identified three runtime defects: uncached ordinary rail
+lookups, detail/browse callbacks preceding the initial Media structural mount,
+and Trash-return settlement armed after the replacement owner's first geometry.
+The focused RED reproduces five recomposes against one and three DOM queries
+against one; the Trash case passes isolated but failed the complete inventory.
+The fixes reuse existing seams and preserve all limits and exact-settlement
+assertions. Complete affected-file qualification and independent review remain
+in progress. Fresh dev also includes the accepted Library keyboard increment
+at `38f7fe63d4`; rebasing and qualifying that increment remains open. This is a
+progress checkpoint, not a completed review or merge claim.
+
+Steps 65–66 are now independently reviewed and qualified: all **182** cases in
+the complete performance, focus/return-settlement, honesty, Conversations
+multiselect, toolbar-adaptation and both size-ratchet files pass (119.10 s;
+`/private/tmp/pr2427-step65-refined.log`). The first unconditional pre-arm
+attempt failed fourteen retained-viewer settlement cases; the final fix
+pre-arms only structural Trash returns and preserves post-mount arming for
+retained viewers. New RED/GREEN controls pin same-kind owner identity and
+post-await navigation admission. The cross-kind cap measures exactly one actual
+awaited recompose plus zero queued refresh fallbacks. Existing Screen
+31901-line/1229-method and MediaController 4669-line ceilings remain unchanged.
+All six derived-artifact preflight checks pass
+(`/private/tmp/pr2427-wave8-preflight-final.log`), scoped undefined-name checks
+pass, and `git diff --check` is clean. The 17 incoming-inventory failures are
+addressed; final-source lifecycle verification, the newer dev increment and
+final-head PR review/checks still remain. Do not mark the owning task Done yet.
+
+## Wave 9 — latest Library keyboard and speech increment
+
+Checkpoint `279282b5991053aa8e1aa53756351b3682891a58` is published on PR 2427;
+its final per-click file passes **11** cases, including separate actual-recompose
+and refresh-fallback counters (`/private/tmp/pr2427-step65-final-spies.log`).
+Backup `codex/pr2427-before-wave9-rebase-20260908` preserves it. The 210-commit
+rebase onto fetched dev `38f7fe63d4f476cf593e06b09a2385d003233c53` completed at
+local `208660c3fdc4f8068b00e780bb78bad08e85585c`. Two conflicts preserved the
+new Tab bindings and both independently appended testing lesson sets.
+
+Complete incoming qualification initially reports **331 passed / 5 failed**
+(144.11 s, `/private/tmp/pr2427-wave9-incoming.log`). Three fake audio.cpp
+child-server cases cannot bind loopback ports in the sandbox; the complete two
+TTS files pass **117** cases (3.19 s) outside that restriction, without models,
+devices or external inference (`/private/tmp/pr2427-wave9-tts-local.log`).
+The navigation allowlist erroneously inherits Shift+F6 as universal, despite
+the retained route gate. Only Tab/Shift+Tab are universal; that test-only
+correction is independently diagnosed and its complete navigation file is
+rerunning. Backlog IDs remain unique across **3652** files.
+
+The remaining structural gate is real: LibraryScreen is **32156 / 31901 lines**
+after the accepted upstream keyboard behavior, with seven added methods.
+Preserving earlier delegate deletions does not earn that saving a second time.
+Inspect current unused delegates before proposing any new extraction; retain
+all seven new keyboard methods and do not raise caps. Final-source native
+Library verification and final-head Qodo/CI are still required before merge.
+
+The corrected complete navigation file passes **145** cases (105.70 s,
+`/private/tmp/pr2427-wave9-navigation-final.log`). Together with the complete
+incoming run and unrestricted offline TTS rerun, all incoming behavioral test
+files now pass; the Screen structural gate remains open at **32156 lines and
+1236 methods**, versus **31901 / 1229**. Current-reference review found only
+four safely dead helpers (53 lines), insufficient by itself. Do not conflate
+prior extraction savings with new savings or remove the newly accepted keyboard
+behavior. A bounded follow-on controller-boundary reduction requires an explicit
+plan/approval before implementation. Existing native evidence is historical
+until the final source is requalified; no merge-ready claim is made here.
+
+Step 68 resolved the apparent design blocker without a new owner: the complete
+reference census identified exactly three obsolete compatibility forwarders
+whose few test/evidence callers can use their existing Media/Prompts/Notes
+controllers directly. Together with four genuinely unused helpers, this is
+mechanical cleanup within the approved reconciliation scope, not an additional
+controller design. Controller-callable pins remain; explicit Screen-absence
+pins now cover the removed forwarders. Independent review approves exact
+scope/callers and docstring contract retention; its stale-census-comment finding
+is corrected (Media23, Prompts56, Notes27). No new approval is needed for an
+owner extraction because none was introduced.
+
+Final measurements are **31868 lines / 1229 methods** for LibraryScreen
+(line ceiling tightened from31901), and **5274 / 5276 lines** for NotesController
+(the pre-increment ceiling is preserved, not the incoming5283 increase).
+AST normalization proves only the exact seven removals, their two newly unused
+imports and documentation changed (`/private/tmp/pr2427-wave9-ast-proof.log`).
+Fresh complete ownership/size guards pass **92** cases (1.69 s), startup/import/
+CSS/size gates pass **76** (26.58 s), and all six preflight checks pass. Scoped
+changed-test/Notes lint and undefined-name checks pass; the Screen retains
+its same **47 pre-existing Ruff findings**, with no new finding (the two newly
+unused imports were removed). These are not reported as a clean whole-Screen
+lint run.
+
+Two final-source runs are active at this checkpoint: the **530-case** complete
+affected owner/Media-preview/Notes-reader/Prompts/keyboard cohort at
+`/private/tmp/pr2427-wave9-owner-green.log`, and the **851-case** complete Library
+shell at `/private/tmp/pr2427-wave9-shell-native.l37Yp9/pytest.log`. Its native
+report is `native.jsonl` in the same directory; require final exit_code0 and
+empty sqlite_paths. Runtime source is frozen until these finish. Final-head
+Qodo review and GitHub checks remain mandatory before a normal merge.
+
+The complete affected owner/UI cohort finished **530 passed, 3 warnings in
+445.47 seconds**. Qodo completed its fresh review of
+`bf1f70cf0c6f153ef9163189385982cca568744d` at 2026-09-09 02:31 UTC with **0 bugs,
+0 rule violations and 0 skill insights** (canonical review comment5560973127;
+exact-head completion comment5594878752). The 851-case native run is still in
+progress; no final cleanup or merge claim is made. Newer dev changes must be
+integrated only after the frozen-source run completes, followed by affected-file
+verification and review of any resulting runtime changes.
+
+The final frozen-source Library run finished **851 passed, 10 warnings in
+1371.47 seconds**, with native final `exit_code: 0` and `sqlite_paths: []` in
+`/private/tmp/pr2427-wave9-shell-native.l37Yp9/native.jsonl`. This qualifies the
+published runtime at `bf1f70cf0c`; its Qodo review is also complete and all 13
+review threads are resolved. Fresh fetch finds dev `80f29a9a1dcd9307662714233c65605e4c517b11`,
+containing 51 changed files since the prior base, including Library loaders,
+handoff, recovery copy, Media polish and their tests. Integrate and qualify
+that increment next; do not reuse this source qualification for changed runtime.
+
+### Wave ten: dev80f29 integration and bounded forwarding cleanup (2026-09-09 UTC)
+
+Rebase completed at `2c7e99f60c` onto `80f29a9a1dcd9307662714233c65605e4c517b11`.
+The prior checkpoint remains recoverable through
+`codex/pr2427-before-wave10-rebase-20260908`. Conflict resolution retains the
+new conversation-workspace callback in the existing assembly helper and the
+Media deep-link Reader-width restoration after the reviewed surface-settlement
+and supersession fence. The new diagnostic is a fixed-label workspace-link
+warning with exception capture, permitted by ADR-029's 2026-09-08 application
+log-readability amendment. Its statement was explicitly reviewed; the rebuilt
+inventory already matches exactly (600 owners, 7668 TASK-494 calls), so no
+blind regeneration or logging-policy change was needed.
+
+Step 70 reproduced Screen growth to 32193 lines / 1238 methods. It preserves
+all nine incoming methods and removes nine existing two-line forwarders:
+Media row-owner adoption, presentation epoch, successful-focus eligibility,
+settlement deadline, Trash post-paint focus, page-control focus, filter request;
+Notes role target and work-first preferences. Their concrete Screen/test callers
+now use the existing controller owners. Both shared `canvas_sync` receiver
+methods remain intact: it accepts Screen OR controller, so direct controller
+member access there would have broken that contract. The existing guard sets
+retain controller-callable proof and gain explicit Screen-absence coverage.
+
+Historical documentation was shortened without changing executable bodies.
+Normalized AST comparison proves the exact nine removals/caller retargets are
+the only runtime delta from the rebased head; all five edited controller/wiring
+modules are executable-AST identical. Final measured Screen is 31853 lines /
+1229 methods against unchanged 31868 / 1229 caps. Reader/ingest/media/notes/
+prompts/wiring measure 908/2713/4645/5269/4978/338 lines, all within original caps.
+
+Fresh evidence:
+
+- Initial guard RED: 1 failed / 44 passed; extended owner RED: 7 failed /
+  67 passed (five line caps and two newly extended absence controls).
+- Complete six-file owner/size GREEN: **97 passed, 2 warnings, 2.04 seconds**,
+  `/private/tmp/pr2427-wave10-owner-green.log`.
+- Startup/import/CSS budget files: **8 passed, 5 warnings, 15.79 seconds**,
+  `/private/tmp/pr2427-wave10-boot.log`.
+- All six derived-artifact preflight checks passed:
+  `/private/tmp/pr2427-wave10-preflight.log`.
+- AST proof: `/private/tmp/pr2427-wave10-ast-proof.log`. F821 and diff-check
+  pass. Ruff comparison finds no new findings; existing counts remain Screen
+  47, ingest controller 6, Media controller 7. Other edited Python files are
+  Ruff-clean (`/private/tmp/pr2427-wave10-lint-baseline.log`).
+
+Complete incoming/affected UI verification is running (1427 collected cases)
+in `/private/tmp/pr2427-wave10-incoming.log`. The separate native 851-case
+Library run is running in `/private/tmp/pr2427-wave10-shell-native.lxPpFD/`;
+require final exit code zero and empty SQLite paths, not intermediate snapshots.
+The expanded controller/diagnostic cohort finished **183 passed, 8 warnings in
+174.10 seconds** (`/private/tmp/pr2427-wave10-diagnostic-guards.log`). The two
+UI/native runs are not yet final-pass claims. Runtime source stays frozen
+while qualification runs.
+
+A subsequent read-only remote check observed newer dev `8aa2211f2b78fcb35c9d1d3db6e15d5f1978da0a`
+(PR #2524, structural-wait cancellation/deadlines; 16 changed files). Integrate
+that accepted increment after the active run completes, then qualify its actual
+affected files and any overlap. Fresh final-head Qodo review and normal merge
+checks remain mandatory. No cap increase, repository-wide sweep, unrelated
+environment change, or further user approval is pending.
+
+### Wave-ten terminal results and fixture reconciliation (2026-09-09 UTC)
+
+The frozen native run completed **849 passed, 2 failed, 10 warnings in
+1375.09 seconds**, with final `exit_code: 1` and `sqlite_paths: []`. Both
+failures were the two terminal sizes of
+`test_library_conversation_disabled_reason_stale_actions_and_notice`, at its
+unchanged `open_console.disabled is False` assertion. The fixture had no active
+workspace/membership, now required by accepted TASK-32056. An independent
+two-case run reproduced both failures in 5.26 seconds. Step 71 supplies a real
+active workspace and membership for the retained `chat-001`, keeping all
+stale-list, enabled-state, tooltip, Retry and focus assertions. The repaired
+pair plus the complete handoff file passed **11 tests, 3 warnings in 7.95
+seconds** (`/private/tmp/pr2427-wave10-conversation-green.log`); scoped Ruff
+and diff-check passed. No production gate changed.
+
+The 1427-case incoming run exited **143 (SIGTERM)** before a pytest summary,
+with its log ending after the 60% marker. Its termination source is not
+established; no pass count is inferred from progress dots. The subsequent
+process census confirmed only the native runner was still active. This cohort
+remains inconclusive and will be rerun as complete-file groups after integration.
+
+Fresh fetch confirms next base `c4a7b1911f14181faa471eb1ea209cfdeed98226` (37
+changed files since dev80f29). In addition to structural waits, it contains
+Collections row/count behavior and documentation. The fixed-ref independent
+review identifies ten safe existing-owner forwarders to offset ten incoming
+Screen methods, plus documentation-only line paydown; shared receiver,
+dynamic dispatch, identity and wiring contracts are excluded. Preserve those
+boundaries and all caps during step 72. The native result above establishes
+clean process exit resources, not an all-green test suite or final-source
+qualification after the upcoming rebase.
+
+### Wave-eleven rebase and bounded owner reconciliation (2026-09-09 UTC)
+
+Rebased all 215 commits onto `c4a7b1911f14181faa471eb1ea209cfdeed98226`,
+finishing at `947e6ec680e4add142b1d9ee888cd934820d6f37`. Backup
+`codex/pr2427-before-wave11-rebase-20260908` preserves `0753440483`.
+Conflict reconciliation retains upstream structural waits and Collections
+count reads, uses canonical `receipt.focus_identity` with the single settled
+focus queue inside the Notes receipt helper, and supplies the live composed
+Skills import status accessor through existing controller wiring. The new
+Collections diagnostic uses the existing bounded `_retry_failure_reason`.
+
+Step 73 removes ten exact two-line Media/Notes Screen delegates and retargets
+only verified real-Screen callers and affected tests to their existing owners.
+Shared polymorphic `canvas_sync` receivers and dynamic/identity contracts stay
+unchanged. Extended owner tests pin both controller callability and Screen
+absence. Fifteen historical Screen docstrings and the Export success docstring
+were shortened without changing executable bodies. SkillImport uses normal
+Ruff formatting, shorter redundant documentation, and removal of an optional
+tuple trailing comma; its public cancellation method retains Google-style
+Returns documentation. No new ADR is required: this is routine reconciliation
+within existing ownership boundaries, not a new interface or state design.
+
+Measured final sizes are Screen **31842 lines / 1229 methods**, Export **1291
+lines**, and SkillImport **760 lines**, within unchanged caps of 31868/1229,
+1307, and 760. No ratchet was raised.
+
+Fresh evidence on the frozen runtime source:
+
+- Initial cap/assembly guards: **3 failed, 71 passed**; newly extended delegate
+  absence controls: **2 failed, 25 passed**. Final seven-file owner/size/assembly
+  cohort: **101 passed, 2 warnings, 2.00 seconds**
+  (`/private/tmp/pr2427-wave11-guards-green.log`).
+- All derived-artifact preflight checks passed
+  (`/private/tmp/pr2427-wave11-preflight.log`). Complete final diagnostic and
+  boot/import/CSS gates: **78 passed, 11 warnings, 191.13 seconds**, exit zero
+  (`/private/tmp/pr2427-wave11-final-gates.log`).
+- `/private/tmp/pr2427-wave11-ast-proof.log` confirms executable AST identity
+  for Export/SkillImport and exactly the enumerated delegate removal/direct
+  owner retargets for Screen and the two UI test files.
+- Diff-check and scoped F821 pass. Fresh Ruff comparison has no new findings:
+  Screen retains its existing 47; every other edited Python file has zero
+  (`/private/tmp/pr2427-wave11-lint-baseline.log`).
+- Independent bounded review found no actionable findings, conditional on
+  the remaining final-source test/native and external merge gates.
+
+The six incoming structural-wait/Collections/Export files initially passed
+**46 tests, 3 warnings, 176.40 seconds** before step 73; those are not final
+cleanup-source evidence. They are included in the active complete-file retries.
+The previously interrupted incoming inventory is now split into sequential
+cohorts A/B/C/D with separate logs/JUnit outputs at
+`/private/tmp/pr2427-wave11-cohort-{a,b,c,d}.{log,xml}`. Later cohorts start only
+after earlier success. Native Library qualification is also active at
+`/private/tmp/pr2427-wave11-shell-native.blE2Qd/{pytest.log,native.jsonl}`.
+Neither run is yet a final-pass claim; require the native terminal exit zero
+and empty SQLite paths. Runtime source remains frozen during these runs.
+
+At this checkpoint the published PR head is still `83f48123fcabcb0b00ae8291f36602dc47aee94d`;
+publication, fresh final-head Qodo completion, latest-base reconciliation and
+normal required checks remain open. No further approval is pending.
+
+### Wave-eleven publication and first complete retry (2026-09-09 UTC)
+
+The reviewed checkpoint is now published at
+`6b28349df17308bf1483b99fe3b010ec711bc995`, confirmed remotely after an exact
+force-with-lease against `83f48123fcabcb0b00ae8291f36602dc47aee94d`.
+Manual Qodo request `5595442919` received fresh exact-head completion
+`5595471395`. It reports zero bugs and one new transaction-rule finding
+(`3964446586`), now under technical review; earlier resolved/dismissed entries
+are historical, not new failures.
+
+Complete retry cohort A finished **754 passed, 2 skipped, 4 warnings in
+455.68 seconds**. JUnit confirms 756 cases, zero errors and zero failures.
+The skips are the Windows spawn/resource-tracker boundary and the explicitly
+deferred TASK-32070 Search/RAG keyboard case. Cohort B subsequently finished
+**518 passed, 3 warnings in 445.64 seconds**. Cohort C and native qualification
+remain active; D has not yet started. Source is still frozen.
+
+The two complete resource-control files relevant to the new Qodo finding passed
+**25 tests, 2 warnings in 2.83 seconds**, exit zero
+(`/private/tmp/pr2427-wave11-qodo-borrowed.log`). The flagged raw SQLite setup
+intentionally creates a caller-owned transaction which must remain open across
+executor submission and drain. `ThreadDatabase` is a minimal real-SQLite double,
+not the production transaction API; separate real-database lifecycle controls
+already use `database.transaction()`. The production transaction manager also
+explicitly documents native caller-owned transactions at managed depth zero.
+Do not remove that borrowed-work sentinel merely to satisfy a blanket rule.
+Independent assessment agreed that no fix is warranted. Thread reply
+`3964470606` records the preserved ownership invariant and fresh 25-test
+evidence; thread `PRRT_kwDOOcyyl86gfuKh` was then resolved. This was an
+evidence-backed rejection of an inapplicable recommendation, not a code fix.
+
+GitHub reports the published head DIRTY against newer dev. Reconcile the
+actual new base only after the frozen qualification finishes; no normal merge
+is yet authorized by the verification results.
+
+### Wave-eleven terminal results and next integration (2026-09-09 UTC)
+
+Native Library qualification ended **850 passed, 1 failed, 10 warnings in
+1425.41 seconds**, with final `exit_code: 1` and `sqlite_paths: []`. The failure
+was `test_library_media_initial_error_is_unknown_and_retry_is_unique`; its
+diagnostic showed the expected type-filter focus, so another conjunct in the
+readiness predicate failed. This establishes clean native resource retirement,
+not a green suite. Cohort C ended **355 passed, 3 failed, 3 warnings in
+441.69 seconds**: analysed-secondary floor width, Trash Back toolbar focus,
+and the Skills status fake's missing real helper. The chained D did not start
+after that failure; its separate complete-file run then passed **160 tests,
+3 warnings in 63.18 seconds**.
+
+The exact C failure rerun reproduced the floor and status failures while Trash
+passed (**2 failed, 1 passed in 20.44 seconds**). The native Retry case passed
+alone (**1 passed in 3.17 seconds**). Ten fresh-process repetitions of the
+Retry/Trash pair each passed both cases (20 passes total); these isolated
+passes do not explain or repair the intermittent full-run failures. The Retry
+failure message now includes total, Retry count and error presence alongside
+focus, without exposing error bodies or weakening the predicate. Evidence:
+`/private/tmp/pr2427-wave11-{c-failures-red,native-failure-red,focus-1,focus-2,focus-3,focus-4,focus-5,focus-6,focus-7,focus-8,focus-9,focus-10}.log`.
+
+Step 74 aligns the two reproduced fixtures with accepted upstream behavior.
+The floor test pins resolved Items width 36 and actual canvas content width 32
+(TASK-32060), retaining complete painted analysed text and no-ellipsis checks.
+The Skills fake binds four real status/wait helpers with empty wait state,
+retaining visible/hidden-row and no-recompose assertions. Both repaired cases
+pass (**2 passed, 3 warnings in 5.10 seconds**), and all three edited Python
+files are Ruff-clean; diff-check passes. Complete affected-file qualification
+and the two intermittent failures remain open.
+
+Fresh fetch after all frozen cohorts finished found dev
+`733f7a628c064005d27bed8bbcf53aae01b5dd45`: PR #2526, 136 changed files,
+including accepted independent Buddy ownership/schema 70 and scheduler startup
+deferral. ADR-139 was read and governs the retained incoming behavior. The
+Library runtime delta is one existing WorkspaceCreateModal persona-service
+argument; broader app/Console/schema/CSS changes still require affected offline
+qualification and diagnostic-delta review. Preserve current work before rebasing
+the exact reviewed range onto this base; do not raise ratchets or reinterpret
+upstream explicit target/approval/ownership rules.
+
+### Wave-twelve rebase and initial qualification (2026-09-09 UTC)
+
+Saved step 74 at `c64eefd369`, with independent review finding no actionable
+issues in the narrow fixture/diagnostic changes. Backup
+`codex/pr2427-before-wave12-rebase-20260909` preserves that checkpoint.
+All 217 review commits were rebased onto `733f7a628c064005d27bed8bbcf53aae01b5dd45`,
+finishing at `be62ee0fcb924055f14e26e6fbc3e86a526cb233`.
+
+Reconciliation preserves both upstream lessons and reviewed fixture lessons;
+the index lesson remains in its relocated section. Hydration keeps the
+upstream legacy-wrapper test and the distinct canonical complete-snapshot test,
+with upstream canonical durable-settings assertions and the reviewed shared
+exact-owner cleanup fixture. Independent conflict review confirmed that union.
+Console suspend retains the incoming visibility notification before the
+existing settings-navigation owner's claim release. The Workspace migration
+conflict was formatting-only. No source limits were raised: Library Screen
+is 31843 lines / 1229 methods after the single incoming WorkspaceCreateModal
+persona-service argument.
+
+Incoming diagnostic additions were reviewed: bounded constant messages for
+default-Persona notice failure, continuation/generation hydration fallback,
+Buddy publication cleanup and app migration; removed/moved statements retain
+their existing privacy boundaries. The combined Session entry is measured at
+26 calls with digest `a71888e4c6bcd258f247`. The unmodified generator verifies
+**601 owners, 1351 TASK-492 calls, 55 TASK-31551 calls, 7665 TASK-494 calls and
+12 sink files** (`/private/tmp/pr2427-wave12-inventory.log`).
+
+Initial verification: **218 passed, 3 warnings in 32.07 seconds** across the
+three complete conflict-affected hydration/Workspace test files, complete
+canvas-scoped sync, and six Library size/owner/assembly files
+(`/private/tmp/pr2427-wave12-guards.log`). Scoped Ruff and diff-check pass.
+All derived-artifact preflight checks pass, including 3667 unique task records,
+115 declared ChaChaNotes tables and 282 indexed names / 67 plan pins
+(`/private/tmp/pr2427-wave12-preflight.log`). An earlier command named a
+nonexistent size-test path and exited 4 without collecting tests; the corrected
+complete command above is the evidence, not that invocation.
+
+Runtime source is frozen for active verification:
+
+- Incoming dev's 43 changed test files are covered by the three completed
+  conflict files plus four sequential offline groups in
+  `/private/tmp/pr2427-wave12-incoming-{1,2,3,4}.{log,xml}`. Each group has its
+  own terminal evidence; later groups run even if an earlier group fails.
+- Complete Media render/Trash/return-settlement files run in
+  `/private/tmp/pr2427-wave12-media.{log,xml}`.
+- Native complete Library Shell runs in
+  `/private/tmp/pr2427-wave12-shell-native.YbMd42/{pytest.log,native.jsonl}`;
+  require final exit zero and empty SQLite paths.
+- Final diagnostic/startup/import/CSS tests run in
+  `/private/tmp/pr2427-wave12-final-gates.log`.
+
+These are pending results. Wave-eleven's two intermittent full-run failures
+are not declared fixed by their isolated/repeated passes. Publication, fresh
+head review, latest-base check and normal protected merge remain open.
+
+Incoming group 1 subsequently ended **305 passed, 3 failed, 2 warnings in
+79.40 seconds**. All failures are the three early-exit parameters in
+`Tests/App/test_scheduler_startup_deferral.py`: quit/shutdown observe a Console
+tab-strip `MountError`, while setup_failure does not raise the injected
+`RuntimeError`. Their cause is not yet established; an exact three-case
+reproduction is running in `/private/tmp/pr2427-wave12-startup-red.log`.
+Group 2 continues independently. The final diagnostic cohort has recorded a
+failure but has not yet emitted its final traceback/summary. Keep all these
+gates open; runtime source remains unchanged for active verification.
+
+Further terminal wave-twelve results:
+
+- Exact startup reproduction: **3 failed, 2 warnings in 6.83 seconds**.
+- Incoming group 2: **429 passed, 2 failed, 3 warnings in 61.13 seconds**.
+  Both failures are bridge live/resume marker text equality for the controller
+  refusal string. Exact reproduction: **2 failed, 1 passed, 273 deselected,
+  2 warnings in 1.02 seconds** (`/private/tmp/pr2427-wave12-bridge-red.log`).
+  `_step_record` intentionally uses `redact_log_line`; its sensitive `user:`
+  assignment match redacts this payload on persistence and records the result
+  field as redacted. Resumed markers therefore omit detail. Structured success
+  versus blocked outcomes remain correct. Do not weaken durable redaction to
+  recover stale byte-for-byte live/resume expectations.
+- Incoming group 3: **86 passed, 5 warnings in 86.29 seconds**.
+- Complete Media cohort: **258 passed, 1 failed, 3 warnings in 320.14 seconds**.
+  `test_local_reader_chrome_stops_before_the_sixth_row` read an empty painted
+  body after loaded-id settlement; its isolated retry passed (**1 passed,
+  3 warnings in 3.43 seconds**, `/private/tmp/pr2427-wave12-paint-red.log`).
+  The helper currently waits for request settlement and one pilot pause,
+  not a rendered first content line. Root-cause confirmation remains open.
+  The previously failing Trash focus case passed in this complete cohort.
+- Final diagnostic/boot cohort: **77 passed, 1 failed, 11 warnings in
+  187.87 seconds**. The metadata-only test still requires two Session startup
+  diagnostics explicitly removed by upstream Buddy/default-settings changes;
+  the generated inventory itself already verifies the accepted removals.
+  Reconcile the specific obsolete entries and retain coverage for the new
+  metadata-only default-resolution path, not the entire privacy guard.
+
+All results above belong to unchanged runtime `be62ee0fcb`. Group 4 and the
+native Library run remain active. No full-source pass or merged status is
+claimed. The no-splash setup wrapper also explicitly catches and logs setup
+exceptions, explaining why a test expecting propagation needs lifecycle-path
+review; the two mount failures still need attribution before any repair.
+
+### Wave-twelve terminal evidence and step-75 repairs (2026-09-09 UTC)
+
+The frozen native Library run finished **851 passed, 10 warnings in 1431.36s**,
+exit 0 and `sqlite_paths: []`; evidence is
+`/private/tmp/pr2427-wave12-shell-native.YbMd42/{pytest.log,native.jsonl}`.
+Incoming group 4 finished **641 passed, 2 failed, 9 warnings in 618.51s**:
+the headless approval and Personas unchanged-resize fixtures.
+
+Step 75 repairs preserve existing ownership and privacy boundaries:
+
+- Tab replacement previously attempted six mounts after real strip removal.
+  The deterministic RED is `/private/tmp/pr2427-wave12-tab-red3.log`; the
+  live-MountError negative control already passed. Native batch removal,
+  exact `is_attached` admission and one batch mount eliminate awaited gaps
+  while preserving order and churn. `is_mounted` remains true after removal
+  and is deliberately not the guard.
+- Startup then exposed the separate queued legacy-workspace-alias worker
+  mounting into a detached tray (`/private/tmp/pr2427-wave12-startup-trace.log`).
+  That synchronous owner now checks its exact tray before mounting; neither
+  repair catches or suppresses live mount errors. The setup-failure fixture
+  observes the existing no-splash logged suppression, with deterministic sink
+  cleanup and unchanged no-readiness/no-scheduler assertions.
+- The complete tab/startup/workspace-rail cohort passed **72 tests, 3 warnings
+  in 72.72s** (`/private/tmp/pr2427-wave12-startup-owners.log`). The final
+  sink-cleanup form was also covered by the subsequent startup/reuse cohort.
+- Bridge fixtures now pin explicit redacted durable text and unchanged
+  structured success/blocked outcomes. No redactor or security policy changed.
+  Two obsolete upstream-deleted diagnostic pins were replaced by the current
+  constant-only default-Persona notice pin. Personas' unchanged-state guard
+  covers pane/workbench queries, not the accepted dynamic conversation rows.
+  The combined complete files initially produced **759 passed / 1 failed**;
+  the sole remaining failure was a new over-strong short-output assertion:
+  complete inline output intentionally has no duplicate expansion affordance.
+  After correction, the complete bridge and headless files passed **294 tests,
+  3 warnings in 78.90s** (`/private/tmp/pr2427-wave12-headless-bridge-final.log`).
+- Headless approval now seeds the exact installed/cache-owned startup Console,
+  rather than stacking an ad-hoc screen that competes for the runtime. After
+  ordinary navigation, the existing exact-owner uninstall helper supplies true
+  teardown. Shutdown-event, detached seams, app-wide painted toast, poll-budget
+  survival, new-screen/card identity and human-verdict assertions remain.
+  Production retained-navigation policy is unchanged. The prior helper attempt
+  correctly failed on the unregistered screen; no precondition was weakened.
+- A controlled delayed first Raw index reproduced the same empty painted
+  reader body while detail was already settled. The geometry test now waits
+  boundedly for real first-line paint, retaining all chrome/title/content
+  assertions. Both ordinary/delayed variants and the complete file pass:
+  **124 passed, 3 warnings in 168.70s**
+  (`/private/tmp/pr2427-wave12-paint-green.log`). Production rendering is unchanged.
+- Qodo comments 3964725128/3964725134 on head565d request helper contracts.
+  `ThreadDatabase` now documents and annotates connection ownership, injected
+  post-close failure and cleanup; complete helper file **10 passed, 2 warnings**
+  (`/private/tmp/pr2427-wave12-qodo-helper.log`).
+
+Fresh derived-artifact preflight passes
+(`/private/tmp/pr2427-wave12-repair-preflight.log`). Ruff passes every changed
+test and the session surface. ChatScreen has exactly its three pre-existing
+Ruff diagnostics (same codes/messages before and after); no new diagnostic.
+Whitespace checks pass. Independent review found no issue in the two production
+guards; final fixture review is being recorded separately. This is not a merge
+claim: fetched dev has advanced to `2e3389e694` (Library crit8 and offline TTS/MCP
+changes), so the next integration/qualification remains necessary.
+
+Final independent fixture review found no blocking issue. Its sole P3 was a
+stale headless-test docstring claiming the retired Leave Console dialog; that
+description now matches ordinary navigation plus explicit exact-owner removal.
+
+Wave-thirteen plan: checkpoint the verified step-75 repairs, then rebase onto
+fetched `2e3389e694` preserving incoming Library crit8, Notes editor/refresh,
+Kokoro runtime, Buddy speech cancellation and MCP teardown behavior. Reconcile
+conflicts at existing owners, retain all ratchets and privacy gates, run complete
+changed offline files and appropriate architecture/import/preflight gates, then
+final-source native Library verification and exact-head review before normal
+merge. No model downloads, real inference/audio/device tests or repo-wide sweep.
+ADR required: no new ADR. ADR path: `backlog/decisions/140-official-kokoro-pytorch-runtime.md`
+for the incoming accepted runtime; existing Library decisions remain authoritative.
+Reason: integration of upstream decisions and routine bounded reconciliation,
+not a new architecture or relaxed cap.
+
+### Wave-thirteen integration and bounded repairs (2026-09-09 UTC)
+
+Rebased 220 commits onto `2e3389e694`, completing at
+`59a5ad3826d9f8902a2be9d3264fe29b3665f7f7`. The conflicts were three independent
+lesson unions and two generated inventory summaries; no production conflict.
+The prior published checkpoint is `1d910d63d624e78f84a2fe806fdb8119eff0eee9`.
+
+- Complete incoming offline TTS/DB/visibility files: **248 passed, 1 skipped
+  (real MPS), 3 warnings in 13.18s** (`/private/tmp/pr2427-wave13-runtime.log`).
+  No download, inference or audio/device test was run.
+- Complete incoming UI cohort: **508 passed, 4 failed, 3 warnings in 665.14s**
+  (`/private/tmp/pr2427-wave13-ui.log`). All four failures use obsolete Notes
+  tree selectors; the retained Notes canvas uses `library-notes-row-0` for
+  the same first fixture note. All five obsolete references were aligned,
+  retaining the pane, focus, status and query assertions. An independent
+  three-case RED reproduced the selector failure in 94.73s.
+- Step 76 removed exactly eight private forwarding methods and retargeted
+  their concrete callers to existing controllers. Absence controls failed
+  before deletion (three Library cases and one Chat case). The full executable
+  AST comparison against `59a5ad3826` passed after accounting only for these
+  eight removals/call targets and stripping docstrings. All incoming behavior
+  remains; Chat is **16,762 lines / 505 methods**, Library **31,865 / 1,229**,
+  within unchanged caps. Historical documentation was shortened, not runtime
+  behavior or cap enforcement.
+- Complete architecture owner/ratchet files: **84 passed, 2 warnings in 1.98s**
+  (`/private/tmp/pr2427-wave13-owner-green.log`). Complete crit8, character
+  switcher, session-tab and scheduler repair files: **99 passed, 3 warnings
+  in 84.68s** (`/private/tmp/pr2427-wave13-repair-green.log`).
+- Both derived-artifact preflights pass; the later log is
+  `/private/tmp/pr2427-wave13-final-preflight.log`. Ruff adds no diagnostics:
+  Chat retains its three baseline diagnostics, Library its 47, crit8 its two
+  pre-existing unused imports. Changed wiring and character-switcher files
+  pass Ruff. Whitespace checks pass. Independent review found no runtime
+  blocker; its stale census comments and import-spacing nits are corrected.
+
+The final-source native run of all 851 Library shell cases is still active at
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave13-shell-native.p859l8`.
+It observes native descriptors without connection patches or forced collection.
+Production and shell-test bytes remain frozen. Two early failures are stale
+Starter focus expectations: the incoming layout moved Chunking Lab into hidden
+Details, so Tab wraps to the visible rail-collapse control. Both sizes reproduce
+independently (**2 failed, 849 deselected in 5.16s**,
+`/private/tmp/pr2427-wave13-starter-red.log`); step 77 records the bounded fixture
+repair to apply after the run. The final descriptor result is not yet known.
+This checkpoint is not merge-ready; native completion, those repairs, current
+head/base review and required checks remain open.
+
+Checkpoint refresh: the architecture files pass again (**84 passed, 2 warnings
+in 1.99s**), reviewed test files pass Ruff, and derived-artifact preflight passes
+with 3,672 unique Backlog task records. The running native cohort has reported
+additional failures beyond the two Starter cases; their terminal tracebacks
+remain to be read before assigning causes. A fresh Git fetch and the live dev
+branch API both still resolve `2e3389e694`; the PR payload's older `baseRefOid`
+is not evidence that dev advanced, so no additional rebase is justified yet.
+
+### Wave-thirteen terminal repairs and final qualification (2026-09-09 UTC)
+
+The first native run completed with **830 passed, 21 failed, 10 warnings in
+1407.71s**, exit 1, and final **`sqlite_paths: []`**. Its source was the wave-thirteen
+integration checkpoint; the terminal log and native record remain in the directory
+above. The zero-descriptor result does not turn failing tests into a passing run.
+
+- Starter wraparound and compact Notes allocation pins were stale after TASK-32064
+  moved Chunking Lab into Details. Exactly one compact row returns to flexible
+  content. Updated pins retain total height, fixed controls, paint, navigation,
+  authority, zero-work seams and exact six-row surplus growth.
+- The three-cell Clear button clipped the Library search placeholder. Reclaimed
+  redundant padding and the doubled joined border within the same rail width;
+  an equally specific focus rule preserves visible focus. Mounted tests cover
+  both widths, full placeholder paint, adjacency, Clear visibility and keyboard
+  clear/refocus behavior. Both clipping and focus styling failed before repair.
+- Wide Work status deduplication had also removed the sole compact storage
+  authority. Compact Work now reuses its existing authority prefix; responsive
+  transitions update the existing node in place. Three compact-wide-compact
+  create/loading/editor controls failed before repair. Loading still omits an
+  invented Next instruction; obsolete test expectations were aligned without
+  removing status, identity, error or recovery assertions.
+- A controlled delayed filter projection proved that filter records precede
+  settled DOM/focus. The Back fixture now waits for the actual filtered list and
+  focus. A subsequent failure still occurred: stack traces showed Back restoring
+  row n-18 before an older queued callback restored the filter and zero scroll.
+  Notes automatic restoration now preserves a newer mounted non-grip focus owner,
+  following existing Media behavior. Deterministic controls retain missing/grip
+  fallback; exact Back identity, placement, filter, sort and scroll pins remain.
+  Temporary stack instrumentation is removed. Notes stays at its original
+  **5,276-line cap**.
+- Qodo comments 3965201343 and 3965201350 are addressed by contiguous local imports
+  and split-JSON test annotations/documentation, respectively.
+
+Current qualification: **28 passed, 828 deselected, 3 warnings in 93.58s** for the
+complete repaired Library case group (`/private/tmp/pr2427-wave13-all-repair.log`);
+**129 passed, 3 warnings in 42.88s** across complete Notes canvas, crit8, owner
+wiring and both ratchet files (`/private/tmp/pr2427-wave13-owner-final.log`);
+**16 passed, 2 warnings in 0.91s** for both Qodo-affected files
+(`/private/tmp/pr2427-wave13-qodo.log`). Changed Python files pass scoped Ruff;
+whitespace checks and derived-artifact preflight pass
+(`/private/tmp/pr2427-wave13-checkpoint-final-preflight.log`). Independent final
+review found no blocker in these repairs or their assertions.
+
+ADR required: no. ADR path: N/A. Reason: routine lifecycle/layout regression
+repairs and fixture alignment within accepted contracts, with no new boundary,
+dependency, privacy change or relaxed cap. The complete **856-case** native
+Library rerun on the repaired checkpoint, current-head Qodo review, live-base
+freshness and required GitHub checks remain merge gates. This is not a merge claim.
+
+### Wave-thirteen final native result and current review (2026-09-09 UTC)
+
+The complete repaired-source native run at `acaa89025033fd8cde2a9b8dbcf24d9539f875ac`
+finished **855 passed, 1 failed, 10 warnings in 1389.30s**, exit 1, final
+**`sqlite_paths: []`**. Source identity and terminal evidence are in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave13-final-native.UHGtuL`.
+No connection patches or forced garbage collection were used; the source freeze
+has ended. This is not a passing complete-file result.
+
+The sole failure, `test_library_note_wide_deep_link_back_clears_explicit_intent`,
+also fails independently (**1 failed in 3.56s**,
+`/private/tmp/pr2427-wave13-deeplink-red.log`). It expected Escape to focus the
+Notes filter and a later resize to replay the Notes stage. The existing action
+explicitly returns to the selected Library row and clears the stage intent,
+consistent with ADR-086 and the existing compact Back tests. The previous late
+automatic filter restore had concealed that contract. Corrected the wide focus
+and subsequent compact rail/visibility assertions, retaining exact targets and
+adding explicit Notes reactivation proof. No Library production change was made.
+The full deep-link/Back/late-focus/compact-stage group passes **13 tests, 843
+deselected, 3 warnings in 15.03s**
+(`/private/tmp/pr2427-wave13-deeplink-cohort.log`).
+
+Qodo posted five new findings on this head: export canonical-path validation,
+real requests-stack coverage, row-actions import separation and parameter docs,
+and roleplay plan lease cleanup when durability admission is closed. Step 83
+records bounded RED/GREEN work; verification and published replies remain open.
+The required derived-artifact GitHub check passed on `acaa890250`, but fresh dev
+advanced to `9faf96d9f86b98916a54d7a895e3c0411fefc912`: Buddy qualification documents,
+artifacts, a test file and its task, with no production changes. That upstream
+task reuses the unmerged Loguru review task's 32108 ID. Preserve the landed Buddy
+ID; re-sweep and move only the review task before the next publication, following
+the existing user-authorized review-only renumbering policy. No merge claim yet.
+
+Publication identity census: all 1,027 local/remote refs and all registered
+worktrees agree on maximum TASK-32135. The review-only Loguru record moves
+32108 to **32136**, with its original dates, completed notes and append-only
+renumbering provenance retained. The landed Buddy TASK-32108 and its literal
+artifact paths remain untouched; historical report mappings remain provenance.
+
+Current-head Qodo repairs:
+
+- Markdown export retains existing lexical rejection, then validates the chosen
+  filename against its explicitly selected parent with the central canonical
+  validator. Both mkdir and file opening receive the returned path. Hidden
+  destinations remain permitted as before; stable final symlinks outside the
+  chosen parent are rejected. This is not race-proof filesystem confinement.
+  Real-file RED: **7 failed, 3 passed**
+  (`/private/tmp/pr2427-export-red.r408cv/results-corrected.xml`); complete new
+  export controls plus conversation action menu: **28 passed, 3 warnings in
+  39.77s** (`/private/tmp/pr2427-export-green.qp9kh7/results.xml`). The two
+  row-actions import/docstring findings are also corrected.
+- Rejected roleplay durability admission now abandons that exact prepared plan
+  and clears inflight repair state only if it owns the same plan. The two RED
+  controls found the leaked token; an intermediate one-pass/one-fail control
+  separately proved matching repair-state cleanup. Both final controls pass
+  while preserving and successfully persisting a second session's unrelated
+  plan. Complete session-settings, durability-controller and owner files:
+  **437 passed, 3 warnings in 247.67s**
+  (`/private/tmp/pr2427-roleplay-lease-full.log`).
+- Requests factory timeout coverage now uses an actual loopback HTTP server,
+  real session/request stack, omitted and explicit timeouts, and deterministic
+  session/server/thread cleanup. A controlled factory-bypass mutation fails;
+  the complete trust file passes **39 tests**. HTTP proves transport/factory
+  behavior, not TLS certificate validation, which remains separately tested.
+  There is no existing external production caller of this factory; no new
+  caller was invented just to meet the review's wording.
+
+Complete owner/ratchet group: **134 passed, 3 warnings in 6.61s**
+(`/private/tmp/pr2427-qodo-new-owners.log`). Complete derived-checker tests:
+**74 passed, 2 warnings in 0.77s**
+(`/private/tmp/pr2427-wave14-id-checkers.log`). Derived preflight passes
+(`/private/tmp/pr2427-qodo-new-preflight.log`). Independent cross-review found
+no blocker in the export, exact-plan cleanup, real transport test or corrected
+deep-link assertions. Latest-dev integration and final-head qualification remain.
+
+Final privacy review found that the central validator's default logging would
+add selected/resolved path details to rejection logs. An active real Loguru
+capture canary proves that regression (**10 passed, 1 failed**); enabling its
+existing `redact_paths=True` option preserves bounded diagnostics and a safe
+user notification without changing the accepted path set. Complete export
+controls now **11 passed, 2 warnings**
+(`/private/tmp/pr2427-export-privacy.T4B39H/{red,green}.xml`). The trust test's
+server context also owns the socket if thread startup fails; final complete
+trust file **39 passed, 2 warnings in 1.44s**
+(`/private/tmp/pr2427-tls-trust-final.log`). Final roleplay controls after their
+parameter-docstring addition **2 passed, 417 deselected, 3 warnings in 2.90s**
+(`/private/tmp/pr2427-roleplay-lease-final.log`). Scoped Ruff and whitespace
+checks pass on all changed Python files.
+
+### Wave-fourteen publication and new upstream churn (2026-09-09 UTC)
+
+Saved the fixes at `8ad6d238a6`, retained backup branch
+`codex/pr2427-before-wave14-rebase-20260909`, and rebased all 223 commits onto
+`9faf96d9f86b98916a54d7a895e3c0411fefc912` without conflicts. Published head is
+**`3fe94c842e0cead1720465dfc25598abd8d42a72`**, using an exact force-with-lease
+against the prior `acaa890250` head. Rebase comparison proves production files
+and `Tests/UI/test_library_shell.py` are byte-identical to the saved repairs.
+The complete incoming Buddy qualification file passes **16 tests, 5 warnings
+in 30.03s** (`/private/tmp/pr2427-wave14-buddy.log`); fresh derived preflight
+passes (`/private/tmp/pr2427-wave14-preflight.log`).
+
+All five Qodo findings were replied to with evidence and resolved on the
+published head: replies 3965798157/3965798334/3965798522/3965798731/3965798948.
+New exact-head review was requested by issue comment 5598000794. Native complete
+Library qualification is running with frozen production/shell-test bytes in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave14-native.Tem3Nf`.
+
+After publication, live dev advanced again to
+`a36fc6133c69f77b8b14596a59918de34261f8ef`. This is substantial Canvas Mermaid,
+SQLite helper and TTS ownership work (202 files), not the preceding docs-only
+Buddy change. It is fetched for read-only conflict/scope analysis while the
+native run finishes. No rebase or runtime mutation has been attempted against
+this new base yet. Its accepted decisions, overlap and offline qualification
+must be reviewed before integration. The PR remains unmerged.
+
+Read-only integration review and main-agent ADR reading are complete; task step
+87 records the constraints before any new-base implementation. Main read ADR-124,
+ADR-125 and the character-TTS ADR-028 amendment in full. Canvas Screen methods
+already moved to `ConsoleMessageController` must receive incoming language and
+served-profile fallback changes at that controller, not be restored on Screen.
+The incoming compiler test doubles add snapshot/parent-profile keywords; browser
+fixtures must retain controller targets while accepting upstream readiness and
+profile identity. The bounded gateway JSON read remains necessary.
+
+SQLite upstream already includes trace-maintenance/legacy-recovery registrations,
+C55/C56 inventory and five backup-census controls. Keep them once, along with
+C48 retirement and helper/native-probe seams. Preserve its exact quiescent
+connection factory, lazy TTS ownership/close latch and Python 3.12 floor. Local
+semaphore failures are not permission to repair the host or relax the upstream
+lock, helper-capacity, terminal-retention or native-close contracts. The incoming
+Mermaid preflight downloads pinned inputs by default: inspect its scope and use
+an existing verified input cache where possible rather than silently skipping
+asset integrity. Browser and platform evidence remain distinct from offline tests.
+
+Current-head Qodo has one new documentation-only finding, comment3965835933,
+thread `PRRT_kwDOOcyyl86gjNh5`, covering both public Evals import-closure tests.
+Step 86 adds complete fixture/parameter types, return annotations and Google Args,
+without changing production or the running Library test. Complete packaging file
+**4 passed, 2 warnings in 2.16s**, scoped Ruff and whitespace checks pass
+(`/private/tmp/pr2427-wave14-evals-docs.log`). Fix publication/reply remains pending
+the next checkpoint; do not resolve the thread before publishing it.
+
+Wave-fourteen terminal native result on `3fe94c842e`: **856 passed, 10 warnings
+in 1313.32s**, exit 0, final **`sqlite_paths: []`**. Both pytest and native
+observer completed successfully; the directory above holds exact source identity
+and terminal evidence. No connection monkeypatches or forced collection were
+used. The source freeze is now lifted. This qualifies that checkpoint, not the
+new Canvas/SQLite base still awaiting integration.
+
+### Wave-fifteen rebase and current-source qualification (2026-09-09 UTC)
+
+Saved checkpoint `54ac4102263400aa58e4adb9c29b8c9f1cb39984` is retained by
+`codex/pr2427-before-wave15-rebase-20260909`. The 224-commit rebase onto
+`a36fc6133c69f77b8b14596a59918de34261f8ef` completed at
+`cc6661100ab26fa2cb918994525d7b59aa23ff47`. Published head remains
+`3fe94c842e0cead1720465dfc25598abd8d42a72`; that exact lease is required for
+publication. The PR is open and not yet merge-qualified.
+
+Conflict resolution retained upstream SQLite registrations, C48 retirement,
+helper/native-probe restrictions and all five backup controls once. The obsolete
+duplicate ChaChaNotes factory dictionary entry was removed in favor of upstream
+`base_db._QuiescentSQLiteConnection`. Incoming TTS shutdown coverage was retained
+with its consistent owner labels and meeting-session initialization. Production
+DB/TTS files have no difference from this upstream base.
+
+Canvas import language identity and served-mode failure behavior were transferred
+to the existing `ConsoleMessageController`, without restoring the removed Screen
+methods. The browser child keeps the upstream exact-card readiness wait and
+button while calling the controller owner. Profile/snapshot fences and compiler
+keyword contracts remain. AST comparisons verified the moved bodies against
+upstream with only the existing owner/recovery-hook substitutions.
+
+Current-source completed checks:
+
+- All derived-artifact checks pass, including exact reproduction of all six
+  Mermaid outputs from eight size/hash-verified public source inputs. Cache:
+  `/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave15-mermaid-cqfbrd0w/inputs`.
+  Log: `/private/tmp/pr2427-wave15-preflight.log`.
+- Complete startup/size/private-delegate/moved-seam/packaging gate selection:
+  **166 passed, 5 warnings in 39.32s**, exit 0. Preimport measured 498/500
+  modules; parsed boot CSS measured 803716/804000 bytes. No limits changed.
+  Log: `/private/tmp/pr2427-wave15-gates.log`.
+- Complete SQLite/trace/legacy-recovery cohort: **679 passed, 2 Windows-only
+  skips, 2 warnings in 100.67s**. Log:
+  `/private/tmp/pr2427-cc6661100a-db-offline.log`.
+
+Remaining current-source runs are active: complete Canvas offline files,
+TTS/helper packaging, affected real Chromium served-flow/readiness files, and
+native complete Library qualification. The Library run uses the unchanged native
+observer without connection patches or forced GC in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave15-native.MyCbEo`.
+Production and test bytes remain frozen during these runs. Initial sandbox
+Canvas failures must be classified from their completed output before any repair;
+an environment-restricted run is not application-failure proof. Review, exact-head
+publication and normal merge remain open.
+
+Wave-fifteen follow-up evidence:
+
+- Real installed Chromium, complete served-flow and startup-readiness files:
+  **65 passed, 3 warnings in 195.75s**, exit 0
+  (`/private/tmp/pr2427-wave15-browser.log`). Providers were scripted and servers
+  fixture-owned loopback; no model or browser download was needed.
+- Independent integration review found no actionable issue in the moved Canvas
+  behavior, current SQLite census/factory, or app TTS ownership. This does not
+  substitute for unfinished test/review/merge gates.
+- Initial sandbox Canvas run: **87 failed, 972 passed, 10 skipped**. The complete
+  failure census identifies loopback-bind denial directly or via the gateway's
+  bounded startup error. A full escalated rerun is in progress with verified
+  Mermaid inputs. Four QuickJS/esbuild archives were also acquired with the
+  existing SHA-512-integrity-checked downloader at
+  `/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave15-quickjs-pztpkqfs`
+  to enable the runtime reproduction test instead of leaving it cache-skipped.
+- TTS cohort: **993 passed, 14 failed, 2 skipped in 197.67s**. All fourteen
+  actual-app child cases receive the non-JSON line
+  `--- _setup_logging START (from Logging_Config.py) ---` on their phase pipe.
+  The isolated `--showlocals` reproduction confirms this exact line; it is not
+  an empty readiness message or a demonstrated semaphore failure. Logs:
+  `/private/tmp/pr2427-cc6661100a-tts-offline.log` and
+  `/private/tmp/pr2427-cc6661100a-tts-phase-diagnostic.log`.
+- Packaging/runtime-floor cohort: **43 passed, 1 failed**. The failing oracle
+  requires `3.12` literally for the derived-assets job, which accepted upstream
+  deliberately pins to `3.12.11` for reproducible Mermaid generation. The exact
+  local SQLite `[live]` case passed separately without enabling provider access.
+
+Task step 88 records the minimal test-only repairs before implementation. Only
+the two isolated TTS-child/runtime-floor test files may change while the native
+Library/Canvas runs continue; production, shared fixtures and those active runs'
+test bytes remain frozen. Strict phase parsing, foreign-cohort assertions,
+timeouts, runtime floor and immutable version pin are not relaxed.
+
+The complete escalated Canvas cohort passed **1068 tests, 1 cache skip in
+197.90s**; the complete runtime-assets follow-up with both caches passed
+**39 tests, no skips in 6.47s**. All 1069 distinct selected cases were exercised
+successfully. Evidence directories:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-canvas-loopback.kG7FJu`
+and `/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-canvas-assets.YvQ5Tw`.
+The 87 sandbox failures disappeared with the required loopback permission.
+
+Step 88's first stdout redirection still failed all fourteen child cases.
+Installed Textual saves `sys.__stdout__` in `app._original_stdout` and forwards
+headless prints to that saved stream. The fixture now redirects that app-owned
+diagnostic stream before mounting as well. All **14 child cases passed in
+64.08s**, preserving strict JSON phases and real foreign-file/lifecycle checks
+(`/private/tmp/pr2427-step88-children-green.log`). The complete TTS aggregate is
+being rerun on these frozen test bytes. The complete packaging/runtime-floor
+group is now **44 passed, 2 warnings in 34.68s**
+(`/private/tmp/pr2427-step88-packaging-green.log`). Scoped Ruff passes on both
+test files, and the refined fixture change received independent review. Fresh
+derived preflight also passes (`/private/tmp/pr2427-wave15-final-preflight.log`).
+
+The final complete eleven-file TTS aggregate now passes: **1007 passed, 2
+expected skips, 6 warnings in 195.88s**, exit 0
+(`/private/tmp/pr2427-step88-tts-full-green.log`). The separately authorized
+local SQLite `[live]` case also passed; none of the original spawned helper
+cases failed with semaphore errors on this run. Both test repairs are verified
+without modifying production, shared fixtures, helper authority or CI pins.
+Live remote dev still equals `a36fc6133c`; the published PR lease remains
+`3fe94c842e`. Native Library qualification is still active and is explicitly
+not included in these completed results. This checkpoint may be published for
+final-head review, but normal merge still requires its terminal cleanup result
+and current remote review/check status.
+
+Published the rebased checkpoint as
+`69108f4d1dd5d498c65c1f79951a478b3fc36e45` with the exact lease against
+`3fe94c842e`. Qodo documentation comment 3965835933 was replied to at
+3966255799 and resolved; final-head review was requested by issue comment
+5598798465. GitHub now schedules the normal PR checks (including PR Fast Lane);
+the merge state is blocked while those checks run, not a rebase conflict.
+
+The active native Library run has reported one failure around 67 percent.
+Its traceback and final descriptor snapshot are still pending. The observer
+records retained handles after
+`test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`, but
+that attribution alone does not establish the failure cause or final cleanup
+state. Do not merge or claim native qualification until the complete result is
+investigated and any required repair is verified. Production and this Library
+test remain byte-identical to the run's captured `cc6661100a` source.
+
+Wave-fifteen native terminal result: **855 passed, 1 failed, 10 warnings in
+1838.76s**, exit 1, final **`sqlite_paths: []`**. Session 65815 has completed;
+the source freeze is lifted. The only failure is the final GC row-count assertion
+at `test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back`:
+intermediate autosave succeeded, but the emptied session-created note survived
+Back. Temporary per-test handle retention did not survive terminal cleanup.
+Task step 90 starts controlled save-reply/GC-order investigation without relaxing
+the original assertion or ADR-055's version-checked silent-GC guards. Main also
+read ADR-027's serialized persistence/destructive-admission contract in full.
+
+Qodo on `69108f4d1d` posted six test-contract documentation/type findings,
+comments 3966299125/3966299137/3966299147/3966299157/3966299166/3966299174.
+Task step 89 adds their missing contracts without changing executable test
+bodies. The six complete files pass **185 tests, 5 warnings in 20.63s**
+(`/private/tmp/pr2427-step89-docs-tests.log`); scoped Ruff and whitespace checks
+pass. AST comparison after stripping annotations/docstrings confirms executable
+behavior is unchanged. The worker-matrix docstring additionally explains callback
+forms, literal exclusivity/group requirements and nested direct-await rejection.
+Published as `538c36b9927fa1e24b494af891379d8d6a14ef96`. All six threads are
+replied to and resolved (replies 3966470050, 3966480304, 3966480459,
+3966480643, 3966480796, 3966480976). Final worker-docstring verification is
+22 passed, 5 warnings in 7.39s. This closes these documentation findings,
+not the remaining runtime qualification or final-head merge gates.
+
+### Step 90/91: save-reply ordering and original-fixture reconciliation
+
+Controlled real-SQLite RED held a successful save reply after its commit:
+the database was version 2 while the coordinator still held version 1 and
+`saving=True`. Back attempted version-1 deletion and received `ConflictError`.
+Another observed interleaving lost a newly authored draft when Back closed
+the session before the save chain settled. Latest main RED: **1 failed,
+2 passed in 9.73s** (`/private/tmp/pr2427-gc-before.log`); the earlier authored
+loss is recorded in `pr2427-blank-gc-red.Qpl1fE/pytest4.log` under the per-user
+temporary directory. These are separate observations, not universal timings.
+
+The existing Notes controller now obtains destructive admission, waits for
+coalesced saves, then rechecks exact session/note identity, canonical blank
+fields, title provenance and explicit-Save exemption before deleting at the
+admitted version. An intervening authored draft falls through normal flushing;
+failed cleanup remains best-effort. Every admission is cancelled or finished.
+ADR-027/055 ownership and silent-GC limits are preserved; no new ADR or caps.
+
+The original shell test still failed after this repair. A separate trace proved
+its unfocused programmatic body clear was overwritten by TASK-32062's accepted
+snapshot projection before its queued Changed event was consumed. Back therefore
+correctly saw nonempty content and never entered GC. The fixture now focuses the
+body and awaits the canonical empty receipt, retaining its strict deletion
+assertion. Paired diagnostic evidence is in
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-blank-gc-trace.FZxJi8`.
+
+The strengthened regression file covers successful cleanup, authored/early
+external changes with **no delete call**, and an external write at the admitted
+delete boundary causing a real version conflict. Every case retains an unrelated
+note's exact content/version. Targeted combined GREEN: **57 passed, 845
+deselected, 3 warnings in 49.76s**
+(`/private/tmp/pr2427-gc-final-targeted.log`). Five complete architecture files:
+**79 passed, 2 warnings in 1.63s**. Derived preflight passes. Controller/new-test
+Ruff passes; Screen's 47 pre-existing findings are byte-identical to the HEAD
+baseline, not newly introduced or declared clean. New-test formatting and
+whitespace checks pass. Independent rereview found no blockers after strengthening
+the destructive-call assertions. An earlier three-case native probe had no
+retained SQLite descriptors; this is not complete-file qualification.
+
+**Wave sixteen complete native verification is active**, session 39893, covering
+the entire Library shell, new race file and note-session coordinator file, with
+source frozen. Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-wave16-native.0PgC1F`
+(`pytest.log`, `native.jsonl`). Runtime repairs remain uncommitted until this
+qualification finishes. Latest live dev remains `a36fc6133c`; final publication,
+exact-head review/checks and normal protected merge are still pending.
+
+Wave-sixteen frozen source SHA-256 (including the still-untracked regression,
+which is not included in `git diff`'s hash):
+
+- Notes controller: `89ef975bc14ebb6c4a4462442b6d75ea3e138718e591986c5e53de647fbf0a4c`
+- Library screen: `dd5ed00e2644a7803c38f414827ea17ba1f417c0d657b645d0b1682e1c5accd3`
+- Library shell tests: `5bd626ada8be4ae292314a4ee8d5e0f894bcd5a4174dc83cf43ef49dab865d85`
+- New GC race tests: `62657a8cd488fb939c73678885f6ffc7bab03e5cb1e90452556f3ed20350b18c`
+- Note session tests: `6999f1ce0955e7991fa59f0dac2187c02f6cb35523dcb2f304fc659c98ab3d83`
+
+Wave-sixteen terminal verification: **902 passed, 10 warnings in 1662.29s
+(27:42)**, exit 0, final **`sqlite_paths: []`**. All five frozen source hashes
+match after completion. Session 39893 is closed and the source freeze is lifted.
+This qualifies the entire Library shell, all four race controls and the complete
+note-session coordinator file. Fresh live dev still equals `a36fc6133c`;
+published `538c36b992` has green required checks and CLEAN merge state, but the
+new runtime repair still requires publication and exact-head review/checks.
+
+Published the qualified repair as
+`b84605f81d596c5b36f4b6b0266f4d8bd47d0dab`; verification evidence is issue
+comment 5599703742 and its Qodo request is 5599703992. Qodo completed that exact
+head with five findings, comments 3966908478/3966908484/3966908490/3966908496/
+3966908502. The native result remains valid; the new review findings require
+their own bounded fixes and publication before final merge.
+
+### Steps 92/93: final-head callable contracts and provenance census
+
+The unchanged strict Console route/callsite census file reproduced **3 failed,
+7 passed in 7.04s** because stored source lines drifted during the rebase.
+Seventeen integer-only updates refresh all eleven changed route markers and six
+gateway-call locations, including retry, actor routes, fallback and excluded
+Settings generation. No route identity, capture policy, predicate, actor-chain
+requirement or assertion changed. The complete strict file then passed 10 tests;
+both complete provenance files pass **53 tests, 5 warnings in 10.15s**
+(`/private/tmp/pr2427-qodo-provenance-full.log`). Independent review verified
+every pin and the unchanged bidirectional AST/ownership checks.
+
+Controller builders now document their screen/dependency contracts. Both lazy
+evaluation hooks use the accurate built-in `type` return annotation and concise
+Google-style contracts, with no new imports. Their normalized executable ASTs
+are unchanged apart from documentation and the intended annotation. Six complete
+wiring/import/architecture files pass **128 tests, 3 warnings in 30.69s**
+(`pr2427-qodo-wiring-docs.lPPMa0/final-pytest.log` in the per-user temp directory).
+
+Settings inspection found the undocumented adapters were thirteen shadowed
+duplicates: later effective definitions already had their public contracts.
+An exact-one-definition regression failed first (1 failed in 0.79s); only the
+earlier duplicate set was removed, preserving the effective functions verbatim.
+The intervening top-level statements were only three unrelated function
+definitions, so no caller captured the removed functions. Duplicate type-only
+imports were consolidated without changing their symbol set or runtime imports.
+The full effective runtime AST proof and scoped Ruff pass; thirteen existing
+F811 redefinition findings disappear. Proof:
+`/private/tmp/pr2427-step93-settings-ast-proof.log`. No new Settings size limit
+was invented or existing cap raised.
+
+Independent review clears these contract/duplicate changes. The complete
+eight-file Settings/import/startup group finished **248 passed, 6 warnings in
+224.08s**, exit 0 (session 66025 closed,
+`/private/tmp/pr2427-step93-settings-green.log`). Fresh derived preflight also
+passes (`/private/tmp/pr2427-step92-final-preflight.log`, session 27603 closed).
+The test result includes a session descriptor warning: start 12, end 274, growth
+262 above its 200 threshold. This is not yet attributed and is not a proven
+SQLite leak; no cleanup success is claimed for this Settings cohort. Step 94
+starts native attribution with no forced GC, connection monkeypatches or host
+cleanup. The five verified review fixes may be checkpointed for exact-head
+review while attribution runs, but merge remains pending resource investigation
+and final review/CI. No complete-repository sweep is claimed.
+
+### Steps 94–99: final Settings resource attribution and new head findings
+
+Steps 92/93 were published as `e38cbb280496a675a9c7b6b1d7e95e44265abeaa`;
+all five previous Qodo threads received evidence replies and are resolved.
+Exact-head review request 5600013712 produced two new findings:
+3967103308 (persisted Console message probe transaction) and 3967103315
+(quoted media-error filenames containing spaces). Live dev remains
+`a36fc6133c69f77b8b14596a59918de34261f8ef` on this turn's check.
+
+The unchanged native SQLite observer confirmed the Settings warning: **248
+passed, 6 warnings in 204.34s**, exit 0, but **95 retained SQLite handles**
+(82 Chroma, 13 test-app databases). Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-settings-native.XcJ7xe`.
+The former passing test counts did not qualify cleanup.
+
+Two separate owners caused retention. Settings index-status reads construct
+one-shot Chroma clients through `collection_indexes.list_indexes`; that function
+and its adoption/deletion siblings never released the acquired clients.
+Capability-checked exact-client close now runs in their `finally` paths, without
+global cache/system shutdown or changed operation results. Older clients without
+close remain compatible. New lifecycle controls first failed **17 of 26 cases**;
+three complete relevant files then passed **45 tests in 0.96s**. The real control
+executes fifteen local operations while preserving a separate same-path client's
+system, reference count and usability, and explicitly closes all test-created
+clients even on RED. Evidence: per-user `pr2427-chroma-lifecycle.63zr9U/`.
+The single added diagnostic is a fixed warning string with no exception payload,
+path, secret or user content; its inventory delta was explicitly reviewed.
+
+The two Settings fixture modules also omitted the existing exact-app resource
+fixtures. Reusing them reduced the first attributable case's app SQLite handles
+**13 to zero**, while leaving its separate Chroma handles unchanged before the
+production fix. Tool-profile plus complete fault/foreign-owner controls pass
+**26 tests**, final SQLite inventory empty. Native all-FD observation after both
+fixes confirms the first Settings case has zero SQLite handles and removes three
+Chroma-associated kqueues; an unlinked test-app instance-lock handle remains and
+is separately assigned to step 98. No global cleanup, forced GC, threshold raise
+or foreign-owner close is used. Full combined native qualification is pending.
+
+Perf Guard run 34337486297 independently failed because its fixed one-second
+sample missed the ChaChaNotes FTS worker queued behind serial recovery. A
+controlled real-boot case holds the first real recovery job until two seconds
+after readiness and reproduces the same failure (**1 failed, 1 passed**).
+The probe now retains its minimum observation period and waits for its unchanged
+required-start identities under the unchanged 300-second subprocess deadline.
+All allowlists and anti-vacuity checks remain intact. Six complete boot/policy
+files pass **35 tests in 45.88s**, with independent review finding no blockers.
+That run also exposed two unawaited-timer warnings in synchronous unmounted
+policy fixtures; step 99 will repair that missing loop precondition without
+changing production scheduling. Logs: `/private/tmp/pr2427-boot-delay-{red,green}.log`.
+
+Task remains In Progress. The new review/resource repairs still need final
+complete-file/native/static qualification, publication, exact-head review and CI
+before normal protected merge. Earlier native Library 902-pass evidence remains
+for its unchanged Notes ownership; it does not substitute for these new gates.
+
+Step 98 closes only the exact app product's existing instance-lock handle on
+the already-owned auxiliary stack, after its database callbacks. Four real
+portalocker cases first failed with the owned handle retained, then passed
+normal/runtime/cancellation/auxiliary-failure teardown while foreign locks stayed
+held and lock files stayed on disk. Three complete fixture/instance-lock files
+pass **39 tests, 2 warnings in 5.30s**. The original native Settings case now
+passes with **zero SQLite and zero instance-lock handles**. Its two additional
+sockets also appear in an app-free Chroma-only control executing fifteen real
+operations with all clients explicitly closed; no app or lock is needed to
+produce that bounded installed-dependency footprint. No all-FD-zero claim is made.
+Evidence: `/private/tmp/pr2427-step98-{lock-red,lock-green,native}.log` and
+`/private/tmp/pr2427-step99-chroma-control{,-retention}.log`.
+
+Step 99's two synchronous timer-registration assertions first failed because
+the unmounted app could not schedule a timer. Each fixture now records only its
+own `set_interval` call and returns a stoppable token; assertions pin the real
+reconcile callback, unchanged interval, gate drain and exactly-once cancellation.
+The mounted real-timer test is unchanged. The complete policy file passes
+**16 tests in 4.85s** with no unawaited-coroutine warning. Final six-file boot
+qualification passes **35 tests, 7 dependency/deprecation/headroom warnings in
+50.53s**, retaining all original module/CSS/worker budgets. Independent reviews
+clear the census and timer changes. `/private/tmp/pr2427-boot-final.log`.
+
+Final derived preflight passes all seven checks, including the explicitly
+reviewed fixed-string Chroma diagnostic inventory update; 3,684 task files,
+115 tables, 282 index census rows and 67 plan pins match. Log:
+`/private/tmp/pr2427-step99-final-preflight.log`.
+
+Complete native Settings requalification is now terminal: **248 passed,
+5 warnings in 217.19s**, exit 0. Final native inventory has **zero SQLite and
+zero instance-lock handles**, with only standard streams plus one kqueue and
+four sockets—the same pytest (one kqueue/two sockets) and app-free Chroma
+(two sockets) footprint established by isolated controls. The former descriptor
+growth warning is gone; no threshold changed. The six frozen source hashes
+match after completion. Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-settings-final.wNGDbh/`
+(`pytest.log`, `fd_identity.jsonl`, `source.sha256`). This is a complete same-file
+comparison, not merely an individual passing case or a SQLite-only scan.
+
+Four complete provenance/Console architecture files additionally pass **103
+tests, 5 warnings in 17.27s** (`/private/tmp/pr2427-step97-census.log`).
+Changed-file Ruff and whitespace checks pass. Live dev remains `a36fc6133c` and
+is already an ancestor of this branch; no additional rebase is needed at this
+checkpoint. The two new Qodo repairs still await terminal owner-file results
+and publication before their review threads can be resolved.
+
+Step 97's final complete owner results are now green: **20 menu tests in
+50.37s**, **73 media-controller tests in 4.50s**, and **3 media-state tests in
+1.33s**. The persisted one-row probe uses the existing borrow-safe transaction;
+real SQLite controls verify both empty/nonempty eligibility and an already-open
+caller transaction, then quiesce the exact created DB in `finally`. The redactor
+handles single/double-quoted POSIX/Windows final filenames with spaces, including
+the opposite quote inside a path, while preserving delimiters and trailing
+prose. Its conservative bare-token matcher is unchanged. Independent review
+cleared production and the strengthened exact-test cleanup. Logs:
+`/private/tmp/pr2427-qodo97-menu-final2.log`,
+`/private/tmp/pr2427-qodo97-media-final.log`, and
+`/private/tmp/pr2427-media-state-final.log`.
+
+Fresh combined six-file resource qualification passes **84 tests, 2 dependency
+warnings in 5.45s** (`/private/tmp/pr2427-resources-final.log`). All scoped repairs
+are ready for publication; task completion still requires the published head's
+review/checks and verified normal merge.
+
+### September 9 — Qodo follow-up on 95dc817a46 (steps 100–102)
+
+Published head `95dc817a46a5cf7b176c33f8552528aa80b8428c` now has green
+PR Fast Lane, Perf Guard, derived artifacts and all applicable platform checks.
+Live dev remains `a36fc6133c69f77b8b14596a59918de34261f8ef`, already included.
+Qodo added three actionable findings; these are new review work, not continuing
+failures of the previously qualified resource or boot repairs.
+
+Step 100 makes failed index-client retirement diagnosable by its sanitized
+exception class, using the existing persistent-metadata helper. Raw exception
+values and tracebacks remain excluded because they can disclose private paths
+or user content. Two real Loguru sink controls first failed and then passed;
+three complete RAG files pass **47 tests, 2 dependency warnings in 0.88s**.
+Independent review confirms no expanded logging authority and exact sink cleanup.
+Evidence: `/private/tmp/pr2427-close-cause-{red,green}.log`.
+
+Step 101 bounds the existing complete, size-limited JSON body read with a fixed
+**30-second absolute deadline**, not a renewable inactivity timeout. Expiry is
+the existing source-free HTTP 408 refusal, with connection reuse disabled and
+that flag preserved through the sanitizing security middleware. ADR-121's new
+JSON request-body deadline amendment records this transport contract before
+implementation. External cancellation, EOF handling, UTF-8/JSON validation and
+size limits are preserved. No global runner policy or aiohttp private API changes.
+
+Controlled stalled/trickled streams produced **4 RED failures**; real loopback
+HTTP then reproduced the missing response, and an intermediate deadline-only
+fix reproduced middleware loss of connection-close policy. Five complete body,
+gateway and served-security files now pass **116 tests, 3 dependency warnings
+in 3.09s**. The real HTTP control asserts sanitized 408/security headers, no
+canary disclosure, and a subsequent complete request using the unconsumed boot
+capability. Exact clients, writer and gateway close in `finally`. Evidence:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-canvas-body-deadline.CKNoPY/`.
+
+Step 102 uses the existing app-thread identity boundary: the known owner queues
+with `Screen.call_later`; other callers use `App.call_from_thread`, with no inline
+fallback after a missing or rejected handoff. Already-committed Canvas state is
+unaffected and manual opening remains available. Current settlement is already
+application-loop-affine under ADR-121; this hardens a permissive fallback rather
+than claiming all production settlement previously ran on background threads.
+The existing diagnostic text and same-session browser suppression are preserved.
+Three controlled failures reproduce the old unsafe/incorrect dispatch; four
+focused controls then pass, including real worker threads and accepted dispatch
+back to the owner. The complete controller file passes **25 tests**; independent
+production review is clear. Logs: `/private/tmp/pr2427-qodo-canvas-{red,green,full-final}.log`.
+
+Original Screen/delegate caps pass **71 tests** and four complete strict
+provenance/architecture files pass **65 tests, 5 warnings in 14.26s**. No census
+location update or raised cap was necessary. Changed-file Ruff and whitespace
+checks pass. The added sanitized warning was explicitly reviewed before generated
+inventory refresh; the other diagnostic change is re-indentation only, with no
+changed message or interpolated fields. Logs:
+`/private/tmp/pr2427-qodo-canvas-caps.log`,
+`/private/tmp/pr2427-qodo102-caps.log`, and
+`/private/tmp/pr2427-qodo102-diagnostics-review.log`.
+
+Independent test review additionally flagged exact app-resource ownership in
+the new worker controls. Step 103 reuses the existing two exact-owner fixtures
+and makes the send test's existing builder/database attachment visible to that
+module-local owner. It does not change shared fixtures or production cleanup.
+Complete native requalification passes **25 tests, 3 warnings in 20.22s**, exit
+0, with no retained SQLite or instance-lock handles after each test or at final
+observation. Only the pytest-asyncio session selector footprint remains (one
+kqueue/two sockets, besides standard streams). Frozen runtime/test hashes match;
+independent review clears the ownership correction. Native evidence:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-qodo-canvas-native-final2.dT1EGz/fd_identity.jsonl`.
+
+All seven derived checks pass, including 3,684 collision-free task files,
+115 tables, 282 index census rows and 67 plan pins. Final preflight log:
+`/private/tmp/pr2427-qodo102-preflight.log`. Scoped Ruff and whitespace checks
+remain green after the test-owner correction. Publication and the new exact
+head's review/checks precede normal protected merge. No repository-wide sweep
+or all-descriptor-zero claim is made.
+
+### September 9 — Qodo follow-up on f26827b949 (steps 104–107)
+
+All applicable CI checks pass on `f26827b949a6c5009feab4e1f5ec44fab6dd1c7b`,
+including Fast Lane, Perf Guard and derived artifacts. Qodo's next review adds
+seven findings. Three do not require implementation after independent tracing
+and fresh verification:
+
+- **Actor policy Pydantic replacement (3967619551):** the archive validator is
+  intentionally strict and byte-preserving under ADR-074/079 and TASK-31764.
+  The pure-contract guard forbids both Pydantic and API-layer imports. The API
+  model's default coercion and activation's normalization are not substitutes
+  for archive admission. Complete architecture, contracts and activation files
+  pass **95 tests, 2 warnings in 10.66s**, including malformed policy rejection
+  and activation/export preservation. No architecture guard is weakened.
+- **Stale display-name lease (3967619593):** the published coordinator already
+  registers exact-plan abandonment in the task's done callback. The existing
+  real-SQLite stale-identity control verifies empty lease maps and restored fork
+  eligibility; complete lifetime file passes **10 tests, 2 warnings in 5.40s**,
+  including writer/cancellation ownership. No extra early release is added.
+- **Recovery modal CSS (3967619617):** immutable `875936d66f` already defines
+  Recovery as a separate ModalScreen while its CSS alias contains only
+  Navigation-rooted selectors. The removed alias was genuinely inert. Fresh
+  complete original-versus-current geometry, compositor paint and button-state
+  parity passes **13 tests, 3 warnings in 11.68s** at compact/wide sizes. No new
+  layout is introduced under the premise of restoring lost effective styles.
+
+These threads received evidence replies 3967712932, 3967713114 and 3967713286
+and were resolved. Logs:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-actor-boundary-review.ddCXE0/pytest.log`,
+`/private/tmp/pr2427-display-name-evidence.log`, and
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-recovery-modal-review.NAZf8N/pytest.log`.
+
+Step 105 confirms the world-book notification leak with **2 RED failures**.
+Attach/detach now show only operation-specific safe retry copy; existing
+diagnostics, mutation calls and exact dialog release remain unchanged. New
+no-mount fault controls allocate no full app or database and assert no refresh
+after failure. The complete retrieval/world-book files, including the existing
+real-DB attach/detach round trip, pass **26 tests, 3 warnings in 18.99s**.
+Independent review is clear; diagnostic statement comparison shows no changed
+logging statements. Logs: `/private/tmp/pr2427-worldbook-privacy-{red,green}.log`.
+
+Step 106 documents the workspace helper's four actual inputs and disabled/tooltip
+result, and the media state's retained/requested/in-flight paging rules.
+Executable ASTs are identical after stripping docstrings. Three complete
+workspace/media files pass **100 tests, 2 warnings in 5.32s**; scoped Ruff,
+formatting and whitespace checks pass. `/private/tmp/pr2427-qodo106-docs.log`.
+
+Step 107 adds only the persisted aliases of already-active path nodes to the
+publication guard's native identity set. Session, conversation, nonempty and
+all-revisions checks remain unchanged. The new genuine restored-store control
+first fails only for the persisted origin; its preceding native-origin check
+passes. Both forms then pass, and both are rejected after branch/session changes;
+mixed sibling revisions and conversation mismatch remain rejected. The original
+ephemeral-session control is retained unchanged. This is representation hardening,
+not a claim that all saved tool publications were previously broken.
+
+Final focused controls pass **2 tests**; settlement correctness passes **6 tests**.
+Complete native controller qualification passes **26 tests, 3 warnings in
+20.63s**, with zero retained SQLite/instance-lock handles and only the established
+pytest-asyncio selector footprint. A subsequent test docstring/return annotation
+change is nonbehavioral; both focused controls pass again on the final bytes.
+Runtime/test hashes are frozen and independent review is clear. Evidence:
+`/private/tmp/pr2427-qodo107-{red,final-current,settlement}.log` and
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-qodo107-native-final.y5U6jU/fd_identity.jsonl`.
+
+Five complete architecture/provenance files pass **131 tests, 5 warnings in
+15.90s**, all seven derived checks pass, and final scoped Ruff/format/whitespace
+checks are green. No diagnostic statements changed, so no inventory rewrite was
+needed. Logs: `/private/tmp/pr2427-qodo107-{caps,preflight,diagnostics}.log`.
+Live dev remains `a36fc6133c`, already an ancestor. Publication and exact-head
+review/checks still precede normal protected merge.
+
+The final complete Canvas controller file additionally passes **47 tests,
+2 warnings in 3.79s**, not just the earlier six settlement-focused controls.
+`/private/tmp/pr2427-qodo107-canvas-complete.log`.
+# September 9 continuation: diagnostic contracts and new dev integration
+
+On published `b96516d897`, Qodo finding 3967831406 treated native Console
+chat/submission UUIDs as authentication sessions. Independent caller tracing
+confirmed UUIDv4 chat and submission generators, distinct from web authentication
+tokens. TASK-31932 step 9 and ADR-029's September 8 amendment explicitly retain
+these correlation IDs. Reply 3967946906 records that evidence; the thread is
+resolved without changing the approved runtime contract. UUID validation is not
+anonymization, and this conclusion depends on caller provenance.
+
+The accompanying complete diagnostic run found an unrelated inherited oracle
+conflict: the persona/workspace boundary test required zero runtime arguments,
+while TASK-25705 and the architecture guard require exact reviewed type/count/
+tool-name metadata. Both existed on the accepted dev base. The test now retains
+all eleven constant templates and uses the canonical exact-field guard, including
+unique presence and no exception/stack capture. Five new negative controls reject
+raw exception/rule/workspace values and missing/duplicate calls. No production,
+inventory, privacy policy or size cap changed.
+
+RED: 1 failed, 15 passed in the original settings/boundary run.
+GREEN: all three complete boundary, architecture-inventory and settings files,
+91 passed, 8 warnings in 152.65s; `/private/tmp/pr2427-diag-contract.log`.
+Independent review, scoped Ruff and whitespace checks pass. Whole-file formatter
+differences in the architecture file are pre-existing and outside this change.
+
+Fresh dev is `fa313e901e4462baae44977f41d15ef660fd379c` (Library phase-C
+residency, PR #2546). The 232-commit rebase completed, preserving incoming
+residency/region ownership and prior focus, blank-GC and resource repairs.
+Independent source/AST review found no lost behavior beyond the explicitly
+repaired integration issues below.
+
+- Two PR-only old shell probes lost ordinary-width pane priority and replaced
+  existing Items canvas identity. Two behavior tests failed after test-selector
+  migration, then passed after using the established Media route marker.
+- Export's newly canvas-owned async handler awaited removal of its own ancestor;
+  ancestor teardown awaited that message task. The unchanged mounted test hit its
+  300-second timeout. Queueing the same controller action through existing
+  Screen-owned `call_next` breaks the cycle without a new worker or export path.
+  Queue ownership/refusal and mounted Export now pass (3 cases; mounted 1.67s).
+- Complete crit8/per-click files: 36 passed, 1 existing Search/RAG-owned skip;
+  `/private/tmp/pr2427-ui-rebase-green.log`. Original reconciliation RED was
+  9 failed, 32 passed, 1 skipped in 371.19s (`pr2427-selector-red.log`).
+- Two previously omitted module cap rows exposed documentation-only overruns.
+  Redundant historical commentary was shortened; requested public documentation
+  and executable ASTs remain intact. MediaBrowseState is 295/295, wiring 338/338;
+  complete state/assembly files pass 85 tests (`pr2427-docs-state.log`). Screen
+  and Media controller pins were lowered to measured 31692/1213 and 4646.
+- The existing strict canvas-sync diagnostic guard remains unchanged: no new
+  traceback capture. Statement review found only two fixed-kind/allowlisted-ID
+  refusal messages and an exact mouse-capture diagnostic move. Regenerated the
+  manifest after this review. Nine complete architecture/diagnostic files pass
+  183 tests, with 8 warnings (`pr2427-rebase-guards-green.log`). All seven derived
+  checks pass (`pr2427-rebase-preflight.log`), including 3686 task files without
+  collisions. Broad changed-file Ruff comparison has the same 48 inherited
+  findings and no new findings; scoped repair files pass.
+
+The initial four complete phase-C files passed 98 cases in 70.97s with zero
+terminal SQLite/instance-lock handles (six total native handles). No fixture
+expansion was made solely on a static ownership concern. The final affected
+Library run is broader: 2184 cases in 34 complete files, native observation only,
+with source held fixed. Log: `/private/tmp/pr2427-rebase-native-final.log`;
+descriptor evidence: `$TMPDIR/pr2427-rebase-native-final.7phLag/fd_identity.jsonl`.
+Early aligned failures involve the single-app route cycle, narrow Media Items
+width, and graduation-toast/route replacement. They remain under diagnosis.
+This is a saved progress checkpoint, not a passing final qualification or merge.
+
+Frozen source SHA-256:
+
+- LibraryScreen: `800fb17fafda1e199e5e9aba5f1d75ebed6f3ad22623631c71e2096b262abbf1`
+- canvas_sync: `15207abfef2e31768894dfe2a5b12b263c56cec61c1275da5a66bff1831b9468`
+- Media canvas: `1626ad389a3c3242cfa6f26299576a5d81e03e6d7fe91b3f997a81a8586077af`
+- phase-C region test: `c224e0ba8fcc79836e23b8b5af922a689dd9384c69e7a06748c2228677b17be1`
+
+### Current-head review and frozen-run follow-up (2026-09-09)
+
+Qodo reviewed published head `2d10bd597c597af28e9482854275a04a3ae16954`
+at 12:14 UTC. All five unresolved threads concern missing test-callable
+docstrings and annotations: packaging closure tests (3968184427), token warmup
+(3968184434), diarization capability (3968184440), descriptor catalog
+(3968184446), and fake promotion refusal (3968184459). Read-only inspection
+confirms the omissions; task step 113 records the bounded documentation repair.
+No thread is represented as fixed before publication and verification.
+
+The native 2184-case run remains active. Its sources have not been edited.
+Independent reproductions identified two stale test contracts and one genuine
+Notes focus regression; step 114 records separate repairs after the freeze.
+TASK-31979 was read: empty-Reader width redistribution is intentional, and the
+comfortable loaded-Reader test must open an item rather than relax its width
+assertions. Same-route resident Notes sync currently restores focus before
+queued recompose; the existing entry-reconcile callback/identity/guard seam is
+the intended repair. The native run's final failures and terminal descriptor
+inventory remain required; intermediate live SQLite handles are not leak proof.
+
+At the current-head CI inspection, PR Fast Lane, Backlog, CSS, UI latency and
+all six GGUF jobs had succeeded; the derived-artifacts job was still running,
+and two conditional evidence jobs were skipped. This is not final merge
+qualification. PR remains open, with local failures and new review work pending.
+
+### Frozen Library qualification completed (2026-09-09)
+
+Session 98710 finished with exit 1: **15 failed, 2168 passed, 1 existing skip,
+15 warnings in 8415.48 seconds**. The source freeze has ended. The final native
+snapshot contains 174 handles, including retained SQLite and instance-lock
+handles; attribution and exact-owner cleanup remain open, not a clean result.
+The original log and JSONL evidence above are preserved unchanged.
+
+The first two stale-contract repairs under step 114 now pass all three focused
+cases (route cycle and both loaded-Reader sizes): 3 passed, 3 warnings in 17.84s,
+`/private/tmp/pr2427-known-oracles-green.log`. The geometry assertions were not
+relaxed. Complete affected-file verification remains due.
+
+Seven additional Media/Files failures were repeated in a bounded uninstrumented
+run (`/private/tmp/pr2427-media-followup-red.log`): 5 failed, 2 passed in 12.49s.
+Border glyph, two scroll-offset, empty-viewer Back and Files-return scroll
+failures reproduced. Media Retry focus and error-callout painted geometry passed
+in that rerun; the original larger-cohort failures remain open for ordering/race
+investigation. Notes focus/lifecycle and resource attribution proceed separately
+from the documentation-only Qodo fixes. No final-head merge claim is made.
+
+### Post-run repairs and remaining gates (2026-09-09)
+
+The complete native terminal inventory is 168 SQLite handles, two instance-lock
+handles, one legitimate process-lifetime faulthandler stream, and three stdio
+handles. Passing controls reproduced the fixture leaks independently of failure
+tracebacks. Existing exact-app teardown fixtures and same-database quiescence
+are reused; no global shutdown or forced collection was introduced. Native
+controls plus both complete shared-cleanup test files pass 33 cases in 12.39s,
+with zero final SQLite/instance-lock handles (`/private/tmp/pr2427-resource-green.log`,
+`$TMPDIR/pr2427-resource-green.dNxbRn/fd_identity.jsonl`). Complete affected UI
+files still require stable-source qualification.
+
+The five Qodo documentation findings now have local docstring/annotation repairs
+on twelve callables across ten files. Executable bodies, embedded scripts and
+assertions are equivalent after excluding documentation/annotation nodes and
+annotation-only imports. All ten complete files pass 602 tests, two warnings in
+76.65s (`$TMPDIR/pr2427-step113-docs.WNT2Lb/pytest.log`); equivalence and Ruff
+evidence are alongside that log. Threads remain unresolved until publication.
+
+Same-route resident Notes focus now travels through the existing post-recompose
+callback, captured Notes identity and generation guard. The original regression,
+new stale-generation control and four complete phase-C files pass 102 cases,
+90 deselected, three warnings in 71.05s
+(`/private/tmp/pr2427-phase-c-focus-green.log`). This is not the full affected
+Library cohort. Separate repairs hide outgoing Work before prune and apply
+bulk-preview state without replacing the focused editor; qualification is ongoing.
+
+The fifty-cycle test now requires exact retained Notes canvas identity and
+hidden/displayed state, plus exactly fifty Work mounts/removals, while retaining
+all save/conflict/discard/worker/timer/final-unmount checks. It passes in 39.02s
+(`/private/tmp/pr2427-resident-cycles-green.log`). The Files receipt test now
+uses y=5, explicitly checks capture, and retains exact final restoration: tracing
+proved y=7 was clamped to six by the preceding resize before receipt capture.
+It passes in 4.36s (`/private/tmp/pr2427-files-receipt-green.log`). The painted
+error test now waits for a positive compositor region before its unchanged
+painted-text assertion; it passes in 4.28s
+(`/private/tmp/pr2427-error-paint-green.log`). Complete files remain due.
+
+Retry's intermittent wrong target now has a controlled reproduction: release a
+real queued initial-entry callback after Retry has focused the filter and
+disarmed the entry arm, and it moves focus to row zero. Task step 122 records
+reuse of the existing generation-checked callback at both unguarded scheduling
+sites (`/private/tmp/pr2427-retry-stale-diagnostic.log`, one failure in 1.85s).
+
+The held-empty-result fixture now delivers real Back before the result clears
+the Reader, exposing a genuine missing Import recovery focus rather than merely
+pressing a removed Back button. The original focus assertion remains failing.
+Two scroll-offset expectations need viewport attribution. Reader border styles
+and its own painted chop are correct, but an earlier three-cell clear button
+produces five painted cells in the joined strip; padding is already zero, so a
+padding-only CSS change is not justified. These investigations remain open.
+
+A fresh GitHub check finds all published-head required jobs completed green
+(two conditional jobs skipped), but the PR now reports DIRTY against advancing
+dev. Preserve and qualify repairs before reconciling that churn; green published
+checks do not cover the uncommitted fixes or justify merge. Task AC3/4 stay open.
+
+### Published documentation checkpoint; lifecycle design pause
+
+Published and GitHub-verified head is now
+`68b05e81b2a9ed9cb02c2b5d50a74ff333a6f3bd`, containing only the ten verified
+Qodo documentation files. Fresh complete run: 602 passed, two existing warnings,
+75.50s (`/private/tmp/pr2427-docs-final.log`); scoped Ruff passes. All five
+documentation threads received published-evidence replies and were resolved
+(reply IDs 3969889842, 3969890231, 3969890660, 3969890995, 3969891376).
+Other repair changes remain local and uncommitted; they are not merge-ready.
+
+Fetched dev is `41c4a5858f4323a7e52d4c7c07d8c84099493cf9`, three commits
+past the previous base. It adds route validation, propagates resident adoption
+failures, treats fresh adoption as success, and fixes a stale shell probe.
+Rebase must union those contracts with the captured-focus repair. AC1 is
+reopened alongside AC3/4; the published PR remains OPEN/DIRTY.
+
+Additional bounded evidence: the two guarded-entry regressions plus original
+Retry now pass unobserved (3 passed, three warnings, 7.31s,
+`/private/tmp/pr2427-retry-ready.log`). The original test now waits for real
+mounted Retry focus before pressing; its recovered filter assertion is intact.
+Clear-button painted width, unchanged Reader glyphs, both exact scroll pins,
+empty Back recovery, cancellation and explicit-target precedence pass seven
+cases (14.56s, `/private/tmp/pr2427-media-focused-green.log`). Independent
+review found no blockers in those changes or the stale-oracle fixes. Screen
+comment-only paydown preserves executable AST hash
+`ce8f1a6be620a66141465d71728c55d115242668a17c5a6b411f8727e398e09a`;
+the line pin is lowered to 31689, with all five complete ratchet tests passing
+(`/private/tmp/pr2427-ratchet-checkpoint.log`).
+
+Two interacting lifecycle issues require a coordinated design decision before
+more implementation. The systematic-debugging escalation rule pauses further
+local fix attempts; no complete-file run is active.
+
+1. Hiding outgoing Work before mounting and deferring prune until refresh clears
+   all three reproduced TextArea gutter crashes. However, a rapid return before
+   prune tries to mount a fresh same-ID pane and raises DuplicateIds
+   (`/private/tmp/pr2427-work-rapid-red.log`, one failure). Reusing the old pane
+   is rejected: Media construction consumes/bakes arrival, Find and current
+   document state, while adoption synchronizes only Items. A replacement design
+   must preserve fresh-owner semantics and safe compositor retirement. No new
+   retiring-owner registry/cache is approved or present.
+2. The tentative bulk in-place helper preserves text/selection/undo, but a newer
+   focused-editor sync can invalidate its drain generation while leaving the old
+   callback queued. That callback may then run on an unrelated recompose. Exact
+   callback disposition belongs in the existing canvas-sync coordinator after
+   follow-up creation, not in a widget helper that reads future callback state.
+
+The focused five/seven-pass Notes logs do not cover these blockers. The rapid
+RED and tentative local fixes are preserved for follow-up. Broader qualification,
+latest-dev rebase and normal protected merge are paused pending approval of the
+coordinated pane-retirement/focus-synchronization repair.
+
+### Approved coordinated lifecycle repair checkpoint (2026-09-09)
+
+The user approved the coordinated repair; the preceding design pause is lifted.
+ADR-141 and `2026-09-09-pr2427-coordinated-lifecycle-repair.md` are committed in
+`f4625caec9`. The existing shell always mounts fresh Work, hides outgoing Work
+before awaits, and retires only an exact hidden non-current same-ID predecessor
+before mount. Ordinary retirement follows refresh with exact-parent/current-owner
+guards. No reuse cache, registry or global cleanup was added.
+
+Bidirectional mounted controls reproduce DuplicateIds before the repair (two
+failures, `/private/tmp/pr2427-work-bidirectional-red.log`) and pass afterward.
+The six focused lifecycle/gutter cases pass; complete reader-shell verification
+passes 42 tests, three warnings in 63.10s (`/private/tmp/pr2427-work-complete.log`).
+The wrapper failed afterward when assigning zsh's readonly `status`; pytest
+itself completed green. Complete architecture ratchets pass 47 tests.
+
+Notes `sync_state` returns a narrow retained-bulk disposition; the existing
+coordinator clears obsolete Work callbacks and places the current follow-up on
+the recomposing Items canvas. The tentative widget callback-drain helper is
+removed. Independent review also reproduced an old explicit Items action running
+after a newer Work action; new explicit intent now invalidates the other owner.
+Targetless sync and existing focus veto behavior remain unchanged.
+
+RED evidence is `/private/tmp/pr2427-followup-red.log` (two failures, one control
+pass) and `/private/tmp/pr2427-cross-owner-red.log` (old Items callback observed
+after the new Work callback). Final focused verification passes five tests,
+33 deselected, three warnings in 11.57s
+(`/private/tmp/pr2427-followup-final.log`), covering text, selection, undo,
+exact-once explicit follow-ups and later real recomposes. The complete Notes
+widget file separately passes 34 tests. Independent spec and correctness reviews
+clear both lifecycle changes; scoped Ruff and whitespace checks pass.
+
+Latest fetched dev is `4192fbdc5e` (adds TTS lifecycle/provider repairs beyond
+`41c4a5858f`). Save the focused-verified repair checkpoint, then rebase while
+preserving upstream adoption success/failure and route validation alongside the
+captured-focus repair. Complete affected-owner/native resource qualification,
+preflight and published-final-head review/CI remain required. No overall clean
+suite or merge-readiness claim is made by this checkpoint.
+
+### Latest-dev rebase and frozen qualification
+
+The repair checkpoint was saved as `9c525d818c`, then rebased onto dev
+`4192fbdc5e0e7fd545d978e6f6a2b5358ae28261`. Rebased runtime head is
+`d034c2d9c90acd55605dac8b8cece7c4e4f9f19c`. Conflict resolution preserves both
+independent testing-lesson additions and combines reviewed diagnostic-count
+deltas (final TASK-494 count 7660, verified by the inventory checker).
+
+Library adoption now retains upstream fresh-mount success and resident-failure
+propagation, forwarding the captured callback, Notes identity and generation
+guard. A fresh canvas restores captured focus after refresh; a failed resident
+sync reaches the existing whole-screen recovery. Upstream pre-mutation route
+validation and shared-shell selectors remain intact. Independent integration
+review found no actionable issues.
+
+Fresh complete guard verification: 54 passed, three warnings in 13.74s, including
+both healthy residency and failed-resident recovery
+(`/private/tmp/pr2427-rebased-guards.log`). All seven derived checks pass
+(`/private/tmp/pr2427-post-rebase-preflight.log`). Changed runtime modules and
+11 changed test files pass Ruff; the two remaining test files retain exactly
+their existing two F401/six E402 findings, and the Screen retains exactly its
+48 baseline findings. Whitespace checks pass. No cap increased.
+
+Sources are frozen at this runtime head for two observation-only native cohorts:
+
+- Four repaired resource-owner files, 237 tests: session 50549,
+  `/private/tmp/pr2427-approved-native-owners.log`, native receipt directory
+  `$TMPDIR/pr2427-approved-native-owners.qgdsoO`.
+- Twelve remaining affected Library/phase-C files, 1345 tests: session 35769,
+  `/private/tmp/pr2427-approved-native-library.log`, native receipt directory
+  `$TMPDIR/pr2427-approved-native-library.vs8f54`.
+
+Both are in progress, not passing evidence yet. Their final `fd_identity.jsonl`
+inventories and pytest exit statuses must be inspected before qualification is
+claimed. No whole-repository sweep or forced cleanup is used. The PR had zero
+unresolved review threads immediately before publication; new published-head
+reviews/checks and normal protected merge still remain.
+
+### Four-file native owner qualification complete
+
+Session 50549 completed with exit 0: **237 passed, three warnings in 352.71s**
+(`/private/tmp/pr2427-approved-native-owners.log`). The final native inventory
+contains **zero SQLite and zero instance-lock descriptors**. Seven descriptors
+remain: three standard streams, one kqueue/two sockets matching the independently
+established pytest footprint, and the legitimate process-lifetime faulthandler
+stream. Full final/result records are in
+`$TMPDIR/pr2427-approved-native-owners.qgdsoO/fd_identity.jsonl`; no forced cleanup
+or GC was performed. This closes the complete-file qualification gap for the
+four resource-owner files; it is not a claim about the remaining cohort.
+
+The separate 1345-test Library cohort (session 35769) is still progressing on
+unchanged runtime/test sources. At the 2026-09-09 15:35 UTC check, PR head is
+still `29cbccec2b`, no review threads are unresolved, completed required jobs
+pass, and PR Fast Lane remains in progress. No merge has been attempted.
+
+At 15:42 UTC all published-head CI jobs are complete and passing (two conditional
+jobs skipped), with zero unresolved review threads. Dev meanwhile advanced to
+`0bb47a570e` through PR #2550 (Library column widths and boot census sentinels),
+making the PR DIRTY again. The ongoing 1345-test cohort remains on its frozen
+source head; do not rebase or alter that evidence mid-run. After completion,
+reconcile the width projection/defaults, overlapping populated-Reader fixture,
+ordinary rail assertions and boot-census sentinel contract. Then rerun the
+affected width/boot/Library gates on the new head; current CI/local results do
+not qualify that future rebase. No merge attempt or protection bypass occurred.
+
+### Complete frozen Library qualification (2026-09-09 17:02 UTC)
+
+Session 35769 finished with exit 0: **1344 passed, one existing skip, 13 warnings
+in 5508.50s** (`/private/tmp/pr2427-approved-native-library.log`). The skip is the
+pre-existing TASK-32070 Search/RAG keyboard ownership case. Final native receipt
+`$TMPDIR/pr2427-approved-native-library.vs8f54/fd_identity.jsonl` contains only
+three standard streams and the legitimate process-lifetime faulthandler stream:
+**zero SQLite, zero instance locks and no other retained native descriptors**.
+Together with the four-file owner cohort, frozen affected-file evidence is
+**1581 passed, one existing skip**. No source changed during either run, no forced
+cleanup/GC was used, and all original lifecycle/resource assertions remain.
+
+All 16 affected files and the separately completed 54 guard/residency tests are
+qualified on runtime `d034c2d9c9`. Source freeze is now released. Latest fetched
+dev is `e574c81d22`: the known PR #2550 width/boot changes plus PR #2541 Watchlists
+Feed Items widening. Save this evidence, reconcile that churn, then verify the
+changed width/boot/Watchlists owners and integration-sensitive Library tests.
+ADR required: no new ADR. Existing ADR-086 and the upstream Watchlists width
+design govern; this is integration of accepted upstream behavior, not a new
+layout policy. Final publication/review/CI and protected merge remain open.
+
+### Width-churn rebase and targeted qualification
+
+Rebased onto `e574c81d22`, local checkpoint `886f94de0e`. Preserved both testing
+lessons, upstream immediate boot sentinels and on-disk splash disable, the PR's
+timer cleanup/bounded wait, fixed ordinary rail projection, and stronger loaded
+Reader readiness. Deferred Watchlists CSS remains in its existing split sheet;
+the generated split alone changes four width values to match upstream source
+(50fr, 42 minimum, 50 maximum, 42 expanded minimum). Root/sibling sheets remain
+unchanged and all generated CSS now reproduces.
+
+Independent review caught a weakened delayed census control after the sentinel
+union: ordinary immediate workers let it finish before delayed FTS starts.
+The delayed variant alone now extends its child required set with FTS and asserts
+that start in returned records. New assertion RED:
+`/private/tmp/pr2427-delayed-census-red.log` (one failure). Complete two-file boot
+GREEN: 19 passed, three warnings in 19.50s
+(`/private/tmp/pr2427-delayed-census-green.log`). A test-only in-memory mutation
+removing the required-wait loop fails the same assertion
+(`/private/tmp/pr2427-census-no-wait.log`); no source was modified for that control.
+The global required set stays upstream's immediate workers. Independent review
+approves the strengthened control and the exact generated CSS diff.
+
+Initial seven-file width/boot run passes 463 tests, three warnings in 55.82s
+(`/private/tmp/pr2427-width-boot.log`); the later 19-case run qualifies the corrected
+boot control. All 52 complete architecture ratchet cases pass, unchanged caps
+(`/private/tmp/pr2427-width-caps.log`), and all seven preflight checks pass
+(`/private/tmp/pr2427-width-preflight.log`). Scoped boot lint and whitespace pass.
+
+Two new affected-scope cohorts are active, not yet passing evidence:
+
+- Native-observed 452 Library cases, session 81802,
+  `/private/tmp/pr2427-width-library.log`, receipts
+  `$TMPDIR/pr2427-width-library.0b2MW7/fd_identity.jsonl`. Complete impacted reader,
+  Media, Notes and phase-C files plus explicitly selected width/geometry/focus,
+  breakpoint and lifecycle controls from the large Shell/Files files; not a
+  repeat of the earlier complete 16-file sweep.
+- Eight complete Watchlists/Settings/CSS files, 634 cases, session 23734,
+  `/private/tmp/pr2427-width-watchlists.log`.
+
+Wait for exact terminal results, inspect native retention, and address any
+failures before claiming this rebase qualified. Final publication/review/CI and
+normal protected merge remain open.
+
+### Targeted width-run results and bounded follow-up
+
+Both targeted runs are terminal. Session 81802: 23 failed, 428 passed, one existing
+skip, 933 deselected, six warnings in 891.56s. Its native inventory has zero
+SQLite/instance locks; final seven descriptors are stdio, the established pytest
+kqueue/socket pair and the legitimate faulthandler. Session 23734: 20 failed,
+614 passed, four warnings in 836.17s. No passing qualification is claimed for
+either run, and neither is still active.
+
+Independent diagnosis attributes all 23 Library failures to pre-PR2550 exact
+matrix values (rail +5 cells, Items target +10 cells, corresponding collapse/
+reopen boundaries), not a runtime defect. The two Settings assertions also
+predate upstream snapshot-owned keys and Canvas/host-access guidance. Eighteen
+Watchlists failures are limited to newly upstream real-bundle geometry harnesses;
+their production-equivalent stylesheet setup is under separate investigation.
+Task plan step 130 limits follow-up to proven stale fixtures/oracles and preserves
+exact geometry, zero-work, persistence and security assertions.
+
+The Library test-only repair now passes all six affected functions (44 cases,
+three warnings in 99.28s; `/private/tmp/pr2427-library-width-green.log`). It updates
+the exact upstream dimensions and adds five boundary phases proving 108/107
+collapse and 108/111/112 hysteretic reopen. All bounds, persistence, zero-work
+and style-write checks remain. Independent correctness review approves; Ruff
+and whitespace pass, and formatter differences match the inherited baseline.
+
+Watchlists diagnosis confirms that the new real-bundle harness omitted the
+runtime's deferred `screen_feature_watchlists.tcss`. Its fixture-only repair
+loads that sheet alongside the boot bundle, preserving all 18 geometry oracles.
+The two Settings oracle updates match exact upstream snapshot ownership keys
+and Canvas/host-access guidance; independent review confirms existing read-only
+Overview, disabled clean actions and privacy checks are retained. Both owners'
+complete-file verification remains in progress; no runtime changes are proposed.
+
+Watchlists verification is now complete: all 18 original failing cases pass
+(3.13s), the complete workbench file passes 44 cases (6.73s), and all three route
+CSS context cases pass (17.56s). Logs are `/private/tmp/pr2427-watchlists-width-green.log`,
+`/private/tmp/pr2427-watchlists-workbench-complete.log` and
+`/private/tmp/pr2427-watchlists-css-context.log`. The exact two-sheet fixture diff
+was reviewed against production's deferred route loading; no geometry assertions
+changed. Both formerly failing Settings cases pass (two tests, three warnings,
+4.19s; `/private/tmp/pr2427-settings-focused.log`). All four edited Python test
+files pass Ruff and whitespace checks.
+
+Thus all 43 observed failures have focused passing evidence with test-only
+repairs; none required a runtime or architecture change. The Settings agent's
+complete three-file native qualification is still running (session 1621,
+443 cases, `/private/tmp/pr2427-settings-oracle.log`, receipt directory
+`$TMPDIR/pr2427-settings-oracle.yCQl8M`). Wait for that terminal inventory and
+exit status before claiming its complete resource qualification. Publication is
+a progress checkpoint, not a declaration that final-head merge gates are met.
+
+### Published c5a2 review and terminal Settings evidence
+
+The complete Settings run is now terminal: 443 passed, three warnings, exit 0 in
+659.79s (`/private/tmp/pr2427-settings-oracle.log`). These are 423 configuration-hub,
+15 snapshot Settings and five Canvas Settings cases. Its final native inventory
+is **not resource-clean**: 45 SQLite handles and three instance locks among 65
+descriptors, with exact paths attributable to the configuration-hub RAG guided
+defaults, keyboard-category focus and every-category banner tests. The two latter
+owners also retain TTS repository resources. Receipt:
+`$TMPDIR/pr2427-settings-oracle.yCQl8M/fd_identity.jsonl`. Session 1621 has ended;
+passing assertions do not close this resource gate. Plan step 132 scopes repair
+to existing exact-app test ownership and the established TTS shutdown operation,
+without production/global cleanup or forced collection.
+
+Qodo top-level comment 5606350372 on this published head identifies a valid
+Console recovery race: the generation/phase key is discarded before asynchronous
+runtime publication. The low-level intent lifecycle already prevents a second
+successful disk replacement, but the coordinator can still admit duplicate work
+and a late failure projection. Step 131 retains the existing guard through final
+publication/synchronization and requires controlled RED/GREEN evidence. This
+top-level finding remains actionable even though inline review threads are all
+resolved. The bot requests `/agentic_review` for subsequent reviews.
+
+Backlog Guard run 34385614720 and Fast Lane run 34385614735 both fail on the
+same TASK-32136 collision between the upstream Library Notes Folder-files task
+and this review's Loguru-capture task. Fast Lane otherwise passes 783 cases
+(two uniqueness failures, one warning, 497.20s;
+`/private/tmp/pr2427-c5a2-fastlane.log`). Step 133 requires exact provenance and
+reference-aware review-task-only renumbering, not a blanket ID substitution.
+Fetched dev is now `88b07c4f6f`, including the Notes picker/import repairs and
+critique task batch; the branch has not yet rebased onto it. Preserve active
+repair ownership, then verify the new integration before publication and normal
+protected merge. No final-head merge readiness is claimed.
+
+The recovery repair now has controlled RED evidence (three failed, four passed;
+`/private/tmp/pr2427-default-recovery-red.log`). The existing key is retained
+through publication and synchronization with one outer `finally`; no new owner
+or lock was introduced. Complete three-file qualification passes 110 cases,
+three warnings, in 16.10s; an unchanged native-observed repeat passes 110 in
+14.41s with only stdio, one kqueue and two sockets at exit (six descriptors,
+zero SQLite/locks). Logs: `/private/tmp/pr2427-default-recovery-green.log` and
+`/private/tmp/pr2427-default-recovery-native.log`; receipt directory
+`$TMPDIR/pr2427-default-recovery-native.Hxts67`. Independent correctness review
+clears the exact-key lifetime, cancellation/shutdown and newer-generation guards.
+
+Settings fixture repair reuses four existing ownership fixtures and invokes the
+established TTS aggregate shutdown only for this module's factory products.
+Three missing-fixture controls first failed; both complete resource-control
+files then pass 32 cases. The three attributed Settings cases pass in 14.69s
+with zero SQLite, instance-lock or TTS descriptors. Final eight descriptors are
+stdio, one kqueue and four sockets; the extra socket pair is consistent with
+the earlier isolated Chroma footprint, not newly proven application ownership.
+Logs: `/private/tmp/pr2427-settings-owner-{red,controls,native}.log`; receipt
+directory `$TMPDIR/pr2427-settings-owner-native.lj9gOC`. Full 423-case hub
+qualification remains pending until independent review and latest-dev rebase.
+
+Collision provenance establishes that Library adopted 32136 before this review
+renumbered its Loguru record to that ID. All-ref history plus physical registered
+worktrees found maximum 32182, with no 32183 path or content references. Only the
+review-owned Loguru record now moves to TASK-32183, with both active inbound
+pointers updated and original dates, previous renumberings and evidence preserved.
+The current branch's 3,708 records and all three uniqueness tests pass; final
+merge-candidate uniqueness is still checked again after rebasing.
+
+### Rebase onto dev 88b07c4f6f
+
+Saved repair checkpoint `a7eb557e99` rebased all 240 commits without conflicts
+onto `88b07c4f6f`, producing `0b15c5efebd2`. The complete binary patch between
+those two heads equals the upstream `e574c81d22..88b07c4f6f` patch exactly
+(SHA-256 `a3c3edc6d8017799c8844c7559283ff6fff687315d690ecec9808ec12a1e4500`).
+All four newly repaired Python files are byte-identical after rebase. All seven
+preflight checks pass, including 3,734 unique task records, unchanged diagnostic
+inventory and stylesheet reproduction; log:
+`/private/tmp/pr2427-recovery-rebase-preflight.log`.
+
+The seven complete newly affected picker/import files finish with 147 passed,
+one failed, two warnings in 31.12s (`/private/tmp/pr2427-picker-rebase.log`).
+The remaining failure is the Add-from-files history scroll test's zero
+`max_scroll_y` at 60x20. It reproduces alone; both test and canvas source match
+current dev. Read-only diagnosis is checking the plain-App stylesheet harness
+against real runtime loading before any repair or assertion change.
+
+Independent review clears the Settings fixture and review-task identity mapping.
+Final complete configuration-hub native qualification is active as session 3490,
+423 cases, `/private/tmp/pr2427-settings-owner-final.log`, receipt directory
+`$TMPDIR/pr2427-settings-owner-final.dYeCUD`. The separate 158-case
+architecture/delegate/diagnostic group is active as session 58123,
+`/private/tmp/pr2427-recovery-guards.log`. Do not infer terminal evidence for
+either from this checkpoint. The previous 110-case recovery native run covered
+the complete durability-controller, settings-failure-diagnostics and Chat
+settings-defaults files, not a repository-wide sweep.
+
+The architecture/delegate/diagnostic group is now terminal: 158 passed, eight
+warnings, 172.75s; all caps and diagnostics remain unchanged. The scroll defect
+is also attributed: the boot-only test host omits the real Library stylesheet.
+Four extra pauses leave history rows at one cell and body virtual/view heights
+17/17. An in-memory control adding only `LibraryScreen.CSS_PATH` yields three-cell
+rows and 43/17 heights, passing the unchanged overflow and pinned-action checks.
+Logs: `/private/tmp/pr2427-history-isolated.log`,
+`/private/tmp/pr2427-history-geometry.log`, and
+`/private/tmp/pr2427-history-library-sheet-control.log`. Step 134 limits the repair
+to those stylesheet inputs, followed by complete affected-file qualification.
+
+Step 134 is now verified: the exact boot-plus-Library stylesheet host change
+passes the complete 46-case Add-from-files file in 12.56s and all seven
+picker/import files, 148 passed, two warnings, in 32.28s. Logs:
+`/private/tmp/pr2427-history-file-green.log` and
+`/private/tmp/pr2427-picker-host-green.log`. Independent review confirms every
+overflow, literal scroll-cue, compositor visibility and pinned-containment
+assertion, the 60x20 viewport and original single pause are unchanged. Scoped
+Ruff/whitespace pass; the file's one inherited formatter difference is unchanged.
+Publication of this checkpoint permits fresh CI/review in parallel with final
+423-case Settings native qualification; it is not permission to merge before
+that run's terminal resource inventory and final-head review/checks are clear.
+
+### Complete Settings resource qualification and final review follow-up
+
+The frozen complete configuration-hub run is terminal: 423 passed, three warnings,
+exit 0 in 613.76s (`/private/tmp/pr2427-settings-owner-final.log`). Its final native
+inventory contains zero SQLite, instance-lock, TTS lock/directory/pipe or other
+file retention. The eight descriptors are stdio, one kqueue and four sockets,
+matching the focused control's bounded pytest/Chroma footprint. Receipt:
+`$TMPDIR/pr2427-settings-owner-final.dYeCUD/fd_identity.jsonl`. Settings sources
+were unchanged throughout the run and at published `645126abf5`; the unchanged
+15 snapshot and five Canvas Settings cases already passed. Session 3490 is closed.
+
+Qodo updated its review for `645126abf5` at 18:26 UTC with one new documentation
+finding, inline comment 3971709694: the Direct-mode paragraph still advertised
+15 tools although the shared provider includes the five chunk descriptors and
+note-save descriptor too. Step 135 corrects the total to 21 without changing
+registration, authorization or implementation. Existing review findings remain
+resolved/dismissed. Fast Lane, Backlog/CSS, latency and all GGUF platform checks
+pass on this head; the derived-artifact job was still running at the 18:30 snapshot.
+
+Dev advanced again to `de6793b9f5` with PR 2540's Library Notes import-UX work.
+All local runs are terminal before this next reconciliation. Step 136 scopes
+the rebase to preserving that accepted upstream behavior and qualifying its
+complete affected owners; prior frozen Settings evidence is not an active run
+or a reason to repeat unchanged code. Final merge remains gated on the rebased
+revision's verification and reviews/checks.
+
+### Notes import-UX rebase and unchanged-cap reconciliation
+
+Rebased 242 commits cleanly onto fetched dev `de6793b9f5`, producing
+`bbdd551d5e`. The 26 incoming files preserve the approved import source-reset,
+group review, skipped-source receipts and compact chooser behavior. The existing
+canvas-sync and browse-route-swap coordinators are unchanged; the incoming Notes
+canvas changes retain ADR-141's exact callback and editor ownership contract.
+All checks on the still-published `645126abf5` subsequently completed successfully
+or with their expected skips, but GitHub correctly reports that revision behind.
+
+The new three import handlers expose a combined Screen ratchet failure:
+31,706 lines / 1,216 methods against unchanged 31,689 / 1,213 caps. Step 137
+removes six redundant private forwarding wrappers and retargets their five live
+calls directly to the existing current Notes/ingest controllers. The unused skill
+conflict wrapper is also retired; `_library_prompt_can_update_original` remains
+because the live evidence runner uses it. Regression RED: nine failed, 28 passed.
+Complete wiring/private-owner/controller-assembly/caps GREEN: 51 passed, two
+warnings, 1.52s. Logs: `/private/tmp/pr2427-six-wrappers-{red,green}.log`.
+Final Screen is 31,688 lines / 1,210 methods; no limit changed. Independent
+whole-repository consumer census and exact AST transformation review verify that
+only those removals/receivers changed, preserving all three incoming handlers.
+Changed tests pass Ruff; the Screen retains exactly its 48 pre-existing findings.
+
+The complete import state/planner/controller files pass 443 tests, two warnings,
+in 3.73s without the diagnostic observer. Log:
+`$TMPDIR/pr2427-note-import-plain.j3bXDz/pytest.log`. The earlier native run had
+442 passes and one observer failure: a planner test deliberately patches
+`os.fstat`, which the after-call observer invokes before monkeypatch teardown.
+The five-case plain control passes. Its final native inventory is six descriptors
+(stdio, kqueue and two sockets), with no SQLite, regular-file or instance-lock
+retention; this does not turn the observer-interrupted run into 443 native passes.
+Receipt: `$TMPDIR/pr2427-note-import-native.8Fxhy2/fd_identity.jsonl`.
+
+The complete execution-model/executor/receipt/Windows-filesystem group passes
+409 tests with three native-Windows skips and two warnings in 66.36s. However,
+native observation retains 19 SQLite-family descriptors from four executor-test
+owners, plus the standard six descriptors. Functional success therefore does not
+close resource qualification. Attribution is in progress without production or
+cleanup changes. Log: `/private/tmp/pr2427-import-execution-native.log`; receipt:
+`$TMPDIR/pr2427-import-execution-native.8Tlqyh/fd_identity.jsonl`.
+The remaining six complete import UI/widget/Notes-reader files pass 176 tests,
+three warnings, in 112.06s; session 80321 is terminal. The final native inventory
+contains 59 descriptors: stdio, kqueue, two sockets, the established process-lifetime
+faulthandler stream and 52 SQLite-family handles from the two real file-backed
+import-flow tests. No new runtime/fixture changes have been made from this evidence;
+exact ownership attribution is the next gate. Log:
+`/private/tmp/pr2427-import-ui-native.log`; receipt:
+`$TMPDIR/pr2427-import-ui-native.ZDWkw9/fd_identity.jsonl`.
+
+Step 137's three additional complete Notes-session/Skills-browse/ingest
+characterization owners pass 58 tests, three warnings, in 14.10s
+(`/private/tmp/pr2427-six-wrappers-regression.log`). All selected functional
+tests pass; the newly attributed executor/import-flow resource qualification,
+final-head publication/review and normal protected merge remain open.
+
+### Exact import database owners and the next dev overlap
+
+Published `0b5ee223067f82625d277c93315218d74859e9d2` with an exact lease from
+`645126abf5`. Qodo's Direct-count finding received reply 3971905593 and its
+verified fixed thread was resolved. Final preflight on this source passes all
+seven checks with 3,734 unique IDs (`/private/tmp/pr2427-import-final-preflight.log`).
+This publication saves the reviewed rebase and wrapper repair; it does not close
+the separately recorded resource or merge gates.
+
+Step 138 fixes only the two real import-flow tests' finalizers. Each private
+database's interop views acquire thread-local connections during planning,
+execution and refresh. Closing only the pytest thread left 26 native SQLite-family
+handles per test. New zero-registry assertions reproduce both failures (11 and 12
+registered connections). Reusing the existing two-second same-file quiescence
+barrier after mounted work exits passes both attributed cases and the complete
+11-case file, with a final inventory of six standard descriptors and zero SQLite
+or lock retention. Full-file result: 11 passed, three warnings, 17.11s; existing
+quiescence/resource fault/foreign-owner controls: 31 passed, three warnings, 6.98s.
+Logs: `/private/tmp/pr2427-import-flow-owner-{red,green,controls,final}.log`.
+Receipt: `$TMPDIR/pr2427-import-flow-owner-final.FJHBJl/fd_identity.jsonl`.
+Independent diff review confirms unchanged functional assertions, interop cleanup
+and exact temporary-file ownership. Ruff, formatting and whitespace pass.
+
+New dev `4d921397b9` (PR 2544 Notes list) arrived after this qualification.
+The read-only integration review identifies a semantic trap as well as textual
+conflicts: the PR already reconciles an undone note exactly once while mutation
+admission is held; incoming code adds a second reconciliation in `finally` after
+release. Step 140 preserves the existing held call, new lifecycle guards and
+layout-before-kwargs behavior together with ADR-141's in-place callback ownership.
+Rebase waits for the executor fixture's complete terminal qualification and a
+saved checkpoint; no pending run is represented as a pass.
+
+Step 139 is now terminal and independently reviewed. The three actual-fixture
+controls initially fail on setup retention, body/worker retention, and missing
+cleanup-error propagation; all three pass after the exact-owner finalizer repair.
+A separate real foreign-path connection remains usable. The four attributed
+executor cases pass natively with no SQLite retention. Independent review caught
+an initially missed first cold-reopen boundary; it was corrected before the final
+frozen qualification, preserving the unrelated similarly named race test.
+The complete executor file passes 140 tests, two environment warnings, in 59.27s,
+exit zero, with exactly six final standard descriptors and no SQLite/regular-file
+retention. Log: `/private/tmp/pr2427-executor-native-complete.log`; receipt:
+`$TMPDIR/pr2427-executor-native-complete.ZNMlSy/fd_identity.jsonl`.
+Source blob `44481d578c2bd29a3703553c8f21a6ea1f0d11f8` stayed unchanged throughout.
+Scoped Ruff and whitespace pass; two inherited whole-file formatting differences
+outside the edited ranges are unchanged. Both resource-repair runs are terminal;
+new dev reconciliation can proceed without altering a running test's sources.
+
+### Notes-list rebase and current qualification scope
+
+Saved the verified resource fixes as `14b8ea3bb8`, then rebased all 244 commits
+onto dev `4d921397b9680d580cb2957d669f5b7990bf8785`. Current rebased checkpoint:
+`c4415548de4fd498bffa43a4f827ac497e357593`. The executor test blob remains exactly
+`44481d578c2bd29a3703553c8f21a6ea1f0d11f8`; the import-flow test adds only the
+incoming removal of the retired tree Sort control to its two verified finalizers.
+The 24-file union retains both lessons entries, bracket-title/whitespace assertions,
+typed late-bound controller ports, exactly-once gated Undo reconciliation, and
+layout-before-kwargs while preserving ADR-141 follow-up ownership. No commit was
+skipped and the unrelated untracked plan is preserved.
+
+The unchanged Screen guard now fails at 31,712 lines / 1,210 methods, versus
+31,689 / 1,213. Cap run: one failed, four passed, 0.77s
+(`/private/tmp/pr2427-list-rebase-caps-red.log`). Step 141 records eight audited
+redundant-wrapper removals and nine direct current-owner calls to pay down 24
+lines without dropping incoming lifecycle code or raising limits. Independent
+integration review and that regression-first repair are in progress.
+
+Complete adaptive-reader-state and Notes-tree-state tests pass 400 cases, two
+warnings, in 12.69s (`/private/tmp/pr2427-notes-list-state.log`). Four isolated
+widget-test sync calls still omit the new required `pane_width` input; step 140
+limits their migration to the existing constructor/current width contract, with
+all geometry, identity and focus assertions retained. The remaining complete
+Notes list/folder-navigation/rename/scoped-sync/canvas-sync/import-flow/shell/
+reader/residency and affected non-Notes wrapper-caller files still require stable
+source qualification. Published `0b5ee22306` is not yet updated with this rebase.
+
+Steps 140–144 follow-up: the four widget sync calls now pass their existing
+`pane_width`; complete Notes/import canvas files pass 68 tests (two warnings,
+16.71s), preserving geometry, input identity and focus assertions. Logs:
+`/private/tmp/pr2427-pane-width-{red,green}.log`.
+
+Eight audited wrappers (step 141) and two more (step 143) were retired in favor
+of their current existing controllers. Exact dispatch/inventory RED controls and
+the real threaded export-success control precede the change. Complete affected
+architecture/wiring/assembly/Screen guards and success control pass 76 tests,
+three warnings, in 2.12s (`/private/tmp/pr2427-two-wrappers-green.log`). Screen
+size is 31,688 lines / 1,200 methods: the line cap remains 31,689 and the earned
+method cap is tightened to 1,200. Independent receiver/AST review is clear.
+
+Step 142 reproduced three stale-visit failures at the final slice, filter and
+locator awaits, with the current-visit control passing. Six guard lines reuse
+the existing captured-generation predicate after those awaits. The first complete
+wave-list run passed 25 and failed two newly incoming layout fakes that still
+used a flat preferences port; that controller receiver already existed before
+the wrapper changes. Updating only the fake's owner nesting preserves all width
+assertions. Final complete native wave-list run: 27 passed, three warnings, 7.35s;
+six final standard descriptors and no SQLite retention. Log:
+`/private/tmp/pr2427-plan142-wave-list-native-green.log`; receipt:
+`$TMPDIR/pr2427-plan142-wave-list.lKZpo4/fd_identity.jsonl`. Independent guard
+and fake review is clear; original RED evidence remains recorded.
+
+Step 144 shortens only the Notes controller's historical module docstring:
+5,274 lines under the unchanged 5,276 cap. Executable AST, all bytes from imports
+onward, and the live contract section are identical. Independent documentation
+review is clear. Complete Notes wiring/module-cap run passes 61 and fails only
+the separate import-controller cap (`/private/tmp/pr2427-notes-doc-paydown.log`).
+That controller remains unchanged at 647/587; its entire docstrings total only
+53 lines, so a documentation-only repair cannot recover 60 lines. The proposed
+bounded-preview projection split requires user design approval and the written
+spec/ADR review before implementation; it is not a waived merge gate.
+
+The remaining eight Notes UI files and four non-Notes wrapper-caller files are
+qualifying in three source-frozen native cohorts. Fresh preflight, final-head
+publication/review/checks and protected merge are still pending. None of these
+running checks is represented as a pass.
+
+The four non-Notes caller files are terminal: 175 passed, three warnings, in
+218.96s (Conversation Reader 52, image preview 25, Media Trash 92, export 6).
+Final native inventory has only the three process baseline descriptors, zero
+added descriptors, no SQLite/locks and no observer errors. Log:
+`/private/tmp/pr2427-four-callers-native.log`; receipt:
+`$TMPDIR/pr2427-four-callers-native.IumOp5/fd_identity.jsonl`.
+Fresh preflight passes all seven derived-artifact checks and 3,734 unique task
+IDs (`/private/tmp/pr2427-list-final-preflight.log`). Scoped Ruff passes for
+the new lifecycle, dispatch, export, Notes-canvas and documentation changes.
+
+The folder-navigation/rename/scoped-sync/canvas-defect cohort finishes 149
+passed / three failed, three warnings, 137.66s. Two filter-clear fake variants
+lack the current settled-focus queue collaborator. The mounted topology Back
+case checks exact scroll before its queued restoration completes; its exact
+receipt offset remains the required oracle. Native final inventory also retains
+24 SQLite handles from two uniquely test-owned databases, `screen-status.db`
+and `mounted-folder-authority.db`, whose thread-local close does not retire
+worker-thread handles. Step 145 scopes current-collaborator/readiness test
+repairs and exact-owner finalization, with no production/global cleanup.
+Original evidence: `/private/tmp/pr2427-plan142-notes-cohort-native.log` and
+`$TMPDIR/pr2427-plan142-notes-cohort.CHLQEr/fd_identity.jsonl`.
+
+The separate shell/import-flow/Notes-reader/residency cohort remains running;
+its first failures are in the custom-preference width matrix. These are not
+classified or waived before terminal traces and diagnosis. At the current
+published head, all 54 GitHub review threads are resolved (no further page),
+but this does not substitute for fresh review/checks after publishing the
+rebased checkpoint. Protected merge remains blocked.
+
+Published the rebase/steps 140–144 checkpoint as
+`25f28bcbb1a9ca1b4aa80bdf3c5ba72e21f07f60` with an exact lease on `0b5ee22306`.
+Progress comment 5607662288 records the open failures; comment 5607662527 requests
+fresh `/agentic_review`, and Qodo has acknowledged that it is working. No new
+unresolved review thread was present at the subsequent check.
+
+Step 145 test-only repair is verified for its exact scope: both database-owning
+tests now use one per-test fixture with finalization from allocation through
+dependent setup/body, ordinary close followed by bounded same-file quiescence,
+and a zero-registry assertion. A real worker/failure/foreign-owner control proves
+the actual finalizer retires the owned handle, preserves the primary error and
+leaves another database usable. The two filter-clear fakes record the existing
+settled-focus collaborator while retaining all trusted-range assertions.
+Native targeted qualification: five passed / 113 deselected, three warnings,
+6.67s; six standard final descriptors and zero SQLite retention. Log:
+`/private/tmp/pr2427-plan145-five-native.log`; receipt:
+`$TMPDIR/pr2427-plan145-five-native.76AWrU/fd_identity.jsonl`.
+Root diff review, scoped Ruff and whitespace checks pass. This is not a claim
+that the complete folder-navigation file is green.
+
+The stronger bounded exact-scroll wait disproves the initial readiness-only
+hypothesis: topology Back still retains zero instead of six. The locator's
+explicit focus runs before layout, then automatic restoration refuses to steal
+the now-live focus and never schedules its scroll retry. Step 147 records a
+locator-local scroll-only after-refresh repair using the existing `current()`
+predicate at both scheduling and execution; it remains unimplemented during the
+frozen source run. Original failing evidence:
+`/private/tmp/pr2427-plan145-scroll-boundary-red.log`.
+
+Step 146 separately confirms two stale shell width oracles in isolated RED
+diagnostics: custom terminal120 resolves Items58 rather than56, and resize170
+resolves Items64/Work92 rather than56/100. These match the accepted TASK-32127
+comfort64 and TASK-31953 custom-width clamp contracts; every other work-budget,
+saved-setting, priority and hysteresis oracle remains required. The rail fit
+test separately passes count/fit/no-midword-cut but wrongly demands `Chats`
+even when the preferred full `Conversations (2)` fits. Logs:
+`/private/tmp/pr2427-custom-resize-diagnostic.log` and
+`/private/tmp/pr2427-rail-diagnostic.log`. No shell source edit during its run.
+
+Dev advanced again to fetched `e1d6e8be2ffccdfc596d00ecc63acec2c1a1bd03`:
+21 commits / 38 files add Notes onboarding and Obsidian import. GitHub now
+reports conflicts against published `25f28bcbb1`. Read-only integration review
+is in progress; no checkout/rebase occurs before current qualification becomes
+terminal. The import decomposition remains specifically design-gated, and its
+size must be reassessed against this incoming behavior rather than an old
+snapshot. Final-head review/checks and normal protected merge remain open.
+
+Step 148 addresses four new Qodo documentation/type findings on the saved PR:
+controller wiring (3972429709), cached handoff (3972429718), dictation lifecycle
+(3972429723), and export fixture (3972429732). Only the named callable docstrings,
+parameter/return annotations and two necessary type imports change. Normalized
+executable ASTs are identical; decorators, assertions, helper behavior and
+resource ownership are unchanged. Independent diff review and scoped Ruff pass.
+Complete affected files pass 96 tests: wiring/handoff 63 in 42.15s, dictation
+22 in 69.39s, export validation 11 in 4.69s, with existing environment warnings.
+Logs: `/private/tmp/pr2427-step148-complete.log`,
+`/private/tmp/pr2427-dictation-docs-green.log`, and
+`/private/tmp/pr2427-export-docs.log`. These unrelated Console files do not change
+the still-running frozen Library qualification; its original failures remain
+open. Review replies/resolution follow publication of this documentation batch.
+
+Main has now read incoming tasks 32126/32129/32140 completely. Step 149 records
+the read-only integration review's semantic unions and affected qualification
+owners; no rebase or incoming behavior change is applied during the active run.
+
+### 2026-09-09: terminal Notes cohort and bounded follow-up
+
+The original four-file native qualification is now terminal: **890 passed,
+23 failed**, ten warnings, 1967.26s, exit 1. Per-file results are import flow
+11 passed, shell 836 passed/22 failed, Notes reader 37 passed/1 failed, and
+phase-C resident canvas 6 passed. All 913 after-protocol receipts are present.
+Final inventory contains only stdio and the intentional process-lifetime
+faulthandler log: zero SQLite-family or instance-lock handles, sockets or
+kqueues. Log: `/private/tmp/pr2427-notes-four-native.log`; receipt:
+`$TMPDIR/pr2427-notes-four-native.3ok8FV/fd_identity.jsonl`. Session 65773 is
+closed; its source freeze has ended. This supersedes the active-run entries above.
+
+The failures comprise twelve custom-width expectations, one high-frequency
+resize expectation, one preferred rail title, eight consumers of the removed
+tree Sort control (seven shell cases and one reader case), and one title/age
+label expectation. Step 150 migrates the accepted tree contracts without
+skipping cases, restoring removed controls or dropping exact Back, keyboard,
+geometry, persistent preference and zero-nonlayout-work assertions. The reader
+capability inventory now pins tree Sort/chooser absence and passes its actual
+mounted scenario: one passed, three warnings, 7.81s;
+`/private/tmp/pr2427-reader-inventory-green.log`. Independent diff review is clear.
+The 37-case shell selection finishes 36 passed/1 failed, 821 deselected,
+three warnings, 95.18s (`/private/tmp/pr2427-shell-oracles-targeted.log`). All
+width, resize, rail, title, toolbar, compact and keyboard cases pass. The normal
+wide Back case now reaches its preserved assertion and exposes Filter focus and
+scroll zero instead of the selected row and scroll seven; its controlled delayed
+filter counterpart passes. This is a newly exposed runtime/ordering failure,
+not an oracle to relax. Read-only diagnosis continues. Independent shell diff
+review confirms the accepted contracts and retained assertions.
+
+Step 148 is published in `df5ef5291e295fd26305e6e10399034e4a056377`.
+All four named Qodo findings received published-fix replies and their exact
+threads were verified resolved. This does not establish current-head CI or
+review completion for the subsequent runtime changes.
+
+The user approved the bounded import-formatting design direction. The written
+[spec](../../Docs/superpowers/specs/2026-09-09-pr2427-import-review-formatting-design.md)
+passed independent review and is saved in `0b83367636`; user review of that
+written spec precedes implementation planning. Pure formatting alone does not
+close the whole controller size deficit; database/workflow ownership and caps
+are not silently expanded to make it pass.
+
+After the bounded step 147/150 repairs are verified and saved, integrate fetched
+`e1d6e8be2ffccdfc596d00ecc63acec2c1a1bd03` under step 149. Complete affected-file
+native qualification is intentionally deferred until that integrated source is
+stable; there is no claim that targeted controls replace it. Final-head checks,
+review and protected merge remain open.
+
+Step 147's topology-scroll repair is now ready for integrated qualification.
+It restores explicit locator focus synchronously, then schedules one scroll-only
+after-refresh retry for a receipt-owned offset, retaining the existing captured
+navigation/topology/lifecycle/focus and optional scroll guard at both boundaries.
+Independent review exposed eager scroll-owner lookup and callback-arity drift;
+four existing receipt controls reproduced the first issue. The correction keeps
+the original one/two-argument binding, exact-False veto and conditional scroll
+lookup. Three explicit-offset fakes expose only the new scroll collaborator;
+ordinary/failed-focus controls deliberately have no controller.
+
+Final focused locator/receipt group: 13 passed, 113 deselected, three warnings,
+4.03s (`/private/tmp/pr2427-plan147-final-compat-green.log`), after the four-case
+RED (`/private/tmp/pr2427-plan147-compat-red.log`). Complete wave-list: 27 passed,
+three warnings, 6.11s (`/private/tmp/pr2427-plan147-final-wave-list-green.log`).
+Exact Screen ratchet: two passed, three deselected, 0.62s
+(`/private/tmp/pr2427-plan147-final-cap-green.log`), 31,689 lines/1,200 methods,
+unchanged ceilings. Scoped Ruff/whitespace and independent rereview are clear.
+Complete folder/native qualification is still held for the integrated dev base.
+
+The separate two-Back rerun passes one and fails one in 21.30s
+(`/private/tmp/pr2427-back-diagnostic.log`). The failing parameter switches to
+the delayed-filter case but has the identical Filter-focus/list-zero symptom.
+This establishes timing sensitivity across both variants, not a fixed outcome
+from the locator repair. All original return assertions remain intact. After
+rebase, observation-only callback tracing may attribute receipt capture, guard
+expiry, pending release and late Filter focus without adding sleeps or changing
+production policy.
+
+## September 10: latest-dev rebase and integration checkpoint
+
+Replayed all 251 commits onto dev
+`4b905d25a7c6aa85511f9f5444643d6a3f7ac5ee`; resulting local head
+`617884de61e49a3cc696a58f8f9cf24f5f246e45`. The 443 changed Python/JSON
+files parse, the integrated diff passes whitespace checks, and no duplicate
+Backlog IDs occur across 3,839 task files. The unrelated untracked
+`2026-09-08-pr2427-library-reader-paydown.md` remains untouched.
+
+Conflict resolution retains upstream archive admission/reservations/cancelled
+draft recovery in the extracted submission owner, research refusal in Commands,
+archive recovery handlers and all consumer timers, independent conversation
+paging errors, exact migration-delta plus current-schema coverage, and the
+combined Watchlists stylesheet ownership. Notes retains semantic note selectors,
+fresh-age assertions, restored tree Sort and its chooser/filtered disabled state,
+ordered locator calls, reveal-only focus semantics and the exact Back receipt.
+Independent fixed-ref review clears plan147 and all six plan142 guard lines.
+
+Initial integrated architecture cohort: **202 passed, 13 failed**, eight warnings,
+161.86s (`/private/tmp/pr2427-rebase-architecture.log`). Eleven failures are
+unchanged size ceilings: ChatScreen +82, LibraryScreen +681, Conversations +113,
+Export +45, Ingest +234, Navigation +4, Import +64 against the auto-merged602,
+Notes +349, RAG search +4, Skill import +4, Unavailable navigation +23.
+The unintended auto-merged Import increase is restored to the original587,
+making its pre-extraction gap79. No increased ceilings are accepted.
+
+The other two architecture failures are addressed separately:
+
+- Incoming archive and new submission wiring called the retired Screen
+  `_current_console_conversation_id`. Both now resolve the existing session
+  owner, including replacement-owner late binding. Two focused controls
+  reproduce the exact AttributeErrors before the two-line fix
+  (`/private/tmp/pr2427-rebase-archive-owner-red.log`). New cancellation tests
+  initially called the retired observed-submit seam; that fixture now calls
+  the actual submission owner. All exact visible/background/closed draft,
+  foreign-tab, stash/task cleanup and recovery assertions remain.
+  Complete cancellation/recovery files: **31 passed**, three warnings,10.38s
+  (`/private/tmp/pr2427-rebase-archive-green.log`). Complete private-delegate
+  architecture: **66 passed**, two warnings,1.98s
+  (`/private/tmp/pr2427-rebase-delegate-green.log`). Changed-file Ruff and
+  independent repair review pass.
+- Diagnostic drift is aggregate arithmetic only. An independent rebuild
+  comparison confirms every non-summary entry—including statement digests,
+  classification and sink topology—is identical. Regeneration corrects
+ 604 owners,709 path candidates and7,669 TASK-494 calls; subsequent checker
+  passes with12 unchanged sink files. No diagnostic or privacy behavior changes.
+
+Complete Notes wave-list: **27 passed**, three warnings,9.32s
+(`/private/tmp/pr2427-rebase-wave-list.log`). Combined CSS integrity, boot-byte
+guard and Watchlists context files: **35 passed**, four warnings,38.77s
+(`/private/tmp/pr2427-rebase-css-tests.log`). Source rebuild produces no further
+stylesheet diff. The official snapshot updater (no force) records755,513 boot
+CSS bytes, within the existing ceiling. This census includes both the reviewed
+modal-default consolidation and newer dev styles.
+
+The approved import-formatting spec and plan were independently approved.
+Commit782bf6c202 moves only pure four-string formatting into the existing state
+module; exact body AST parity, privacy and controller effect ownership pass
+sequential independent spec and quality reviews. Final complete state/controller
+files:73 passed,2 dependency warnings,4.01s
+(`/private/tmp/pr2427-import-formatting-style-final.log`), after characterization
+GREEN and wiring RED. Ruff/scoped formatting pass. Controller628 remains41 over
+the original587 ceiling; the unchanged size suite finishes41 passed,11 failed
+(`/private/tmp/pr2427-size-final.log`). No cap failure is waived.
+
+Initial complete Notes Reader plus two Back cases finished35 passed,5 failed
+(`/private/tmp/pr2427-rebase-reader-back.log`). Three Reader errors call a
+Media fallback using the retired controller.applied_scope rather than ADR128's
+controller.state.applied_scope. Six direct controls fail with that exact
+AttributeError before the one-line receiver correction
+(`/private/tmp/pr2427-media-fallback-red.log`); they distinguish applied versus
+pending query state and disabled fallback controls. The two Back cases reach
+their selected-row focus but have an auto-merged stale `newest` assertion,
+contradicting the test's explicit persisted `title` setup. Correcting that exact
+oracle preserves row18, placement, list7 and rail2 assertions.
+
+Expanded verification then finishes67 passed,1 failed
+(`/private/tmp/pr2427-reader-back-green.log`), including all Reader and both exact
+Back cases. The sole failure is another stale oracle: the empty Media page now
+retains its toolbar, so its first enabled recovery control is Type, not Import.
+That exact target is corrected; cancellation and explicit-target assertions
+remain unchanged. Independent integration review clears these repairs.
+
+Final complete Reader, Media side-by-side, projection, crit9 Media-list,
+archive cancellation/recovery and both exact Notes Back cases pass133 tests,
+3 warnings,157.92s (`/private/tmp/pr2427-reader-media-native.log`). Observation-
+only native inventory at
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-reader-media-native.x55eYR/fd_identity.jsonl`
+ends with7 descriptors:stdio3, intended faulthandler log1, kqueue1 andsockets2;
+no SQLite or instance-lock handles. The final three first appeared during the
+first synchronous Reader test. Isolating that test reproduces them, but so does
+a minimal application-free async pytest test (1 passed,0.07s), with no project
+imports or fixtures:
+`/private/tmp/pr2427-pytest-loop-control.log` and
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-pytest-loop-control.FAQA6u/fd_identity.jsonl`.
+Installed pytest-asyncio's `_temporary_event_loop_policy` obtains then restores
+the old policy loop. This is the measured runner baseline, not evidence for a
+new application cleanup hook. No global cleanup or test-body change was added.
+
+All seven derived checks pass with the existing pinned Mermaid source cache
+(`/private/tmp/pr2427-rebase-cached-preflight.log`). An initial uncached run
+failed only for unavailable Mermaid input; no generated asset was replaced.
+The three changed Library test files pass Ruff; LibraryScreen retains the same
+49 existing Ruff findings as HEAD, adding none in this repair.
+
+GitHub dev advanced again to a5486ad4d4b070a7ee09cf592894a1844a21f4c9,
+60 commits/49 files after4b905d25a7. Preserve this verified checkpoint before
+integrating the new rail, reader and list-entry focus changes. These bounded
+passes do not qualify the entire integrated PR or new resource owners.
+
+Fresh GitHub read still reports OPEN at published
+`a7a180dbc16cc10e8f0a18c82608c64c0f5a144e`, with no unresolved review threads
+(pagination complete). Its external reviewer statuses are not current-head CI
+clearance. Publication, remaining affected tests/size repairs, final-head review
+and normal protected merge remain open.
+
+### September10 second latest-dev checkpoint
+
+Published c61962cfa437c7ca7907fc436e898e8dad43185e with an exact lease on the
+previous PR head, then replayed all253 review commits onto fetched
+a5486ad4d4b070a7ee09cf592894a1844a21f4c9. Result31d32d9d2c1d9773592d3ae17b38c4dd6998e457
+includes the additional60 commits/49 files. The only conflict areas preserved
+dev's task32237 measured17/17 More columns and unioned rail-heading/fold-cue
+CSS with the reviewed search-focus rules; the generated sheet was rebuilt.
+All28 newly changed Python/JSON files parse; integrated whitespace passes.
+Independent fixed-ref review verifies identical Notes locator/reconciliation
+and Media fallback ASTs, all six plan142 guards, original callback arity and
+focus veto, and no resurrected private delegate. Upstream's new retry handle
+retains generation fencing and cancellation on re-arm/disarm.
+
+Latest native qualification selects complete Notes Reader, Media side-by-side,
+Media render fixes, crit9 Media reader/rail/shell, rail widget and media viewer
+state files plus both exact Notes Back cases:337 passed,1 non-strict XPASS,
+5 warnings,486.26s (`/private/tmp/pr2427-latest-dev-native.log`). The XPASS is the
+unchanged upstream Conversations arrival pin (TASK32302); one successful run
+does not resolve its documented intermittency. Final native7 descriptors match
+the earlier measured baseline:stdio3, intended faulthandler1, runner kqueue1
+and socketpair2. No SQLite/instance-lock retention. Exact report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-latest-dev-native.bLVHvI/fd_identity.jsonl`.
+
+Companion complete collections reader, honesty/accessibility, Media scroller,
+Skills reader and post-release workspace-depth files:78 passed,2 failed,
+3 warnings,104.59s (`/private/tmp/pr2427-latest-reader-contracts.log`). Native
+final6 descriptors arestdio plus the same runner baseline, with no database
+or lock retention. Both failures demonstrate a retained Handoff summary that
+does not receive the source-arrival update, while its action button already
+uses current policy. No assertion or readiness delay was substituted. User
+approved passing owner-formatted text through the existing in-place rail
+refresh; written spec0516e9def6 awaits its required review gate before code.
+
+Latest CSS/budget/Watchlists35 tests pass,5 warnings,44.85s
+(`/private/tmp/pr2427-latest-css.log`); official boot census is unchanged755,513.
+All seven cached-input derived checks pass
+(`/private/tmp/pr2427-latest-dev-preflight.log`). Size/private-owner suite:
+126 passed,13 failed,2 warnings,3.32s
+(`/private/tmp/pr2427-latest-dev-size.log`). All failures are original size
+ceilings; new dev adds Collections and Skills overruns. LibraryScreen32715 is
+1026 over31689; import628 remains41 over587. No budget is raised. Remaining
+ownership decomposition, Handoff repair, final-head Qodo/checks and normal
+protected merge are open. Every process mentioned in this checkpoint is terminal.
+
+### September10 approved Handoff repair and Qodo callable contracts
+
+The user approved the independently reviewed written Handoff spec and the
+existing weekly follow-up. The bounded implementation plan was written and
+independently approved before production edits. No new policy, cleanup owner,
+dependency or architecture decision is introduced.
+
+Qodo comments3985628196 and3985628201 are repaired by local commitca0871b6ec:
+the command-route mutation parameter/return and database fixture Path argument
+now have accurate types and Google-style documentation. Normalized executable
+ASTs are identical; database finally-close and every assertion are unchanged.
+Both complete files pass77 tests,2 warnings,7.50s
+(`/private/tmp/pr2427-qodo-callable-docs.log`); scoped Ruff, whitespace and
+independent review pass. Publication and exact-thread replies follow the saved
+repair. Comment3985628204 remains open for actual size reductions, not cap raises.
+
+Handoff RED captures5 failed/6 passed in the new focused selection
+(`/private/tmp/pr2427-handoff-red-corrected.log`) and both original failures
+(`/private/tmp/pr2427-handoff-original-red.log`). The mounted regression reaches
+the stale-label assertion after confirming current button policy, retained
+identities, focus and exact nonzero scroll. Four other RED cases reject the
+previously absent keyword. The fix adds the optional presentation string to
+the rail's existing in-place update and passes the existing owner's formatter
+at all three Screen callers. No body-factory invocation or state cache is added.
+Omitted, empty and absent-row controls retain their distinct contracts.
+
+Focused GREEN:11 passed/89 deselected,3 warnings,9.43s
+(`/private/tmp/pr2427-handoff-green.log`). The complete action-sync and unchanged
+post-release workspace-depth files pass20 tests
+(`/private/tmp/pr2427-handoff-workspaces-green.log`). Three small files pass
+Ruff; Screen retains exactly its49 baseline findings. Sequential independent
+spec and quality reviews found no issues. Screen grows only the required nine callsite lines,
+to32724/31689. Fresh size/private-owner guards finish126 passed/13 failed,
+2 warnings,3.44s (`/private/tmp/pr2427-handoff-size.log`), with the same13 size
+failures and no raised ceilings.
+
+Published e11bbb1cfd's entire PR Fast Lane workflow34557609212, including its
+derived-artifact job, is now successful. Dev subsequently advanced8 commits
+to0fcb79e596b3e527778c56867cf7ee0c62c17894; read-only comparison shows only ten
+Backlog files. Save and qualify the repair before that next rebase. This
+published-head CI result is not clearance for unpushed code or a protected merge.
+
+The complete four-file native run is terminal:135 passed/1 failed,3 warnings,
+168.24s (`/private/tmp/pr2427-handoff-native.log`). All original Handoff cases
+and new controls pass. The final inventory has six descriptors (stdio plus
+the already attributed pytest selector-loop/socketpair baseline), no SQLite
+or instance-lock retention. Report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-handoff-native.PxhU1U/fd_identity.jsonl`.
+All seven derived checks pass (`/private/tmp/pr2427-handoff-preflight.log`).
+
+The one unchanged failure is
+`test_pending_conversation_open_cannot_overwrite_same_route_user_selection`:
+its selected-ID, SUPERSEDED result and canvas-identity assertions pass, but it
+expects focus on a row disabled by the in-flight locator. It reproduces alone
+(`/private/tmp/pr2427-handoff-conversation-focus.log`) and with the exact
+pre-repair LibraryRail.sync_state body, discarding only the newly added summary
+keyword (`/private/tmp/pr2427-no-handoff-control-fixed.log`). An observation
+before locator release proves loading=True, row.disabled=True, row attached,
+and focus already on library-conversations-library-grip; a new diagnostic
+precondition fails before the original asynchronous race assertion
+(`/private/tmp/pr2427-focus-disabled-evidence.log`). This is not TASK32302.
+The loading-disabled projection comes from incoming TASK32275/ADR147; no
+production focus or loading policy was altered. The temporary diagnostic
+runner lives outside the repository and changes no retained test assertions.
+The user was asked to approve an enabled rail-Search focus target with an
+explicit acquisition precondition while preserving the selected-ID, owner,
+SUPERSEDED and exact-focus oracles. That test-only correction is not yet made.
+Do not report the full136 as green. Protected merge remains blocked by this
+fixture repair,13 size ceilings, and final-head review/checks.
+
+The approved follow-up rebase is complete: all257 review commits replayed onto
+dev0fcb79e596b3e527778c56867cf7ee0c62c17894 without conflict. Rebased repair
+f5ee9cd703212300887e9842bd53b2fab0266aae and callable-docs b814fb007f preserve
+the prior verified contents. A whole-tree comparison to saved e8cc9e2803 shows
+only the ten incoming Backlog files; production, tests, scripts, workflows and
+project configuration are byte-identical. Post-rebase all seven preflight
+checks pass (`/private/tmp/pr2427-handoff-rebased-preflight.log`). All local
+verification processes are terminal. Publication follows this documentation
+checkpoint; the unrelated untracked September8 plan remains untouched.
+
+### September10 approved focus fixture correction
+
+Step156 is approved. With the original disabled-row target, the new pre-release
+focus-acquisition assertion fails before the locator is released
+(`/private/tmp/pr2427-focus-acquisition-red.log`). The corrected fixture uses
+the existing rail Search Input, asserts attached/enabled and actual focus, and
+retains the original SUPERSEDED, selected-ID, canvas-identity and exact-focus
+assertions. The exact case passes1 test,3 warnings,4.10s
+(`/private/tmp/pr2427-focus-acquisition-green.log`). Independent review finds no
+issues; scoped Ruff and whitespace pass. No production source was modified.
+
+Complete four-file native rerun is terminal:136 passed,3 warnings,164.43s
+(`/private/tmp/pr2427-approved-focus-native.log`). Final inventory has only
+stdio plus the previously attributed pytest selector-loop/socketpair baseline;
+no SQLite/instance-lock retention. Exact report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-approved-focus-native.lnCrls/fd_identity.jsonl`.
+All seven derived checks pass (`/private/tmp/pr2427-focus-qodo-preflight.log`).
+The13 separate architecture size failures remain; no ceiling or runtime policy
+changed. Dev still equals0fcb79e596 at this verification checkpoint.
+
+### September10 six additional Qodo findings
+
+Step157 verifies and repairs comments3985730238/240/242 with callable
+documentation/types only. The complete gateway file passes15 tests after
+permission for its test-owned localhost listener
+(`/private/tmp/pr2427-qodo-gateway-escalated.log`). The initial sandbox-denied
+listener run remains recorded, not treated as a product failure. Both complete
+Live Notes tests and both selected scripted-authority cases pass; no inference
+or external service is invoked (`/private/tmp/pr2427-qodo-callable-tests.log`).
+Complete-module normalized AST equivalence, including unchanged assertion and
+fixture lifetimes, passes via `/private/tmp/pr2427-qodo-callable-verify.py`;
+changed-range Google-doc/type lint and formatting pass.
+
+Comments3985730245/249 are corrected against the actual registered descriptor
+table and ADR113:21 Library tools comprise15 item reads over five types plus
+six chunking/note-write tools; generic Collections tools are retired, and
+document expansion overlaps four of five direct item-get seams. Comment
+3985730254 removes only the identical duplicate task_31551_calls:0 literal.
+Evaluated expected mapping remains identical, and both real fixture variants
+produce it (`/private/tmp/pr2427-qodo-inventory-proof.EGxjuB/mapping-proof.log`).
+Complete diagnostic-inventory, Library tool contract, MCP Library tools and MCP
+documentation-contract files pass238 tests,8 warnings,178.33s
+(`/private/tmp/pr2427-qodo-inventory.ILhOfa/tests.log`). Actual production
+inventory rebuild is unchanged:604 owners,1351 TASK492,55 TASK31551,7669 TASK494,
+12 sinks (`/private/tmp/pr2427-qodo-inventory-proof.EGxjuB/inventory.log`).
+Independent six-file review finds no issues; no production code or generated
+inventory artifact changes. Publication precedes exact-thread replies and
+resolutions. The existing size-budget Qodo thread remains open.
+
+### September10 latest Console rebase qualification
+
+Published7c9bc7942a includes the approved focus correction and six Qodo fixes.
+All six exact review threads were replied to and resolved (replies3985783348,
+3985783466,3985783567,3985783668,3985783722,3985783831). The size-budget thread
+PRRT_kwDOOcyyl86hU_qn remains open. Published-head Fast Lane and derived-artifact
+workflow34560234635 completed successfully; that result does not qualify the
+subsequent rebase.
+
+Step158 replays260 commits without conflicts onto dev
+3afa68f1b99103ec8b5b5f19921ac480ad9344ac, reaching local89143266ba. Independent
+review confirms the normalized whole-tree delta from saved8b28404995 is exactly
+the twelve incoming dev files; earlier repairs and incoming TASK32311/ADR083
+behavior are preserved. Library runtime/widget/focus tests and the six Qodo
+files retain their verified bytes. Remote dev still equals3afa68f1b9 at the
+post-verification read; remote PR head still equals7c9bc7942a before publication.
+
+The complete five-file Console native cohort is terminal:271 passed,8 warnings,
+418.73s (`/private/tmp/pr2427-console-dev-native.log`). Files: character-avatar,
+avatar-geometry-offloop, rail-reconciliation, tick-gating, workspace-controller.
+Its final native inventory is NOT clean:500 live descriptors include493 SQLite
+handles, zero instance-lock handles, stdio, the already measured pytest
+selector-loop/socketpair baseline, and one process-lifetime faulthandler log.
+Exact final SQLite attribution:438 handles first seen in character-avatar
+tests,48 in imported avatar-geometry-offloop fixtures, and7 in
+test_rail_height_drives_adaptive_cap_through_the_mounted_ui. These are final
+live handles, not cumulative additions or a count of distinct databases.
+Report:
+`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-console-dev-native.NDidYy/fd_identity.jsonl`.
+
+Read-only diagnosis identifies the avatar fixture's current-thread-only
+close_connection after worker-thread reads; its imported offloop fixtures
+execute in the original avatar module, so blindly patching the importing
+module's builder cannot establish ownership. The workspace case retains its
+own adaptive_cap_chats.db and WAL/SHM handles. Any repair must drain admitted
+work before exact-owner quiescence and protect failure/cancellation and foreign
+owners. No shared fixture, runtime, cleanup policy or test assertion has been
+changed for these new findings; no global cleanup or forced GC was used.
+
+All seven post-rebase preflight checks pass
+(`/private/tmp/pr2427-console-dev-preflight.log`). Size/private-owner cohort:
+126 passed,13 failed,2 warnings,3.55s
+(`/private/tmp/pr2427-console-dev-size.log`). The same13 ceilings fail;
+ChatScreen is16889/16811 and LibraryScreen32724/31689. No cap was raised.
+The proposed pure Handoff-summary helper move remains separately design-gated
+and is not implemented. All local test processes are terminal. AC1/3/4 and
+normal protected merge remain open for resource repair, size paydown and
+final-head review/checks. The unrelated untracked September8 plan is untouched.
+
+### September10 formatter preimplementation review
+
+The user approved the written pure-Handoff-formatter spec, requested a further
+review, and then approved continuation. Independent review found no wrapper,
+free-global or architectural compatibility blocker. Verification is strengthened
+with actual helper residency and exact one-call forwarding assertions, rather
+than relying on the existing support guard's name-presence checks alone.
+The implementation plan is independently reviewed and approved:
+`Docs/superpowers/plans/2026-09-10-pr2427-handoff-formatter-extraction.md`.
+
+Review uncovered another existing gate failure before any runtime/test changes:
+screen preimport adds504 modules against500. The complete support/Library
+packaging/preload group returned9 passed/1 failed,2 warnings,8.53s
+(`/private/tmp/pr2427-formatter-review-tests.log`); the complete preload file
+reproduced alone in2.74s (`/private/tmp/pr2427-formatter-preload-repeat.log`).
+Six selected Handoff output cases passed,3 warnings,3.81s
+(`/private/tmp/pr2427-formatter-review-output.log`). Runtime and test bytes were
+verified unchanged from02597164ff. The safe isolated helper-import probe found
+eligibility already loaded and zero additional modules, but it does not replace
+the full preload-budget gate. Do not raise that budget or repair unrelated
+preload ownership inside the formatter move.
+
+### September10 formatter extraction qualified
+
+Step159 is implemented in eca8c083e7c4b27fadf6d8d8a7fe40515eca69ce. The helper
+body, including comments/docstring, is byte-identical after dedenting; executable
+AST is identical. The Screen keeps its original signature and four production
+callers, adding only the helper import/delegate, removing unused re and making
+the existing prefix-constant re-export explicit. All prior helper/test definitions
+are AST-identical. Independent parity checker:
+`/private/tmp/pr2427-formatter-parity.dGsOq0/check.py`.
+LibraryScreen32724 ->32664,60 lines removed;975 remain above its31689 ceiling.
+No size or preload limit changed. Mechanical-move blame provenance is recorded.
+
+The new positional/keyword delegation guard failed twice on the original missing
+helper before production edits (2 failures,8 deselections,0.97s; original output
+retained in the task's tool history, not a persisted log). It now proves actual
+helper module/globals, identical Screen re-export, exactly one identical-state
+call and unchanged sentinel return. Full support10 passed,2 warnings,4.05s:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-handoff-support-final.KOltnx/pytest.log`.
+Six existing Handoff unit cases passed,3 warnings,2.13s:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-handoff-unit-final.7qDCGN/pytest.log`.
+
+Complete frozen five-file UI native run:153 passed,3 warnings,171.39s
+(`/private/tmp/pr2427-formatter-native.log`). Final inventory has six standard
+descriptors (stdio plus previously attributed pytest selector/socketpair), zero
+SQLite and zero instance-lock handles. Report:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-formatter-native.aOiGxD/fd_identity.jsonl`.
+This does not resolve the separate Console cohort's493 retained SQLite handles.
+
+Complete support/packaging/preload/size group:50 passed,14 failed,2 warnings,
+8.72s (`/private/tmp/pr2427-formatter-guards.log`). Failures are the same13 size
+ceilings plus the separately reproduced504/500 preload limit; no new failure.
+Both full private-owner files pass87 tests,2 warnings,3.10s
+(`/private/tmp/pr2427-formatter-private-guards.log`). All seven derived checks
+pass (`/private/tmp/pr2427-formatter-preflight.log`). Helper/test Ruff and
+whitespace pass; Screen Ruff remains exactly49 baseline findings, with identical
+code/message multiplicities and no additions. Sequential independent spec and
+code-quality reviews found no issues. All local test processes are terminal.
+TASK31932 remains In Progress; normal protected merge remains blocked.
+
+### September10 composer-width rebase qualified
+
+Step160 rebased all266 commits from5cdda8bd43 onto fetched dev
+d80d85d9714513c48ef7cff5582cada537546f48 atb4226385c4750804f01e06979211fec0716290f6.
+The single on_resize conflict preserves the upstream docstring and cached voice
+replay plus this PR's attachment-width sync before reason sync. Independent
+review confirms the whole-tree delta is exactly the four incoming files; after
+normalizing diff offsets/index hashes, its hunks match the incoming delta.
+All prior action/Redirect/attachment assertions and incoming voice budget/cache,
+same-turn idle restoration and preparing exemption remain. No review findings.
+Formatter parity is still exact; its mapped move commit is
+f6274c1e5aa6862d8fc50ac9320c6ace468c9dad, now recorded in blame-ignore metadata.
+
+Complete reason-width/dictation/dictation-streaming native qualification:
+131 passed,3 warnings,308.12s, exit0. Log:
+`/private/tmp/pr2427-composer-dev-native.log`; native report:
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-composer-dev-native.BkEa7C/fd_identity.jsonl`.
+Final six descriptors are stdio plus the measured pytest event-loop pair/selector
+baseline; zero SQLite and zero instance-lock handles. This does not resolve the
+separate avatar/offloop/workspace493SQLite finding.
+
+Complete support/packaging/preload/size guards:50 passed,14 failed,2 warnings,
+8.79s (`/private/tmp/pr2427-composer-guards.log`): same13 size breaches and
+preload504/500, no caps raised. Composer/runtime-test Ruff and whitespace pass.
+All seven derived checks pass across the ordinary preflight and exact Mermaid
+retry: `/private/tmp/pr2427-composer-preflight.log` records six passes and a
+sandbox-unavailable pinned input; `/private/tmp/pr2427-composer-mermaid.log`
+records all six generated Mermaid outputs reproducing with declared pinned
+public inputs. An initial isolated-mode standalone script attempt could not
+import its sibling module; the documented non-isolated script invocation passed.
+No generated artifacts changed. All local verification processes are terminal.
+
+Immediately before publication, remote PR still equals8d7fdf68485bf4b293033c6af4ea7c39243754d6,
+but dev advanced again to423ae37c1b5394cb596d0d975c1579c9e6f790d3. Inspect that
+delta before any further integration; this evidence qualifiesd80, not the new
+unread tip. Fresh paginated review still has only the existing size thread open.
+TASK31932 AC1/3/4 and normal protected merge remain open.
+
+### Notes critique rebase and fixture qualification (2026-09-10)
+
+Rebased the published f87779b02abdf48b83e17938fd835fb057970bd3 checkpoint
+onto dev423ae37c1b5394cb596d0d975c1579c9e6f790d3, yielding local
+5fb70876dff1215e30274bb7e81e4f95fe6d40ca before follow-up repairs. The sole
+shell-test conflict retains the new Library notes noun and the existing
+loading-aware Next assertions. Independent whole-delta review found the same
+955 normalized change lines across the25 incoming files, with no lost PR or
+upstream behavior. The Handoff formatter ignore entry now names its exact
+rebased commit1d8af2c9dfa231cc6c5cc44e8fbf9d2335d0023b.
+
+Initial native cohortA could not collect because two duplicate pane_width
+keywords already existed before this rebase. Removing only each redundant
+copy, updating one retired compact-heading prefix, and dropping its unused
+stylesheet import leaves all37 Notes widget tests passing. Independent review
+approved the exact patch; production styling and assertions are retained.
+
+The eight-file native rerun completed214 passed/1 failed in269.16s:
+`/private/tmp/pr2427-notes-dev-native-a-final.log`. Terminal native inventory
+retained146 SQLite handles and zero instance-lock handles. Historical owner
+attribution places62 in the three Obsidian import tests and84 in the journey
+import/conflict tests; these are final live identities, not cumulative opens.
+
+The Obsidian helper's current-thread-only close was independently reproduced
+by actual-helper setup/body/cancellation controls: owned registrations remained
+2/1/1. The helper now protects setup from database allocation onward, disposes
+the service cache, and uses existing bounded same-file quiescence after the
+enclosing host exits. All17 complete import-flow tests pass in32.24s, with
+zero terminal SQLite or instance-lock handles. The controls preserve the exact
+raised exception and prove a foreign-path connection remains usable. Evidence:
+`/private/tmp/pr2427-import-fixture-red.log` and
+`/private/tmp/pr2427-import-fixture-green.log`. Independent review is clear.
+
+The lone behavior failure was a painted-text oracle: the complete server
+warning was visible, but capability and not installed wrapped onto adjacent
+rows. Reuse the existing compositor-region helper and require the complete
+phrase after whitespace normalization; retain disabled state, Back visibility,
+navigation and both viewports. All30 complete journey tests pass in50.41s;
+independent review is clear. The separate journey resource problem remains:
+this standalone run retained76 SQLite handles (34 import and42 conflict),
+zero instance locks. Counts vary with worker connections, not ownership.
+Evidence: `/private/tmp/pr2427-notes-server-painted-screen.log` and
+`/private/tmp/pr2427-journey-paint-green.log`.
+
+Read-only in-memory diagnosis of four early cohortB failures verifies that
+three still select the retired Files task-return control. TASK32136 retains
+the source strip and its guarded Library notes button instead. The fourth
+also scrolls before the list has scrollable geometry: before_list_scroll is0,
+before the return action. Waiting for max_scroll_y>=5 before capturing the row,
+then using the accepted source button, passes every original exact receipt,
+focus and scroll assertion. These B-source repairs are not implemented while
+its full1018-case run remains frozen. Evidence:
+`/private/tmp/pr2427-notes-source-switch-probe.log`,
+`/private/tmp/pr2427-notes-source-switch-exact.log`, and
+`/private/tmp/pr2427-notes-return-ready.log`.
+
+Complete guards remain176 passed/15 failed:13 unchanged size ceilings,
+preload504/500, and seven unconsolidated widget CSS declarations. CSS bytes
+pass757059/768000. The seven declarations are WorkspaceArchiveReceiptModal,
+BuddyConversationModal, BuddyManagementModal, BuddySpeechControls,
+BuddyWorkspaceModal, WorkspacePersonaDefaultModal and WorkspacePersonaPicker.
+All seven derived preflight checks pass; no artifacts or caps were changed.
+Evidence: `/private/tmp/pr2427-notes-dev-guards.log` and
+`/private/tmp/pr2427-notes-dev-preflight.log`. Fatal scoped Ruff checks and
+whitespace pass; full lint/format still have inherited findings, with no new
+diagnostics after the test-context formatting correction.
+
+An observation-only import trace confirms two eager entry routes: Library media
+imports meeting_session, while Meetings imports meeting_owner, system_audio_tap
+and wav_writer. No preload repair is implemented; changing only the Meetings
+route would not remove all four Audio modules. The separately recorded
+Console493 SQLite finding is also still open. Latest remote read confirms
+dev423ae37 and published PRf87779b unchanged, with only Qodo size thread
+PRRT_kwDOOcyyl86hU_qn unresolved. Final eight-file rerun completes218 passed,
+3 warnings in274.60s (`/private/tmp/pr2427-notes-dev-native-a-verified.log`).
+Terminal observation retains86 SQLite handles, all attributed to the still-open
+journey owners (44 import and42 conflict), zero from the repaired Obsidian
+fixture and zero instance locks. The1018-case B run remains in progress;
+no complete-PR or merge-readiness claim.
+
+All seven derived checks pass again on this repair checkpoint:
+`/private/tmp/pr2427-notes-fixture-preflight.log`. No generated output changed.
+
+## 2026-09-11: terminal B failures and targeted reconciliation
+
+The previously running B cohort is terminal: **986 passed, 32 failed**, 10
+warnings in 4778.73 seconds. Its native final inventory contains four descriptors,
+zero named SQLite handles and zero instance locks. Evidence:
+`/private/tmp/pr2427-notes-dev-native-b.log` and
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-notes-dev-native-b.Keh6x6/fd_identity.jsonl`.
+
+Work remains on published `81dadcc80bc92988f9def977992708a96c36b6a5`, before
+another dev rebase. TASK31932 steps166–167 record the bounded plan. Re-running
+the exact32 first produced **30 failed, 2 passed** in154.98 seconds
+(`/private/tmp/pr2427-32-baseline.log`). The two isolated passes were not dismissed:
+controlled worker/mount ordering subsequently reproduced both original NoMatches
+failures in37.25 seconds (`/private/tmp/pr2427-lifecycle-proof.log`).
+
+Test-only corrections follow existing accepted contracts: retained Files source
+switch and settled list scrolling; five-cell grips; landing Ctrl+N; separate
+conversation source handoff versus Resume and active archive scope; Settings
+credential recovery; singular export counts; authoritative saved timestamp;
+Notes Info/delete geometry and exact visible keyboard scroll origins; removed
+context row and token display; Search-only query commits; explicit focus-channel
+prerequisites. No product behavior, skips, caps, or cleanup ownership changed.
+Independent review approved the Files diff and identified two Shell copy
+assertions to strengthen before accepting the final patch.
+
+Files return checks: **6 passed** in20.48 seconds, zero final SQLite/locks
+(`/private/tmp/pr2427-files-four-green.log`, native report directory
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-files-four-green.Duou39`).
+The corrected exact32 run is terminal: **29 passed, 3 failed** in87.48 seconds
+(`/private/tmp/pr2427-32-contract-green.log`, native report directory
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-32-contract-green.EGHkqV`).
+Its remaining failures concern Notes deep-link focus after resize, Notes footer
+registration, and attached focus after an empty Conversations recompose. The
+two controlled lifecycle defects remain open despite passing this ungated run.
+Both exact32 runs retain13 SQLite descriptors and one instance lock, with final
+identity/path evidence pointing to the last empty-Conversations fixture; this
+cleanup difference from complete B is under investigation, not accepted.
+
+Read-only attribution explains the observed last-test retention: installed
+pytest retains the final failure in `sys.last_value`/`sys.last_traceback`/
+`sys.last_exc`, clearing it at the next test call. The retained traceback holds
+the empty-Conversations test's app/host/screen; complete B continues after that
+test, whereas exact32 ends there. This is a source-backed explanation, not a
+successful cleanup qualification. Fix the failure and repeat native attribution;
+do not clear process globals or add forced collection to manufacture a result.
+
+Runtime evidence: Files `_initialize` resumes with `is_running=False` while
+`_active`, `is_mounted`, and `is_attached` are still true, then queries an already
+removed path label. Notes backlinks project while the mounted work pane has
+no editor children. The footer's last incorrect publisher is pane visibility
+refresh calling generic `_register_footer_shortcuts`; the Notes-specific helper
+still returns the correct expected tuple. A temporary diagnostic selector
+correction repairs navigator/create/sync footer states, exposing a further stale
+exit expectation for the accepted search-input typing context. Runtime fixes
+are proposed, not implemented; the skill-required design approval is pending.
+
+Scoped fatal Ruff and whitespace checks pass. Complete owning files have not
+been requalified after these edits. No commit, push, rebase, or merge was made
+during this failure-investigation batch; all previously documented size,
+preload, CSS and separate resource-owner blockers remain open.
+
+Final contract refinements: preserve the original selected Notes rail-row focus
+after compact resize (TASK32233 changed the preceding Escape hop, not this
+fallback), and strengthen the RAG callout/export checks to exact text. These
+three tests pass in6.53 seconds, with six final descriptors and zero SQLite/locks:
+`/private/tmp/pr2427-contract-refinements.log`, native report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-contract-refinements.IUMxF9/fd_identity.jsonl`.
+Combined targeted evidence now verifies corrections for28 of the original32
+failures. It does not establish a clean complete-file run.
+
+The remaining four are runtime defects. In addition to the two lifecycle races
+and footer overwrite, empty Conversations has a missing focus fallback. Its
+test initially injected a detached rail row; reacquiring the current attached
+row corrects that fixture, but a controlled recompose still leaves focus None
+beyond the settlement deadline. The true empty page offers Start in Console,
+not the filter its registered focus channel searches for. Evidence:
+`/private/tmp/pr2427-focus-current.log` (1 failed in6.07 seconds).
+The proposed fourth narrow fix extends that existing channel to the already
+visible recovery action; no new owner or navigation policy is proposed.
+
+The footer test's final exit expectation now pins exact rail typing help.
+Temporary diagnostic selection control plus that expectation and the old metric
+assertions passes the whole test in3.81 seconds
+(`/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-footer-exit.JluVS2/exit-control.log`),
+but no tracked runtime change exists. All diagnostic and verification processes
+are terminal. Final fatal scoped Ruff and whitespace pass. Step168 records these
+refinements and the four design-gated runtime candidates.
+
+Final independent review caught a further footer contract violation: that
+diagnostic observed the retired token indicator displayed (empty) on exit,
+because the Notes ancillary publisher still reveals all three indicators.
+TASK17653 requires it to stay hidden; the final test now requires word/DB
+visibility and separately hidden/empty token state, matching its sibling.
+Do not preserve the passing old visibility assertion or claim the temporary
+control qualifies this strengthened test. Include retirement-safe ancillary
+publication in the pending Notes footer fix; no runtime edit has been made.
+
+### Approved direction and written-spec checkpoint
+
+The user approved the targeted runtime fixes on2026-09-11. The written design is
+`Docs/superpowers/specs/2026-09-11-pr2427-library-runtime-repairs-design.md`, saved
+in design-only commit `7906de42ef`. Independent spec review approved it without
+findings. It preserves existing owners and includes the token-indicator repair
+within the footer area. ADR086/141 apply; no new ADR is required.
+
+The required written-spec user review remains before implementation planning.
+No runtime edit, test execution, push, rebase or merge occurred in this design
+checkpoint. Previously verified test corrections remain uncommitted and intact.
+
+### Approved runtime repair implementation (2026-09-11)
+
+Written-spec approval is received; the prior approval gate is closed. The
+independently reviewed plan is
+`Docs/superpowers/plans/2026-09-11-pr2427-library-runtime-repairs.md`.
+One implementation owner changed only the four approved runtime owners and the
+two existing UI test files, preserving the earlier28 contract corrections.
+Notes retains the newest snapshot before checking editor-child readiness;
+Files skips stopped control projection without abandoning its acquired runtime;
+footer registration uses the existing Notes-aware selector and no longer
+reveals the retired token; empty Conversations tries the existing filter then
+the attached/focusable Console recovery action without activating it.
+
+Controlled RED establishes five intended failures, including both actual
+`NoMatches` worker errors: `/private/tmp/pr2427-runtime-red-implementation.log`
+(5 failed,30.05s). Expanded GREEN passes13 in26.42s, including rootful/rootless
+late initialization, retained remount and exact replica close, latest Notes
+snapshot/EditorReady/dirty edit, footer replacement and token retirement, and
+Conversations filter/expiry/newer-focus controls:
+`/private/tmp/pr2427-runtime-green-expanded.log`. Its native report is
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-green-expanded.SnQHeP/fd_identity.jsonl`:
+six final descriptors, zero SQLite or locks. The mounted sibling Media footer
+typing control passes1 in3.39s, also six final descriptors/zero SQLite or locks:
+`/private/tmp/pr2427-runtime-media-control.log` and
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-media-control.jEBx1V/fd_identity.jsonl`.
+
+The wider controls are17 passed/4 failed, not clean:
+`/private/tmp/pr2427-runtime-final-controls.log`. All four failures are in
+untouched `Tests/UI/test_library_footer_focus.py`, whose `SimpleNamespace`
+omits `_library_narrow_stage_return_active` used by the byte-identical baseline
+generic dispatcher. These failures are recorded, not skipped or weakened.
+That run also ends with six descriptors/zero SQLite or locks. Initial GREEN
+diagnostics exposed two new-test mistakes (wrong owner alias/first-paint receipt
+and the formatter's literal leading blank); they were corrected in tests,
+without relaxing exact content, ordering or focus assertions.
+
+Fatal scoped Ruff and whitespace pass. Full scoped Ruff has exactly the same
+309 filename/code/message findings as baseline, not a clean-full-lint claim.
+Six derived-artifact checks pass in
+`/private/tmp/pr2427-runtime-preflight.log`; the sandbox could not acquire the
+declared Mermaid input. The unchanged hash-pinned checker succeeds with network
+access in `/private/tmp/pr2427-runtime-mermaid-retry.log` (all six generated
+outputs reproduce). No generated files were changed.
+
+Implementation review and integrated qualification are in progress. The
+independent unsharded inventory contains1063 cases across both complete UI files
+and `Tests/Widgets/Library/test_library_notes_canvas.py`. Three deterministic
+native-observed shards cover that inventory without xdist; their union must be
+checked for exact-once coverage. Original32 plus eight controlled cases run
+separately, unsharded. Sources are frozen; no rebase, publication or merge is
+claimed while these runs remain pending.
+
+The first original32-plus-eight run completed40 passed in96.31s with six final
+descriptors and zero SQLite/locks: `/private/tmp/pr2427-runtime-original32.log`,
+report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-original32.zkGEIL/fd_identity.jsonl`.
+Independent spec review then required a stronger no-navigation observation:
+the harness can stay on Library while a separate app receives a Console-open
+call. Behavior-preserving spies now wrap the real app method and assert zero
+calls after empty entry/recompose and expiry/newer-focus recovery. All three
+strengthened cases pass in9.56s, six descriptors/zero SQLite or locks:
+`/private/tmp/pr2427-runtime-navigation-spy.log`, report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-navigation-spy.ln7wYl/fd_identity.jsonl`.
+Spec re-review approves Task1 without remaining findings; quality review follows.
+
+Before that assertion edit, the three full-file shards were deliberately
+stopped. Shards0/1 ended on interrupt (exit2;50/87 passed), and shard2 required
+termination after not responding to interrupt (exit143; incomplete). Their
+`/private/tmp/pr2427-runtime-shard{0,1,2}.log` files are aborted diagnostic
+evidence only, never complete coverage or cleanup qualification. Fresh full-file
+processes and an original32-plus-eight rerun are required after final review.
+
+Quality review found a real remaining partial-mount race, so Task1 is not yet
+approved. Holding `#library-note-context-keywords-row` before its children mount
+while the real title is already queryable reproduces `NoMatches` for the context
+keywords field. The whole-subtree regression still passes under this probe,
+demonstrating its coverage gap. The reviewer made no source changes. The writer
+is adding this controlled partial-child case and checking every unconditional
+projection target before writes, as already allowed by the approved spec/plan.
+Latest snapshot retention and existing post-compose replay must remain intact.
+No full-file qualification has restarted, and no implementation commit or push
+has occurred while this finding is open.
+
+The partial-mount refinement is implemented: require the existing direct
+children's mounted state in addition to title presence before any projection.
+Textual recursively awaits composed descendants before marking each direct root
+mounted; no new state flag, coordinator, selector inventory or exception handler
+is needed. The same Notes regression now gates five branches. With the old guard,
+four partial branches fail through real backlinks with missing context keywords,
+mode control, wide keywords and delete confirmation; the whole-pane control
+passes (4 failed/1 passed,18.85s, `/private/tmp/pr2427-notes-partial-red.log`).
+Final targeted controls pass11 in23.25s:
+`/private/tmp/pr2427-notes-partial-green.log`, report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-notes-partial-green.u24Y6l/fd_identity.jsonl`.
+Final six descriptors include zero SQLite/locks. Fatal Ruff/whitespace pass and
+the complete scoped lint multiset remains the same309 baseline findings.
+Spec re-review approves this anticipated refinement without remaining findings;
+quality re-review is pending. The expanded inventory now gains four cases:
+expected1067 complete-file cases and44 original32-plus-regression cases.
+
+Final independent quality re-review approves the bounded implementation with no
+critical, important or minor findings. Both review gates are now closed. The
+original32 contract corrections and four runtime repairs are ready for an exact
+local implementation checkpoint; complete-file qualification remains pending.
+The four unrelated incomplete-footer-fake failures and previously documented
+size/preload/CSS/resource-owner findings remain open. No merge readiness claim.
+
+### Final runtime checkpoint qualification
+
+Reviewed implementation is committed as `2adcbe0c18e8a7a4006a83f352208c194f62f12e`.
+All seven derived checks pass together on final source:
+`/private/tmp/pr2427-runtime-final-preflight.log`. The final unsharded original32
+plus12 controlled regression cases pass44 in107.64s (three existing dependency
+warnings): `/private/tmp/pr2427-runtime-qualified-original32.log`. Native report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-runtime-qualified-original32.5AS9oT/fd_identity.jsonl`
+ends with six descriptors, zero SQLite or locks, without forced collection or
+clearing pytest state. This is final-source evidence for all original32 repairs.
+
+The independent unsharded inventory confirms1067 complete-file cases in
+`/private/tmp/pr2427-runtime-qualified-inventory.log`. Final native shards select
+364/356/347 cases respectively and are still pending. Their logs are
+`/private/tmp/pr2427-runtime-qualified-shard{0,1,2}.log`, with reports under the
+per-user temporary roots `pr2427-runtime-qualified-shard0.vweQC9`,
+`pr2427-runtime-qualified-shard1.vQm64z`, and
+`pr2427-runtime-qualified-shard2.qCEDLB`. Source remains frozen at the checkpoint.
+No publication, rebase or merge has been performed in this repair batch.
+
+All three final shards are terminal and green on unchanged `2adcbe0c18` source:
+
+| Shard | Passed | Seconds | Final descriptors | SQLite / locks |
+| --- | ---: | ---: | ---: | --- |
+| 0 | 364 | 1730.10 | 7 | 0 / 0 |
+| 1 | 356 | 851.56 | 7 | 0 / 0 |
+| 2 | 347 | 1432.22 | 4 | 0 / 0 |
+
+The union of all `before_protocol` IDs matches the independently collected1067
+IDs exactly, with no duplicates or omissions. Per-file inventory is162 Files
+workspace,868 Library shell and37 Notes canvas cases. This qualifies complete
+files across three deterministic processes, not their historical single-process
+order. The original32-plus12 run above remains ordered and unsharded. Existing
+dependency warnings remain visible (3/3/10 across the shards); no skips, weakened
+assertions, timeout increases, forced GC or source edits were used.
+
+Each final process holds one `faulthandler.log` stream in addition to standard
+streams and, where still present, the runner's selector descriptors.
+`Logging_Config.py` explicitly retains `_crash_dump_stream` for the process
+lifetime because fault/signal-context writes cannot reopen it lazily. It is not
+a SQLite or instance-lock handle, and it was not forcibly closed to alter the
+inventory. Every final descriptor was inspected, including historical paths.
+
+### Adjacent footer fixture closeout
+
+After all frozen qualification processes exited, the independently reviewed
+Task3 plan supplied only the pure footer fake's two missing state seams:
+non-narrow return and unmounted state. The real dispatcher and every original
+assertion are unchanged; production bytes are unchanged. Complete-file RED is
+4 failed/3 passed in2.98s (`/private/tmp/pr2427-footer-fake-red.log`). Complete
+seven-test file plus the real mounted Media footer control pass8 in3.77s:
+`/private/tmp/pr2427-footer-fake-green.log`, native report
+`/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T/pr2427-footer-fake-green.V2fzXo/fd_identity.jsonl`.
+Final six descriptors include zero SQLite/locks. File-scoped full Ruff and
+whitespace pass; independent spec and quality reviews approve without findings.
+The four previously recorded incomplete-fake failures are therefore resolved.
+
+The final independent four-file inventory contains1074 distinct cases:
+`/private/tmp/pr2427-runtime-closeout-inventory.log`. It matches the union of
+the three qualified native shards and the footer control run. The sole repeated
+case is the intentionally rerun mounted Media footer control; the original
+three-shard1067 inventory is independently exact-once. All seven derived checks
+pass again in `/private/tmp/pr2427-runtime-closeout-preflight.log`. All local
+verification processes are terminal. No repository-wide sweep was run.
+
+The original32 failures and four adjacent footer-fixture failures are addressed.
+This does not close the separately recorded journey86/Console493 SQLite-owner
+findings,13 size ceilings, preload504/500, or seven unconsolidated CSS declarations.
+Newest-dev integration, current-head PR review/checks and normal protected merge
+also remain open. No cap, ownership policy or merge protection was changed.
+
+## 2026-09-11: dev934 replay and exact-owner fixture qualification
+
+All 272 PR commits replayed onto dev
+`934b28f39a5c386ca95de49a67abdf16a54251a8`, yielding
+`b5f8d0d7c96c4b39c5daad75ee3dd4d7436f9616` before this repair checkpoint.
+The recoverable published predecessor is `ab59e4684ab25d2f5771effebd5ffa325ad00f4b`.
+The detailed reconciliation map, immutable IDs, reviews and scope are in
+`Docs/superpowers/plans/2026-09-11-pr2427-dev934-reconciliation.md`.
+
+Preserved incoming runtime-owned Console custody in the existing controllers,
+shared runtime prompt history, exact cancellation receipts and generation guards,
+and Library Handoff/import/Media behavior. Post-rebase runtime edits remove only
+one newly introduced unused import. Fixture corrections retain exact identity,
+authority, provenance, payload and admission assertions; the delegate census is
+60 live owner routes plus four separately enforced retired APIs, not a weakened
+64-name check. The Handoff tests pin the complete accepted copy and raw state.
+
+The initial 943-case integration census found 18 failures and separately retained
+392 Console SQLite / 30 instance-lock handles and 14 backend SQLite handles.
+Reuse of the established importing-module app owner eliminates all Console
+handles. Backend cleanup drains owned controllers/databases and gives workspace
+lookup a real test-owned registry and its existing thread-aware executor.
+A logging-only attempt did not remove the remaining workspace handles; an actual
+constructor stack identified earlier workspace-context lookup. That unnecessary
+fixture and its four tests were removed before final qualification. No production
+logging, global registry, forced collection or cleanup policy changed.
+
+Final complete-file native cohorts:
+
+| Scope | Result | Native report directory |
+| --- | --- | --- |
+| Eight Console files plus existing cleanup controls | 313 passed, 301.72s | `/private/tmp/pr2427-dev934-console-verified.LDwaIV` |
+| Three backend files plus existing worker-fault controls | 382 passed, 60.16s | `/private/tmp/pr2427-dev934-backend-final.UOHQh7` |
+| Complete Handoff workspace-depth file | 13 passed, 19.89s | `/private/tmp/pr2427-dev934-library-verified.7SCiFm` |
+
+All three report zero final SQLite and instance-lock handles. Native inventories
+retain seven/six/six descriptors respectively: redirected stdio, event-loop
+descriptors, and the Console run's intentional process-lifetime faulthandler log.
+Each directory has `pytest.log` and `fd_identity.jsonl`; the latter records exact
+test arguments for the unchanged observation-only runner
+`/private/tmp/pr2427-fd-identity.OTL9up/native_fd_identity.py`.
+
+The initially timed-out 1,000-turn case completed unchanged, alone, in 287.52s
+under its original 300-second deadline, with zero SQLite/locks:
+`/private/tmp/pr2427-dev934-tombstone-isolated.jeddw2`. The first run persisted
+988 complete turns; bounded probes measured substantial repeated diagnostics
+shutdown cost. No workload, timeout or retention assertion was changed; timing
+margin remains small. All seven derived checks pass in
+`/private/tmp/pr2427-dev934-closeout-preflight.log`, using the established offline
+Mermaid input cache. Fatal affected-file Ruff and whitespace pass; this is not
+a claim that all pre-existing full-lint findings are resolved. Independent spec
+and quality reviews approve each final repair slice.
+
+An additional current-head run of the original/regression 44 cases finished
+**38 passed / 6 failed**, 121.75s, zero final SQLite/locks:
+`/private/tmp/pr2427-dev934-original-regressions.G1FiDJ`. Open cases:
+
+- `test_wide_files_source_switch_restores_database_browse_receipt`: returned
+  list scroll 0 instead of the captured 5.
+- Two `test_library_note_60x20_editor_state_allocation` parameters: compact
+  authority text no longer includes the expected `Library notes` prefix.
+- `test_library_note_footer_covers_navigator_create_sync_and_exit` and
+  `test_notes_footer_registration_preserves_media_route_typing_hints`: actual
+  typing footer includes the new after-Escape search/selection guidance.
+- `test_library_note_pilot_delete_pending_locks_and_cancel_restores_context`:
+  exact comparison observes 7 versus a captured 7.000000010566575.
+
+These six need diagnosis and verification, not an assertion relaxation. The
+unchanged architecture cohort separately reports 86 passed / 15 size failures;
+the prior journey/Console resource cohorts, preload 504/500 and seven CSS
+declarations are not requalified by this batch. TASK-31932 stays In Progress,
+AC1/3/4 open. Publish this reviewed progress without resolving the outstanding
+size thread or bypassing normal final-head review, CI or merge protection.

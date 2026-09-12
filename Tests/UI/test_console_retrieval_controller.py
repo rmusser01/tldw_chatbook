@@ -1,7 +1,9 @@
 """No-mount contracts for Console retrieval ownership."""
 
 import asyncio
+import sqlite3
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -13,6 +15,131 @@ from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 
 
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "_console_chat_dictionary_applier",
+        "_console_world_info_applier",
+        "_console_dictionary_attach_worker",
+        "_console_dictionary_detach_worker",
+        "_console_worldbook_attach_worker",
+        "_console_worldbook_detach_worker",
+    ],
+)
+def test_dictionary_and_world_book_operations_belong_to_retrieval(method_name):
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    assert method_name in ConsoleRetrievalController.__dict__
+    assert method_name not in ChatScreen.__dict__
+
+
+def test_view_applier_hooks_resolve_retrieval_only_when_invoked():
+    from Tests.UI.console_controller_stubs import (
+        stub_fleet_controller,
+        stub_library_activity_controller,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = ChatScreen.__new__(ChatScreen)
+    screen.app_instance = SimpleNamespace()
+    stub_fleet_controller(screen)
+    stub_library_activity_controller(screen)
+    screen._console_chat_store = None
+    hooks = screen.console_view_hooks()
+    assert "_retrieval" not in screen.__dict__
+
+    calls = []
+    for owner in ("first", "replacement"):
+        screen._retrieval = SimpleNamespace(
+            _console_chat_dictionary_applier=lambda *args: (
+                calls.append((owner, "dictionary", args)) or "dictionary text"
+            ),
+            _console_world_info_applier=lambda *args: (
+                calls.append((owner, "world", args)) or "world text"
+            ),
+        )
+        history = ["earlier text"]
+        assert (
+            hooks["_chat_dictionary_applier"]("conversation", "text")
+            == "dictionary text"
+        )
+        assert (
+            hooks["_world_info_applier"]("conversation", "text", history)
+            == "world text"
+        )
+        assert calls[-2:] == [
+            (owner, "dictionary", ("conversation", "text")),
+            (owner, "world", ("conversation", "text", history)),
+        ]
+        assert calls[-1][2][2] is history
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["dictionary", "worldbook"])
+@pytest.mark.parametrize("operation", ["attach", "detach"])
+async def test_picker_without_conversation_releases_only_its_screen_guard(
+    kind, operation
+):
+    controller, state = _controller()
+    notifications = []
+    controller.app_instance.notify = lambda message, **kwargs: notifications.append(
+        (message, kwargs)
+    )
+
+    await getattr(controller, f"_console_{kind}_{operation}_worker")()
+
+    assert notifications == [
+        ("Start or load a conversation first.", {"severity": "warning"})
+    ]
+    assert state.dictionary_dialog_active is (kind != "dictionary")
+    assert state.worldbook_dialog_active is (kind != "worldbook")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["attach", "detach"])
+async def test_worldbook_mutation_failure_keeps_backend_details_out_of_notification(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """A failed mutation releases its dialog without disclosing backend text.
+
+    Args:
+        monkeypatch: Replaces only the manager boundary with a failing operation.
+        operation: World-book mutation whose error presentation is exercised.
+    """
+    from tldw_chatbook.Character_Chat import world_book_manager
+
+    controller, state = _controller()
+    controller._current_conversation_id = lambda: "conversation-a"
+    controller.app_instance.chachanotes_db = object()
+    controller.app_instance.notify = Mock()
+    controller.app_instance.push_screen_wait = AsyncMock(return_value=7)
+    controller.refresh_active_world_books_summary = AsyncMock()
+    mutation = Mock(
+        side_effect=sqlite3.OperationalError(
+            "private-schema-canary /Users/example/private.sqlite"
+        )
+    )
+    manager = SimpleNamespace(
+        list_world_books=lambda **_kwargs: [{"id": 7, "name": "World book"}],
+        get_world_books_for_conversation=lambda *_args, **_kwargs: (
+            [] if operation == "attach" else [{"id": 7, "name": "World book"}]
+        ),
+        associate_world_book_with_conversation=mutation,
+        disassociate_world_book_from_conversation=mutation,
+    )
+    monkeypatch.setattr(world_book_manager, "WorldBookManager", lambda _db: manager)
+
+    await getattr(controller, f"_console_worldbook_{operation}_worker")()
+
+    mutation.assert_called_once_with("conversation-a", 7)
+    controller.app_instance.notify.assert_called_once_with(
+        f"Could not {operation} the world book. Try again.", severity="error"
+    )
+    controller.refresh_active_world_books_summary.assert_not_awaited()
+    assert state.worldbook_dialog_active is False
+    assert state.dictionary_dialog_active is True
+
+
 def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
     """Build the real controller with observable no-mount boundary doubles."""
     state = SimpleNamespace(
@@ -22,6 +149,8 @@ def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
         sync_result=True,
         sync_calls=0,
         refresh_calls=0,
+        dictionary_dialog_active=True,
+        worldbook_dialog_active=True,
     )
 
     def sync_pending_launch_surfaces() -> bool:
@@ -40,6 +169,12 @@ def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
         sync_control_bar=lambda: None,
         request_control_bar_sync=lambda: None,
         dictionary_scope_service=lambda: None,
+        finish_dictionary_dialog=(
+            lambda: setattr(state, "dictionary_dialog_active", False)
+        ),
+        finish_worldbook_dialog=(
+            lambda: setattr(state, "worldbook_dialog_active", False)
+        ),
         set_library_rag_source_scope=lambda _scope: None,
         set_library_rag_query=lambda _query: None,
         run_library_rag_action=lambda: None,

@@ -9,7 +9,6 @@ from .evaluation_normalizers import (
 )
 from .evaluation_scope_service import EvaluationBackend, EvaluationScopeService
 from .local_evaluations_service import LocalEvaluationsService
-from .server_evaluations_service import ServerEvaluationsService
 
 __all__ = [
     "EvaluationBackend",
@@ -22,3 +21,27 @@ __all__ = [
     "normalize_evaluation_run_record",
     "normalize_evaluation_target_record",
 ]
+
+
+def __getattr__(name: str) -> type:
+    """Keep server transport imports out of local normalization callers.
+
+    Args:
+        name: Lazy export name; only ``ServerEvaluationsService`` is supported.
+
+    Returns:
+        The server service class, cached in this package's namespace.
+
+    Raises:
+        AttributeError: If the name is not the supported lazy export.
+    """
+    if name != "ServerEvaluationsService":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from .server_evaluations_service import ServerEvaluationsService
+
+    globals()[name] = ServerEvaluationsService
+    return ServerEvaluationsService
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

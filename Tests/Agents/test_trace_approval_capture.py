@@ -352,7 +352,7 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
             conversation_id="conv-1",
             messages=[{"role": "user", "content": "run it"}],
             config=AgentConfig(
-                model="model",
+                model="gpt-4o",
                 system_prompt="system",
                 allowed_tools=(
                     "credential_result",

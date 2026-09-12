@@ -340,7 +340,7 @@ def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
     )
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
-    all_nodes = screen._console_messages_from_conversation_tree(tree)
+    all_nodes = screen._message._console_messages_from_conversation_tree(tree)
     active_leaf_id, before_message_id = db.get_conversation_active_cursor(
         conversation_id
     )
@@ -1065,7 +1065,7 @@ def test_console_messages_from_conversation_tree_flattens_all_branches():
         ],
     }
 
-    messages = screen._console_messages_from_conversation_tree(tree)
+    messages = screen._message._console_messages_from_conversation_tree(tree)
 
     by_pid = {m.persisted_message_id: m for m in messages}
     assert set(by_pid) == {"u1", "a1", "a1-prime"}

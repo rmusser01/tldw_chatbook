@@ -276,6 +276,8 @@ def test_all_consumers_share_validation_and_write_prefilters(
     ro_binding = registry.add_folder_binding("ws-a", ro_root)
     rw_binding = registry.add_folder_binding("ws-a", rw_root, allow_write=True)
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    assert registry.change_review_enabled("ws-a") is False
+    registry.set_change_review_enabled("ws-a", True)
     monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
     seen: list[tuple[str, ...]] = []
 
@@ -312,6 +314,8 @@ def test_change_review_gates_precede_binding_validation(tmp_path, monkeypatch) -
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
     registry.add_folder_binding("ws-a", root)
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    assert registry.change_review_enabled("ws-a") is False
+    registry.set_change_review_enabled("ws-a", True)
     factory_calls = 0
     calls = 0
 

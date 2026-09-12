@@ -55,6 +55,68 @@ def _cap(run_tag="r1", seq=0, status="complete"):
     )
 
 
+@pytest.mark.parametrize("terminal", ("complete", "stopped", "failed"))
+@pytest.mark.parametrize("ephemeral", (False, True))
+def test_terminal_generation_preserves_exchanges_with_real_sqlite(
+    tmp_path, terminal: str, ephemeral: bool
+) -> None:
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_exchange_capture import capture_from_blob
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "terminal.sqlite", client_id="exchange-terminal")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Terminal exchanges", ephemeral=ephemeral)
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        store.append_stream_chunk(message.id, "Retained answer")
+        # The real getter materializes the pending streaming row; an empty
+        # placeholder deliberately has no durable message ID yet.
+        message = store.get_message(message.id)
+        persisted_id = message.persisted_message_id
+        if not ephemeral:
+            assert persisted_id is not None
+            before_version = db.get_message_by_id(persisted_id)["version"]
+        capture = _cap(status="error" if terminal == "failed" else terminal)
+        store.attach_message_exchanges(message.id, [capture])
+
+        result = getattr(store, f"mark_message_{terminal}")(message.id)
+
+        assert result.content == "Retained answer"
+        assert result.status == terminal
+        assert result.assistant_generation_state == terminal
+        assert result.exchanges == (capture,)
+        db.close_connection()
+        if ephemeral:
+            assert session.persisted_conversation_id is None
+            assert result.persisted_message_id is None
+            with db.transaction() as cursor:
+                counts = cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM conversations), "
+                    "(SELECT COUNT(*) FROM messages), "
+                    "(SELECT COUNT(*) FROM message_exchanges)"
+                ).fetchone()
+                assert tuple(counts) == (0, 0, 0)
+        else:
+            row = db.get_message_by_id(persisted_id)
+            assert row["content"] == "Retained answer"
+            assert row["assistant_generation_state"] == terminal
+            assert row["version"] == before_version + 1
+            rows = db.get_message_exchanges(persisted_id)
+            assert len(rows) == 1
+            assert rows[0]["status"] == capture.status
+            assert capture_from_blob(rows[0]["capture_blob"]).response == {
+                "content": "x"
+            }
+    finally:
+        with db.quiesce_connections(timeout_seconds=2):
+            pass
+        db.close_connection()
+        assert db.registered_connection_count() == 0
+
+
 def test_capture_policy_state_uses_exact_revisions():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -125,9 +187,11 @@ def test_capture_policy_hydrates_from_the_existing_repository():
             return repository_module.CapturePolicyReadResult(
                 repository_module.CapturePolicyReadStatus.FOUND,
                 ConversationCapturePolicy(
-                    conversation_id,
-                    CaptureDetail.FULL,
-                    "2026-08-26T00:00:00Z",
+                    conversation_id=conversation_id,
+                    detail=CaptureDetail.FULL,
+                    capture_enabled=None,
+                    pii_redaction_enabled=None,
+                    updated_at="2026-08-26T00:00:00Z",
                 ),
             )
 
@@ -169,10 +233,28 @@ def test_unavailable_capture_policy_hydration_publishes_explicit_safe_pending() 
     assert state.save_pending is True
 
 
-def test_failed_staged_safe_flush_stays_safe_and_pending_after_publication():
+@pytest.mark.parametrize("failed_stage", ("privacy", "detail"))
+def test_failed_staged_safe_flush_stays_safe_and_pending_after_publication(
+    failed_stage,
+):
     class Repository:
         @staticmethod
+        def replace_privacy(conversation_id, *, capture_enabled, pii_redaction_enabled):
+            assert (conversation_id, capture_enabled, pii_redaction_enabled) == (
+                "conversation-1",
+                None,
+                None,
+            )
+            return CapturePolicyWriteResult(
+                CapturePolicyWriteStatus.UNAVAILABLE
+                if failed_stage == "privacy"
+                else CapturePolicyWriteStatus.UNCHANGED,
+                None,
+            )
+
+        @staticmethod
         def replace(conversation_id, detail):
+            assert failed_stage == "detail"
             assert (conversation_id, detail) == (
                 "conversation-1",
                 CaptureDetail.SAFE,

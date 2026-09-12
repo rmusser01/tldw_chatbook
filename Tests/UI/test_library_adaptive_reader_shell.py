@@ -764,12 +764,16 @@ async def test_media_items_pane_grows_with_the_terminal_once_reader_is_comfortab
 
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
-        # Measure a populated reader; the empty reader gives its space to Items.
+        # TASK-31979 gives an empty Reader's surplus to Items; this contract
+        # measures the comfortable split while the Reader contains an item.
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._media_state.reader_session.loaded_id is not None,
-            message="Media reader did not finish opening the selected item",
+            lambda: (
+                screen._media_state.reader_session.pending_request is None
+                and screen._media_state.reader_session.loaded_id is not None
+            ),
+            message="Media Reader did not load before measuring its split.",
         )
         for _ in range(4):
             await pilot.pause()

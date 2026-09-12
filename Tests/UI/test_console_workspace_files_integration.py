@@ -132,7 +132,7 @@ def _console_fingerprint(console, app) -> tuple[object, ...]:
     return (
         active.workspace_id if active else None,
         store.active_session_id,
-        console._current_console_conversation_id(),
+        console._session._current_console_conversation_id(),
         composer.draft_text,
         composer._pending_attachment_label,
         console._task_resume_state.pending_approval,

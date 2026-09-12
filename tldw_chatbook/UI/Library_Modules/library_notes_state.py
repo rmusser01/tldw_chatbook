@@ -639,7 +639,6 @@ class LibraryNotesState:
     sync_counter: int = 0
     sync_active_token: int | None = None
     sync_running: bool = False
-    auto_sync_timer: Timer | None = None
 
     # The folder box's live (possibly uncommitted) text. Typing updates
     # only this field -- persisting to the TOML config on every

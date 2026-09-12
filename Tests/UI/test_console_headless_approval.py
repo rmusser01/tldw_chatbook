@@ -27,11 +27,14 @@ from Tests.Chat.test_console_runtime_lifetime import _pending_call, _View
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_mcp_approval import _pending
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _unmount_installed_console,
+)
 from Tests.UI.test_console_store_continuity import (
     _drain_from_child_thread,
     _navigate,
-    _seed_console,
+    SEEDED_USER,
     _StallingWakeGateway,
     _terminal_survivor_run,
 )
@@ -301,10 +304,11 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
 ):
     """The whole of plan Task 5's first two bullets, through production.
 
-    Console is left via the REAL navigation API (`NavigateToScreen` + the
-    real "Leave Console?" dialog) with a wake turn parked in flight, so
-    the runtime is in exactly the state a headless wake runs in. Then a
-    risk-tagged round arms from a plain worker thread.
+    Console is left via the REAL navigation API (`NavigateToScreen`)
+    with a wake turn parked in flight. Navigation
+    now retains the Console, so explicitly uninstall that exact suspended
+    screen through Textual's real teardown path before arming the headless
+    risk-tagged round from a plain worker thread.
 
     RED before the fix, measured (1.01s): the round self-denied at the
     first poll, no toast was raised on the Library screen, and opening
@@ -331,9 +335,21 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
     # forever and one that asserted on `app._notifications` would pass
     # without proving anything reached the screen.
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
-        chat, controller, store, session_id, conversation_id = await _seed_console(
-            app, pilot, gateway
+        assert await _settle(lambda: app._initial_screen_pushed, seconds=10.0)
+        chat = app.screen
+        assert type(chat).__name__ == "ChatScreen"
+        assert app.is_screen_installed(chat)
+        assert app._reusable_screen_instances["chat"][1] is chat
+        assert await _settle(
+            lambda: bool(chat.query("#console-native-composer")), seconds=10.0
         )
+        controller = chat._ensure_console_chat_controller()
+        store = chat._console_chat_store
+        session_id = store.sessions()[0].id
+        outcome = await controller.submit_draft(SEEDED_USER, session_id=session_id)
+        assert outcome.accepted, "the seed submission must be accepted"
+        conversation_id = store.sessions()[0].persisted_conversation_id
+        assert conversation_id, "the seeded conversation must persist"
         wake = controller.fleet_wake
         runs_db = controller._agent_bridge.runs_db
         run_id = _terminal_survivor_run(runs_db, conversation_id)
@@ -347,6 +363,7 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
         )
 
         await _navigate(app, pilot, "library", expect="LibraryScreen")
+        await _unmount_installed_console(app, chat)
         assert chat not in app.screen_stack, "Console must actually unmount"
         assert controller is app.console_runtime.chat_controller, (
             "harness precondition: the runtime must OUTLIVE the screen"
@@ -390,7 +407,7 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
 
         # (3) opening Console MOUNTS the card.
         chat2 = await _navigate(app, pilot, "chat", expect="ChatScreen")
-        assert chat2 is not chat, "screens are never cached"
+        assert chat2 is not chat, "the explicitly uninstalled screen must be recreated"
         await pilot.pause()
         assert await _settle(
             lambda: bool(list(chat2.query(".approval-row"))), seconds=5.0

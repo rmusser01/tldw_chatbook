@@ -429,7 +429,7 @@ async def test_served_preview_rechecks_child_branch_after_compilation(monkeypatc
 async def test_chat_screen_html_import_yields_and_checks_view_before_apply(
     monkeypatch, detach
 ):
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 
     authority, controller, live = setup_authority()
     message = SimpleNamespace(
@@ -471,7 +471,7 @@ async def test_chat_screen_html_import_yields_and_checks_view_before_apply(
         "tldw_chatbook.Chat.console_canvas_controller.compile_canvas_document", delayed
     )
     task = asyncio.create_task(
-        ChatScreen._open_console_canvas_block(screen, reference, SOURCE)
+        ConsoleMessageController._open_console_canvas_block(screen, reference, SOURCE)
     )
     try:
         assert await asyncio.to_thread(delayed.started.wait, 1)

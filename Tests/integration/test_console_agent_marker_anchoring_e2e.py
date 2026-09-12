@@ -175,7 +175,7 @@ def _resume_with_markers(
     )
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = db
-    all_nodes = screen._console_messages_from_conversation_tree(tree)
+    all_nodes = screen._message._console_messages_from_conversation_tree(tree)
     resumed_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     resumed_session = resumed_store.restore_persisted_session(
         title="Marker Anchoring E2E",

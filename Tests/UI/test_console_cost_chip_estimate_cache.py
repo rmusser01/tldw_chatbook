@@ -27,7 +27,9 @@ from Tests.UI.test_console_cost_chip_screen import (
     _AnthropicCostGateway,
     _configure_anthropic_ready_console,
     _mount_and_send_warm_reply,
+    _next_send_dollars,
 )
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -40,7 +42,8 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import context_cost as chat_screen_module
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 _TRANSCRIPT_ROWS = 12
 _ROW_TEXT = "the quick brown fox jumps over the lazy dog. " * 40
@@ -85,13 +88,13 @@ async def test_second_identical_tick_does_not_retokenize_the_transcript(monkeypa
 
         spy = _spy_on_estimator(monkeypatch)
 
-        first = console._build_console_cost_state()
+        first = console._context_cost._build_console_cost_state()
         first_calls = spy.call_count
         assert first_calls == _TRANSCRIPT_ROWS, (
             "test setup: every seeded row must be an estimated row"
         )
 
-        second = console._build_console_cost_state()
+        second = console._context_cost._build_console_cost_state()
 
         assert spy.call_count == first_calls, (
             "the cost chip re-tokenized an unchanged transcript on the next "
@@ -112,12 +115,12 @@ async def test_editing_one_row_retokenizes_only_that_row(monkeypatch):
         await _wait_for_selector(console, pilot, "#console-cost-chip")
         store, session_id = _seed_usageless_transcript(console)
 
-        console._build_console_cost_state()
+        console._context_cost._build_console_cost_state()
         spy = _spy_on_estimator(monkeypatch)
 
         target = store.messages_for_session(session_id)[-1]
         store.update_message_content(target.id, "a different, much shorter row")
-        state = console._build_console_cost_state()
+        state = console._context_cost._build_console_cost_state()
 
         assert spy.call_count == 1, (
             "editing one row re-tokenized "
@@ -139,33 +142,39 @@ async def test_edited_row_is_repriced_not_served_stale(monkeypatch):
         await _wait_for_selector(console, pilot, "#console-cost-chip")
         store, session_id = _seed_usageless_transcript(console)
 
-        before = console._build_console_cost_state()
+        before = console._context_cost._build_console_cost_state()
         target = store.messages_for_session(session_id)[-1]
         original_content = target.content
         store.update_message_content(target.id, "tiny")
-        after = console._build_console_cost_state()
+        after = console._context_cost._build_console_cost_state()
 
         assert before is not None and after is not None
         assert after.tooltip != before.tooltip
         # And restoring the original text restores the original reading.
         store.update_message_content(target.id, original_content)
-        restored = console._build_console_cost_state()
+        restored = console._context_cost._build_console_cost_state()
         assert restored is not None
         assert restored.tooltip == before.tooltip
 
 
 @pytest.mark.asyncio
 async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
-    """The staged-evidence pseudo-row is rebuilt as a NEW string on every
-    pass (``console_prompted_evidence_text`` joins the snippets each call),
-    so it only caches if identity is not the test for a hit."""
+    """Staged evidence belongs to Next Send, never current-spend tokenization."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-cost-chip")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("price this request")
+        console._sync_console_settings_summary()
+        before = console._context_cost._build_console_cost_state()
+        assert before is not None
+        assert "Current $0.00" in before.label
 
         reference = EvidenceReference(
             evidence_id="S1",
@@ -183,8 +192,8 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
             source="Library Search/RAG",
             references=(reference,),
         )
-        # Spy BEFORE staging: staging itself drives a sync pass, so the
-        # pseudo-row's one legitimate estimate may be spent there.
+        # Staging itself drives a sync pass; it must not count unsent evidence
+        # as spend there or on any subsequent unchanged tick.
         spy = _spy_on_estimator(monkeypatch)
         console._retrieval._stage_console_library_rag_launch(
             ConsoleLiveWorkLaunch.from_values(
@@ -196,15 +205,16 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch):
         )
         await pilot.pause()
 
-        first = console._build_console_cost_state()
+        first = console._context_cost._build_console_cost_state()
         settled_calls = spy.call_count
-        assert settled_calls >= 1, "test setup: staged text must price as a row"
-        assert first is not None and first.label.startswith("~")
+        assert settled_calls == 0, "unsent evidence must not tokenize as current spend"
+        assert first is not None and "Current $0.00" in first.label
+        assert _next_send_dollars(first) > _next_send_dollars(before)
 
-        second = console._build_console_cost_state()
+        second = console._context_cost._build_console_cost_state()
 
         assert spy.call_count == settled_calls, (
-            "the staged-evidence pseudo-row was re-tokenized on the next tick"
+            "unsent evidence was tokenized as current spend on the next tick"
         )
         assert second == first
 
@@ -216,6 +226,7 @@ async def test_projected_delta_estimate_is_not_recomputed_every_tick():
     alerting session paid it 5x/s for the life of the alert."""
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -235,11 +246,11 @@ async def test_projected_delta_estimate_is_not_recomputed_every_tick():
         original = chat_screen_module._estimate_tokens_locally
         chat_screen_module._estimate_tokens_locally = spy
         try:
-            alert_state = console._build_console_cost_state()
+            alert_state = console._context_cost._build_console_cost_state()
             assert alert_state is not None and alert_state.alert is True
             assert spy.call_count == 1, "test setup: the projection must run once"
 
-            repeat_state = console._build_console_cost_state()
+            repeat_state = console._context_cost._build_console_cost_state()
 
             assert spy.call_count == 1, (
                 "the projected cache-break delta re-tokenized the whole "

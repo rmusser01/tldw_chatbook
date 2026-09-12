@@ -30,6 +30,14 @@ from textual.widgets import (
     TextArea,
 )
 
+from Tests.app_thread_resource_fixtures import (
+    close_owned_app_initialization_connections as close_owned_app_initialization_connections,
+    close_owned_console_workers as close_owned_console_workers,
+)
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -134,6 +142,50 @@ PERSISTED_PROVIDER_ALIASES = (
     ("Custom OpenAI", "custom"),
     ("custom-openai-api", "custom"),
 )
+
+
+@pytest.fixture(autouse=True)
+async def close_owned_settings_tts(
+    request,
+    monkeypatch,
+    close_owned_console_workers,
+    close_owned_app_initialization_connections,
+    drain_test_app_user_data_dirs,
+):
+    """Close exact builder-owned TTS consumers before sandbox removal.
+
+    Args:
+        request: Importing module whose builder owns the app instances.
+        monkeypatch: Scoped builder replacement.
+        close_owned_console_workers: Existing bounded thread-drain owner.
+        close_owned_app_initialization_connections: Existing constructor owner.
+        drain_test_app_user_data_dirs: Sandbox lifetime enclosing this cleanup.
+
+    Yields:
+        None. Existing TTS shutdown preserves consumer-before-store ordering.
+    """
+    apps = []
+    build_app = request.module._build_test_app
+
+    def build_owned_app(*args, **kwargs):
+        app = build_app(*args, **kwargs)
+        apps.append(app)
+        return app
+
+    monkeypatch.setattr(request.module, "_build_test_app", build_owned_app)
+    yield
+
+    errors = []
+    try:
+        for app in reversed(apps):
+            try:
+                await app._close_owned_tts_resources()
+            except BaseException as error:
+                errors.append(error)
+    finally:
+        apps.clear()
+    if errors:
+        raise BaseExceptionGroup("Settings test app TTS cleanup failed", errors)
 
 
 @pytest.mark.asyncio
@@ -504,8 +556,9 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
     (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Video
     Gen (video-generation-foundation) brought it to 25; Agents
-    (supervisor-fleet PR-1 task 6) brought it to 26; Web Search (TASK-32189)
-    brought it to 27. This pins the literal
+    (supervisor-fleet PR-1 task 6) brought it to 26; Personal Context, Network,
+    and Tool Profiles brought it to 29; Web Search (TASK-32189) brought it
+    to 30. This pins the literal
     count so the next addition must touch this assertion deliberately, and
     cross-checks that summaries neither miss nor duplicate an enum member.
     """
@@ -1152,6 +1205,8 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         # the screen writes it at `_save_provider_category` -- but left this
         # exhaustive tuple behind. Stale contract, not a product change.
         "model_capabilities.models.<model>.context_window",
+        "llamacpp_snapshots.enabled",
+        "llamacpp_snapshots.keep_count",
     )
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -1668,6 +1723,11 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         if category is SettingsCategoryId.LIBRARY_RAG:
             assert record.writes_allowed
             assert "active RAG profile" in " ".join(record.owns_config_sections)
+        elif category is SettingsCategoryId.SCHEDULES:
+            assert record.writes_allowed
+            assert "briefing_schedules_enabled" in " ".join(
+                record.owns_config_sections
+            )
         else:
             assert not record.writes_allowed
             assert record.read_only_reason
@@ -2475,7 +2535,7 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
@@ -2484,9 +2544,9 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
         theme.value = "textual-light"
         screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
 
-        screen.query_one("#settings-preview-appearance").scroll_visible(animate=False)
-        await pilot.pause()
-        await pilot.click("#settings-preview-appearance")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-preview-appearance"
+        )
         text = _visible_text(screen)
 
         assert app.theme == "textual-light"
@@ -2499,7 +2559,7 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
 async def test_settings_appearance_focused_input_keeps_typed_text_visible():
     app = _build_test_app()
     app.app_config["general"] = {"palette_theme_limit": 1}
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-appearance")
@@ -5462,7 +5522,7 @@ async def test_settings_category_search_filters_and_enter_opens_first_match():
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+            "Filter: priv | 3 matches | Enter opens Privacy & Security",
         )
 
         assert screen.query_one("#settings-category-privacy-security").display
@@ -5490,12 +5550,12 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+            "Filter: priv | 3 matches | Enter opens Privacy & Security",
         )
 
         visible_text = _visible_text(screen)
         assert (
-            "Filter: priv | 2 matches | Enter opens Privacy & Security" in visible_text
+            "Filter: priv | 3 matches | Enter opens Privacy & Security" in visible_text
         )
         assert screen.query_one("#settings-category-privacy-security").has_class(
             "settings-primary-search-match"
@@ -7103,7 +7163,7 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_raw_cli():
+async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them_to_canvas_and_host_access():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -7127,13 +7187,16 @@ async def test_settings_read_only_overview_hides_actions_and_privacy_limits_them
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text=(
-                "Guided edit: raw CLI unlock only; posture remains read-only."
+                "Guided edits: Canvas controls and host-access unlock; quotas stay read-only."
             ),
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         visible = _visible_text(screen)
-        assert "Guided edit: raw CLI unlock only; posture remains read-only." in visible
+        assert (
+            "Guided edits: Canvas controls and host-access unlock; quotas stay read-only."
+            in visible
+        )
         assert "Check Privacy" in visible
 
 

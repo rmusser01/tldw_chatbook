@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from Tests.UI.background_signals import wait_for_signal
+from tldw_chatbook.Library import library_note_import_state as state_module
 from tldw_chatbook.Notes.note_import_execution_models import (
     ImportExecutionReceipt,
     ImportSessionState,
@@ -232,6 +233,220 @@ def test_destination_input_keeps_raw_authority_and_publishes_inline_error(
     assert controller.presentation_snapshot.can_check is False
 
 
+def test_review_effects_without_matches_never_construct_a_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Avoid constructing a note reader when the plan has no matches.
+
+    Args:
+        tmp_path: Test-owned source root.
+        monkeypatch: Fixture for detecting unexpected target construction.
+    """
+    plan = _plan(tmp_path / "one.md")
+
+    def unexpected_target(**kwargs):
+        pytest.fail("Unmatched sources must not construct a note reader")
+
+    monkeypatch.setattr(controller_module, "LocalNoteImportTarget", unexpected_target)
+    controller = _controller(plan=plan, calls=[], repository=_FolderRepository())
+    assert controller._build_review_effects(plan) == ()
+
+
+def test_review_effects_preserve_reader_order_missing_notes_and_first_payload(
+    tmp_path: Path,
+) -> None:
+    """Keep ordered reads and first-payload effects while skipping missing notes.
+
+    Args:
+        tmp_path: Test-owned source root.
+    """
+    base = _plan(tmp_path / "one.md")
+    matched = replace(
+        base.items[0],
+        classification=ImportClassification.UNCERTAIN_MATCH,
+        match=ImportMatch(
+            kind=ImportMatchKind.UNCERTAIN, note_id="first", note_version=7
+        ),
+    )
+    first_payload = matched.payloads[0]
+    second_payload = ParsedNotePayload(title="Ignored title", content="Ignored body")
+    plan = replace(
+        base,
+        items=(
+            base.items[0],
+            replace(matched, item_id="item-000002"),
+            replace(
+                matched,
+                item_id="item-000003",
+                match=replace(matched.match, note_id="missing"),
+            ),
+            replace(
+                matched,
+                item_id="item-000004",
+                match=replace(matched.match, note_id="multiple"),
+                payloads=(first_payload, second_payload),
+                memberships=(
+                    *matched.memberships,
+                    ProposedFolderMembership(
+                        payload_index=1, folder_segments=("Inbox",)
+                    ),
+                ),
+            ),
+        ),
+    )
+    reads = []
+
+    def read(note_id):
+        reads.append(note_id)
+        if note_id == "missing":
+            return None
+        return SimpleNamespace(title="Existing", content="Old", version=9)
+
+    controller = _controller(
+        plan=plan, calls=[], repository=_FolderRepository(), review_note_reader=read
+    )
+    effects = controller._build_review_effects(plan)
+    assert reads == ["first", "missing", "multiple"]
+    assert [effect.item_id for effect in effects] == ["item-000002", "item-000004"]
+    assert all(
+        effect.target_title == "Existing" and effect.target_version == 9
+        for effect in effects
+    )
+    expected = (
+        "--- Existing note\n+++ Imported source\n@@ -1,3 +1,3 @@\n"
+        "-Title: Existing\n+Title: One\n \n-Old\n+Body"
+    )
+    assert [effect.content_diff for effect in effects] == [expected, expected]
+    assert all(
+        "Existing" not in repr(effect) and "Body" not in repr(effect)
+        for effect in effects
+    )
+
+
+def test_review_effects_empty_payload_retains_target_without_formatting(
+    tmp_path: Path,
+) -> None:
+    """Retain target metadata without reading content for an empty payload.
+
+    Args:
+        tmp_path: Test-owned source root.
+    """
+    # Typed plans reject matched empty payloads; preserve this defensive boundary.
+    plan = SimpleNamespace(
+        items=(
+            SimpleNamespace(
+                item_id="item-000001",
+                match=SimpleNamespace(note_id="empty"),
+                payloads=(),
+            ),
+        )
+    )
+    reads = []
+
+    def read(note_id):
+        reads.append(note_id)
+        return SimpleNamespace(title="Existing", version=9)
+
+    controller = _controller(
+        plan=_plan(tmp_path / "one.md"),
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=read,
+    )
+    effects = controller._build_review_effects(plan)
+    assert reads == ["empty"]
+    assert len(effects) == 1
+    assert effects[0].item_id == "item-000001"
+    assert effects[0].target_title == "Existing"
+    assert effects[0].target_version == 9
+    assert effects[0].content_diff == ""
+
+
+def test_review_effects_default_target_uses_existing_late_bound_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Construct the fallback reader with the controller's current dependencies.
+
+    Args:
+        tmp_path: Test-owned source root.
+        monkeypatch: Fixture for observing fallback target construction.
+    """
+    base = _plan(tmp_path / "one.md")
+    plan = replace(
+        base,
+        items=(
+            replace(
+                base.items[0],
+                classification=ImportClassification.UNCERTAIN_MATCH,
+                match=ImportMatch(
+                    kind=ImportMatchKind.UNCERTAIN, note_id="note-1", note_version=7
+                ),
+            ),
+        ),
+    )
+    repository = _FolderRepository()
+    calls = []
+
+    class Target:
+        def __init__(self, *, db, folder_repository):
+            calls.append((db, folder_repository))
+
+        def read_note(self, *, note_id):
+            calls.append(note_id)
+            return SimpleNamespace(title="One", content="Body", version=9)
+
+    monkeypatch.setattr(controller_module, "LocalNoteImportTarget", Target)
+    controller = _controller(plan=plan, calls=[], repository=repository)
+    effects = controller._build_review_effects(plan)
+    assert calls == [("database", repository), "note-1"]
+    assert len(effects) == 1
+    assert effects[0].target_version == 9
+    assert effects[0].content_diff == ""
+
+
+def test_review_effects_call_presentation_formatter_with_four_strings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pass four document strings to the formatter and retain its private result.
+
+    Args:
+        tmp_path: Test-owned source root.
+        monkeypatch: Fixture for observing formatter arguments and output.
+    """
+    base = _plan(tmp_path / "one.md")
+    plan = replace(
+        base,
+        items=(
+            replace(
+                base.items[0],
+                classification=ImportClassification.UNCERTAIN_MATCH,
+                match=ImportMatch(
+                    kind=ImportMatchKind.UNCERTAIN, note_id="note-1", note_version=7
+                ),
+            ),
+        ),
+    )
+    formatted = []
+
+    def format_diff(*documents):
+        formatted.append(documents)
+        return "private formatter result"
+
+    monkeypatch.setattr(controller_module, "bounded_note_diff", format_diff)
+    controller = _controller(
+        plan=plan,
+        calls=[],
+        repository=_FolderRepository(),
+        review_note_reader=lambda note_id: SimpleNamespace(
+            title="Old", content="Prior", version=9
+        ),
+    )
+    effects = controller._build_review_effects(plan)
+    assert formatted == [("Old", "Prior", "One", "Body")]
+    assert effects[0].content_diff == "private formatter result"
+    assert "private formatter result" not in repr(effects[0])
+
+
 def test_destination_depth_uses_controller_import_bounds_inline(tmp_path: Path) -> None:
     bounds = replace(BOUNDS, max_depth=32)
     controller = _controller(
@@ -342,7 +557,7 @@ async def test_large_review_diff_bounds_inputs_and_marks_truncated_preview(
         observed.append((sum(map(len, before)), sum(map(len, after))))
         return real_diff(before, after, *args, **kwargs)
 
-    monkeypatch.setattr(controller_module.difflib, "unified_diff", bounded_diff)
+    monkeypatch.setattr(state_module.difflib, "unified_diff", bounded_diff)
     controller = _controller(
         plan=plan,
         calls=[],

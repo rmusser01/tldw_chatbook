@@ -314,8 +314,28 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
     """Legacy constants remain isolated from normal profile resolution."""
     base_data_consumers: list[tuple[str, int]] = []
     runtime_constant_definitions: list[str] = []
-    for source_path in sorted(REPO_ROOT.rglob("*.py")):
-        relative_path = source_path.relative_to(REPO_ROOT).as_posix()
+    # Include maintained and new source, but not ignored packaging copies or
+    # virtual environments produced by other tests in the same checkout.
+    source_paths = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "*.py",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\0")
+    for relative_path in sorted(set(source_paths) - {""}):
+        source_path = REPO_ROOT / relative_path
+        if not source_path.is_file():
+            continue
         tree = ast.parse(source_path.read_text(encoding="utf-8"), relative_path)
         base_data_consumers.extend(
             (relative_path, line) for line in _base_data_dir_cli_consumer_lines(tree)

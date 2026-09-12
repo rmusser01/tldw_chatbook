@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import threading
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -31,6 +32,7 @@ from Tests.Performance.test_boot_worker_census import (
     EXPECTED_BOOT_WORKERS,
 )
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.app import BOOT_WORKER_RECONCILE_INTERVAL_SECONDS
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.Utils.boot_worker_policy import (
     BOOT_WORKER_KEY_BY_IDENTITY,
@@ -187,10 +189,19 @@ def _fake_worker(spec_key: str) -> SimpleNamespace:
     )
 
 
-def test_deferred_startup_starts_the_cap_then_advances_on_completion():
-    """The app starts up to the cap, then one more per terminal transition."""
+def test_deferred_startup_starts_the_cap_then_advances_on_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The app starts up to the cap, then one more per terminal transition.
+
+    Args:
+        monkeypatch: Record timer scheduling on this unmounted, synchronous app.
+    """
     cap = MAX_CONCURRENT_STAGGERED_BOOT_WORKERS
     app = _build_test_app()
+    timer = SimpleNamespace(stop=Mock())
+    set_interval = Mock(return_value=timer)
+    monkeypatch.setattr(app, "set_interval", set_interval)
     started: list[str] = []
     workers: dict[str, SimpleNamespace] = {}
 
@@ -203,6 +214,11 @@ def test_deferred_startup_starts_the_cap_then_advances_on_completion():
 
     app._start_staggered_boot_workers()
     assert started == list(STAGGERED_BOOT_WORKER_KEYS[:cap])
+    assert app._boot_worker_reconcile_timer is not None
+    assert app._boot_worker_reconcile_timer is timer
+    set_interval.assert_called_once_with(
+        BOOT_WORKER_RECONCILE_INTERVAL_SECONDS, app._reconcile_boot_worker_slots
+    )
 
     # Completing the oldest in-flight worker admits exactly one more, in
     # policy order, until the whole fleet has run.
@@ -210,6 +226,18 @@ def test_deferred_startup_starts_the_cap_then_advances_on_completion():
         app._release_boot_worker_slot(workers[STAGGERED_BOOT_WORKER_KEYS[index]])
         assert started == list(STAGGERED_BOOT_WORKER_KEYS[: cap + index + 1])
 
+    assert started == list(STAGGERED_BOOT_WORKER_KEYS)
+    assert set_interval.call_count == 1
+    timer.stop.assert_not_called()
+
+    # The remaining terminal events are lost: invoke the registered backstop
+    # callback, not a substitute for the real reconciliation policy.
+    for worker in workers.values():
+        worker.is_finished = True
+    set_interval.call_args.args[1]()
+    assert app._boot_worker_gate.is_drained
+    assert app._boot_worker_reconcile_timer is None
+    timer.stop.assert_called_once_with()
     assert started == list(STAGGERED_BOOT_WORKER_KEYS)
 
 
@@ -230,15 +258,29 @@ def test_a_starter_that_starts_nothing_still_advances_the_queue():
     assert started == list(STAGGERED_BOOT_WORKER_KEYS)
 
 
-def test_shutdown_closes_the_gate_instead_of_starting_more_work():
-    """A quit inside the staggered window starts nothing further."""
+def test_shutdown_closes_the_gate_instead_of_starting_more_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quit inside the staggered window starts nothing further.
+
+    Args:
+        monkeypatch: Record timer scheduling on this unmounted, synchronous app.
+    """
     app = _build_test_app()
+    timer = SimpleNamespace(stop=Mock())
+    set_interval = Mock(return_value=timer)
+    monkeypatch.setattr(app, "set_interval", set_interval)
     started: list[str] = []
     app._start_boot_worker = lambda key: (started.append(key), _fake_worker(key))[1]
 
     cap = MAX_CONCURRENT_STAGGERED_BOOT_WORKERS
     app._start_staggered_boot_workers()
     assert started == list(STAGGERED_BOOT_WORKER_KEYS[:cap])
+    assert app._boot_worker_reconcile_timer is not None
+    assert app._boot_worker_reconcile_timer is timer
+    set_interval.assert_called_once_with(
+        BOOT_WORKER_RECONCILE_INTERVAL_SECONDS, app._reconcile_boot_worker_slots
+    )
 
     app._shutting_down = True
     app._release_boot_worker_slot(_fake_worker(STAGGERED_BOOT_WORKER_KEYS[0]))
@@ -246,6 +288,9 @@ def test_shutdown_closes_the_gate_instead_of_starting_more_work():
     assert started == list(STAGGERED_BOOT_WORKER_KEYS[:cap])
     assert app._boot_worker_gate.is_closed
     assert app._boot_worker_gate.pending == ()
+    assert app._boot_worker_reconcile_timer is None
+    timer.stop.assert_called_once_with()
+    assert set_interval.call_count == 1
 
 
 def test_the_worker_identity_map_covers_the_whole_policy():

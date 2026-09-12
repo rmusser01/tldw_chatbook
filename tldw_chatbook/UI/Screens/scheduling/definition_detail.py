@@ -657,6 +657,7 @@ class DefinitionDetail(Vertical):
                     id="scheduling-automation-pause-resume",
                     variant="warning",
                     classes="detail-lifecycle-button",
+                    tooltip="Pause this automation.",
                 )
                 yield self._pause_resume_button
                 # redesign PR-4, task 3: the retired Automations-tab `r`
@@ -670,6 +671,7 @@ class DefinitionDetail(Vertical):
                     id="scheduling-automation-run-now",
                     variant="primary",
                     classes="detail-lifecycle-button",
+                    tooltip="Request an immediate run of this automation.",
                 )
                 yield self._run_now_button
             # task-31823: spec §5's kebab list (Run now · Duplicate ·
@@ -759,10 +761,18 @@ class DefinitionDetail(Vertical):
             # (`.display`-toggled) rather than `begin_edit`-mounted into
             # the row itself.
             self._runs_on_cancel_button = Button(
-                "Cancel transfer", id=_RUNS_ON_CANCEL_ID, variant="warning", classes="detail-owner-action-button"
+                "Cancel transfer",
+                id=_RUNS_ON_CANCEL_ID,
+                variant="warning",
+                classes="detail-owner-action-button",
+                tooltip="Cancel this ownership transfer, if it can still be canceled.",
             )
             self._runs_on_retry_button = Button(
-                "Retry transfer", id=_RUNS_ON_RETRY_ID, variant="warning", classes="detail-owner-action-button"
+                "Retry transfer",
+                id=_RUNS_ON_RETRY_ID,
+                variant="warning",
+                classes="detail-owner-action-button",
+                tooltip="Retry this failed ownership transfer.",
             )
             runs_on_actions = Horizontal(
                 self._runs_on_cancel_button,

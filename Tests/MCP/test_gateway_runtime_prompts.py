@@ -949,7 +949,7 @@ def test_real_keyword_search_failure_stays_private_through_prompt_gateway(
         raise RuntimeError(private_sentinel)
 
     monkeypatch.setattr(media_db, "search_media_db", fail_search)
-    monkeypatch.setattr(search_service, "create_rag_service", lambda **_kwargs: None)
+    monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: None)
 
     runtime = _runtime()
     server = TldwMCPServer.__new__(TldwMCPServer)

@@ -39,20 +39,13 @@ completeness checks ran alongside it, both returning nothing new:
   beyond the six ``on_prompt_block_editor_*`` handlers, which already contain
   "prompt" and are therefore already in the 161.
 
-**Single vs. split controller: single, decided by connected-components
-analysis, not by feel.** The plan explicitly leaves a two-controller split on
-the table for a cluster this size ("split ONLY on a clean ownership seam;
-when unsure, one controller"). Building the ``self.<name>`` reference graph
-among all 161 candidates yields **one connected component of 145 names plus
-16 isolated singletons** -- no second component of any size, and therefore no
-seam to split on. The hypothetical editor/studio-vs-browse seam does not
-hold: the editor's own exit path (``_exit_library_prompt_editor_guarded``)
-drives the browse refetch, the detail loader
-(``_refresh_library_prompt_detail``) is reached from both the row handler and
-the conflict resolvers, and the delete/undo flow writes state both surfaces
-read. **Decision: ONE combined ``LibraryPromptsController``**, matching the
-skills/search+RAG/ingest precedent's identical resolution at comparable
-scale.
+**Single controller: no independent ownership seam.** The ``self.<name>``
+graph of 161 candidates has one 145-name component and 16 singletons.
+An editor/browse split would cross the editor exit's browse refetch,
+the detail loader shared by row handlers and conflict resolvers, and the
+delete/undo state read by both surfaces. One ``LibraryPromptsController``
+therefore follows the skills/search+RAG/ingest precedent and the plan's
+requirement to split only at a clean ownership seam.
 
 **22 of the 161 candidates excluded, not moved (139 move):**
 
@@ -243,7 +236,7 @@ name, per the two binding kinds; see ``LibraryIngestController.__init__`` and
 binding surface below was derived MECHANICALLY, by walking all 139 moved
 bodies for every ``self.<attr>`` load/store AND every
 ``getattr(self, "<literal>")`` call, then subtracting this controller's own
-state fields and the movers themselves -- 42 names, every one of them pinned
+state fields and the movers themselves -- 43 names, every one of them pinned
 in ``test_prompts_controller_binds_every_name_its_moved_bodies_use``:
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
@@ -450,6 +443,7 @@ class LibraryPromptsController:
         open_library_export_canvas,
         refresh_local_source_snapshot,
         register_footer_shortcuts,
+        library_source_load_failure,
         run_library_service_call,
         safe_text,
         sanitize_media_field,
@@ -520,6 +514,7 @@ class LibraryPromptsController:
         self._open_library_export_canvas_fn = open_library_export_canvas
         self._refresh_local_source_snapshot_fn = refresh_local_source_snapshot
         self._register_footer_shortcuts_fn = register_footer_shortcuts
+        self._library_source_load_failure_fn = library_source_load_failure
         self._run_library_service_call_fn = run_library_service_call
         self._safe_text_fn = safe_text
         self._sanitize_media_field_fn = sanitize_media_field
@@ -577,14 +572,8 @@ class LibraryPromptsController:
 
     @property
     def focused(self) -> Any:
-        """Live-forward the screen's currently focused widget.
-
-        Bound explicitly because four moved bodies reach it as
-        ``getattr(self, "focused", None)`` -- an expression the recipe's own
-        ``self.<attr>`` census cannot see, and one that returns its DEFAULT
-        forever (no exception, no red test) when the name is unbound. The
-        skills series shipped exactly that regression; see the module
-        docstring's framework-services note.
+        """Live-forward focus: four movers use ``getattr`` with a silent default.
+        See the module's framework-services note for the Skills regression.
         """
         return self._screen.focused
 
@@ -716,6 +705,10 @@ class LibraryPromptsController:
     @property
     def _register_footer_shortcuts(self) -> Any:
         return self._register_footer_shortcuts_fn
+
+    @property
+    def _library_source_load_failure(self) -> Any:
+        return self._library_source_load_failure_fn
 
     @property
     def _run_library_service_call(self) -> Any:
@@ -2937,41 +2930,13 @@ class LibraryPromptsController:
         target_artifact_type: ArtifactType | None = None,
         save_as_new: bool = False,
     ) -> None:
-        """Save the open Library prompt's current editor text.
-
-        The prompts DB's update seam (``update_prompt_by_id``, reached via
-        ``PromptScopeService.save_prompt``) has no caller-supplied
-        expected-version parameter of its own -- it always re-derives the
-        version to bump from a fresh read inside its own transaction, so it
-        cannot detect "this editor's cached version is stale" by itself.
-        This method does that staleness check itself, via a fresh
-        ``get_prompt`` read, BEFORE attempting the real write.
-
-        Likewise, a rename to another prompt's name needs to distinguish
-        "that name belongs to an active prompt" (name-in-use) from "that
-        name belongs to a soft-deleted prompt" (soft-deleted-name) --
-        outcomes the real ``update_prompt_by_id`` cannot cleanly
-        distinguish either (both ultimately surface as the same
-        ``ConflictError``/wrapped-``DatabaseError`` shape once the actual
-        write is attempted, since ``Prompts.name`` is globally unique
-        regardless of soft-delete state). So a rename is pre-checked by a
-        name lookup too, before ever attempting the write.
-
-        Every branch re-checks that the prompt this save was *for* is still
-        selected (and the editor still showing) before mutating shared
-        state, mirroring ``_save_library_note``'s stale-result guard.
-
-        Task 8b D1: ``prompt_id is None`` (``_selected_prompt_id`` unset) is
-        the create-flow sentinel -- set by
-        ``_enter_library_prompt_create_editor``/``handle_library_prompt_duplicate``,
-        never a stray/invalid state (a browsed prompt always has a real
-        int id). ``save_prompt`` already routes ``prompt_identifier=None``
-        to its own create path (``PromptScopeService.save_prompt``), so the
-        actual write call below is unchanged between create and update --
-        only the pre-checks (the version-staleness read has nothing to
-        check for a not-yet-created prompt) and the post-write bookkeeping
-        (adopting the freshly created id) differ, per ``is_create`` below.
-        """
+        """Save live prompt text through the scope service.
+        For updates, fetch the current version before writing: the DB derives its
+        own version and cannot detect a stale editor. Pre-check renames including
+        soft-deleted names so distinct refusal reasons survive the DB's shared
+        ConflictError shape. Recheck selection/editor ownership before every result.
+        None is the create-flow ID sentinel, not invalid state: skip update-only
+        prechecks, use the service's existing create path, and adopt the returned ID."""
         if self._library_prompts_mutation_in_flight:
             return
         if self._library_prompts_view != "editor":
@@ -4129,6 +4094,9 @@ class LibraryPromptsController:
                         self._library_prompt_browse_controller.mutation_refresh_scope,
                         focus_identity=focus_identity,
                     )
+                    source_failure = self._library_source_load_failure()
+                    if source_failure is None or source_failure.severity != "error":
+                        self._refresh_local_source_snapshot()
                 self._library_prompt_delete_inflight_fingerprint = None
                 self._library_prompts_mutation_in_flight = False
                 if self.is_mounted:
@@ -4455,6 +4423,9 @@ class LibraryPromptsController:
                         self._library_prompt_browse_controller.mutation_refresh_scope,
                         focus_identity="library-prompts-delete-undo",
                     )
+                    source_failure = self._library_source_load_failure()
+                    if source_failure is None or source_failure.severity != "error":
+                        self._refresh_local_source_snapshot()
                 self._library_prompt_delete_inflight_fingerprint = None
                 self._library_prompts_mutation_in_flight = False
                 if self.is_mounted:

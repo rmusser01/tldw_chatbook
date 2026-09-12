@@ -458,9 +458,11 @@ def test_file_notes_error_ink_and_disabled_opacity_are_app_tier() -> None:
         git_error = _declarations(css, ".file-notes-git-commit-error")
         save_error = _declarations(css, "#file-notes-save-status.-error")
         assert git_error["color"] == "$ds-status-error-readable"
-        assert save_error["color"] == "$ds-status-error-readable"
+        # TASK-31910: Save failed uses the all-theme contrast-qualified pair;
+        # the Git error palette intentionally remains unchanged.
+        assert save_error["color"] == "$ds-text-primary"
         assert git_error["background"] == "$error-darken-3"
-        assert save_error["background"] == "$error-darken-3"
+        assert save_error["background"] == "$surface"
         disabled = _declarations(css, "LibraryFileNotesWorkspace Button:disabled")
         assert disabled["opacity"] == "100%"
         assert disabled["text-opacity"] == "100%"
@@ -815,7 +817,7 @@ def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
 
 @pytest.mark.parametrize(
     "module",
-    ["features/_evals.tcss", "features/_scheduling.tcss"],
+    ["features/_evals.tcss", "features/_scheduling.tcss", "features/_watchlists.tcss"],
 )
 def test_screen_owned_module_is_exactly_partitioned(module: str) -> None:
     """Every byte of a screen-owned module reaches exactly one output.
@@ -976,8 +978,14 @@ def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
     import importlib
 
     for screen_module, screen_name in [
-        ("tldw_chatbook.UI.Screens.scheduling.schedules_workbench", "SchedulesWorkbench"),
-        ("tldw_chatbook.UI.Screens.scheduling.workbench_host_screen", "WorkbenchHostScreen"),
+        (
+            "tldw_chatbook.UI.Screens.scheduling.schedules_workbench",
+            "SchedulesWorkbench",
+        ),
+        (
+            "tldw_chatbook.UI.Screens.scheduling.workbench_host_screen",
+            "WorkbenchHostScreen",
+        ),
         ("tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
         (
             "tldw_chatbook.UI.Screens.watchlists_collections_screen",
@@ -998,12 +1006,50 @@ def test_screens_do_not_take_owned_sheets_onto_css_path() -> None:
             )
 
 
+_FEATURE_ROUTE_CASES = (
+    ("schedules", "SchedulesWorkbench", "screen_feature_scheduling.tcss", "ctrl+7"),
+    (
+        "watchlists_collections",
+        "WatchlistsCollectionsScreen",
+        "screen_feature_watchlists.tcss",
+        "ctrl+6",
+    ),
+)
+
+
+def _observe_watchlists_sheet_at_mount(monkeypatch, route, sheet):
+    """Observe the real Watchlists mount before it can paint unstyled."""
+    observed = []
+    if route != "watchlists_collections":
+        return observed
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen,
+    )
+
+    original_mount = WatchlistsCollectionsScreen.on_mount
+
+    def on_mount(screen):
+        observed.append(screen.app.stylesheet.has_source(sheet, ""))
+        return original_mount(screen)
+
+    monkeypatch.setattr(WatchlistsCollectionsScreen, "on_mount", on_mount)
+    return observed
+
+
+@pytest.mark.parametrize(
+    ("route", "screen_name", "sheet_name", "shortcut"), _FEATURE_ROUTE_CASES
+)
 @pytest.mark.ui
 @pytest.mark.asyncio
 async def test_schedules_visit_loads_the_screen_owned_sheet(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    route: str,
+    screen_name: str,
+    sheet_name: str,
+    shortcut: str,
 ) -> None:
-    """First navigation to Schedules parses the split sheet; boot does not.
+    """First navigation parses the route's split sheet; boot does not.
 
     The functional half of the app-seam contract: the sheet is absent from
     the app stylesheet at `_ui_ready` (that absence IS the boot-CSS win)
@@ -1029,7 +1075,8 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
 
     from tldw_chatbook.app import TldwCli
 
-    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    sheet = str(_CSS_ROOT / sheet_name)
+    mounted_with_sheet = _observe_watchlists_sheet_at_mount(monkeypatch, route, sheet)
     app = TldwCli()
     async with app.run_test(size=(170, 48)) as pilot:
         while not getattr(app, "_ui_ready", False):
@@ -1038,32 +1085,61 @@ async def test_schedules_visit_loads_the_screen_owned_sheet(
             await asyncio.sleep(0.05)
             await pilot.pause()
         assert not app.stylesheet.has_source(sheet, ""), (
-            "the scheduling sheet must NOT ride the boot parse -- that "
-            "deferral is the entire TASK-24459 byte win"
+            f"{sheet_name} must not ride the boot parse"
         )
-        await pilot.press("ctrl+7")
+        reads = []
+        original_read = app.stylesheet.read
+
+        def tracked_read(path, *args, **kwargs):
+            if str(path) == sheet:
+                reads.append(str(path))
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(app.stylesheet, "read", tracked_read)
+        await pilot.press(shortcut)
         deadline = asyncio.get_running_loop().time() + 30.0
         while asyncio.get_running_loop().time() < deadline:
             await pilot.pause()
-            if type(app.screen).__name__ == "SchedulesWorkbench":
+            if type(app.screen).__name__ == screen_name:
                 break
-        assert type(app.screen).__name__ == "SchedulesWorkbench"
+        assert type(app.screen).__name__ == screen_name
         assert app.stylesheet.has_source(sheet, ""), (
-            "arriving at Schedules must load the split sheet, or the moved "
-            "rules never style the real app"
+            f"arriving at {route} must load the split sheet"
         )
+        if route == "watchlists_collections":
+            assert mounted_with_sheet == [True]
+
+        # Exercise real leave/re-entry, not only direct repeated loader calls.
+        for key, destination in (("ctrl+1", "HomeScreen"), (shortcut, screen_name)):
+            await pilot.press(key)
+            deadline = asyncio.get_running_loop().time() + 30.0
+            while asyncio.get_running_loop().time() < deadline:
+                await pilot.pause()
+                if type(app.screen).__name__ == destination:
+                    break
+            assert type(app.screen).__name__ == destination
+        assert reads == [sheet], "revisiting must not read/parse the sheet twice"
+        assert all(mounted_with_sheet)
 
 
+@pytest.mark.parametrize(
+    ("route", "screen_name", "sheet_name", "shortcut"), _FEATURE_ROUTE_CASES
+)
 @pytest.mark.ui
 @pytest.mark.asyncio
 async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    route: str,
+    screen_name: str,
+    sheet_name: str,
+    shortcut: str,
 ) -> None:
-    """A configured `default_tab = schedules` boots with the sheet loaded.
+    """A configured initial route boots with its owned sheet loaded.
 
     Qodo #2409 finding 2: the in-app navigation test above never exercises
     `_push_initial_screen`'s loading call -- deleting that call would leave
-    a schedules-default user unstyled on every boot and no test would go
+    a user starting on that route unstyled on every boot and no test would go
     red. This one boots through the real initial-push boundary.
     """
     import asyncio
@@ -1077,7 +1153,7 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(
         "[first_run]\nsetup_completed = true\n\n[splash_screen]\n"
-        "enabled = false\n\n[general]\ndefault_tab = \"schedules\"\n"
+        f'enabled = false\n\n[general]\ndefault_tab = "{route}"\n'
     )
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_DATA_HOME", str(data))
@@ -1087,7 +1163,8 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
 
     from tldw_chatbook.app import TldwCli
 
-    sheet = str(_CSS_ROOT / "screen_feature_scheduling.tcss")
+    sheet = str(_CSS_ROOT / sheet_name)
+    mounted_with_sheet = _observe_watchlists_sheet_at_mount(monkeypatch, route, sheet)
     app = TldwCli()
     async with app.run_test(size=(170, 48)) as pilot:
         while not getattr(app, "_ui_ready", False):
@@ -1095,13 +1172,14 @@ async def test_schedules_as_initial_tab_loads_the_screen_owned_sheet(
         for _ in range(20):
             await asyncio.sleep(0.05)
             await pilot.pause()
-        assert type(app.screen).__name__ == "SchedulesWorkbench", (
+        assert type(app.screen).__name__ == screen_name, (
             f"configured default tab did not land: {type(app.screen).__name__}"
         )
         assert app.stylesheet.has_source(sheet, ""), (
-            "booting INTO Schedules must load the split sheet through "
-            "_push_initial_screen, or a schedules-default user is unstyled"
+            f"booting into {route} must load the sheet through _push_initial_screen"
         )
+        if route == "watchlists_collections":
+            assert mounted_with_sheet == [True]
 
 
 def test_stale_split_sheets_are_removed_when_their_module_leaves(

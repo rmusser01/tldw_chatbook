@@ -263,13 +263,16 @@ def build_httpx_client(**kwargs: Any) -> httpx.Client:
 
 
 def build_requests_session(*, verify: bool | str | None = None) -> _requests.Session:
-    """``requests.Session`` with the app TLS trust policy applied by default.
+    """Session with the app TLS policy and configured default request timeout.
 
     An explicit ``verify`` (bool or CA-bundle path) wins over the policy,
     mirroring the httpx factories' setdefault semantics. ``requests.Session``
     accepts no constructor kwargs, so there is intentionally no kwargs
     forwarding here.
     """
-    session = _requests.Session()
-    session.verify = requests_verify() if verify is None else verify
+    from .egress import create_default_session
+
+    session = create_default_session()
+    if verify is not None:
+        session.verify = verify
     return session

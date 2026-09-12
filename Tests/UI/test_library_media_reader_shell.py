@@ -7,8 +7,10 @@ import threading
 from unittest.mock import Mock
 
 import pytest
-from textual.containers import Horizontal
-from textual.widgets import Button
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widget import AwaitMount
+from textual.widgets import Button, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -432,7 +434,7 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
             len(service.update_calls),
             len(service.delete_calls),
         )
-        scope = controller.applied_scope
+        scope = controller.state.applied_scope
         selected = screen._media_state.selected_media_id
 
         await pilot.resize_terminal(*size)
@@ -455,7 +457,7 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
         await pilot.pause()
 
         assert shell.query_one("#library-media-canvas") is items
-        assert controller.applied_scope == scope
+        assert controller.state.applied_scope == scope
         assert screen._media_state.selected_media_id == selected
         assert (
             len(service.search_calls),
@@ -504,6 +506,126 @@ class _SixtyColumnMediaShellApp(ConsolidatedCSSApp):
         )
         shell.styles.width = 60
         yield shell
+
+
+class _SixtyColumnNotesShellApp(ConsolidatedCSSApp):
+    CSS_PATH = TldwCli.CSS_PATH
+
+    def compose(self) -> ComposeResult:
+        """Compose a Notes-owned shell with a real TextArea work subtree."""
+        layout = resolve_media_reader_layout(60, MediaReaderLayoutPreferences())
+        shell = LibraryBrowseReaderShell(
+            Horizontal(id="library-rail"),
+            Horizontal(id="library-notes-canvas"),
+            Vertical(
+                TextArea("Old Notes body", id="old-notes-body"),
+                id="library-note-work-pane",
+            ),
+            layout,
+            route="notes",
+            id="library-browse-reader-shell",
+        )
+        shell.styles.width = 60
+        yield shell
+
+
+@pytest.mark.asyncio
+async def test_browse_shell_hides_the_old_work_pane_before_removing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A detached TextArea subtree cannot remain visible to the compositor.
+
+    Args:
+        monkeypatch: Scoped observation of the outgoing pane removal.
+    """
+    app = _SixtyColumnMediaShellApp()
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        shell = app.query_one(".library-media-route", LibraryBrowseReaderShell)
+        previous = shell.work
+        original_remove = previous.remove
+        original_mount = shell.mount
+        visible_at_mount: list[bool] = []
+        visible_at_remove: list[bool] = []
+
+        def record_mount(*args: object, **kwargs: object) -> AwaitMount:
+            """Record visibility before the first awaited replacement step."""
+            visible_at_mount.append(previous.display)
+            return original_mount(*args, **kwargs)
+
+        async def record_remove() -> None:
+            """Record compositor visibility at the destructive boundary."""
+            visible_at_remove.append(previous.display)
+            await original_remove()
+
+        monkeypatch.setattr(shell, "mount", record_mount)
+        monkeypatch.setattr(previous, "remove", record_remove)
+        replacement = Static("Replacement")
+
+        await shell.swap_work(replacement)
+        await pilot.pause()
+
+        assert shell.work is replacement
+        assert visible_at_mount == [False]
+        assert visible_at_remove == [False]
+        assert previous.parent is None
+
+
+@pytest.mark.asyncio
+async def test_browse_shell_rapid_notes_to_media_mounts_fresh_current_work() -> None:
+    """A rapid Notes return retires old Media before mounting fresh Media."""
+    app = _SixtyColumnMediaShellApp()
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        shell = app.query_one(".library-media-route", LibraryBrowseReaderShell)
+        original = shell.work
+        notes = Vertical(
+            TextArea("Notes body", id="rapid-notes-body"),
+            id="library-note-work-pane",
+        )
+        fresh_media = Vertical(
+            TextArea("Fresh Media body", id="fresh-media-body"),
+            id=original.id,
+        )
+
+        await shell.swap_work(notes)
+        await shell.swap_work(fresh_media)
+        await pilot.pause()
+
+        assert shell.work is fresh_media
+        assert fresh_media.parent is shell
+        assert fresh_media.display is True
+        assert original.parent is None
+        assert notes.parent is None
+        assert len(shell.query(f"#{original.id}")) == 1
+        assert "Fresh Media body" in _painted_text_in_region(app, fresh_media.region)
+
+
+@pytest.mark.asyncio
+async def test_browse_shell_rapid_media_to_notes_mounts_fresh_current_work() -> None:
+    """A rapid Media return retires old Notes before mounting fresh Notes."""
+    app = _SixtyColumnNotesShellApp()
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        shell = app.query_one(".library-notes-route", LibraryBrowseReaderShell)
+        original = shell.work
+        media = Static("Media body", id="library-media-viewer")
+        fresh_notes = Vertical(
+            TextArea("Fresh Notes body", id="fresh-notes-body"),
+            id=original.id,
+        )
+
+        await shell.swap_work(media)
+        await shell.swap_work(fresh_notes)
+        await pilot.pause()
+
+        assert shell.work is fresh_notes
+        assert fresh_notes.parent is shell
+        assert fresh_notes.display is True
+        assert original.parent is None
+        assert media.parent is None
+        assert len(shell.query(f"#{original.id}")) == 1
+        assert "Fresh Notes body" in _painted_text_in_region(app, fresh_notes.region)
 
 
 @pytest.mark.asyncio

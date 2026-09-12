@@ -1,5 +1,4 @@
 from dataclasses import FrozenInstanceError
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +6,11 @@ from textual.app import App, ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    ConsolidatedCSSApp,
+    app_css_text,
+)
 from textual.widgets import Button, Markdown, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -176,14 +179,6 @@ def _speaker_label_for(transcript: ConsoleTranscript, message_id: str) -> Static
         else transcript.query_one(f"#console-message-{message_id}")
     )
     return owner.query_one(".console-transcript-speaker-label", Static)
-
-
-_BUNDLE = (
-    Path(__file__).resolve().parents[2]
-    / "tldw_chatbook"
-    / "css"
-    / "tldw_cli_modular.tcss"
-)
 
 
 def _roleplay_context(
@@ -856,7 +851,7 @@ def test_legacy_set_messages_preserves_same_id_activity_expansion() -> None:
 
 
 class StyledRoleplayTranscriptHarness(ConsolidatedCSSApp):
-    CSS_PATH = str(_BUNDLE)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
@@ -1029,7 +1024,9 @@ def test_chat_screen_transcript_fingerprint_tracks_presentation_revision():
         _ensure_console_chat_store=lambda: SimpleNamespace(
             active_session_id="session-1"
         ),
-        _console_presentation_context=lambda: holder["context"],
+        _message=SimpleNamespace(
+            _console_presentation_context=lambda: holder["context"]
+        ),
     )
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT, content="same body", id="a1"
@@ -1907,7 +1904,7 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Fork Retry ---> More…"
+    assert action_row == "Copy Edit Fork Retry More…"
     assert len(action_row) <= 48
 
 
@@ -2003,7 +2000,7 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
 @pytest.mark.asyncio
 async def test_console_transcript_more_menu_captures_message_and_closes_before_choice():
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
@@ -2018,6 +2015,8 @@ async def test_console_transcript_more_menu_captures_message_and_closes_before_c
             "Helpful",
             "Not helpful",
             "Delete",
+            "Summarize up to here as note",
+            "Save transcript up to here as note",
         ]
 
         await pilot.press("down", "enter")
@@ -2041,7 +2040,7 @@ async def test_console_transcript_more_menu_captures_message_and_closes_before_c
 async def test_console_more_menu_lifecycle_dismisses_without_dispatch(
     monkeypatch, dismissal, expected_selection
 ):
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2092,7 +2091,7 @@ async def test_console_more_menu_lifecycle_dismisses_without_dispatch(
 async def test_console_more_menu_closes_on_in_transcript_click_without_dispatch(
     monkeypatch, click_target, expected_selection
 ):
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2126,7 +2125,7 @@ async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatc
         ) -> None:
             self.review_note_requests.append(event.anchor_message_id)
 
-    app = AnnotationHarness(css_path=str(_BUNDLE))
+    app = AnnotationHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2157,7 +2156,7 @@ async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatc
 
 @pytest.mark.asyncio
 async def test_console_real_recompose_closes_more_and_restores_opener(monkeypatch):
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2184,7 +2183,7 @@ async def test_console_real_recompose_closes_more_and_restores_opener(monkeypatc
 async def test_console_more_choice_keeps_captured_target_after_selection_race(
     monkeypatch,
 ):
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2217,7 +2216,7 @@ async def test_console_more_choice_keeps_captured_target_after_selection_race(
 
 @pytest.mark.asyncio
 async def test_console_more_choice_claims_first_activation_only(monkeypatch):
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2243,7 +2242,7 @@ async def test_console_more_choice_claims_first_activation_only(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_console_more_keyboard_traversal_skips_disabled_and_restores_opener():
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.click("#console-message-m2")
@@ -2271,7 +2270,7 @@ async def test_console_more_keyboard_traversal_skips_disabled_and_restores_opene
 
 @pytest.mark.asyncio
 async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.click("#console-message-m2")
@@ -2280,17 +2279,34 @@ async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
 
         save = app.query_one("#console-message-more-save-as", Button)
         helpful = app.query_one("#console-message-more-feedback-up", Button)
+        not_helpful = app.query_one("#console-message-more-feedback-down", Button)
         delete = app.query_one("#console-message-more-delete", Button)
+        summarize = app.query_one("#console-message-more-summarize-note", Button)
+        save_transcript = app.query_one(
+            "#console-message-more-save-transcript-note", Button
+        )
         assert save.has_focus
 
         await pilot.press("tab")
         assert helpful.has_focus
         assert app.query("#console-message-more-menu")
 
+        await pilot.press("tab")
+        assert not_helpful.has_focus
+        await pilot.press("shift+tab")
+        assert helpful.has_focus
         await pilot.press("shift+tab")
         assert save.has_focus
         await pilot.press("shift+tab")
+        assert save_transcript.has_focus
+        await pilot.press("shift+tab")
+        assert summarize.has_focus
+        await pilot.press("shift+tab")
         assert delete.has_focus
+        await pilot.press("tab")
+        assert summarize.has_focus
+        await pilot.press("tab")
+        assert save_transcript.has_focus
         await pilot.press("tab")
         assert save.has_focus
         assert app.query("#console-message-more-menu")
@@ -2299,7 +2315,7 @@ async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
 @pytest.mark.asyncio
 async def test_console_more_focus_falls_back_to_composer_after_row_removal():
     class ComposerFallbackHarness(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLE)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             transcript = ConsoleTranscript(id="console-native-transcript")
@@ -2367,7 +2383,7 @@ async def test_console_more_focus_falls_back_to_composer_after_row_removal():
                 status="failed",
                 id="row-failed",
             ),
-            ("copy", "edit", "fork", "retry", "continue", "more"),
+            ("copy", "edit", "fork", "retry", "more"),
         ),
         (
             ConsoleChatMessage(
@@ -2384,7 +2400,7 @@ async def test_console_more_focus_falls_back_to_composer_after_row_removal():
 async def test_console_selected_action_rows_fit_reference_terminals(
     size, message, expected_actions
 ):
-    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+    app = MutableTranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=size) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2405,7 +2421,7 @@ async def test_console_selected_action_rows_fit_reference_terminals(
 @pytest.mark.parametrize("media_kind", ("generated-image", "video"))
 @pytest.mark.asyncio
 async def test_console_media_card_actions_fit_reference_terminals(size, media_kind):
-    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+    app = MutableTranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=size) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2487,7 +2503,7 @@ async def test_console_media_card_actions_fit_reference_terminals(size, media_ki
 
 @pytest.mark.asyncio
 async def test_console_hidden_generation_card_keeps_view_reachable_at_80_columns():
-    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+    app = MutableTranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2521,7 +2537,7 @@ async def test_console_hidden_generation_card_keeps_view_reachable_at_80_columns
 
 @pytest.mark.asyncio
 async def test_console_generation_card_reconciles_save_eligibility_change():
-    app = MutableTranscriptHarness(css_path=str(_BUNDLE))
+    app = MutableTranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
     ephemeral = True
 
     async with app.run_test(size=(80, 24)) as pilot:
@@ -2556,7 +2572,7 @@ async def test_console_ineligible_fork_reason_is_visible_and_repeated_by_f(
     monkeypatch,
 ):
     reason = "Save this chat before forking from the selected message."
-    app = TranscriptHarness(css_path=str(_BUNDLE))
+    app = TranscriptHarness(css_path=[str(path) for path in APP_STYLESHEETS])
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -2653,7 +2669,7 @@ async def test_console_transcript_rule_spans_full_width_on_wide_terminals():
     """
 
     class _BundledTranscriptHarness(TranscriptHarness):
-        CSS_PATH = str(_BUNDLE)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     app = _BundledTranscriptHarness()
     async with app.run_test(size=(250, 20)) as pilot:
@@ -4272,18 +4288,27 @@ def test_console_transcript_empty_state_is_centered_in_stylesheets():
     pins in test_master_shell_navigation.py.
     """
     from pathlib import Path
+    import re
 
-    for css_path in (
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
-        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+    for source, css in (
+        (
+            Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+            Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
+                encoding="utf-8"
+            ),
+        ),
+        ("generated app stylesheets", app_css_text()),
     ):
-        css = css_path.read_text(encoding="utf-8")
-        panel_rule = css.split(".console-transcript-empty-panel {", 1)[1].split("}", 1)[
-            0
-        ]
-        assert "align: center middle" in panel_rule, css_path
-        body_rule = css.split(".console-transcript-empty-body {", 1)[1].split("}", 1)[0]
-        assert "text-align: center" in body_rule, css_path
+        # Match the base selector, not a scoped compact-mode rule whose
+        # selector merely ends with the same class and only adjusts padding.
+        panel_rule = "\n".join(
+            re.findall(r"(?m)^\.console-transcript-empty-panel\s*\{([^}]*)\}", css)
+        )
+        assert "align: center middle" in panel_rule, source
+        body_rule = "\n".join(
+            re.findall(r"(?m)^\.console-transcript-empty-body\s*\{([^}]*)\}", css)
+        )
+        assert "text-align: center" in body_rule, source
 
 
 def test_console_thinking_row_edit_action_gated_by_displayability():

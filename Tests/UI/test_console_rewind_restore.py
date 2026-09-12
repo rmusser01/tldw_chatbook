@@ -104,9 +104,9 @@ async def test_restore_mid_path_truncates_active_path_and_refills_composer():
         session, ids = await _seed_u1_a1_u2_a2(console)
 
         spy_insert = MagicMock(return_value=True)
-        console._insert_prompt_text_into_composer = spy_insert
+        console._commands._insert_prompt_text_into_composer = spy_insert
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(kind="restore", message_id=ids["u2"].id, prompt_text="U2"),
         )
@@ -133,9 +133,9 @@ async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path(monkeypa
         monkeypatch.setattr(store, "set_active_path_before", spy_before)
         monkeypatch.setattr(store, "set_active_leaf", spy_leaf)
         spy_insert = MagicMock(return_value=True)
-        console._insert_prompt_text_into_composer = spy_insert
+        console._commands._insert_prompt_text_into_composer = spy_insert
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(kind="restore", message_id=ids["u1"].id, prompt_text="U1"),
         )
@@ -161,7 +161,7 @@ async def test_first_prompt_warns_if_restart_cursor_is_unsaved(monkeypatch):
         session, ids = await _seed_u1_a1_u2_a2(console)
 
         spy_insert = MagicMock(return_value=True)
-        console._insert_prompt_text_into_composer = spy_insert
+        console._commands._insert_prompt_text_into_composer = spy_insert
         original = store.set_active_path_before
 
         def apply_but_report_unsaved(session_id: str, message_id: str) -> bool:
@@ -176,7 +176,7 @@ async def test_first_prompt_warns_if_restart_cursor_is_unsaved(monkeypatch):
             (str(text), kwargs.get("severity", ""))
         )
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind="restore",
@@ -214,14 +214,14 @@ async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
         )
 
         spy_insert = MagicMock(return_value=True)
-        console._insert_prompt_text_into_composer = spy_insert
+        console._commands._insert_prompt_text_into_composer = spy_insert
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
             (str(message_text), kwargs.get("severity", ""))
         )
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(kind="restore", message_id=ids["u2"].id, prompt_text="U2"),
         )
@@ -250,7 +250,7 @@ async def test_none_choice_just_refocuses_composer_without_mutation():
         spy_focus = MagicMock()
         console._focus_console_composer_if_needed = spy_focus
 
-        await console._apply_console_rewind_choice(session.id, None)
+        await console._commands._apply_console_rewind_choice(session.id, None)
         await pilot.pause()
 
     assert store.active_path_message_ids(session.id) == original_path
@@ -290,7 +290,7 @@ async def test_summary_choice_dispatches_symmetric_exclusive_worker_without_muta
         spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
         console.run_worker = spy_worker
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind=kind, message_id=ids["u2"].id, prompt_text="U2"
@@ -355,7 +355,7 @@ async def test_summary_choices_refuse_sending_streaming_and_compacting(
             (str(message_text), kwargs.get("severity", ""))
         )
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind=kind, message_id=ids["u2"].id, prompt_text="U2"
@@ -416,7 +416,7 @@ async def test_both_summary_workers_share_one_non_overlapping_exclusive_group(
 
         monkeypatch.setattr(console, "run_worker", capture_worker)
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind=KIND_SUMMARIZE_UP_TO,
@@ -425,7 +425,7 @@ async def test_both_summary_workers_share_one_non_overlapping_exclusive_group(
             ),
         )
         await asyncio.wait_for(started[0].wait(), timeout=1)
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind=KIND_SUMMARIZE_FROM,
@@ -480,7 +480,7 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
             (str(text), kwargs.get("severity", ""))
         )
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind=KIND_SUMMARIZE_FROM,
@@ -804,7 +804,7 @@ async def test_console_command_rewind_notifies_when_no_prompts_yet():
         app.notify = lambda message_text, **kwargs: notices.append(str(message_text))
 
         screens_before = len(host.screen_stack)
-        await console._console_command_rewind(CommandParse("command", "rewind", ""))
+        await console._commands._console_command_rewind(CommandParse("command", "rewind", ""))
         await pilot.pause()
 
         assert len(host.screen_stack) == screens_before
@@ -842,9 +842,9 @@ async def test_restore_refills_composer_with_full_prompt_not_truncated_preview()
         assert preview != long_prompt  # sanity: the preview really is truncated
 
         spy_insert = MagicMock(return_value=True)
-        console._insert_prompt_text_into_composer = spy_insert
+        console._commands._insert_prompt_text_into_composer = spy_insert
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(kind="restore", message_id=u1.id, prompt_text=preview),
         )
@@ -874,14 +874,14 @@ async def test_restore_to_a_stale_message_id_makes_no_mutation_and_notifies():
         original_leaf = store.active_leaf(session.id)
 
         spy_insert = MagicMock(return_value=True)
-        console._insert_prompt_text_into_composer = spy_insert
+        console._commands._insert_prompt_text_into_composer = spy_insert
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
             (str(message_text), kwargs.get("severity", ""))
         )
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind="restore", message_id="does-not-exist", prompt_text="x"
@@ -923,14 +923,14 @@ async def test_restore_choice_guards_against_changed_active_session():
         other_path = store.active_path_message_ids(other_session.id)
 
         spy_insert = MagicMock(return_value=True)
-        console._insert_prompt_text_into_composer = spy_insert
+        console._commands._insert_prompt_text_into_composer = spy_insert
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
             (str(message_text), kwargs.get("severity", ""))
         )
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(kind="restore", message_id=ids["u2"].id, prompt_text="U2"),
         )
@@ -965,14 +965,23 @@ async def test_summarize_choice_guards_against_changed_active_session():
         store.switch_session(other_session.id)
 
         spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
-        console.run_worker = spy_worker
+        real_run_worker = console.run_worker
+
+        def capture_summary_worker(work, **kwargs):
+            # Workspace alias refreshes may still be queued after the session
+            # switch. Only the guarded summary dispatch is under test here.
+            if kwargs.get("group", "").startswith("console-run-"):
+                return spy_worker(work, **kwargs)
+            return real_run_worker(work, **kwargs)
+
+        console.run_worker = capture_summary_worker
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
             (str(message_text), kwargs.get("severity", ""))
         )
 
-        await console._apply_console_rewind_choice(
+        await console._commands._apply_console_rewind_choice(
             session.id,
             ConsoleRewindChoice(
                 kind="summarize-up-to", message_id=ids["u2"].id, prompt_text="U2"
@@ -1000,7 +1009,7 @@ async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         session, ids = await _seed_u1_a1_u2_a2(console)
 
-        await console._console_command_rewind(CommandParse("command", "rewind", ""))
+        await console._commands._console_command_rewind(CommandParse("command", "rewind", ""))
         await pilot.pause()
 
         modal = host.screen_stack[-1]
@@ -1039,7 +1048,7 @@ async def test_rewind_callback_refuses_sibling_descendant_path_change(monkeypatc
         transcript.select_message(ids["a1"].id)
         await pilot.pause()
 
-        await console._console_command_rewind(CommandParse("command", "rewind", ""))
+        await console._commands._console_command_rewind(CommandParse("command", "rewind", ""))
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRewindModal)
@@ -1100,7 +1109,7 @@ async def test_console_rewind_disables_summaries_for_incomplete_tip_only():
             content="unfinished prompt",
         )
 
-        await console._console_command_rewind(CommandParse("command", "rewind", ""))
+        await console._commands._console_command_rewind(CommandParse("command", "rewind", ""))
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRewindModal)
@@ -1139,7 +1148,7 @@ async def test_console_rewind_disables_summaries_while_run_is_active():
             ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
         )
 
-        await console._console_command_rewind(CommandParse("command", "rewind", ""))
+        await console._commands._console_command_rewind(CommandParse("command", "rewind", ""))
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRewindModal)
@@ -1180,7 +1189,7 @@ async def test_console_rewind_marks_both_actions_as_replacing_typed_memory(
             ),
         )
 
-        await console._console_command_rewind(CommandParse("command", "rewind", ""))
+        await console._commands._console_command_rewind(CommandParse("command", "rewind", ""))
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRewindModal)
@@ -1215,7 +1224,7 @@ async def test_console_rewind_memory_lookup_error_warns_conservatively_without_l
             format="{message}",
         )
         try:
-            await console._console_command_rewind(
+            await console._commands._console_command_rewind(
                 CommandParse("command", "rewind", "")
             )
             await pilot.pause()
@@ -1459,7 +1468,7 @@ async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
         monkeypatch.setattr(console.app, "push_screen", fail_rewind_modal)
 
         with pytest.raises(RuntimeError, match="rewind modal launch failed"):
-            await console._send_console_message_from_visible_action()
+            await console._submission._send_console_message_from_visible_action()
 
         expected = "/rewindlate" if source == "keyboard" else "/rewind"
         assert composer.draft_text() == expected
@@ -1495,10 +1504,10 @@ async def test_visible_rewind_cleanup_preserves_a_changed_composer(
             return True
 
         clear_draft = MagicMock()
-        monkeypatch.setattr(console, "_console_command_rewind", succeed_after_mutation)
-        monkeypatch.setattr(console, "_clear_console_composer_draft", clear_draft)
+        monkeypatch.setattr(console._commands, "_console_command_rewind", succeed_after_mutation)
+        monkeypatch.setattr(console._commands, "_clear_console_composer_draft", clear_draft)
 
-        assert not await console._send_console_message_from_visible_action()
+        assert not await console._submission._send_console_message_from_visible_action()
 
         current_snapshot = composer.capture_draft_snapshot()
         assert composer.draft_text() == "/rewind"

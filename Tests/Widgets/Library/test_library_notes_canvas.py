@@ -13,7 +13,6 @@ from textual.widgets import Button, Static
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
 from Tests.UI.consolidated_css import (
     APP_STYLESHEETS,
-    BUNDLED_STYLESHEET,
     ConsolidatedCSSApp,
 )
 from tldw_chatbook.Library.library_notes_state import (
@@ -49,6 +48,7 @@ from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
     LibraryNotesCanvas,
 )
+from tldw_chatbook.Widgets.Library.library_note_work_pane import LibraryNoteWorkPane
 
 pytestmark = pytest.mark.asyncio
 
@@ -241,6 +241,33 @@ async def test_authority_row_is_first_plain_child_in_every_notes_mode(
         assert "Library database" not in text
         assert status_fragment in text
         assert "Next:" in text
+
+
+@pytest.mark.parametrize("mode", ("create", "loading", "editor"))
+async def test_compact_work_authority_survives_responsive_round_trip(
+    widget_pilot, mode: str,  # noqa: F811
+) -> None:
+    """Keep storage authority in compact Work without duplicating wide Items.
+
+    Args:
+        widget_pilot: Real mounted-widget test context.
+        mode: Work subview whose inherited authority node stays mounted.
+    """
+    async with await widget_pilot(
+        LibraryNoteWorkPane, mode=mode, compact=True,
+    ) as pilot:
+        canvas = pilot.app.query_one(LibraryNoteWorkPane)
+        authority = canvas.query_one("#library-note-work-authority", Static)
+        for compact in (True, False, True):
+            canvas.apply_compact_presentation(compact)
+            await pilot.pause()
+            assert canvas.query_one("#library-note-work-authority") is authority
+            text = str(authority.renderable)
+            assert text.startswith("Library notes") is compact
+            assert text
+            if mode == "loading":
+                assert "Loading note…" in text
+                assert "Next:" not in text
 
 
 async def test_completed_import_receipt_has_focusable_back_action_at_60_columns():
@@ -587,7 +614,7 @@ async def test_paged_tree_projection_renders_branch_controls_at_exact_boundaries
         assert [child.id for child in children] == [
             "library-notes-tree-folder-0",
             "library-notes-tree-pager-folder-776f726b-folders-earlier",
-            "library-notes-tree-note-2",
+            "library-notes-row-0",
             "library-notes-tree-pager-folder-776f726b-placements-more",
         ]
         earlier = children[1]
@@ -892,7 +919,7 @@ async def test_pager_focus_survives_failure_retry_and_retry_loading_recompose() 
     )
 
     class PagerFocusApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             yield LibraryNotesCanvas(list_state=_list_state(), tree_projection=idle)

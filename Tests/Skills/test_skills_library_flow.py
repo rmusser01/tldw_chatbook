@@ -41,6 +41,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _active_library_screen,
     _build_test_app,
+    _wait_for_condition,
     _wait_for_display,
     _wait_for_library_shell,
     _wait_for_selector,
@@ -588,6 +589,11 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         assert trust_service.trust_store.has_manifest()
         assert screen.query_one("#library-skills-canvas") is items
         assert screen.query_one("#library-skill-work-pane") is work
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_skills_browse_controller.freshness == "fresh",
+            message="Bootstrap did not refresh the retained Skills Items page",
+        )
         assert len(screen.query("#library-skill-trust-setup")) == 0
         view_details = screen.query_one("#library-skill-trust-view-details", Button)
         assert view_details
@@ -620,6 +626,7 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         await _wait_for_selector(screen, pilot, "#library-skill-trust-region")
 
         assert screen._skills_state.editor_state.trust_blocked is True
+        assert screen._skills_state.editor_state.description == "v2"
         screen.query_one("#library-skill-trust-review", Button).press()
         await pilot.pause()
         for _ in range(150):
@@ -822,6 +829,109 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
         assert screen.query_one("#library-skill-row-keeper", Button)
         assert screen.query_one("#library-skills-canvas") is items
         assert screen.query_one("#library-skill-work-pane") is work
+
+
+@pytest.mark.asyncio
+async def test_skills_items_retry_and_paging_preserve_dirty_work(tmp_path, monkeypatch):
+    """Source-only recovery never rebuilds or replaces the live draft owner."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    for index in range(21):
+        await local_service.create_skill(
+            name=f"skill-{index:02d}",
+            content=_skill_content(title=f"Skill {index}", description="original"),
+        )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "skill-00")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._skills_state.editor_armed,
+            message="Skills editor did not arm after mounting",
+        )
+        items = screen.query_one("#library-skills-canvas")
+        work = screen.query_one("#library-skill-work-pane")
+        body = screen.query_one("#library-skill-body", TextArea)
+        draft = "# Unsaved draft\nKeep this local text.\n"
+        body.text = draft
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._skills_state.dirty,
+            message="The live Skills draft did not become dirty",
+        )
+        body.move_cursor((1, 4))
+        cursor = body.cursor_location
+
+        def assert_work_unchanged():
+            assert screen.query_one("#library-skills-canvas") is items
+            assert screen.query_one("#library-skill-work-pane") is work
+            assert screen.query_one("#library-skill-body", TextArea) is body
+            assert body.text == draft
+            assert body.cursor_location == cursor
+            assert screen._skills_state.dirty
+            assert screen._skills_state.selected_skill_name == "skill-00"
+
+        original_list = service.list_skills
+        failed = False
+
+        async def fail_once(**kwargs):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise RuntimeError("Skills page temporarily unavailable")
+            return await original_list(**kwargs)
+
+        monkeypatch.setattr(service, "list_skills", fail_once)
+        browse = screen._library_skills_browse_controller
+        screen._request_library_skills_browse(browse.scope)
+        await _wait_for_condition(
+            pilot,
+            lambda: browse.result.status == "error",
+            message="Open-editor Skills page did not report its source failure",
+        )
+        assert_work_unchanged()
+        screen.query_one("#library-skills-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                browse.result.status == "ready"
+                and browse.freshness == "fresh"
+                and not screen.query_one("#library-skills-page-next", Button).disabled
+            ),
+            message="Retry did not recover the retained Skills page",
+        )
+        assert_work_unchanged()
+        screen.query_one("#library-skills-page-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: browse.result.status == "ready" and browse.visible_result.page == 2,
+            message="Next did not page the open-editor Skills Items pane",
+        )
+        assert_work_unchanged()
+        row = await _wait_for_selector(screen, pilot, "#library-skill-row-skill-20")
+        row.press()
+        await pilot.pause()
+        assert_work_unchanged()
+
+        filter_input = screen.query_one("#library-skills-filter", Input)
+        filter_input.value = "skill-02"
+        filter_input.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                browse.result.status == "ready"
+                and browse.visible_result.scope.query == "skill-02"
+            ),
+            message="Filtering did not settle independently of the dirty Work pane",
+        )
+        assert_work_unchanged()
+        assert await screen.flush_pending_work() is False
 
 
 @pytest.mark.asyncio

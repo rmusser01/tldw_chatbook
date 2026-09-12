@@ -12,6 +12,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.noise_defaults import default_ignore_selectors_text
+from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
@@ -96,6 +97,7 @@ class DestinationHarness:
             side_effect=_settings_without_splash,
         ):
             async with self.app.run_test(**kwargs) as pilot:
+                self.app._ensure_screen_owned_css("watchlists_collections")
                 await self.app.push_screen(self.context_screen)
                 await pilot.pause()
                 yield pilot
@@ -115,6 +117,7 @@ class WatchlistsContextHarness:
             side_effect=_settings_without_splash,
         ):
             async with self.app.run_test(**kwargs) as pilot:
+                self.app._ensure_screen_owned_css("watchlists_collections")
                 await self.app.push_screen(self.context_screen)
                 await pilot.pause()
                 yield pilot
@@ -181,6 +184,8 @@ async def test_console_briefing_inspect_navigates_shell_to_exact_loaded_row():
             for _ in range(200):
                 await pilot.pause(0.01)
                 pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+                if not pane.query("#artifacts-table"):
+                    continue
                 table = pane.query_one("#artifacts-table", DataTable)
                 if (
                     (screen._selected_briefing or {}).get("id") == target["id"]
@@ -460,6 +465,11 @@ async def test_subscriptions_alias_preserves_watchlists_navigation_context(monke
         ),
     )
     monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app,
+        "_navigation_target_owns_stack",
+        lambda candidate: candidate in switched_screens,
+    )
     monkeypatch.setattr(
         type(app), "screen", property(lambda self: FakeOutgoingScreen())
     )
@@ -1505,17 +1515,23 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
         screen._controller.list_sources = AsyncMock(
             return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
         )
-        screen._controller.list_items = AsyncMock(
-            return_value=[
-                {
-                    "id": "i1",
-                    "title": "Item One",
-                    "source_name": "Feed One",
-                    # The real backend always carries a status; without one the
-                    # reader-set filter (TASK-3072) legitimately hides the row.
-                    "status": "new",
-                }
-            ]
+        screen._controller.list_reader_items_page = AsyncMock(
+            return_value=WatchlistItemPage(
+                items=(
+                    {
+                        "id": "i1",
+                        "title": "Item One",
+                        "source_name": "Feed One",
+                        # The real backend always carries a status; without one
+                        # the reader-set filter legitimately hides the row.
+                        "status": "new",
+                    },
+                ),
+                has_more=False,
+                snapshot_max_item_id=1,
+                snapshot_count=1,
+                next_cursor=None,
+            )
         )
         screen._controller.list_alert_rules = AsyncMock(
             return_value=[
@@ -2080,7 +2096,7 @@ async def test_a_running_run_poll_cannot_resurrect_a_cleared_tree_scope():
 
 
 @pytest.mark.asyncio
-async def test_moving_the_tree_disarms_run_actions_selected_before_the_move():
+async def test_moving_the_tree_disarms_running_run_cancel_selected_before_the_move():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
         TreeScope,
         TreeScopeChanged,
@@ -2104,7 +2120,7 @@ async def test_moving_the_tree_disarms_run_actions_selected_before_the_move():
         cancel = screen.query_one("#runs-cancel-button", Button)
         rerun = screen.query_one("#runs-rerun-button", Button)
         assert not cancel.disabled, "precondition: a running run arms Cancel"
-        assert not rerun.disabled, "precondition: a selected run arms Re-run"
+        assert rerun.disabled, "only a retryable failed run may arm Re-run"
 
         screen.post_message(
             TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
@@ -2146,7 +2162,8 @@ async def test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild():
             "backend": "local",
             "source_id": 5,
             "source_title": "Feed [five]",
-            "status": "completed",
+            "status": "failed",
+            "stats": {"failure_category": "connection_failure"},
         }
         pane = screen.query_one("#watchlists-runs-pane", RunsPane)
         pane.runs = [run]
@@ -2271,6 +2288,9 @@ async def test_unmounting_during_rerun_cleans_state_without_refreshing():
 @pytest.mark.asyncio
 async def test_external_local_check_now_paints_the_selected_run_as_checking():
     app = _build_test_app()
+    # This test exercises the controller fallback. Production apps normally
+    # route local checks through the shared operation coordinator instead.
+    app.watchlists_operation_coordinator = None
     screen = WatchlistsCollectionsScreen(app)
     host = WatchlistsContextHarness(screen)
     started = asyncio.Event()
@@ -2306,7 +2326,10 @@ async def test_external_local_check_now_paints_the_selected_run_as_checking():
                 break
 
         screen._controller.check_now = AsyncMock(side_effect=check_now)
-        screen.post_message(
+        # App startup may provision the normal coordinator after the test
+        # app was built; clear it here so this assertion reaches the fallback.
+        screen.app_instance.watchlists_operation_coordinator = None
+        screen.handle_check_now_requested(
             CheckNowRequested(
                 {
                     "id": "local:subscription:5",
@@ -2331,7 +2354,7 @@ async def test_external_local_check_now_paints_the_selected_run_as_checking():
             if not screen._checks_in_flight:
                 break
         assert str(button.label) == "Re-run source"
-        assert not button.disabled
+        assert button.disabled, "a successful run has no retryable failure to re-run"
 
 
 @pytest.mark.asyncio
@@ -2591,7 +2614,8 @@ async def test_rerun_reports_a_returned_failed_status():
     )
 
     app.notify.assert_called_once_with(
-        "Re-run failed: Feed [five] — source denied",
+        "Re-run failed: Feed [five] — Watchlists source check failed. "
+        "Review the source configuration before trying again.",
         severity="error",
         markup=False,
     )
@@ -3859,8 +3883,14 @@ async def test_loader_results_landing_before_textual_flips_is_mounted_still_pain
         screen.active_section = "overview"
         for _ in range(300):
             await pilot.pause(0.01)
-            if screen.query("#watchlists-overview-pane"):
+            if (
+                screen.query("#watchlists-overview-pane")
+                and not screen._surface_refresh_draining
+            ):
                 break
+        assert not screen._surface_refresh_draining, (
+            "precondition: the Overview section swap finished before rewind"
+        )
 
         # Rewind to what a cold screen looks like a millisecond into `on_mount`:
         # nothing loaded, the loading markers on screen, the DOM fully attached.
@@ -3872,7 +3902,7 @@ async def test_loader_results_landing_before_textual_flips_is_mounted_still_pain
         screen._request_surface_refresh(screen._SURFACE_HEADER)
         for _ in range(300):
             await pilot.pause(0.01)
-            if screen.query("#wc-loading-state"):
+            if screen.query("#wc-loading-state") and not screen._surface_refresh_draining:
                 break
         assert screen.query("#wc-loading-state"), "precondition: rewound to loading"
         overview = screen.query_one("#watchlists-overview-pane", OverviewPane)

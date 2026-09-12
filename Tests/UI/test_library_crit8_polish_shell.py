@@ -9,7 +9,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from rich.cells import cell_len
 from textual import events
+from textual.geometry import Region
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook import config as app_config
@@ -195,8 +197,8 @@ async def test_skill_import_updates_the_rail_count_and_the_list_in_place():
 async def _open_first_tree_note(screen, pilot) -> None:
     """Open the first Database note through the folder tree the canvas renders."""
     screen.query_one("#library-row-browse-notes", Button).press()
-    await _wait_for_selector(screen, pilot, "#library-notes-tree-note-1")
-    screen.query_one("#library-notes-tree-note-1", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+    screen.query_one("#library-notes-row-0", Button).press()
     await _wait_for_selector(screen, pilot, "#library-note-title")
     await pilot.pause()
     await pilot.pause()
@@ -243,7 +245,7 @@ async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-tree-note-1")
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
         # Reconciliation with phase C (TASK-32089): task 2 unified the media and
         # notes browse routes onto ONE resident shell (`id_prefix="library-
         # browse"`), so the notes Items grip is now `#library-browse-items-grip`
@@ -253,7 +255,7 @@ async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
         await pilot.pause()
         assert screen._notes_state.reader_preferences.items_open is False
 
-        screen.query_one("#library-notes-tree-note-1", Button).press()
+        screen.query_one("#library-notes-row-0", Button).press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
         await pilot.pause()
         await pilot.press("escape")
@@ -924,7 +926,7 @@ async def test_chunking_lab_escape_leaves_from_the_focused_sample_editor(
 
 
 @pytest.mark.asyncio
-async def test_rail_search_box_clears_and_does_not_carry_a_query_across_canvases():
+async def test_rail_search_box_clears_and_does_not_carry_a_query_across_canvases() -> None:
     """task-32069: the box kept the last query with no way to clear it."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -938,6 +940,9 @@ async def test_rail_search_box_clears_and_does_not_carry_a_query_across_canvases
         await pilot.pause()
 
         clear = screen.query_one("#library-search-clear", Button)
+        assert clear.region.width == 3
+        painted = clear.render_lines(Region(0, 0, 3, 3))[1]
+        assert painted.cell_length == cell_len(painted.text) == 3
         clear.press()
         await pilot.pause()
         assert screen.query_one("#library-search-input", Input).value == ""
@@ -945,7 +950,7 @@ async def test_rail_search_box_clears_and_does_not_carry_a_query_across_canvases
         screen.query_one("#library-search-input", Input).value = "retro"
         screen._rag_search_state.query = "retro"
         screen.query_one("#library-row-browse-notes", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-notes-tree-note-1")
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
 
         assert screen.query_one("#library-search-input", Input).value == "", (
             "a stale query must not follow the reader onto another canvas"

@@ -1,5 +1,5 @@
 ---
-id: task-22250
+id: TASK-22250
 title: CI runs are swept by simultaneous burst cancellations
 status: In Progress
 labels:

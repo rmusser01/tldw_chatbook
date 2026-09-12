@@ -1726,11 +1726,28 @@ def test_owner_never_imports_an_engine_package(tmp_path):
 
 
 def test_optional_deps_lists_the_onnx_diarization_feature():
+    """The named ONNX capability is provided by core, not a phantom extra."""
+    import tomllib
+
+    from packaging.requirements import Requirement
     from tldw_chatbook.Utils.optional_deps import OPTIONAL_FEATURES
 
     feature = OPTIONAL_FEATURES["diarization_onnx"]
     assert feature.package_dependencies == ("sherpa_onnx", "numpy")
     assert feature.label == "Speaker diarization (ONNX)"
+    assert feature.extra is None
+    assert feature.capability_tier == "baseline"
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
+    )
+    core_packages = {
+        Requirement(requirement).name.replace("_", "-").lower()
+        for requirement in pyproject["project"]["dependencies"]
+    }
+    assert {
+        name.replace("_", "-") for name in feature.package_dependencies
+    } <= core_packages
+    assert "diarization_onnx" not in pyproject["project"]["optional-dependencies"]
 
 
 def test_prepare_reports_store_unavailable_without_raising(tmp_path, monkeypatch):

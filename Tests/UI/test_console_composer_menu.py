@@ -308,6 +308,7 @@ def test_impersonate_appends_then_replaces_its_own_text():
     appended on a new line after existing text, and a second suggestion
     replaces the first rather than stacking.
     """
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _Composer:
@@ -332,6 +333,8 @@ def test_impersonate_appends_then_replaces_its_own_text():
             return self.drafts[session_id]
 
     screen = ChatScreen.__new__(ChatScreen)
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._session._console_visible_draft_session_id = "s1"
     composer = _Composer("my own words")
     store = _Store()
     screen._console_composer_or_none = lambda: composer
@@ -348,6 +351,7 @@ def test_impersonate_appends_then_replaces_its_own_text():
 @pytest.mark.unit
 def test_impersonate_appends_when_the_user_edited_our_text():
     """If the user changed our suggestion, appending beats rewriting it."""
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     class _Composer:
@@ -372,6 +376,8 @@ def test_impersonate_appends_when_the_user_edited_our_text():
             return self.drafts[session_id]
 
     screen = ChatScreen.__new__(ChatScreen)
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._session._console_visible_draft_session_id = "s1"
     composer = _Composer("")
     store = _Store()
     screen._console_composer_or_none = lambda: composer
@@ -550,7 +556,10 @@ async def test_impersonate_payload_obeys_the_provider_contract():
     async def _capture(_session_id, _configuration):
         return _Resolution(), object()
 
-    async def _collect(_resolution, messages, **_kwargs):
+    async def _collect(_resolution, messages, *, route):
+        from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute
+
+        assert route is ConsoleRequestRoute.IMPERSONATE
         captured["messages"] = messages
         return "drafted reply"
 
@@ -1250,11 +1259,13 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
 @pytest.mark.unit
 def test_prompts_menu_choice_opens_exactly_one_browse_modal():
     """The existing callback dispatch owns the one modal entry point."""
+    from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
+    screen._prompts = ConsolePromptsController.__new__(ConsolePromptsController)
     calls: list[bool] = []
-    screen._open_console_prompts_modal = lambda: calls.append(True)
+    screen._prompts._open_console_prompts_modal = lambda: calls.append(True)
 
     screen._handle_console_composer_menu_choice("prompts")
 

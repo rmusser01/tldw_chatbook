@@ -579,40 +579,34 @@ def test_legacy_tools_settings_route_uses_mcp_context():
 
 
 @pytest.mark.asyncio
-async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
-    """Regression lock for the rapid-tab-switch freeze (2026-07-11).
+async def test_nonreusable_screen_navigation_constructs_fresh_instances(monkeypatch):
+    """Non-opted-in routes never remount an already unmounted instance."""
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
 
-    Navigation used to cache Screen INSTANCES for allowlisted routes and
-    re-mount them after ``switch_screen`` had already unmounted them. Under
-    rapid switching the re-mount interleaved with the still-in-flight
-    unmount, leaving zombie widgets (``mounted=True`` with stopped message
-    pumps), a compositor stuck on a stale frame, and an app that silently
-    swallowed every subsequent click -- a permanent, exception-free freeze.
-    Every navigation must therefore construct a FRESH screen instance; this
-    test fails if instance reuse ever returns.
-    """
+    assert not resolve_screen_route("settings").reusable
+    assert not resolve_screen_route("personas").reusable
     app = _build_test_app()
-    constructed = {"chat": 0, "library": 0}
+    constructed = {"settings": 0, "personas": 0}
 
-    class FakeChatScreen:
-        screen_name = "chat"
-
-        def __init__(self, app_instance):
-            self.app_instance = app_instance
-            constructed["chat"] += 1
-
-    class FakeLibraryScreen:
-        screen_name = "library"
+    class FakeSettingsScreen:
+        screen_name = "settings"
 
         def __init__(self, app_instance):
             self.app_instance = app_instance
-            constructed["library"] += 1
+            constructed["settings"] += 1
+
+    class FakePersonasScreen:
+        screen_name = "personas"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+            constructed["personas"] += 1
 
     def fake_resolve(target):
-        if target == "chat":
-            return "chat", "chat", FakeChatScreen
-        if target == "library":
-            return "library", "library", FakeLibraryScreen
+        if target == "settings":
+            return "settings", "settings", FakeSettingsScreen
+        if target == "personas":
+            return "personas", "personas", FakePersonasScreen
         return target, target, None
 
     switched_screens = []
@@ -622,18 +616,22 @@ async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
 
     monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
     monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(app, "_navigation_target_owns_stack", lambda _screen: True)
 
     async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.1)
-        # These direct handler calls simulate post-startup navigation; mark
-        # startup complete so the pre-initial-screen guard lets them through.
+        # The fake screen classes are deliberately not Textual screens, so
+        # the app's own initial push cannot complete. Treat the direct calls
+        # below as post-startup and ignore any attempted initial Chat build.
         app._initial_screen_pushed = True
+        constructed.update(settings=0, personas=0)
+        switched_screens.clear()
 
-        await app.handle_screen_navigation(NavigateToScreen("chat"))
-        await app.handle_screen_navigation(NavigateToScreen("library"))
-        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        await app.handle_screen_navigation(NavigateToScreen("personas"))
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
 
-    assert constructed == {"chat": 2, "library": 1}
+    assert constructed == {"settings": 2, "personas": 1}
     assert switched_screens[0] is not switched_screens[2]
 
 
@@ -1871,6 +1869,12 @@ async def test_file_notes_source_transition_blocks_mutation_through_recompose(
     binding = owner.select_root(tmp_path / "notes")
 
     class WorkspaceProbe:
+        display = True
+        is_attached = False
+
+        def cancel_path_task(self):
+            return False
+
         async def flush_pending_work(self):
             return not owner.mutation_active(binding)
 
@@ -1923,6 +1927,12 @@ async def test_file_notes_create_route_returns_to_database_notes(monkeypatch):
     transition_events = []
 
     class WorkspaceProbe:
+        display = True
+        is_attached = False
+
+        def cancel_path_task(self):
+            return False
+
         async def flush_pending_work(self):
             transition_events.append("flushed")
             return True
@@ -1962,10 +1972,7 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
         NoteFlushOutcome,
         NoteFlushOutcomeKind,
     )
-    from tldw_chatbook.UI.Screens.library_screen import (
-        LibraryEntryReconcileResult,
-        LibraryScreen,
-    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     app = _build_test_app()
     owner = app.file_notes_session_owner
@@ -1975,6 +1982,12 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     finish_reconcile = asyncio.Event()
 
     class WorkspaceProbe:
+        display = True
+        is_attached = False
+
+        def cancel_path_task(self):
+            return False
+
         async def flush_pending_work(self):
             return not owner.mutation_active(binding)
 
@@ -1989,9 +2002,8 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     screen._library_collections_loaded = False
 
-    async def sync_collections_panel(*, refresh_snapshot, wait_for_recompose):
-        assert refresh_snapshot is True
-        assert wait_for_recompose is True
+    async def replace_library_browse_canvas(shell):
+        assert shell.selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
         screen._library_collections_loaded = True
         sync_returned.set()
         reconcile_started.set()
@@ -1999,7 +2011,7 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
         assert admission.lease is None
         assert admission.reason == "transition_active"
         await finish_reconcile.wait()
-        return LibraryEntryReconcileResult.APPLIED
+        return True
 
     async def flush_note():
         # task-3316: this stub MUST honour ``_flush_library_note_save``'s
@@ -2014,9 +2026,10 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
 
     monkeypatch.setattr(
         screen,
-        "_sync_collections_panel",
-        sync_collections_panel,
+        "_replace_library_browse_canvas",
+        replace_library_browse_canvas,
     )
+    monkeypatch.setattr(screen, "run_worker", lambda work, **_: work.close())
     monkeypatch.setattr(screen, "refresh", lambda *, recompose: None)
     monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
     monkeypatch.setattr(screen, "_flush_library_prompt_save", flush_editor)
@@ -2061,6 +2074,12 @@ async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
     finish_flush = asyncio.Event()
 
     class WorkspaceProbe:
+        display = True
+        is_attached = False
+
+        def cancel_path_task(self):
+            return False
+
         async def flush_pending_work(self):
             flush_started.set()
             await finish_flush.wait()
@@ -2154,6 +2173,12 @@ async def test_action_library_notes_files_back_returns_to_database(
     binding = owner.select_root(tmp_path / "notes")
 
     class WorkspaceProbe:
+        display = True
+        is_attached = False
+
+        def cancel_path_task(self):
+            return False
+
         async def flush_pending_work(self):
             return not owner.mutation_active(binding)
 
@@ -2219,6 +2244,12 @@ async def test_action_library_notes_files_back_cancels_open_reload_confirmation_
     cancel_returns = []
 
     class WorkspaceProbe:
+        display = True
+        is_attached = False
+
+        def cancel_path_task(self):
+            return False
+
         async def flush_pending_work(self):
             assert not confirmation_open, (
                 "back-mid-confirmation must cancel the pending reload "
@@ -2345,7 +2376,9 @@ def test_files_back_navigation_workspace_contract_matches_real_workspace():
     probe_contract = {
         "flush_pending_work",
         "acquire_transition",
+        "cancel_path_task",
         "cancel_reload_confirmation",
+        "display",
     }
     assert called == probe_contract, (
         "the Files-mode back-navigation seams now touch a different "
@@ -2826,20 +2859,19 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     actions legitimately apply -- each one must either be gated (``check_
     action`` returns ``False``) or be explicitly declared universal below
     (works identically on every surface, so ``True`` would be correct
-    even on the landing). Nothing is declared universal today; the
-    allowlist exists so a genuinely screen-wide binding could be added
-    later without failing this test for the right reason.
+    even on the landing). Tab and Shift+Tab are the only current
+    universal bindings; context-specific pane movement remains gated.
     """
     from textual.binding import Binding
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    # Shift+F6 is the one screen-wide Binding: the shared pane-focus helper
-    # resolves only visible targets and safely no-ops when none exist.  "/"
+    # Even Shift+F6 is gated until a Library route owns visible panes.  "/"
     # (focus search) and F6 (next pane) are also screen-wide keys, but they
     # are not Bindings (see ``LibraryScreen.on_key`` and the app-global F6
     # wiring), so they never appear in this audit.
-    # task-32052: Tab/Shift+Tab join Shift+F6 as genuinely screen-wide --
+    # task-32052: Tab/Shift+Tab are genuinely screen-wide; Shift+F6 remains
+    # route-gated until visible workbench panes exist. For Tab/Shift+Tab,
     # this screen re-declares Textual's own focus-movement keys only to
     # SCOPE them to ``#screen-content`` (``action_focus_next``), so they
     # must stay active on every surface, the landing included. They are
@@ -2847,7 +2879,7 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     # ``_active_library_binding_shortcuts``), since app-wide keyboard
     # chrome is not a Library shortcut.
     universal_actions = frozenset(
-        {"focus_previous_workbench_pane", "focus_next", "focus_previous"}
+        {"focus_next", "focus_previous"}
     )
 
     app = _build_test_app()
@@ -3076,7 +3108,7 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     # is covered live in ``Tests/UI/test_library_shell.py::
     # test_library_media_deep_link_back_loads_exact_page_and_facets``.
     applied_scope = MediaBrowseScope()
-    screen._library_media_browse_controller.applied_result = MediaBrowseResult(
+    screen._library_media_browse_controller.state.applied_result = MediaBrowseResult(
         scope=applied_scope,
         items=(
             summary_row(
@@ -3233,12 +3265,18 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
     screen._refresh_local_source_snapshot = lambda: None
     focus_calls = []
     screen.call_after_refresh = lambda callback, *args: focus_calls.append(callback)
+    restored_identities = []
+    screen._restore_library_notes_focus_identity = (
+        lambda identity: restored_identities.append(identity)
+    )
 
     await screen.action_library_note_editor_back()
 
     assert screen._notes_state.view == "list"
     assert refresh_calls == [True]
-    assert focus_calls == [screen._restore_library_notes_focus_identity]
+    assert len(focus_calls) == 1
+    focus_calls[0]()
+    assert restored_identities == [screen._notes_state.pending_focus_identity]
 
 
 @pytest.mark.asyncio
@@ -3303,23 +3341,16 @@ def test_action_library_list_focus_rail_focuses_search_input(monkeypatch):
     app = _build_test_app()
     screen = LibraryScreen(app)
 
-    focused_widgets = []
-
-    class _FakeInput:
-        display = True
-        disabled = False
-
-    fake_input = _FakeInput()
-    monkeypatch.setattr(screen, "query_one", lambda *a, **k: fake_input)
+    rail_focus_requests = []
     monkeypatch.setattr(
         screen,
-        "set_focus",
-        lambda widget, **_kwargs: focused_widgets.append(widget),
+        "_focus_library_rail_action",
+        lambda selector: rail_focus_requests.append(selector),
     )
 
     screen.action_library_list_focus_rail()
 
-    assert focused_widgets == [fake_input]
+    assert rail_focus_requests == ["#library-search-input"]
 
 
 def test_compose_content_reapplies_pending_list_entry_focus_on_every_recompose():
@@ -3364,7 +3395,11 @@ def test_compose_content_reapplies_pending_list_entry_focus_on_every_recompose()
             # test checks (the flag-consume runs before any of that).
             pass
 
-    assert focus_calls == [screen._focus_library_list_entry] * 2
+    assert [
+        callback
+        for callback in focus_calls
+        if callback == screen._focus_library_list_entry
+    ] == [screen._focus_library_list_entry] * 2
     assert screen._library_pending_list_entry_focus is True
 
 
@@ -3546,6 +3581,7 @@ def test_focus_library_list_entry_prefers_still_checked_row_in_select_mode():
     screen._media_state.select_mode = True
     screen._media_state.row_selection = selection
     screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b, row_c])
+    screen.set_focus = lambda target, **_kwargs: target.focus()
 
     screen._focus_library_list_entry()
 
@@ -3609,6 +3645,7 @@ def test_focus_library_list_entry_checked_row_preference_is_media_only():
     row_a = _FakeMediaRowButton("n1")
     row_b = _FakeMediaRowButton("n2")
     screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b])
+    screen.set_focus = lambda target, **_kwargs: target.focus()
 
     screen._focus_library_list_entry()
 
@@ -3671,7 +3708,8 @@ def test_on_descendant_focus_disarms_when_focus_leaves_the_armed_list():
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
     screen._library_pending_list_entry_focus = True
 
-    foreign_widget = SimpleNamespace(has_class=lambda name: False)
+    foreign_widget = SimpleNamespace(id="foreign-control", has_class=lambda name: False)
+    screen.focused = foreign_widget
     screen.on_descendant_focus(SimpleNamespace(widget=foreign_widget))
 
     assert screen._library_pending_list_entry_focus is False
@@ -4204,6 +4242,10 @@ async def test_screen_navigation_routes_reach_real_app_handler():
         captured_destinations.append(type(screen).__name__)
 
     app.switch_screen = fake_switch_screen
+    # The navigation contract now commits only after the target owns Textual's
+    # stack. This test replaces `switch_screen`, so stand in for that ownership
+    # transfer while continuing to inspect the constructed destination class.
+    app._navigation_target_owns_stack = lambda _screen: True
 
     cases = [
         ("chatbooks", "ChatbooksScreen"),
@@ -4244,13 +4286,23 @@ def test_primary_routed_screens_use_base_app_screen():
 
 # --- Cross-visit state persistence (real save_state/restore_state) --------
 #
-# Screens are never cached/reused (see
-# ``test_screen_navigation_always_constructs_fresh_instances`` above), so
-# continuity across a visit depends entirely on ``_screen_states``
-# (``save_state``/``restore_state``). These are round-trip pilots through the
+# Cold visits restore snapshots; opted-in warm visits retain installed screens.
+# These are round-trip pilots through the
 # REAL navigation path -- ``NavigateToScreen`` posted, drained via bounded
 # polling (the storm pilot's idiom above), real widgets mutated the way a
 # user would -- not direct calls into ``save_state``/``restore_state``.
+
+
+def _configure_navigation_reuse(monkeypatch, route_id, reuse):
+    """Keep the default warm route, or scope one cold-route control to this test."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route = screen_registry.resolve_screen_route(route_id)
+    assert route.reusable
+    if not reuse:
+        monkeypatch.setitem(
+            screen_registry._SCREEN_ROUTES, route_id, replace(route, reusable=False)
+        )
 
 
 @pytest.mark.asyncio
@@ -4372,15 +4424,12 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
 
 
 @pytest.mark.asyncio
-async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
-    """A generic Library return lands at the hub without losing a RAG draft.
-
-    The selected canvas is deliberately not restored automatically. After
-    reopening the disclosed Search/RAG canvas, the freshly-composed Input
-    must still contain the saved draft.
-    """
+@pytest.mark.parametrize("reuse", [True, False], ids=("warm", "cold"))
+async def test_library_screen_round_trip_preserves_rag_draft(monkeypatch, reuse):
+    """Warm visits retain Search; cold visits restore its draft from the hub."""
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
+    _configure_navigation_reuse(monkeypatch, "library", reuse)
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
@@ -4398,7 +4447,9 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
                 break
         assert type(app.screen).__name__ == "LibraryScreen"
 
-        app.screen.query_one("#library-rag-query-input", Input).value = "roadmap notes"
+        first_screen = app.screen
+        first_input = first_screen.query_one("#library-rag-query-input", Input)
+        first_input.value = "roadmap notes"
         await pilot.pause()
         await pilot.pause()
 
@@ -4425,7 +4476,17 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
         assert restored_screen._rag_search_state.query == "roadmap notes"
-        assert restored_screen._library_selected_row_id == ""
+        if reuse:
+            assert restored_screen is first_screen
+            assert app.is_screen_installed(restored_screen)
+            assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+            assert (
+                restored_screen.query_one("#library-rag-query-input", Input)
+                is first_input
+            )
+        else:
+            assert restored_screen is not first_screen
+            assert restored_screen._library_selected_row_id == ""
 
         await app.handle_screen_navigation(NavigateToScreen("search"))
         for _ in range(150):
@@ -4437,29 +4498,23 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
         assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
         query_input = restored_screen.query_one("#library-rag-query-input", Input)
         assert query_input.value == "roadmap notes"
+        query_input.focus()
+        await pilot.press("end", "!")
+        await pilot.pause()
+        assert query_input.value == "roadmap notes!"
+        assert restored_screen._rag_search_state.query == "roadmap notes!"
 
 
 @pytest.mark.asyncio
-async def test_console_staged_live_work_launch_survives_navigate_away_and_back():
-    """D3 (RAG-truth staged-evidence critique): a staged Console live-work
-    launch must survive a REAL screen swap, not merely a same-screen
-    refresh.
-
-    ``ChatScreen`` is never cached/reused across navigation (see
-    ``test_screen_navigation_always_constructs_fresh_instances`` above) --
-    ``_create_navigation_screen`` builds a brand new instance every time, so
-    ``_pending_console_launch_context`` (screen-instance state set in
-    ``ChatScreen.__init__``) started life on the OLD instance and is gone
-    unless ``save_state``/``restore_state`` carries it to the new one.
-    Before this fix, neither method touched the launch at all, so
-    navigating chat -> home -> chat silently dropped a staged live-work
-    item with no error and no user-visible warning -- the live critique
-    blamed Library's "Run" action for this, but Run is pure; screen
-    teardown on ANY navigation away was the actual destroyer.
-    """
+@pytest.mark.parametrize("reuse", [True, False], ids=("warm", "cold"))
+async def test_console_staged_live_work_launch_survives_navigate_away_and_back(
+    monkeypatch, reuse
+):
+    """Staged launch payload survives both installed reuse and cold restoration."""
     from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
+    _configure_navigation_reuse(monkeypatch, "chat", reuse)
     app = _build_test_app()
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
@@ -4484,6 +4539,9 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
         first_screen = app.screen
         assert first_screen._pending_console_launch_context is not None
         assert first_screen._pending_console_launch_context.title == "Daily digest"
+        first_payload = (
+            first_screen._pending_console_launch_context.to_pending_payload()
+        )
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         app.post_message(NavigateToScreen("home"))
@@ -4504,10 +4562,17 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "ChatScreen"
-        # A genuinely fresh instance, not a cached/reused one.
-        assert restored_screen is not first_screen
+        if reuse:
+            assert restored_screen is first_screen
+            assert app.is_screen_installed(restored_screen)
+        else:
+            assert restored_screen is not first_screen
         assert restored_screen._pending_console_launch_context is not None
         assert restored_screen._pending_console_launch_context.title == "Daily digest"
+        assert (
+            restored_screen._pending_console_launch_context.to_pending_payload()
+            == first_payload
+        )
         assert restored_screen.query_one("#console-pending-launch-card")
         assert (
             restored_screen.query_one("#console-live-work-title").renderable
@@ -5463,15 +5528,12 @@ async def test_deep_link_library_route_lands_its_canvas_over_restored_state():
 
 
 @pytest.mark.asyncio
-async def test_generic_reentry_returns_to_library_landing():
-    """A bare Library route returns to the landing, not a prior canvas.
-
-    Explicit deep links still open their requested canvas. Generic re-entry
-    uses the returning-landing contract so the user chooses whether to
-    continue an authoritative prior scope.
-    """
+@pytest.mark.parametrize("reuse", [True, False], ids=("warm", "cold"))
+async def test_generic_reentry_obeys_library_visit_lifecycle(monkeypatch, reuse):
+    """Generic warm reentry retains the canvas; cold reentry offers the hub."""
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
+    _configure_navigation_reuse(monkeypatch, "library", reuse)
     app = _build_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
@@ -5482,16 +5544,24 @@ async def test_generic_reentry_returns_to_library_landing():
         await app.handle_screen_navigation(NavigateToScreen("search"))
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        first_screen = app.screen
 
         # Leave.
         await app.handle_screen_navigation(NavigateToScreen("home"))
         assert type(app.screen).__name__ == "HomeScreen"
 
-        # Generic re-entry returns to the hub instead of reopening Search/RAG.
+        # Generic re-entry follows the route's warm/cold lifecycle.
         await app.handle_screen_navigation(NavigateToScreen("library"))
 
         assert type(app.screen).__name__ == "LibraryScreen"
-        assert app.screen._library_selected_row_id == ""
+        if reuse:
+            assert app.screen is first_screen
+            assert app.is_screen_installed(app.screen)
+            assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+            assert app.screen.query_one("#library-rag-query-input", Input)
+        else:
+            assert app.screen is not first_screen
+            assert app.screen._library_selected_row_id == ""
 
 
 @pytest.mark.asyncio
