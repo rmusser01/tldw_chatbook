@@ -19,7 +19,7 @@ Under test here:
    ``MessageMetadata.origin == "agent_wake"`` and NO new USER row; the
    composer hook is never invoked; the ``FLEET_UNSEEN`` mark clears
    through the named seam only after acceptance;
-2. coalescing + exactly-once: one wake bundles every undelivered
+2. coalescing + notification dedupe: one wake bundles every undelivered
    completion; a refused wake loses nothing and is retried; a child
    settling DURING a wake turn rides the NEXT wake, and the mark
    survives until nothing undelivered remains;
@@ -121,7 +121,7 @@ class _RecordingWakeGateway:
         self.payloads: list[list[dict]] = []
         self.reply = reply
         #: When False, `resolve_for_send` reports not-ready (the refusal
-        #: shape for the exactly-once tests); flip back to retry.
+        #: shape for the notification-dedupe tests); flip back to retry.
         self.ready = True
         #: Optional gate the stream waits on before yielding (slot tests).
         self.stream_gate: asyncio.Event | None = None
@@ -186,13 +186,22 @@ def _within_turn(run_id, **kwargs):
     )
 
 
+_NEW_MANUAL_CHAIN = object()
+
+
 def _terminal_subagent_run(
-    runs_db, conversation_id, *, parent_id=None, result="child answer", status="done"
+    runs_db, conversation_id, *, parent_id=None, result="child answer", status="done",
+    work_chain_id=_NEW_MANUAL_CHAIN,
 ):
     """A terminal subagent row settled AFTER its (terminal) parent."""
     if parent_id is None:
+        if work_chain_id is _NEW_MANUAL_CHAIN:
+            from uuid import uuid4
+            work_chain_id = runs_db.automatic_work.create_chain(
+                conversation_id, root_submission_id=uuid4().hex
+            )
         parent_id = runs_db.create_run(
-            conversation_id=conversation_id, agent_kind="primary"
+            conversation_id=conversation_id, agent_kind="primary", work_chain_id=work_chain_id
         )
         runs_db.set_status(parent_id, "done", "turn final")
     run_id = runs_db.create_run(
@@ -209,6 +218,8 @@ def _controller_rig(tmp_path, *, session_title="Research"):
     """Controller + fake bridge + real runs DB + real marks DB + app stub."""
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     app = _AppStub(chacha)
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    app.local_chat_conversation_service = ChatConversationService(chacha)
     runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     # Wire the real ChaChaNotes DB this rig already opens into the store, as
     # production does (`ConsoleRuntime.ensure_chat_store`). A bare store has
@@ -219,6 +230,15 @@ def _controller_rig(tmp_path, *, session_title="Research"):
     # `test_console_viewless_hooks` imports this rig and does MANUAL sends.
     store = ConsoleChatStore(persistence=ChatPersistenceService(chacha))
     session = store.ensure_session(title=session_title)
+    # Model a saved conversation: durable automatic lineage belongs to this ID.
+    policy = store.persistence.persist_console_conversation_with_policy(
+        conversation_id=session.id,
+        policy_candidate=store.session_library_policy_candidate(session.id),
+        conversation_kwargs={"conversation_title": session_title},
+    )
+    store.rebind_persisted_conversation(session.id, session.id)
+    session.library_policy_holder.snapshot = policy
+    session.library_policy_hydrated = True
     gateway = _RecordingWakeGateway()
     bridge = _FakeWakeBridge(runs_db)
     controller = ConsoleChatController(
@@ -333,60 +353,38 @@ def test_buddy_wake_callback_runs_outside_registry_lock_and_is_post_fenced():
 
 
 @pytest.mark.asyncio
-async def test_dispose_fences_delivery_completion_after_its_await():
-    """An accepted late result finalizes only its durable ledger state."""
-    started = asyncio.Event()
-    release = asyncio.Event()
+async def test_dispose_fences_delivery_completion_after_its_await(tmp_path):
+    """Interrupted accepted work remains recorded for review, never replayed."""
+    rig = _controller_rig(tmp_path)
+    chacha, _, runs_db, _, session, gateway, _, controller = rig
+    coordinator = controller.fleet_wake
     sink = _RecordingBuddySink()
-
-    class RunsDB:
-        stamps = 0
-
-        def mark_wake_delivered(self, run_ids) -> None:
-            self.stamps += 1
-
-    runs_db = RunsDB()
-
-    class Controller:
-        _buddy_sink = sink
-        _agent_bridge = SimpleNamespace(runs_db=runs_db)
-
-        async def submit_draft(self, *args, **kwargs):
-            started.set()
-            await release.wait()
-            return SimpleNamespace(accepted=True)
-
-    controller = Controller()
-    coordinator = ConsoleFleetWakeCoordinator(controller)
-    with coordinator._registry_lock:
-        coordinator._pending["conversation-1"] = {"run-1": "done"}
-        coordinator._delivering = "conversation-1"
-        coordinator._delivering_session = "session-1"
-    sink.wake("conversation-1", "run-1", active=True)
-    authorization = AgentWakeAuthorization(
-        coordinator,
-        "session-1",
-        _key=console_fleet_wake._WAKE_AUTHORIZATION_KEY,
-    )
-
-    task = asyncio.create_task(
-        coordinator._deliver(
-            "conversation-1",
-            "session-1",
-            ("run-1",),
-            "",
-            authorization,
-        )
-    )
-    await started.wait()
-    coordinator.dispose()
-    release.set()
-    await task
-
-    assert runs_db.stamps == 1
-    assert coordinator.pending_conversation_ids() == ()
-    clear_index = sink.calls.index(("clear",))
-    assert all(call[-1] is not True for call in sink.calls[clear_index + 1 :])
+    coordinator.buddy_sink = sink
+    release = asyncio.Event()
+    gateway.stream_gate = release
+    try:
+        _, run_id = _terminal_subagent_run(runs_db, session.id)
+        coordinator.on_fleet_drained(_drain(session.id, _survivor(run_id)))
+        assert await _settle(lambda: bool(gateway.payloads))
+        tasks = tuple(coordinator._delivery_tasks)
+        coordinator.dispose()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        chain = runs_db.get_run(run_id)["work_chain_id"]
+        snapshot = runs_db.automatic_work.snapshot(chain)
+        assert snapshot.used["generation"] == 1
+        assert snapshot.status in {"active", "review_required"}
+        # A terminal controller return may race cancellation; both durable
+        # outcomes prevent replay, while only completion stamps the exact row.
+        assert bool(runs_db.get_run(run_id)["wake_delivered_at"]) == (snapshot.status == "active")
+        assert coordinator.pending_conversation_ids() == ()
+        coordinator.on_fleet_drained(_drain(session.id, _survivor(run_id)))
+        assert await _quiet(lambda: len(gateway.payloads) > 1)
+        clear_index = sink.calls.index(("clear",))
+        assert all(call[-1] is not True for call in sink.calls[clear_index + 1:])
+    finally:
+        release.set()
+        runs_db.close()
+        chacha.close()
 
 
 @pytest.mark.asyncio
@@ -564,9 +562,10 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
         # Never the composer's business.
         assert accepted_hook_calls == []
 
+        assert await _settle(lambda: not controller.fleet_wake.has_pending(session.id))
         # Delivered: mark cleared through the named seam, pending drained,
-        # and the durable per-run ledger stamped (exactly-once survives a
-        # restart because THIS row, not memory, is the delivered bit).
+        # and the durable per-run ledger stamped. A successful stamp
+        # survives restart; this does not cover a crash before stamping.
         assert not app.conversation_local_marks_service.has_mark(
             session.id, ConversationLocalMarksService.FLEET_UNSEEN
         )
@@ -624,7 +623,7 @@ async def test_children_finishing_inside_their_turn_never_wake(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 2. Coalescing + exactly-once.
+# 2. Coalescing + notification dedupe.
 # ---------------------------------------------------------------------------
 
 
@@ -684,7 +683,7 @@ async def test_a_redelivered_drain_cannot_double_deliver(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path):
-    """Refusal direction of exactly-once: the provider blocks the first
+    """Refusal direction of notification dedupe: the provider blocks the first
     attempt -> no notice row, pending + mark retained; the retry
     delivers, and only THEN does the mark clear."""
     chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
@@ -915,6 +914,11 @@ async def test_the_global_cap_defers_a_wake_like_any_other_send(tmp_path):
             ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
             session_id=busy_sessions[0].id,
         )
+        assert await _quiet(lambda: gateway.payloads, seconds=0.1)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=busy_sessions[1].id,
+        )
         assert await _settle(lambda: gateway.payloads), (
             "freeing a cap slot never retried the wake"
         )
@@ -1030,14 +1034,15 @@ async def test_no_open_session_means_the_mark_is_the_staged_wake(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_wake_delivery_is_serialized_one_conversation_at_a_time(tmp_path):
-    """Two conversations owed wakes deliver sequentially: while wake #1
-    streams, conversation #2 waits; #1 finishing chains #2."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
-        tmp_path
+async def test_wake_delivery_allows_two_conversations_at_a_time(tmp_path):
+    """Both automatic conversations progress while a manual slot remains free."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = (
+        _controller_rig(tmp_path)
     )
     try:
         second = store.create_session(title="Second")
+        chacha.add_conversation({"id": second.id, "title": "Second"})
+        store.rebind_persisted_conversation(second.id, second.id)
         _parent_a, run_a = _terminal_subagent_run(
             runs_db, session.id, result="alpha result"
         )
@@ -1050,11 +1055,11 @@ async def test_wake_delivery_is_serialized_one_conversation_at_a_time(tmp_path):
         wake.on_fleet_drained(
             _drain(session.id, _survivor(run_a, session_id=session.id))
         )
-        wake.on_fleet_drained(_drain(second.id, _survivor(run_b, session_id=second.id)))
-        assert await _settle(lambda: len(gateway.payloads) == 1)
-        assert await _quiet(lambda: len(gateway.payloads) > 1, seconds=0.3), (
-            "the second conversation's wake must wait for the first"
+        wake.on_fleet_drained(
+            _drain(second.id, _survivor(run_b, session_id=second.id))
         )
+        assert await _settle(lambda: len(gateway.payloads) == 2)
+        assert set(wake.delivering_session_ids()) == {session.id, second.id}
         gateway.stream_gate = None
         gate.set()
         assert await _settle(lambda: len(gateway.payloads) == 2), (
@@ -1101,32 +1106,31 @@ async def test_a_wake_turn_occupies_the_sessions_send_slot(tmp_path):
 async def test_one_conversations_failed_delivery_does_not_strand_anothers(
     tmp_path,
 ):
-    """The chaining half `_deliver`'s own trailing retry owns (mutation
-    M23's first run SURVIVED without this): a delivery that RAISES lands
-    no terminal run-state transition -- the session sticks at VALIDATING
-    -- so nothing else would ever re-attempt the OTHER conversation that
-    deferred behind the serialization gate."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
-        tmp_path
+    """One conversation's preflight failure cannot hold another wake slot."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = (
+        _controller_rig(tmp_path)
     )
     try:
         second = store.create_session(title="Second")
+        chacha.add_conversation({"id": second.id, "title": "Second"})
+        store.rebind_persisted_conversation(second.id, second.id)
         _pa, run_a = _terminal_subagent_run(runs_db, session.id, result="alpha")
         _pb, run_b = _terminal_subagent_run(runs_db, second.id, result="beta")
         real_resolve = gateway.resolve_for_send
-        blew_up = []
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        first_chain = runs_db.get_run(run_a)["work_chain_id"]
 
         async def exploding_resolve(selection):
-            if not blew_up:
-                blew_up.append(True)
+            context = current_automatic_work()
+            if context is not None and context.chain_id == first_chain:
                 raise RuntimeError("probe blew up mid-wake")
             return await real_resolve(selection)
 
         gateway.resolve_for_send = exploding_resolve
         wake = controller.fleet_wake
-        # Both pending before the first delivery task runs: attempt #2
-        # defers behind the serialization gate, so only the failed
-        # delivery's own completion can ever revive it.
+        # Both pending before either asynchronous preparation runs. Failure
+        # belongs to a specific chain, regardless of executor completion order.
         wake.on_fleet_drained(
             _drain(session.id, _survivor(run_a, session_id=session.id))
         )
@@ -1163,8 +1167,9 @@ async def test_mount_claim_delivers_a_marked_conversations_result_from_the_db(
     )
     try:
         conversation_id = session.id
+        chain = runs_db.automatic_work.create_chain(conversation_id, root_submission_id="manual")
         parent_id = runs_db.create_run(
-            conversation_id=conversation_id, agent_kind="primary"
+            conversation_id=conversation_id, agent_kind="primary", work_chain_id=chain
         )
         # A within-turn child: terminal BEFORE its parent -> excluded.
         within_id = runs_db.create_run(
@@ -1346,8 +1351,8 @@ async def test_autowake_off_records_everything_and_fires_nothing(tmp_path, monke
             session.id, ConversationLocalMarksService.FLEET_UNSEEN
         ), "OFF keeps the indicator working"
 
-        # The second fire point: mount-claim seeds nothing while OFF.
-        assert wake.seed_from_marks() == 0
+        # History projection remains available while dispatch is disabled.
+        assert wake.seed_from_marks() == 1
 
         monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
         wake.retry_soon()
@@ -1462,11 +1467,11 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     assert raising.calls == 1, (
         "harness precondition: the attempt never reached create_task"
     )
-    assert wake.delivering_conversation_id() is None, (
+    assert not wake.delivering_conversation_ids(), (
         "a failed create_task left `_delivering` set forever -- every "
         "future wake in the process is silently refused"
     )
-    assert wake.delivering_session_id() is None
+    assert not wake.delivering_session_ids()
 
     # The wake is deferred, not lost: a later attempt on a healthy loop
     # schedules the delivery.
@@ -1494,36 +1499,27 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     )
 
 
-def test_failed_runtime_admission_unwinds_delivery_and_keeps_pending(monkeypatch):
-    """A synchronous runtime scheduling failure is a retry, never loss."""
-    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
-    session = SimpleNamespace(id="s-1", persisted_conversation_id="conv-1")
-    controller = SimpleNamespace(
-        _disposed=False,
-        store=SimpleNamespace(sessions=lambda: [session]),
-        send_refusal_copy=lambda session_id: None,
-    )
-    wake = ConsoleFleetWakeCoordinator(controller)
-
-    class _Loop:
-        def is_closed(self):
-            return False
-
-    wake._loop = _Loop()
-    calls: list[dict[str, object]] = []
-
+@pytest.mark.asyncio
+async def test_failed_runtime_admission_unwinds_delivery_and_keeps_pending(tmp_path):
+    """A synchronous custody refusal refunds the unaccepted durable attempt."""
+    rig = _controller_rig(tmp_path)
+    chacha, _, db, _, session, _, _, controller = rig
+    wake = controller.fleet_wake
+    calls = []
     def refuse_runtime(notice, **kwargs):
-        calls.append({"notice": notice, **kwargs})
+        calls.append(kwargs)
         raise RuntimeError("runtime scheduler unavailable")
-
     wake.bind_runtime_submitter(refuse_runtime)
-    with wake._registry_lock:
-        wake._pending["conv-1"] = {"run-1": "done"}
-
-    wake._attempt("conv-1")
-
-    assert len(calls) == 1
-    assert isinstance(calls[0]["wake_authorization"], AgentWakeAuthorization)
-    assert wake.delivering_conversation_id() is None
-    assert wake.delivering_session_id() is None
-    assert wake.has_pending("conv-1")
+    try:
+        _, child = _terminal_subagent_run(db, session.id)
+        wake.on_fleet_drained(_drain(session.id, _survivor(child)))
+        assert await _settle(lambda: bool(calls) and not wake.delivering_session_ids())
+        assert isinstance(calls[0]["wake_authorization"], AgentWakeAuthorization)
+        assert wake.has_pending(session.id)
+        chain = db.get_run(child)["work_chain_id"]
+        assert db.automatic_work.snapshot(chain).used["generation"] == 0
+        assert wake.pause_reason(session.id) is None
+    finally:
+        wake.dispose()
+        db.close()
+        chacha.close()

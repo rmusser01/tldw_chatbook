@@ -282,6 +282,8 @@ def test_local_command_resume_projection_bounds_raw_rows_before_json_projection(
         for statement in statements
         if "agent_kind = 'local_command'" in statement
     )
+    # SQL layout is incidental to the bounded-projection contract.
+    query = " ".join(query.split()).replace("( ", "(").replace(" )", ")")
     eligibility = query.split("), projected AS", maxsplit=1)[0]
     retained_columns = eligibility.split("SELECT", maxsplit=1)[1].split(
         "FROM agent_runs", maxsplit=1
@@ -884,11 +886,12 @@ def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(
 
     monkeypatch.setattr(db, "transaction", faulting_transaction)
     with pytest.raises(sqlite3.OperationalError):
-        db.set_terminal_with_step(run_id, "done", "answer", step)
+        db.set_terminal_with_step(run_id, "done", "answer", step, budget_tokens=23)
 
     row = db.get_run(run_id)
     assert row["status"] == "running"
     assert row["result"] is None
+    assert row["budget_tokens"] is None
     assert not any(step["kind"] == "agent_run_completed" for step in row["steps"])
 
 
@@ -1421,7 +1424,7 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert "spawn_event_id" in columns
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 15
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
     parent = first.create_run(conversation_id="c", agent_kind="primary")
     child = first.create_run(
         conversation_id="c",
@@ -1477,7 +1480,7 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
     assert "CHECK(transition_revision > 0)" in table_sql
     assert "CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL)" in table_sql
     assert "idx_console_activity_receipts_unseen" in indexes
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 15
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
     assert database.receipt_capability_available is True
 
 
@@ -1577,7 +1580,11 @@ def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
             is None
         )
         assert (
-            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 14
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
+        )
+        assert (
+            conn.execute("SELECT 1 FROM schema_version WHERE version = 15").fetchone()
+            is None
         )
 
 

@@ -2069,12 +2069,12 @@ def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_relo
 
     monkeypatch.setattr(db, "insert_steps_at_indices", fail_lifecycle_once)
 
-    def fail_terminal_once(run_id, status, result, terminal_step):
+    def fail_terminal_once(run_id, status, result, terminal_step, **kwargs):
         nonlocal failed
         if not failed and terminal_step["kind"] == failed_kind:
             failed = True
             raise RuntimeError("simulated lifecycle storage failure")
-        return original_terminal(run_id, status, result, terminal_step)
+        return original_terminal(run_id, status, result, terminal_step, **kwargs)
 
     if failed_kind == "agent_run_completed":
         monkeypatch.setattr(db, "set_terminal_with_step", fail_terminal_once)

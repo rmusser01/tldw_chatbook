@@ -1826,6 +1826,14 @@ Button.console-inspector-action:disabled {
 /* TASK-31665 AC#5: no top margin. With the section's own bottom margin the
    tail button floated between two blank lines, "orphaned ~28 lines from its
    data"; flush under the last row makes its owner unambiguous. */
+.console-inspector-section-row-stuck > .console-inspector-section-row-primary {
+    color: $ds-status-warning;
+}
+
+.console-inspector-section-row-cancelled > .console-inspector-section-row-primary {
+    color: $ds-text-muted;
+}
+
 .console-inspector-section-view-all {
     width: 100%;
     height: 1;
@@ -4289,3 +4297,4 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     height: auto;
     color: $text-muted;
 }
+#console-agent-progress { width: 1fr; height: 1; min-height: 1; margin: 1 0; }

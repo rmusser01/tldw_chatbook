@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from enum import Enum
 from functools import wraps
@@ -37,6 +38,7 @@ UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.Canvas.staging import (
         CanvasPromotionContribution,
         CanvasStagingOwner,
@@ -1377,6 +1379,10 @@ class ConsoleChatSession:
     #: Advances whenever this live slot is rebound or repurposed. Ordinary
     #: first persistence is the sole None -> id transition that preserves it.
     conversation_binding_revision: int = 0
+    # Process-local only. init=False gives dataclass copies a fresh owner.
+    _progress_owner_id: str | None = field(
+        default_factory=lambda: str(uuid4()), init=False, repr=False, compare=False
+    )
     settings: ConsoleSessionSettings | None = None
     generation_settings_revision: int = 0
     context_policy_revision: int = 0
@@ -1746,6 +1752,8 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self.on_active_session_changed: Callable[[], None] | None = None
         self._speech_preference_epoch_sequence = 0
+        self._progress_identity_lock = threading.RLock()
+        self._progress_message_store: MessageStore | None = None
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._ephemeral_promotion_lock = threading.RLock()
         self._ephemeral_promotion_reservations: dict[
@@ -2237,27 +2245,30 @@ class ConsoleChatStore:
             session.id,
             session.conversation_binding_revision,
         )
-        self._sessions[session.id] = session
-        self._advance_console_settings_session_incarnation(session.id)
-        self._messages_by_session[session.id] = []
-        self._nodes_by_session[session.id] = {}
-        self._children_by_parent[session.id] = {}
-        self._active_leaf_by_session[session.id] = None
-        self._context_summary_by_session[session.id] = (None, None)
-        self._conversation_context_epochs[session.id] = 0
-        if self.library_policy_coordinator is not None:
-            self.library_policy_coordinator.register_holder(
-                session.id,
-                None,
-                session.library_policy_holder,
-            )
-        if activate:
-            self._activate_session(session.id)
-        if assistant_default_notice and self._on_assistant_default_notice is not None:
-            try:
-                self._on_assistant_default_notice(assistant_default_notice)
-            except Exception:  # noqa: BLE001 - presentation cannot undo a new chat
-                logger.warning("Workspace default Persona notice could not be shown")
+        with self._progress_identity_lock:
+            if session.id in self._sessions:
+                raise ValueError("session id already exists")
+            self._sessions[session.id] = session
+            self._advance_console_settings_session_incarnation(session.id)
+            self._messages_by_session[session.id] = []
+            self._nodes_by_session[session.id] = {}
+            self._children_by_parent[session.id] = {}
+            self._active_leaf_by_session[session.id] = None
+            self._context_summary_by_session[session.id] = (None, None)
+            self._conversation_context_epochs[session.id] = 0
+            if self.library_policy_coordinator is not None:
+                self.library_policy_coordinator.register_holder(
+                    session.id,
+                    None,
+                    session.library_policy_holder,
+                )
+            if activate:
+                self._activate_session(session.id)
+            if assistant_default_notice and self._on_assistant_default_notice is not None:
+                try:
+                    self._on_assistant_default_notice(assistant_default_notice)
+                except Exception:  # noqa: BLE001 - presentation cannot undo a new chat
+                    logger.warning("Workspace default Persona notice could not be shown")
         return session
 
     def _activate_session(self, session_id: str | None) -> None:
@@ -2809,6 +2820,16 @@ class ConsoleChatStore:
                 session.id,
                 str(persisted_conversation_id),
             )
+            with self._progress_identity_lock:
+                sibling = next(
+                    (other for other in self._sessions.values()
+                     if other is not session
+                     and other.persisted_conversation_id == session.persisted_conversation_id
+                     and other._progress_owner_id is not None),
+                    None,
+                )
+                if sibling is not None:
+                    session._progress_owner_id = sibling._progress_owner_id
             session.generation_durable_snapshot = generation_durable_snapshot
             session.generation_metadata_status = generation_metadata_status
             self.hydrate_session_capture_policy(session.id)
@@ -4744,6 +4765,8 @@ class ConsoleChatStore:
         """Purge one session after late trace handoffs have been fenced."""
 
         session = self._session_or_raise(session_id)
+        with self.progress_owner_scope(session_id, release=True):
+            pass
 
         self._settle_provider_trace_settlements_for_messages(owned_message_ids)
         for message_id in owned_message_ids:
@@ -4857,6 +4880,62 @@ class ConsoleChatStore:
                 native_leaf_id,
                 persisted_leaf_id,
             )
+
+    @contextmanager
+    def progress_owner_scope(
+        self,
+        session_id: str,
+        *,
+        release: bool = False,
+        message_store: MessageStore | None = None,
+    ) -> Iterator[str | None]:
+        """Fence inbox binding against native release; never do external work here.
+
+        Lock order is identity, then coordinator (if needed), then message store.
+        A release yields an owner only when this was its last native binding.
+        Unknown/released sessions yield None and must never create an inbox.
+        """
+        with self._progress_identity_lock:
+            if (
+                message_store is not None
+                and message_store is not self._progress_message_store
+            ):
+                yield None
+                return
+            session = self._sessions.get(session_id)
+            owner_id = session._progress_owner_id if session is not None else None
+            if release and session is not None:
+                session._progress_owner_id = None
+                if any(
+                    other._progress_owner_id == owner_id
+                    for other in self._sessions.values()
+                ):
+                    owner_id = None
+                if owner_id is not None and self._progress_message_store is not None:
+                    self._progress_message_store.close_inbox(owner_id)
+            yield owner_id
+
+    def register_progress_message_store(self, message_store: MessageStore) -> None:
+        """Bind one runtime; replacement invalidates only the previous runtime."""
+        with self._progress_identity_lock:
+            previous = self._progress_message_store
+            if previous is not None and previous is not message_store:
+                previous.close()
+            self._progress_message_store = message_store
+
+    def progress_owner_id(self, session_id: str) -> str | None:
+        """Read a live native progress identity without allocating an inbox."""
+        with self.progress_owner_scope(session_id) as owner_id:
+            return owner_id
+
+    def progress_owner_ids(self) -> dict[str, str]:
+        """Return body-free native-session bindings for navigation counts."""
+        with self._progress_identity_lock:
+            return {
+                session.id: session._progress_owner_id
+                for session in self._sessions.values()
+                if session._progress_owner_id is not None
+            }
 
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""
@@ -10294,7 +10373,17 @@ class ConsoleChatStore:
             and self.canvas_turn_controller is not self.canvas_promotion_participant
         ):
             self.canvas_turn_controller.discard_all()
-        self._sessions.clear()
+        with self._progress_identity_lock:
+            for previous in self._sessions.values():
+                if (
+                    previous._progress_owner_id is not None
+                    and self._progress_message_store is not None
+                ):
+                    self._progress_message_store.close_inbox(
+                        previous._progress_owner_id
+                    )
+                previous._progress_owner_id = None
+            self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
         self._pending_persistence_message_ids.clear()
@@ -10365,7 +10454,17 @@ class ConsoleChatStore:
                 and self.canvas_turn_controller is not self.canvas_promotion_participant
             ):
                 self.canvas_turn_controller.activate_session(restored_session.id)
-            self._sessions[session.id] = restored_session
+            with self._progress_identity_lock:
+                sibling = next(
+                    (other for other in self._sessions.values()
+                     if restored_session.persisted_conversation_id is not None
+                     and other.persisted_conversation_id == restored_session.persisted_conversation_id
+                     and other._progress_owner_id is not None),
+                    None,
+                )
+                if sibling is not None:
+                    restored_session._progress_owner_id = sibling._progress_owner_id
+                self._sessions[session.id] = restored_session
             self._seed_console_settings_owned_bases(restored_session)
             if self.library_policy_coordinator is not None:
                 self.library_policy_coordinator.register_holder(

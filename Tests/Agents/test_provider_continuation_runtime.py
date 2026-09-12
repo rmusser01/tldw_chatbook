@@ -1737,3 +1737,404 @@ def test_cycle_4d_raised_final_persistence_stops_safely() -> None:
     )
     assert outcome.status == RUN_ERROR
     assert "PRIVATE-CANARY" not in outcome.steps[-1].summary
+
+
+@pytest.mark.parametrize("name", ["report_to_supervisor", "read_agent_messages"])
+def test_restored_pending_message_call_refuses_before_execution(name):
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    store = MessageStore()
+    store.open_inbox("c")
+    store.close_inbox("c")
+    inbox = store.open_inbox("c")
+    sender = inbox.sender(MessageIdentity("h", "child", "parent", None, "child"))
+    sender.send("replacement report must remain queued")
+    reader = inbox.reader("new-primary", chain_id=None, automatic=False)
+    invoked, events = [], []
+    deps = _deps(
+        [],
+        order=[],
+        persist=events.append,
+        invoke=lambda c: pytest.fail("catalog invocation"),
+        expand=lambda checkpoint: [],
+        cancel=lambda: bool(events),
+    )
+    deps.read_agent_messages = lambda args: (
+        invoked.append(args) or collect(reader, args, 8000)
+    )
+    deps.report_to_supervisor = lambda args: invoked.append(args) or ToolResult(True)
+    outcome = run_agent_loop(
+        CONFIG,
+        [],
+        [],
+        deps,
+        restore_provider_continuation=_checkpoint(_pending_call(name=name, args={})),
+        restore_provider_target=ContinuationRestoreTarget(
+            "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+        ),
+        resume_provider_continuation=True,
+    )
+    assert outcome.status == "cancelled"
+    assert invoked == []
+    assert [type(event) for event in events] == [ToolCallFinished]
+    assert events[0].target_state == "failed"
+    assert events[0].result.value == "ERROR: restored_pending"
+    assert len(inbox.snapshot()) == 1
+
+
+@pytest.mark.parametrize("fail_at", ["executing", "result", None])
+def test_reader_native_barriers_preserve_private_content_and_never_retry(fail_at):
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    secret = "a private report body"
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(secret)
+    reader = inbox.reader("primary", chain_id=None, automatic=False)
+    events, calls, records = [], [], []
+    call = ToolCall("read_agent_messages", {}, "read-1", "{}")
+    checkpoint = _checkpoint(_pending_call("read-1", name=call.name, args={}))
+
+    def persist(event):
+        events.append(event)
+        if (fail_at == "executing" and isinstance(event, ToolCallExecuting)) or (
+            fail_at == "result" and isinstance(event, ToolCallFinished)
+        ):
+            raise OSError("write failed")
+
+    deps = _deps(
+        [_native_turn((call,), checkpoint)],
+        order=[],
+        persist=persist,
+        invoke=lambda c: pytest.fail("catalog invocation"),
+        cancel=lambda: len(events) >= 3,
+    )
+    deps.read_agent_messages = lambda args: (
+        calls.append(args) or collect(reader, args, 8000)
+    )
+    deps.on_step = records.append
+    outcome = run_agent_loop(CONFIG, [], [], deps)
+    assert outcome.status == ("error" if fail_at else "cancelled")
+    assert len(calls) == (0 if fail_at == "executing" else 1)
+    assert len(inbox.snapshot()) == (1 if fail_at == "executing" else 0)
+    assert secret not in repr(records)
+    if fail_at != "executing":
+        assert secret in events[-1].result.value
+
+
+def test_collected_body_reaches_native_payload_and_private_db_with_capture_off():
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_agent_bridge import format_agent_step_marker
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(":memory:", "progress-continuation-test")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+        session = store.create_session(title="Progress")
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="go", persist=True
+        )
+        owner = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        inbox = MessageStore().open_inbox("c")
+        secret = "PRIVATE-PROGRESS-BODY"
+        inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+            secret
+        )
+        reader = inbox.reader("run", chain_id=None, automatic=False)
+        call = ToolCall("read_agent_messages", {}, "read-1", "{}")
+        first = _native_turn(
+            (call,), _checkpoint(_pending_call("read-1", name=call.name, args={}))
+        )
+        seen = []
+
+        def call_model(messages, active):
+            seen.append(list(messages))
+            if len(seen) == 1:
+                return first
+            checkpoint = store.get_message(owner.id).provider_continuation
+            return ModelTurn(
+                text="done",
+                provider_continuation=replace(
+                    checkpoint, checkpoint_revision=4, state="complete"
+                ),
+            )
+
+        deps = _deps(
+            [],
+            order=[],
+            persist=store.persist_provider_continuation_event,
+            invoke=lambda c: pytest.fail("catalog dispatch"),
+            context=ContinuationEventContext(owner.id, "run", "primary", "persistent"),
+        )
+        deps.call_model = call_model
+        deps.read_agent_messages = lambda args: collect(reader, args, 8000)
+        assert deps.on_record is None
+        outcome = run_agent_loop(CONFIG, [], [], deps)
+        assert outcome.status == "done", outcome.steps
+        result_row = seen[1][-1]
+        assert result_row["role"] == "tool" and result_row["tool_call_id"] == "read-1"
+        assert json.loads(result_row["content"])["messages"][0]["body"] == secret
+        persisted_owner = store.get_message(owner.id)
+        row = database.get_message_by_id(persisted_owner.persisted_message_id)
+        assert secret in row["provider_continuation_json"]
+        assert secret not in repr(outcome.steps)
+        assert secret not in repr(
+            [format_agent_step_marker(step) for step in outcome.steps]
+        )
+        assert inbox.snapshot() == ()
+    finally:
+        database.close_connection()
+
+
+def test_committed_reader_replay_does_not_consume_a_new_report():
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+        "new report"
+    )
+    checkpoint = _checkpoint(
+        ContinuationCall(
+            "read-1",
+            "read_agent_messages",
+            "{}",
+            "completed",
+            ContinuationResult("exact old collected report"),
+        ),
+        revision=3,
+    )
+    seen = []
+    deps = _deps(
+        [],
+        order=[],
+        persist=lambda event: None,
+        invoke=lambda c: pytest.fail("catalog dispatch"),
+        expand=lambda actual: [
+            {
+                "role": "tool",
+                "tool_call_id": "read-1",
+                "content": actual.rounds[0].calls[0].result.value,
+            }
+        ],
+    )
+    deps.read_agent_messages = lambda args: pytest.fail(
+        "committed reader must never redispatch"
+    )
+
+    def call_model(messages, active):
+        seen.extend(messages)
+        return ModelTurn(
+            text="done",
+            provider_continuation=replace(
+                checkpoint, checkpoint_revision=4, state="complete"
+            ),
+        )
+
+    deps.call_model = call_model
+    outcome = run_agent_loop(
+        CONFIG,
+        [],
+        [],
+        deps,
+        restore_provider_continuation=checkpoint,
+        restore_provider_target=ContinuationRestoreTarget(
+            "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+        ),
+        resume_provider_continuation=True,
+    )
+    assert outcome.status == "done"
+    assert seen == [
+        {
+            "role": "tool",
+            "tool_call_id": "read-1",
+            "content": "exact old collected report",
+        }
+    ]
+    assert len(inbox.snapshot()) == 1
+
+
+@pytest.mark.parametrize(
+    "restored", [False, True], ids=["native-review-refused", "restored-pending-refused"]
+)
+def test_refused_reader_keeps_cycle_protection_after_continuation_barrier(restored):
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+        "keep queued"
+    )
+    reader = inbox.reader("primary", chain_id=None, automatic=False)
+    events, invoked, seen = [], [], []
+    name = "read_agent_messages"
+    seed = _checkpoint(_pending_call("read-1", name=name, args={}))
+    next_number = 2 if restored else 1
+
+    def call_model(messages, active, checkpoint):
+        nonlocal next_number
+        seen.append(list(messages))
+        if next_number > 4:
+            return ModelTurn(
+                text="done",
+                provider_continuation=replace(
+                    checkpoint,
+                    checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                    state="complete",
+                ),
+            )
+        call_id = f"read-{next_number}"
+        next_number += 1
+        call = ToolCall(name, {}, call_id, "{}")
+        round_ = ContinuationRound(
+            "", (), (_pending_call(call_id, name=name, args={}),)
+        )
+        candidate = (
+            _checkpoint(*round_.calls)
+            if checkpoint is None
+            else replace(
+                checkpoint,
+                checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                rounds=checkpoint.rounds + (round_,),
+            )
+        )
+        return _native_turn((call,), candidate)
+
+    def expand(checkpoint):
+        return [
+            {"role": "tool", "tool_call_id": call.call_id, "content": call.result.value}
+            for round_ in checkpoint.rounds
+            for call in round_.calls
+            if call.result is not None
+        ]
+
+    deps = _deps(
+        [],
+        order=[],
+        persist=events.append,
+        invoke=lambda call: pytest.fail("catalog dispatch"),
+        review=lambda calls: {call.call_id: "denied" for call in calls},
+        expand=expand,
+    )
+    deps.call_model_with_continuation = call_model
+    deps.read_agent_messages = lambda args: (
+        invoked.append(args) or collect(reader, args, 8000)
+    )
+    restore = (
+        {}
+        if not restored
+        else {
+            "restore_provider_continuation": seed,
+            "restore_provider_target": ContinuationRestoreTarget(
+                "deepseek",
+                "deepseek-v4-flash",
+                "responses",
+                "https://api.deepseek.com/v1",
+            ),
+            "resume_provider_continuation": True,
+        }
+    )
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(max_steps=40, max_model_turns=20)),
+        [],
+        [],
+        deps,
+        **restore,
+    )
+    assert outcome.status == "stuck"
+    assert invoked == [] and [message.body for message in inbox.snapshot()] == [
+        "keep queued"
+    ]
+    finished = [event for event in events if isinstance(event, ToolCallFinished)]
+    assert len(finished) == 3
+    assert all(event.target_state == "failed" for event in finished)
+    assert not any(isinstance(event, ToolCallExecuting) for event in events)
+    assert finished[0].result.value == (
+        "ERROR: restored_pending" if restored else "denied"
+    )
+    assert finished[-1].call_id == "read-3"
+    # Stop only after the third refusal is durably paired; never issue a fourth call.
+    assert len(seen) == (2 if restored else 3)
+    assert [row["tool_call_id"] for row in seen[-1] if row.get("role") == "tool"] == [
+        "read-1",
+        "read-2",
+    ]
+    assert [
+        row["tool_call_id"]
+        for row in outcome.final_messages
+        if row.get("role") == "tool"
+    ] == ["read-1", "read-2"]
+
+
+def test_mixed_native_refusals_stop_on_reader_boundary_without_another_model_call():
+    from tldw_chatbook.Agents.fleet_message_tools import collect
+    from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
+
+    inbox = MessageStore().open_inbox("c")
+    inbox.sender(MessageIdentity("h", "child", "parent", None, "child")).send(
+        "keep queued"
+    )
+    reader = inbox.reader("primary", chain_id=None, automatic=False)
+    events, invoked, seen = [], [], []
+
+    def call_model(messages, active, checkpoint):
+        seen.append(list(messages))
+        number = len(seen)
+        if number > 6:
+            return ModelTurn(
+                text="done",
+                provider_continuation=replace(
+                    checkpoint,
+                    checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                    state="complete",
+                ),
+            )
+        name = "calculator" if number % 2 else "read_agent_messages"
+        call = ToolCall(name, {}, f"call-{number}", "{}")
+        pending = _pending_call(call.call_id, name=name, args={})
+        candidate = (
+            _checkpoint(pending)
+            if checkpoint is None
+            else replace(
+                checkpoint,
+                checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                rounds=checkpoint.rounds + (ContinuationRound("", (), (pending,)),),
+            )
+        )
+        return _native_turn((call,), candidate)
+
+    deps = _deps(
+        [],
+        order=[],
+        persist=events.append,
+        invoke=lambda call: invoked.append(call) or ToolResult(True),
+        review=lambda calls: {call.call_id: "denied" for call in calls},
+    )
+    deps.call_model_with_continuation = call_model
+    deps.read_agent_messages = lambda args: (
+        invoked.append(args) or collect(reader, args, 8000)
+    )
+    outcome = run_agent_loop(
+        replace(CONFIG, budget=RunBudget(max_steps=40, max_model_turns=20)),
+        [],
+        [],
+        deps,
+    )
+    assert outcome.status == "stuck"
+    assert len(seen) == 4
+    assert invoked == [] and len(inbox.snapshot()) == 1
+    finished = [event for event in events if isinstance(event, ToolCallFinished)]
+    assert len(finished) == 4 and finished[-1].call_id == "call-4"
+    assert all(event.target_state == "failed" for event in finished)
+    assert not any(isinstance(event, ToolCallExecuting) for event in events)
+    assert [
+        row["tool_call_id"]
+        for row in outcome.final_messages
+        if row.get("role") == "tool"
+    ] == ["call-1", "call-2", "call-3"]

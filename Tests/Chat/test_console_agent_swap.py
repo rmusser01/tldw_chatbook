@@ -1514,13 +1514,17 @@ async def test_regenerate_through_agent_path_uses_bridge_and_forks_sibling(
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("error:coroutine .* was never awaited:RuntimeWarning")
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
 async def test_agent_runtime_gate_refreshes_without_screen_teardown():
     """Flipping ``[console] agent_runtime`` after controller construction must
     change the next send's path. Previously only controller construction
     (``_ensure_console_chat_controller``) read the gate/bridge --
     ``_sync_console_chat_core_state`` refreshed provider selection on every
     access but never the gate, so toggling the kill-switch had no effect
-    until the whole screen was torn down and rebuilt."""
+    until the whole screen was torn down and rebuilt. The unmounted screen cannot
+    start its acceptance refresh worker; that refusal must not leak a coroutine.
+    """
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 

@@ -2225,7 +2225,10 @@ class ConsoleWorkspaceController:
             )
             source_rows = self._rows_with_latest_canonical_owner(source_rows)
             source_rows = self._overlay_current_console_browser_markers(source_rows)
+        bridge = self._ensure_console_agent_bridge()
+        read_counts = getattr(bridge, "progress_counts", None)
         return build_workspace_tree_state(
+            progress_counts=read_counts() if callable(read_counts) else {},
             workspaces=(
                 (str(record.workspace_id), str(record.name or record.workspace_id))
                 for record in records
@@ -3505,26 +3508,28 @@ class ConsoleWorkspaceController:
         rows, _total, error = result
         if not error:
             self._record_canonical_owner_rows(rows)
-        from ...Chat.conversation_archive_actions import (
-            local_conversation_service,
-            storage_call,
-        )
-
         store = self._console_chat_store
         native_ids = [
             str(session.persisted_conversation_id)
             for session in (store.sessions() if store is not None else ())
             if session.persisted_conversation_id
         ]
-        try:
-            states = await storage_call(
-                local_conversation_service(self.app_instance),
-                "get_conversation_archive_states",
-                native_ids,
+        states = {}
+        if native_ids:
+            from ...Chat.conversation_archive_actions import (
+                local_conversation_service,
+                storage_call,
             )
-        except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
-            logger.debug("Archive state refresh unavailable")
-            states = {}
+
+            try:
+                states = await storage_call(
+                    local_conversation_service(self.app_instance),
+                    "get_conversation_archive_states",
+                    native_ids,
+                )
+            except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
+                logger.debug("Archive state refresh unavailable")
+                states = {}
         # Both database reads await: retain ownership through the last one,
         # including any archive receipt that settled while its snapshot loaded.
         if (
@@ -3925,6 +3930,7 @@ class ConsoleWorkspaceController:
             result_total_count=total,
             result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
             subagent_counts=subagent_counts,
+            progress_counts=(bridge.progress_counts() if callable(getattr(bridge, "progress_counts", None)) else {}),
             # The visible-row cap grows with the measured rail body height so
             # the Chats section expands to fill its even share of the rail
             # alongside the Workspaces tree; the historical 12-row default

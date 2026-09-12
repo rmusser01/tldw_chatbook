@@ -338,6 +338,9 @@ class ConsoleLeftRail(Vertical):
         agent_full_log_available: bool,
         agent_steering_state: ConsoleAgentSteeringState | None = None,
         agent_cancel_all_visible: bool = False,
+        open_agent_progress: Callable[[], None] | None = None,
+        agent_progress_state: Callable[[], tuple[int, dict[str, int]]] | None = None,
+        refresh_progress_navigation: Callable[[], None] | None = None,
         show_character_section: bool,
         character_avatar_widget_builder: CharacterAvatarWidgetBuilder | None,
         character_avatar_name: str,
@@ -446,6 +449,11 @@ class ConsoleLeftRail(Vertical):
         self._agent_status_line = agent_status_line
         self._agent_steps_text = agent_steps_text
         self._agent_drilldown_active = agent_drilldown_active
+        self._open_agent_progress = open_agent_progress
+        self._agent_progress_state = agent_progress_state
+        self._refresh_progress_navigation = refresh_progress_navigation
+        self._progress_counts: dict[str, int] = {}
+        self._progress_timer = None
         self._agent_full_log_available = agent_full_log_available
         self._agent_steering_state = agent_steering_state
         self._agent_cancel_all_visible = agent_cancel_all_visible
@@ -619,6 +627,9 @@ class ConsoleLeftRail(Vertical):
         )
         self.request_allocation_reconcile()
         self.call_after_refresh(self._request_initial_workspace_tree_pages)
+        if self._open_agent_progress is not None:
+            self._sync_progress_count()
+            self._progress_timer = self.set_interval(0.5, self._sync_progress_count)
 
     @staticmethod
     def _default_recovery_copy(state: ConsoleDefaultDurabilityState) -> str:
@@ -2488,6 +2499,8 @@ class ConsoleLeftRail(Vertical):
                 steering_bar,
                 back_button,
                 full_log_button,
+                *([Button("Progress: 0 queued", id="console-agent-progress", compact=True)]
+                  if self._open_agent_progress is not None else []),
                 classes="console-agent-section",
             )
             yield _ContextBoundedSection(
@@ -2532,6 +2545,23 @@ class ConsoleLeftRail(Vertical):
         outer_hint.styles.display = "none"
         yield outer_hint
 
+    def on_unmount(self) -> None:
+        if self._progress_timer is not None:
+            self._progress_timer.stop()
+
+    def _sync_progress_count(self) -> None:
+        count, counts = (
+            self._agent_progress_state() if self._agent_progress_state else (0, {})
+        )
+        self.query_one(
+            "#console-agent-progress", Button
+        ).label = f"Progress: {count} queued"
+        if counts != self._progress_counts:
+            if self._refresh_progress_navigation is not None:
+                self._refresh_progress_navigation()
+            self._progress_counts = counts
+
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
 
@@ -2551,6 +2581,10 @@ class ConsoleLeftRail(Vertical):
                 consulted here.
         """
         button_id = event.button.id or ""
+        if button_id == "console-agent-progress" and self._open_agent_progress is not None:
+            event.stop()
+            self._open_agent_progress()
+            return
         self._flush_pointer_activation()
         owned_section_id = self._section_for_owned_target(event.button)
         if owned_section_id is not None:

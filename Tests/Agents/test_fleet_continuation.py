@@ -1522,7 +1522,8 @@ def test_a_resume_consumes_a_spawn_slot_and_refuses_at_the_budget(db):
     assert all(row["resumed_from_run_id"] is None for row in rows)
 
 
-def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db):
+@pytest.mark.parametrize("capacity_scope", ["conversation", "runtime"])
+def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db, capacity_scope):
     """At the live cap the resume is refused with spawn's own retryable
     copy -- and, like spawn's cap refusal, it must NOT consume a slot: a
     later spawn in the same turn still fits the budget."""
@@ -1568,8 +1569,14 @@ def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db):
             "task b": [gated_b],
             "task c": ["c done"],
         },
-        max_live=1,
+        max_live=1 if capacity_scope == "conversation" else 3,
     )
+    if capacity_scope == "runtime":
+        from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+        service.runtime_capacity = RuntimeCapacity(
+            max_child_executions=1, reserved_manual_children=0
+        )
     run1, outcome1 = _run(service, config=TWO_SLOT_CFG)
     assert outcome1.status == RUN_DONE
     finished = _finished_child(coordinator)
@@ -1580,7 +1587,12 @@ def test_a_live_cap_refusal_unwinds_the_resumes_spawn_slot(db):
     assert outcome2.status == RUN_DONE
     sends = _tool_results(db.get_run(run2), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" in sends[0]
-    assert "live sub-agent limit reached" in sends[0]
+    expected = (
+        "live sub-agent limit reached"
+        if capacity_scope == "conversation"
+        else "runtime sub-agent limit reached"
+    )
+    assert expected in sends[0]
     rows = _subagent_rows(db)
     # A, B and C all exist; the refused resume created nothing.
     assert sorted(row["task"] for row in rows) == ["task a", "task b", "task c"]
@@ -1778,12 +1790,8 @@ def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
     coordinator's `snapshot()` copies -- asserted here at the coordinator
     seam with the exact same summation.
 
-    The audit's negative half -- a finished survivor's spend LEAVES that
-    sum at the next turn's `prune_terminal`, and a continued task's
-    aggregate (old + resumed run) is derivable from no surface (the DB
-    joins `resumed_from_run_id` lineage but persists no tokens) -- is
-    characterized at the tail, filed as TASK-18311, deliberately not
-    patched here (the plan's own scope pin).
+    TASK-18311: pruning still empties the live-only rollup; durable per-run
+    budget counters and continuation ancestry preserve the historical total.
     """
     holder: dict = {}
 
@@ -1840,11 +1848,15 @@ def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
     rollup = sum(h.total_tokens for h in coordinator.snapshot())
     assert rollup == old_spend + resumed_handle.total_tokens
 
-    # -- The honest gap, characterized (TASK-18311; do not "fix" this
-    # assertion without that task): the next turn's prune drops both
-    # terminal handles, so the rollup reads 0 -- the finished survivor's
-    # spend has left `fleet_snapshot`, and NO surface can reconstruct the
-    # continued task's old+new aggregate (the DB has the lineage join but
-    # no token column).
+    # History must survive prune without being reintroduced into the live
+    # cost-chip feed, whose provider usage has its own durable accounting.
     assert coordinator.prune_terminal() >= 2
     assert sum(h.total_tokens for h in coordinator.snapshot()) == 0
+    assert db.get_run(old_run_id)["budget_tokens"] == old_spend
+    assert db.get_run(resumed_row["id"])["budget_tokens"] == resumed_handle.total_tokens
+    assert db.continuation_budget("c", resumed_row["id"]) == {
+        "budget_tokens": rollup,
+        "run_count": 2,
+        "recorded_run_count": 2,
+        "complete": True,
+    }
