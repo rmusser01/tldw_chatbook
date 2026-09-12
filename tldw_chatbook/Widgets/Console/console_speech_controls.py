@@ -11,6 +11,22 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Static, Switch
 
+#: TASK-32015: the two voice switches sit side by side with no other
+#: affordance explaining them, so each tooltip carries the three facts a
+#: first-time user cannot discover elsewhere: scope (per-conversation),
+#: the relationship between the features (hands-free owns reply speech
+#: while it runs -- the two never double-speak), and the interrupt/exit
+#: keys that need no voice round-trip. Pinned by
+#: `test_voice_switch_tooltips_state_relationship_and_interrupts`.
+AUTO_SPEAK_SWITCH_TOOLTIP = (
+    "Speak new assistant replies in this conversation (per-conversation, "
+    "consent-gated). While Hands-free is on, that mode speaks replies."
+)
+HANDS_FREE_SWITCH_TOOLTIP = (
+    "Voice conversation loop: speak, auto-send after a pause, hear the "
+    "reply (Ctrl+Shift+H). Type to interrupt a spoken reply; Esc exits."
+)
+
 
 class ConsoleHandsFreeToggleRequested(Message):
     """User requested a visible Hands-free state change."""
@@ -71,7 +87,7 @@ class ConsoleSpeechControls(Horizontal):
                 False,
                 name="Speak replies",
                 id="console-auto-speak",
-                tooltip="Speak only new assistant replies in this conversation.",
+                tooltip=AUTO_SPEAK_SWITCH_TOOLTIP,
             )
             self._size_switch(auto_speak_switch)
             yield auto_speak_switch
@@ -89,10 +105,7 @@ class ConsoleSpeechControls(Horizontal):
                 False,
                 name="Hands-free",
                 id="console-hands-free-switch",
-                tooltip=(
-                    "Voice conversation loop: speak prompts, hear replies "
-                    "(Ctrl+Shift+H)."
-                ),
+                tooltip=HANDS_FREE_SWITCH_TOOLTIP,
             )
             self._size_switch(hands_free_switch)
             yield hands_free_switch
@@ -135,7 +148,7 @@ class ConsoleSpeechControls(Horizontal):
         switch.tooltip = (
             "Automatic speech is paused after a failure."
             if self.auto_speak_paused
-            else "Speak only new assistant replies in this conversation."
+            else AUTO_SPEAK_SWITCH_TOOLTIP
         )
 
     def sync_hands_free_state(self, active: bool) -> None:
