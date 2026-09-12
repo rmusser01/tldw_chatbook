@@ -116,6 +116,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderProprietaryThinkingEvidence,
     ProviderThinkingDelta,
     ProviderToolCalls,
+    ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -10710,3 +10711,256 @@ def test_ending_an_unmarked_setup_phase_is_a_no_op():
     bridge = _make_bridge()
     bridge.end_setup_phase("never-marked")
     assert bridge.live_snapshot("never-marked").status == "idle"
+
+# --- ADR-147 Task 6B: `_StreamingModelAdapter.chat_call` honors the per-call
+# routing kwargs Task 6 emits for a spawned child (`api_endpoint`, `model`,
+# `api_base_url`, and the 13 `_CHAT_CALL_PARAM_MAP` sampling kwargs) instead
+# of dropping them into `**_ignored`. ---
+
+
+class _RoutingGateway:
+    """Capturing gateway carrying the ``resolve_for_send`` seam routing uses.
+
+    ``stream_chat`` records each ``(resolution, messages, kwargs)`` call and
+    replays ``chunks``; ``resolve_for_send`` records the selection it was
+    asked to resolve and answers with ``resolver(selection)`` (default: echo
+    the selection's identity and sampling fields into a real
+    ``ConsoleProviderResolution``, so the captured stream resolution proves
+    what the selection carried).
+    """
+
+    def __init__(self, *, resolver=None, chunks=("routed answer",)):
+        self.stream_calls = []
+        self.resolve_calls = []
+        self._resolver = resolver or self._echo_resolution
+        self._chunks = list(chunks)
+
+    @staticmethod
+    def _echo_resolution(selection):
+        return ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url=selection.base_url or "",
+            model=selection.explicit_model,
+            ready=True,
+            readiness_key=selection.provider,
+            execution_key=selection.provider,
+            temperature=selection.temperature,
+            top_p=selection.top_p,
+            top_k=selection.top_k,
+            seed=selection.seed,
+        )
+
+    async def resolve_for_send(self, selection):
+        self.resolve_calls.append(selection)
+        return self._resolver(selection)
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        self.stream_calls.append(
+            (resolution, [dict(message) for message in messages], dict(kwargs))
+        )
+        for chunk in self._chunks:
+            yield chunk
+
+
+def _routing_parent_resolution():
+    return ConsoleProviderResolution(
+        provider="Moonshot",
+        base_url="https://api.moonshot.ai/v1",
+        model="kimi-k2",
+        ready=True,
+        readiness_key="moonshot",
+        execution_key="moonshot",
+        api_key="parent-key",
+    )
+
+
+@contextlib.contextmanager
+def _streaming_adapter(resolution, gateway):
+    """A `_StreamingModelAdapter` on its own driver thread (the :2324 pattern)."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+    loop_thread.start()
+    adapter = _StreamingModelAdapter(
+        store=store,
+        provider_gateway=gateway,
+        resolution=resolution,
+        assistant_message_id=assistant.id,
+        should_cancel=lambda: False,
+        loop=loop,
+        native_tools=False,
+    )
+    try:
+        yield adapter
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        loop_thread.join(timeout=2)
+        loop.close()
+
+
+def _routed_child_messages():
+    return [
+        {"role": "system", "content": SUBAGENT_PROMPT_PREFIX},
+        {"role": "user", "content": "child task"},
+    ]
+
+
+def test_per_call_routing_kwargs_re_resolve_and_forward(monkeypatch):
+    """A routed child re-resolves through the gateway's send-resolution seam:
+    the child's provider/model/base_url and sampling params reach
+    ``stream_chat`` on the per-call resolution -- never the parent's fixed
+    one -- and usage accounting is labeled for the child."""
+    usage_labels = []
+    real_usage = bridge_module._openai_usage_from_provider_call
+
+    def spy(payload, *, provider, model):
+        usage_labels.append((provider, model))
+        return real_usage(payload, provider=provider, model=model)
+
+    monkeypatch.setattr(bridge_module, "_openai_usage_from_provider_call", spy)
+    terminal = ProviderToolCalls(
+        tool_calls=(),
+        metadata=ProviderTurnMetadata(
+            finish_reason="stop",
+            usage={"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        ),
+    )
+    gateway = _RoutingGateway(chunks=("routed answer", terminal))
+    parent = _routing_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="custom-ep:qwen-local",
+            model="qwen3.8-27b",
+            api_base_url="http://127.0.0.1:8080",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+            temp=0.2,
+            topk=40,
+            seed=7,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert len(gateway.resolve_calls) == 1
+    selection = gateway.resolve_calls[0]
+    assert selection.provider == "custom-ep:qwen-local"
+    assert selection.explicit_model == "qwen3.8-27b"
+    assert selection.base_url == "http://127.0.0.1:8080"
+    assert selection.temperature == 0.2
+    assert selection.top_k == 40
+    assert selection.seed == 7
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, _kwargs = gateway.stream_calls[0]
+    assert resolution.provider == "custom-ep:qwen-local"
+    assert resolution.model == "qwen3.8-27b"
+    assert resolution.base_url == "http://127.0.0.1:8080"
+    assert resolution.temperature == 0.2
+    assert resolution.top_k == 40
+    assert resolution.seed == 7
+    # Usage labels follow the per-call identity, and the shared parent
+    # resolution was never mutated.
+    assert ("custom-ep:qwen-local", "qwen3.8-27b") in usage_labels
+    assert adapter._resolution is parent
+
+
+def test_no_routing_kwargs_uses_parent_resolution_unchanged():
+    """Only today's kwargs (api_endpoint/model naming the parent): the exact
+    parent resolution OBJECT reaches ``stream_chat``, no re-resolution
+    happens, and no new stream kwargs appear."""
+    gateway = _RoutingGateway()
+    parent = _routing_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="moonshot",
+            model="kimi-k2",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert response["choices"][0]["message"]["content"] == "routed answer"
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 1
+    resolution, _messages, stream_kwargs = gateway.stream_calls[0]
+    assert resolution is parent
+    assert stream_kwargs == {}
+
+
+def test_per_call_routing_sampling_only_reroutes_params_not_provider():
+    """Sampling kwargs with the PARENT's endpoint (the inherit-with-own-params
+    case) keep the parent's provider identity and overlay only what the call
+    carried -- including a per-call model on the same provider."""
+    gateway = _RoutingGateway()
+    parent = _routing_parent_resolution()
+    with _streaming_adapter(parent, gateway) as adapter:
+        adapter.chat_call(
+            api_endpoint="moonshot",
+            model="kimi-k2",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+            temp=0.2,
+            topk=40,
+        )
+        adapter.chat_call(
+            api_endpoint="moonshot",
+            model="kimi-k2-instruct",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+            max_tokens=512,
+        )
+    assert gateway.resolve_calls == []
+    assert len(gateway.stream_calls) == 2
+    first, _messages, _kwargs = gateway.stream_calls[0]
+    assert first is not parent
+    assert first.provider == parent.provider
+    assert first.execution_key == parent.execution_key
+    assert first.base_url == parent.base_url
+    assert first.api_key == parent.api_key
+    assert first.model == "kimi-k2"
+    assert first.temperature == 0.2
+    assert first.top_k == 40
+    assert first.max_tokens is None
+    second, _messages, _kwargs = gateway.stream_calls[1]
+    assert second.provider == parent.provider
+    assert second.model == "kimi-k2-instruct"
+    assert second.max_tokens == 512
+    assert second.temperature is None
+    # The shared parent resolution was never mutated.
+    assert adapter._resolution is parent
+    assert parent.model == "kimi-k2"
+    assert parent.temperature is None
+
+
+def test_unknown_per_call_provider_routing_is_a_loud_error_not_silent_fallback():
+    """An unready/unknown per-call provider raises through chat_call's error
+    channel (the same one stream failures use); the parent's resolution is
+    never silently streamed from."""
+
+    def blocked(selection):
+        return ConsoleProviderResolution(
+            provider=selection.provider,
+            base_url="",
+            model=selection.explicit_model,
+            ready=False,
+            visible_copy=(
+                f"Provider blocked: '{selection.provider}' is not available "
+                "in Console yet. Choose a supported provider."
+            ),
+            readiness_key=selection.provider,
+            execution_key=selection.provider,
+        )
+
+    gateway = _RoutingGateway(resolver=blocked)
+    parent = _routing_parent_resolution()
+    with (
+        _streaming_adapter(parent, gateway) as adapter,
+        pytest.raises(RuntimeError, match="not-a-provider"),
+    ):
+        adapter.chat_call(
+            api_endpoint="not-a-provider",
+            model="some-model",
+            messages_payload=_routed_child_messages(),
+            streaming=False,
+        )
+    assert len(gateway.resolve_calls) == 1
+    assert gateway.stream_calls == []
