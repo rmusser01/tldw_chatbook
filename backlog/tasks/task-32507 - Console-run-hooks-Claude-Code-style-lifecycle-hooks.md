@@ -1,10 +1,10 @@
 ---
 id: TASK-32507
 title: Console run hooks (Claude Code-style lifecycle hooks)
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-12 15:39'
-updated_date: '2026-09-12 16:41'
+updated_date: '2026-09-12 16:56'
 labels: []
 dependencies: []
 ---
@@ -46,6 +46,8 @@ Implemented all six run-hook events with restriction-only per-call guards, bound
 GitHub Perf Guard found one eager hook module beyond ADR097 startup budget (974/973). Reopen to defer hook helpers until event use, verify real UI-ready census and hook regressions, then publish and wait for all CI checks.
 
 CI startup regression fixed under existing ADR097 by deferring controller hook imports to lifecycle use; added run_hooks to the real UI-ready absence assertion without changing the budget. Real startup census plus engine/controller/config regressions:111 passed. Independent diff review found no behavior change. Latest dev ea406f4d41 adds only branch-protection documentation.
+
+Release PR2588 landed during CI with a conflicting documentation task ID. Preserve its existing ID, renumber the unrelated fallback-model design task with fresh remote/worktree provenance, and rebase onto release dev eab1188011 before the final merge gate.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

@@ -1,5 +1,5 @@
 ---
-id: TASK-32506
+id: TASK-32508
 title: 'Preset fallback_models: user-configured fallback chains for routed sub-agents'
 status: To Do
 assignee: []
@@ -27,3 +27,5 @@ Follow-up to TASK-32477 (agent provider routing, ADR-147). Let an AgentDefinitio
 ## Renumbering provenance
 
 Renumbered from TASK-32479 during PR #2645 rebase on 2026-09-12 because the older task on dev retains that ID. New ID checked across remote refs and registered worktrees.
+
+Renumbered again from TASK-32506 to TASK-32508 after PR #2588 landed its older release task on dev during CI. Checked all fetched remote refs and registered worktrees; TASK-32507 remains the run-hooks task.
