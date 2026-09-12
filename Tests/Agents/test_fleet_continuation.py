@@ -39,12 +39,13 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from Tests.Agents.test_agent_service import fence
+from Tests.Agents.test_agent_service import FleetChat, fence
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
     _fs_local_provider,
@@ -53,7 +54,9 @@ from Tests.Agents.test_fleet_runtime import (
     git_repo,  # noqa: F401  -- pytest fixture, resolved via this import
     make_fleet_service,
 )
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
+    AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     FENCE_TOOL_RESULT_PREFIX,
     RUN_CANCELLED,
@@ -79,12 +82,18 @@ from tldw_chatbook.Agents.agent_models import (
     format_steering_message,
 )
 from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+from tldw_chatbook.Agents.agent_routing import AgentsRoutingConfig
+from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
     DEFAULT_RETAINED_TRANSCRIPTS,
     FleetCoordinator,
 )
 from tldw_chatbook.Chat.local_reasoning import EXCHANGE_CONTINUATION_KEY
+from tldw_chatbook.Agents.tool_catalog import (
+    BuiltinToolProvider,
+    ToolCatalogRegistry,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 # LoopDeps plumbing shared with the Task 1 suite (one `make_deps`, one
@@ -1859,4 +1868,279 @@ def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
         "run_count": 2,
         "recorded_run_count": 2,
         "complete": True,
+    }
+
+
+# =========================================================================
+# 5. ADR-147 (Task 8): continuation reuses the persisted resolved-target
+#    snapshot (schema v16) instead of re-resolving the preset live
+# =========================================================================
+
+#: The resolver's app-config fixture, mirroring the Task 6 integration
+#: suite's APP_CFG: one keyless-family custom endpoint with per-entry
+#: params, plus a chat_default the preset's own params must beat.
+ROUTED_APP_CFG = {
+    "custom_endpoints": {
+        "qwen-local": {
+            "display_name": "Qwen Local",
+            "family": "llama_cpp",
+            "base_url": "http://127.0.0.1:8080",
+            "params": {"top_k": 40},
+        }
+    },
+    "chat_defaults": {"temperature": 0.9},
+    "api_settings": {"llama_cpp": {"model": "llama-3-8b"}},
+}
+
+#: A preset ROUTED off the parent's provider (Task 4 fields): spawn
+#: resolves it to custom-ep:qwen-local / qwen3.8-27b with the preset's
+#: params beating chat_defaults and the entry's params riding along.
+IMPLEMENTER = AgentDefinition(
+    name="implementer",
+    description="an implementer",
+    instructions="Implement.",
+    provider="custom-ep:qwen-local",
+    model="qwen3.8-27b",
+    params=(("temperature", 0.2),),
+)
+
+
+@pytest.fixture()
+def _default_routing(monkeypatch):
+    """Pin the ``[agents]`` routing keys to their shipped defaults.
+
+    Same reason as the Task 6 integration suite's autouse pin:
+    ``load_agents_routing_config`` reads live config, so a developer's own
+    config.toml (e.g. a configured ``subagent_default_provider``) would
+    silently re-route these spawns. Requested only by this section's
+    service-level tests; the rest of the file keeps its pre-existing
+    (unpinned) behavior.
+    """
+    monkeypatch.setattr(
+        agent_service, "load_agents_routing_config", AgentsRoutingConfig
+    )
+
+
+def _make_routed_service(db, parent_replies, child_replies):
+    """``make_fleet_service`` with the resolver's app-config injected.
+
+    The production ``AgentService._app_config`` fallback reads the live
+    config.toml; these tests always inject, exactly like the Task 6
+    integration suite's ``_make_service``.
+    """
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    chat = FleetChat(parent_replies, child_replies)
+    coordinator = FleetCoordinator(max_live=3, clock=time.monotonic)
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        fleet_coordinator=coordinator,
+        app_config=ROUTED_APP_CFG,
+    )
+    return service, chat, coordinator
+
+
+def test_continuation_reuses_snapshot_after_preset_edit(db, _default_routing):
+    """THE snapshot-hit path: a retained child's continuation runs where
+    the child ACTUALLY ran (the v16 snapshot frozen at spawn), not where
+    the preset points NOW.
+
+    The between-turns edit here retargets the preset to a custom endpoint
+    that no longer EXISTS: had the continuation re-resolved (and thereby
+    re-validated) the preset live, the resume would have refused with a
+    RoutingError. The snapshot was validated when it was written, so the
+    continuation neither re-resolves nor re-validates.
+    """
+    definition_id = db.create_agent_definition(IMPLEMENTER)
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = _make_routed_service(
+        db,
+        [
+            # -- turn 1
+            fence(
+                SPAWN_TOOL_NAME,
+                {"task": "implement it", "agent": "implementer"},
+            ),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            # -- turn 2
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"implement it": ["implemented", "continued implementing"]},
+    )
+    _run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    old_run_id = finished.run_id
+    _await_retained(coordinator, finished.handle_id)
+
+    # The spawn froze the routed target onto the run row (Task 6). Params:
+    # the preset's temperature beats the chat_default and the entry's
+    # top_k rides along (the resolver's own top_p fallback is part of the
+    # stack too -- same assertion style as the Task 6 integration suite).
+    snapshot = db.get_run_resolved_target(old_run_id)
+    assert snapshot["provider"] == "custom-ep:qwen-local"
+    assert snapshot["model"] == "qwen3.8-27b"
+    assert snapshot["base_url"] == "http://127.0.0.1:8080"
+    snapshot_params = json.loads(snapshot["params_json"])
+    assert snapshot_params["temperature"] == 0.2
+    assert snapshot_params["top_k"] == 40
+
+    # EDIT the preset between runs: the provider now points at a custom
+    # endpoint that is gone from the registry, and the model is retargeted.
+    db.update_agent_definition(
+        definition_id,
+        AgentDefinition(
+            name="implementer",
+            description="an implementer",
+            instructions="Implement.",
+            provider="custom-ep:gone",
+            model="retargeted-model",
+        ),
+    )
+
+    run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+    # The resume was NOT refused (no re-validation of the edited preset).
+    sends = _tool_results(db.get_run(run2), SEND_TO_AGENT_TOOL_NAME)
+    assert sends and "ERROR" not in sends[0]
+
+    # The resumed child's provider call went to the SNAPSHOT target --
+    # endpoint, model, base_url and params all frozen at spawn time.
+    resumed_call = chat.child_calls["implement it"][1]
+    assert resumed_call["api_endpoint"] == "custom-ep:qwen-local"
+    assert resumed_call["model"] == "qwen3.8-27b"
+    assert resumed_call["api_base_url"] == "http://127.0.0.1:8080"
+    assert resumed_call["temp"] == 0.2
+    assert resumed_call["topk"] == 40
+
+    # And the NEW row re-freezes the same target, so a continuation of the
+    # continuation reuses it too.
+    resumed_row = next(
+        r for r in _subagent_rows(db) if r["resumed_from_run_id"] == old_run_id
+    )
+    assert db.get_run_resolved_target(resumed_row["id"]) == snapshot
+    _wait_until(
+        lambda: db.get_run_fresh(resumed_row["id"])["status"] == RUN_DONE,
+        "the resumed child's row never went terminal",
+    )
+
+
+def test_continuation_without_a_snapshot_reroutes_live(db, _default_routing):
+    """The snapshot-MISS path: a pre-v16 row (resolved_* columns NULL --
+    simulated here with an UPDATE) keeps the pre-Task-8 fall-through
+    byte-identical: the resumed child inherits the PARENT's endpoint and
+    takes the definition's CURRENT model (live re-resolution), and the new
+    row stays snapshot-less too."""
+    definition_id = db.create_agent_definition(IMPLEMENTER)
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, chat, coordinator = _make_routed_service(
+        db,
+        [
+            # -- turn 1
+            fence(
+                SPAWN_TOOL_NAME,
+                {"task": "implement it", "agent": "implementer"},
+            ),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            # -- turn 2
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {"implement it": ["implemented", "continued implementing"]},
+    )
+    _run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    old_run_id = finished.run_id
+    _await_retained(coordinator, finished.handle_id)
+
+    # Simulate the pre-v16 row: no resolved-target snapshot.
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET resolved_provider = NULL, "
+            "resolved_model = NULL, resolved_base_url = NULL, "
+            "resolved_params_json = NULL WHERE id = ?",
+            (old_run_id,),
+        )
+    assert db.get_run_resolved_target(old_run_id) is None
+
+    # Edit ONLY the model: the legacy path re-resolves the definition live.
+    db.update_agent_definition(
+        definition_id,
+        AgentDefinition(
+            name="implementer",
+            description="an implementer",
+            instructions="Implement.",
+            provider="custom-ep:qwen-local",
+            model="edited-model",
+        ),
+    )
+
+    _run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+
+    resumed_call = chat.child_calls["implement it"][1]
+    # Live, exactly as before Task 8: the parent's endpoint (the legacy
+    # continuation path never routed through the preset's provider) ...
+    assert resumed_call["api_endpoint"] == "llama_cpp"
+    # ... and the definition's CURRENT model ...
+    assert resumed_call["model"] == "edited-model"
+    # ... with no snapshot params or base_url applied.
+    assert resumed_call.get("api_base_url") is None
+    assert "temp" not in resumed_call
+    assert "topk" not in resumed_call
+
+    # Legacy in, legacy out: the resumed row carries no snapshot either.
+    resumed_row = next(
+        r for r in _subagent_rows(db) if r["resumed_from_run_id"] == old_run_id
+    )
+    assert db.get_run_resolved_target(resumed_row["id"]) is None
+
+
+def test_get_run_resolved_target_returns_none_without_a_snapshot(db):
+    """The accessor's MISS contract, both halves: a plain run (no routing
+    resolved at spawn -- every pre-v16 row looks like this) and a
+    never-existent id both read as None so callers fall back to live
+    re-resolution; a routed row reads its frozen snapshot back verbatim."""
+    plain = db.create_run(conversation_id="c", agent_kind=AGENT_KIND_PRIMARY)
+    assert db.get_run_resolved_target(plain) is None
+    assert db.get_run_resolved_target("never-existed") is None
+
+    routed = db.create_run(
+        conversation_id="c",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        task="routed child",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_model="qwen3.8-27b",
+        resolved_base_url="http://127.0.0.1:8080",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    assert db.get_run_resolved_target(routed) == {
+        "provider": "custom-ep:qwen-local",
+        "model": "qwen3.8-27b",
+        "base_url": "http://127.0.0.1:8080",
+        "params_json": '{"temperature": 0.2}',
     }

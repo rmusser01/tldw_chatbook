@@ -47,7 +47,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
-from tldw_chatbook.Chat.sampling_params import params_to_dict
+from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
@@ -6598,7 +6598,40 @@ class AgentService:
                     if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
                 )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
-            child_model = config.model
+            # ADR-147 (Task 8): WHERE the resumed child runs comes from the
+            # v16 snapshot the ORIGINAL run froze at spawn time
+            # (`get_run_resolved_target`), never from a live re-resolution
+            # -- editing a preset between runs retargets NEW spawns only,
+            # and an edit to something invalid cannot break continuing an
+            # existing child: the snapshot is not re-validated here (it was
+            # validated when it was written), so `resolve_spawn_target`
+            # does not run on this path at all. The DEFINITION still
+            # re-resolves live below (Ruling #1: instructions/allow-list
+            # follow the current form, fingerprinted on the new row) --
+            # only the routing is pinned. A legacy row (NULL snapshot --
+            # every run from before v16) takes the miss branch, which keeps
+            # this path's pre-Task-8 behavior byte-identical: inherit the
+            # parent's endpoint, take the definition's CURRENT model.
+            snapshot = None
+            if retained.run_id is not None:
+                try:
+                    snapshot = self.db.get_run_resolved_target(retained.run_id)
+                except Exception:  # noqa: BLE001 — a read failure is a miss
+                    snapshot = None
+            if snapshot is not None:
+                child_endpoint = snapshot["provider"]
+                child_model = snapshot["model"] or config.model
+                child_base_url = snapshot["base_url"]
+                child_sampling_params = (
+                    params_to_tuple(json.loads(snapshot["params_json"]))
+                    if snapshot["params_json"]
+                    else ()
+                )
+            else:
+                child_endpoint = api_endpoint
+                child_model = config.model
+                child_base_url = None
+                child_sampling_params = ()
             if resolved is not None:
                 # IDENTITY CONTRACT: instructions APPEND, never prepend
                 # (fleet spec SS4; console_agent_bridge._is_subagent
@@ -6606,7 +6639,7 @@ class AgentService:
                 child_system_prompt = (
                     child_system_prompt + "\n\n" + resolved.instructions
                 )
-                if resolved.model:
+                if snapshot is None and resolved.model:
                     child_model = resolved.model
                 if resolved.tool_allowlist:
                     wanted = set(resolved.tool_allowlist)
@@ -6629,6 +6662,10 @@ class AgentService:
                 workspace_context_note=config.workspace_context_note,
                 personal_context_block=config.personal_context_block,
                 response_reserve_tokens=config.response_reserve_tokens,
+                # Snapshot-owned routing (ADR-147, Task 8); both sit at
+                # their AgentConfig defaults on the legacy miss branch.
+                base_url=child_base_url,
+                sampling_params=child_sampling_params,
             )
             seed = [dict(m) for m in retained.messages]
             retained_steering = retained.steering_with_causes or tuple(
@@ -6645,7 +6682,7 @@ class AgentService:
                 conversation_id=conversation_id,
                 messages=seed,
                 config=child_config,
-                api_endpoint=api_endpoint,
+                api_endpoint=child_endpoint,
                 agent_kind=AGENT_KIND_SUBAGENT,
                 task=retained.task,
                 parent_run_id=run_id,
@@ -6661,6 +6698,15 @@ class AgentService:
                     *retained_steering,
                     (STEERING_SOURCE_SUPERVISOR, steer_text, resume_event_id),
                 ),
+                # ADR-147 (Task 8): re-freeze the snapshot onto the NEW row
+                # so a later continuation of THIS run reuses the same
+                # target. The legacy miss branch leaves them NULL -- a
+                # pre-v16 row's continuations keep re-resolving live, as
+                # they always have.
+                resolved_provider=snapshot["provider"] if snapshot else None,
+                resolved_model=child_model if snapshot else None,
+                resolved_base_url=snapshot["base_url"] if snapshot else None,
+                resolved_params_json=snapshot["params_json"] if snapshot else None,
             )
             child_kwargs["spawn_parent_event_id"] = (
                 child_kwargs["spawn_event_id"] or f"agent-run:{run_id}"

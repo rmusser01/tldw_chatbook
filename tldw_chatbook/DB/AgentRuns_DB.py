@@ -2587,6 +2587,40 @@ class AgentRunsDB(BaseDB):
         finally:
             conn.close()
 
+    def get_run_resolved_target(self, run_id: str) -> dict | None:
+        """Fetch the v16 resolved-target snapshot for ``run_id``.
+
+        ADR-147 (TASK-32477, Task 8): the spawn resolver's frozen target --
+        where this run ACTUALLY ran -- which a resume/continuation reuses
+        instead of re-resolving the (possibly edited) preset live.
+
+        Args:
+            run_id: The run to fetch the snapshot for.
+
+        Returns:
+            ``{"provider", "model", "base_url", "params_json"}`` with the
+            raw column values (``params_json`` kept as the raw JSON object
+            string, exactly as stored), or ``None`` when the row does not
+            exist or carries no snapshot (NULL ``resolved_provider`` --
+            every legacy pre-v16 row), so callers fall back to live
+            re-resolution.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT resolved_provider, resolved_model,"
+                " resolved_base_url, resolved_params_json"
+                " FROM agent_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return {
+            "provider": row[0],
+            "model": row[1],
+            "base_url": row[2],
+            "params_json": row[3],
+        }
+
     def latest_primary_run(self, conversation_id: str) -> dict | None:
         """Fetch the newest non-superseded PRIMARY run for a conversation.
 
