@@ -608,7 +608,11 @@ _CHILD_ENVIRONMENT_KEYS = (
 
 def _base_child_environment():
     """Retain only toolchain and native Windows interpreter requirements."""
-    return {key: os.environ[key] for key in _CHILD_ENVIRONMENT_KEYS if key in os.environ}
+    return {
+        **{key: os.environ[key] for key in _CHILD_ENVIRONMENT_KEYS if key in os.environ},
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
 
 
 def test_roundtrip_child_environment_preserves_windows_runtime_without_secrets(
@@ -634,6 +638,8 @@ def test_roundtrip_child_environment_preserves_windows_runtime_without_secrets(
         key: "fixture-" + key.lower() for key in required
     }
     assert "UNRELATED_SECRET" not in environment
+    assert environment["PYTHONUTF8"] == "1"
+    assert environment["PYTHONIOENCODING"] == "utf-8"
 
 
 def _capture_two_profiles(tmp_path):

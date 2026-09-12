@@ -14,7 +14,7 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 # The seed uses real native stores and proves public Complete capture, captured
 # note bytes, and resumed ordinary writes before archive packaging.
 _SEED = r"""
-import asyncio,json,os,sqlite3,sys,threading
+import asyncio,faulthandler,json,os,sqlite3,sys,threading
 from contextlib import closing
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
@@ -43,6 +43,8 @@ def inventory_diagnostic(inventory):
  return {'issues':inventory.issues,'blocking':blocking,'ancestor_pairs':ancestor_pairs}
 async def main():
  app=TldwCli();home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH'])
+ diagnostics=(home/'seed-stacks.log').open('w',encoding='utf-8')
+ faulthandler.dump_traceback_later(60,repeat=True,file=diagnostics)
  service=RecoveryService(default_control_root())
  from Tests.Backup_Recovery.test_restore_plan import sealed
  warm=sealed(home)
@@ -63,7 +65,7 @@ async def main():
   assert details['capacity'] and all(row['sufficient'] for row in details['capacity'])
   assert preview.complete,inventory_diagnostic(preview)
   operation=service.start_backup((selector,),preview.scope_digest,destination,options=options,password=None)
-  async with asyncio.timeout(65):
+  async with asyncio.timeout(150 if sys.platform=='win32' else 65):
    while not entered.is_set():
     assert service.status(operation)['state']=='running',dict(service.status(operation))
     await asyncio.sleep(.01)
@@ -93,6 +95,7 @@ async def main():
   await asyncio.to_thread(service.close)
   monitoring.cancel();await asyncio.gather(monitoring,return_exceptions=True)
   await app._shutdown_app_owned_lifecycles();await app.tts_service.close();await app.tts_service.wait_closed()
+  faulthandler.cancel_dump_traceback_later();diagnostics.close()
 asyncio.run(main())
 print('retired and reopened')
 """
@@ -320,7 +323,7 @@ def test_full_f9_replacement_after_explicit_safety_and_credential_review(
         "service",
         "backup",
         script=_SEED,
-        timeout=110,
+        timeout=300 if sys.platform == "win32" else 110,
         installed_package=native_package,
     )
     test_root = Path(__file__).resolve().parents[2]

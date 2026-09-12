@@ -24,6 +24,10 @@ _NATIVE_TESTS = ("Tests/Utils/test_windows_files.py",)
 _PRODUCT_TESTS = (
     "Tests/DB/test_private_sqlite_windows_descriptor.py",
     (
+        "Tests/ProductionApp/test_backup_restore_end_to_end.py::"
+        "test_f9_created_archive_restores_and_opens_through_actual_controls"
+    ),
+    (
         "Tests/Backup_Recovery/test_complete_roundtrip.py::"
         "test_two_captured_profiles_restore_and_open_with_native_content"
     ),
@@ -55,11 +59,17 @@ _PRODUCT_TESTS = (
         "Tests/ProductionApp/test_backup_restore_composition.py::"
         "test_actual_mounted_backup_publishes_verified_archive_after_navigation"
     ),
+)
+_RESTORE_DIAGNOSTIC_TESTS = (
     (
         "Tests/ProductionApp/test_backup_restore_end_to_end.py::"
-        "test_f9_created_archive_restores_and_opens_through_actual_controls"
+        "test_f9_created_archive_restores_and_opens_through_actual_controls[plain]"
     ),
 )
+_PRODUCT_SELECTIONS = {
+    "full": _PRODUCT_TESTS,
+    "restore-diagnostic": _RESTORE_DIAGNOSTIC_TESTS,
+}
 _SYNTHETIC_CREDENTIALS = (
     "test-only-new-safety-password",
     "test-only-later-safety-password",
@@ -412,8 +422,10 @@ def _private_environment(workspace: Path, private_root: Path) -> dict[str, str]:
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         PYTHONDONTWRITEBYTECODE="1",
+        PYTHONIOENCODING="utf-8",
         PYTHONNOUSERSITE="1",
         PYTHONUNBUFFERED="1",
+        PYTHONUTF8="1",
         PYTHONPATH=str(workspace),
         HF_HUB_OFFLINE="1",
         HF_HUB_DISABLE_TELEMETRY="1",
@@ -613,8 +625,11 @@ def _artifact_hashes(artifacts: Path) -> dict[str, str]:
     }
 
 
-def run(workspace: Path, evidence_root: Path) -> int:
+def run(
+    workspace: Path, evidence_root: Path, *, product_selection: str = "full"
+) -> int:
     """Execute the finite qualification and retain safe failure evidence."""
+    product_tests = _PRODUCT_SELECTIONS[product_selection]
     workspace = workspace.resolve()
     evidence_root = evidence_root.resolve()
     artifacts = evidence_root / "artifacts"
@@ -656,7 +671,7 @@ def run(workspace: Path, evidence_root: Path) -> int:
         artifacts=artifacts,
         environment=environment,
         phase="product",
-        tests=_PRODUCT_TESTS,
+        tests=product_tests,
         noconftest=False,
         timeout_seconds=80 * 60,
     )
@@ -680,7 +695,8 @@ def run(workspace: Path, evidence_root: Path) -> int:
         )
     summary = {
         "schema": 2,
-        "tests": [*_NATIVE_TESTS, *_PRODUCT_TESTS],
+        "product_selection": product_selection,
+        "tests": [*_NATIVE_TESTS, *product_tests],
         "phases": phases,
         "effective_returncode": 1 if effective_failure else 0,
         "installed_package_receipts": len(installed),
@@ -700,8 +716,17 @@ def main(arguments: Iterable[str] | None = None) -> int:
         default=Path(__file__).resolve().parents[2],
     )
     parser.add_argument("--evidence-root", type=Path, required=True)
+    parser.add_argument(
+        "--product-selection",
+        choices=tuple(_PRODUCT_SELECTIONS),
+        default="full",
+    )
     options = parser.parse_args(arguments)
-    return run(options.workspace, options.evidence_root)
+    return run(
+        options.workspace,
+        options.evidence_root,
+        product_selection=options.product_selection,
+    )
 
 
 if __name__ == "__main__":

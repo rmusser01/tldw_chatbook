@@ -80,6 +80,25 @@ from tldw_chatbook.Backup_Recovery import archive_reader,storage_admission
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.profile_catalog import ProfileCatalog
 fixture=Path.home().parent
+from tldw_chatbook.Backup_Recovery import recovery_service as service_module
+original_issue_code=service_module.issue_code
+failure_records=[]
+failure_record_lock=threading.Lock()
+def observed_issue_code(error,*,kind=''):
+ import traceback
+ record={'error_class':type(error).__name__[:80],'frames':[]}
+ for key in ('errno','winerror'):
+  value=getattr(error,key,None)
+  record[key]=value if type(value) is int else None
+ for frame,line in traceback.walk_tb(error.__traceback__):
+  record['frames'].append({'file':Path(frame.f_code.co_filename).name[:128],'function':frame.f_code.co_name[:128],'line':line})
+ record['frames']=record['frames'][-64:]
+ with failure_record_lock:
+  failure_records.append(record)
+  del failure_records[:-16]
+  (fixture/'recovery-failures.log').write_text(json.dumps(failure_records),encoding='utf-8')
+ return original_issue_code(error,kind=kind)
+service_module.issue_code=observed_issue_code
 package=Path(os.environ['TLDW_F9_PACKAGE'])
 test_root=Path(os.environ['TLDW_F9_TEST_ROOT'])
 import tldw_chatbook

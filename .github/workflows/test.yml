@@ -12,6 +12,14 @@ on:
         required: false
         type: boolean
         default: false
+      backup_platform_selection:
+        description: Select the full qualification or the fixed restore diagnostic
+        required: true
+        type: choice
+        options:
+          - full
+          - restore-diagnostic
+        default: full
   schedule:
     # Nightly deep run (08:30 UTC); the job checks out dev explicitly because
     # scheduled workflows execute from the default branch.
@@ -477,7 +485,8 @@ jobs:
         TLDW_PLATFORM_EVIDENCE_ROOT: ${{ runner.temp }}/backup-platform-product
       run: |
         python Tests/Backup_Recovery/run_platform_product.py \
-          --evidence-root "$TLDW_PLATFORM_EVIDENCE_ROOT"
+          --evidence-root "$TLDW_PLATFORM_EVIDENCE_ROOT" \
+          --product-selection "${{ inputs.backup_platform_selection }}"
 
     - name: Upload failure-preserving Windows receipts
       if: always()
