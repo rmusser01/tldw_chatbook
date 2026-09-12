@@ -79,6 +79,24 @@ complete backup/recovery.
   The next correction uses explicit atomic replacement for ordinary config writes
   and aligns each child fixture's HOME and USERPROFILE. Safe inventory diagnostics,
   visible sanitized log names and escaped-path redaction improve failure evidence.
+- Windows [34710456481](https://github.com/rmusser01/tldw_chatbook/actions/runs/34710456481)
+  at `ea917deb027af20150e665c192c264e4db596fc8`: all 34 native cases passed,
+  including ordinary config replacement; product remained 15/19 with no skips.
+  All 11 artifact hashes verified. The inventory diagnostic identified unavailable
+  dictionary and built-in artwork roots, with 31 required artwork members missing
+  from the refused tree. Windows directory stream enumeration had treated the
+  documented no-stream result (`ERROR_HANDLE_EOF`) as an error. The next native
+  correction handles only that result; other query failures still propagate and
+  alternate streams remain detected. The two-profile seed also exceeded its
+  60-second observer while creating records. Windows seeding now permits 120
+  seconds and records a thread dump at 55 seconds. The pytest observer permits
+  the existing replacement/later-rollback child deadlines to run in sequence.
+- Windows [34711217652](https://github.com/rmusser01/tldw_chatbook/actions/runs/34711217652)
+  at `b3843f718054ccbe88e7d1661fe9c8079b452baa` is pending. It adds actual directory
+  stream checks and all three F9 archive modes. The Windows UI wrapper creates a
+  native console and verifies console handles before running the existing UI flow;
+  terminal suspension and restored-profile opening remain real operations.
+  macOS plaintext UI regression passed 34.45 seconds after this wrapper change.
 
 ## Regression and retained failures
 
@@ -96,6 +114,13 @@ complete backup/recovery.
   Bandit findings relative to the clean baseline. Parent crypto retains2existing
   low-severity subprocess findings; private_sqlite retains7existing findings outside
   new code; the native Windows module has no Bandit findings.
+- Linux private-file regressions at `b3843f718`: 66 passed, two existing platform
+  skips, no failures (4.67 seconds). Public source archive SHA256:
+  `c7885b030153c4fadc9c0ffe7352a492b572d7870b3646692ddb54dd627ffb76`.
+  The preceding run exposed a fixture assumption about umask; the final-symlink
+  test now explicitly creates its intended 0644 outside target. The actual refusal
+  behavior was unchanged. This verifies the shared atomic config-write correction
+  on the supplied Linux host as well as macOS.
 
 Linux failures and synthetic fixtures remain on the authorized host under the
 private test directory. Earlier source distributions had group-writable extracted

@@ -108,7 +108,7 @@ if credentials:
    assert len(records)==17 and len({row['id'] for row in records})==17
    assert all(row['status']=='unreadable' and row['remappable'] is False and 'value' not in row for row in records)
    assert Counter(row['kind'] for row in records)=={'citation':5,'generation':8,'server':4}
-   owners={str(item.path.relative_to(stage)):item.owner for item in inventory.items if item.path is not None}
+   owners={item.path.relative_to(stage).as_posix():item.owner for item in inventory.items if item.path is not None}
    citations=[row for row in records if row['kind']=='citation']
    assert {owners[row['file']] for row in citations}=={'db.chachanotes.primary','chat.attachments','study.local','quiz.local','notes.sync_bindings'}
    assert all(row['service']=='tldw_chatbook.citation-provenance.v1' for row in citations)

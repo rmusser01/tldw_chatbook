@@ -1052,6 +1052,7 @@ _RESTORE_ISOLATED = "".join(
         r"""
 import hashlib,sqlite3,stat,subprocess
 from contextlib import closing
+from tldw_chatbook.Utils.platform_files import os as platform_os
 from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated,_launch_descriptor
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
 selected=dict(plan.restore)
@@ -1070,7 +1071,7 @@ for row in doc.directories:
  assert desired==row.metadata
  assert applied.mode==0o700 and applied.mtime_ns==desired.mtime_ns
  assert ('metadata_normalized:'+row.logical_id in plan.issues)==(desired!=applied)
- info=selected[row.logical_id].stat()
+ info=platform_os.stat(selected[row.logical_id],follow_symlinks=False)
  assert stat.S_ISDIR(info.st_mode)
  assert stat.S_IMODE(info.st_mode)==applied.mode
  assert info.st_mtime_ns==desired.mtime_ns,(row.logical_id,info.st_mtime_ns,desired.mtime_ns)

@@ -15,13 +15,13 @@ Record real Linux product failure and native Windows runner failure. Map calls t
 private paths, locking, identity, flush and exclusive publication.
 
 ## Stage 2 — Platform operations
-Status: In Progress. Linux and macOS operations verified; Windows adapter reviewed, runner ownership refusal under diagnosis.
+Status: In Progress. Linux and macOS operations verified; 34 Windows native cases pass. The documented empty-directory stream correction awaits native verification.
 Windows implementer owns new platform adapter modules and Windows primitive tests.
 Root owns Linux native operations, integration imports and release contracts.
 Preserve containment, permissions, exclusive rename and failure propagation.
 
 ## Stage 3 — Actual product verification
-Status: In Progress. Linux and macOS full product flows pass at7d1019190; Windows34707982570 stopped in fixture startup. Next run separates native operations and records anonymous ancestor permission evidence.
+Status: In Progress. Linux and macOS full product flows pass at7d1019190. Windows34710456481 reached product bodies (15/19 passed); 34711217652 tests the directory fix and three native-console F9 modes.
 Use installed package, private profile and synthetic data on supplied Linux host,
 GitHub Actions Windows runner and local macOS. Create and verify backups, restore
 and open them, then exercise replacement and retained-copy rollback. Fix failures.
