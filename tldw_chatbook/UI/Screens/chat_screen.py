@@ -235,6 +235,7 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
     normalize_console_transcript_style,
     resolve_console_message_presentation,
+    resolve_send_system_prompt,
 )
 from ...Chat.prompt_history import PromptHistory
 from ...Chat.console_cost_tracker import (
@@ -9653,7 +9654,7 @@ class ChatScreen(BaseAppScreen):
             and endpoint_policy.provider == selection_settings.provider
             and endpoint_policy.model == selection_settings.model
         )
-        return ConsoleProviderSelection(
+        selection = ConsoleProviderSelection(
             provider=provider,
             base_url=base_url,
             configured_endpoint_fallback_allowed=(not endpoint_policy_owns_selection),
@@ -9681,6 +9682,48 @@ class ChatScreen(BaseAppScreen):
             system_prompt=selection_settings.system_prompt,
             workspace_context=workspace_context,
         )
+        # task-32484: the controller's per-send identity re-expansion never
+        # reached this production path (its persona/character branch only
+        # fires for bare controllers without a wired turn-context provider),
+        # so sends here reused the settings' last materialized projection.
+        # Apply the same shared resolver: a named persona/character session
+        # with a trusted template sends a fresh expansion against the current
+        # effective display name; anything else keeps the settings prompt.
+        if target_session_id is not None:
+            identity_session = next(
+                (item for item in store.sessions() if item.id == target_session_id),
+                None,
+            )
+            if (
+                identity_session is not None
+                and identity_session.assistant_kind in {"persona", "character"}
+            ):
+                is_persona = identity_session.assistant_kind == "persona"
+                try:
+                    global_default = self._global_chat_display_name()
+                except Exception:
+                    global_default = "User"
+                selection = replace(
+                    selection,
+                    system_prompt=resolve_send_system_prompt(
+                        identity_name=(
+                            identity_session.assistant_name
+                            if is_persona
+                            else identity_session.character_name
+                        ),
+                        identity_template=(
+                            identity_session.persona_system_template
+                            if is_persona
+                            else identity_session.character_system_template
+                        ),
+                        user_name_override=(
+                            identity_session.user_display_name_override
+                        ),
+                        global_default=global_default,
+                        fallback=selection.system_prompt,
+                    ),
+                )
+        return selection
 
     def _active_console_provider_model_display(
         self,

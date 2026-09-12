@@ -138,6 +138,40 @@ def expand_character_template(
     return _TEMPLATE_TOKEN_RE.sub(replacement, source)
 
 
+def resolve_send_system_prompt(
+    *,
+    identity_name: object,
+    identity_template: object,
+    user_name_override: object,
+    global_default: object,
+    fallback: str | None,
+) -> str | None:
+    """Resolve the system prompt for one send of an identity-bound session.
+
+    Single source of truth for per-send template re-expansion (task-32481,
+    task-32484): the controller's bare-selection path and the production
+    provider-selection path both route through here. A named identity session
+    (persona or character) with a trusted non-blank template sends a FRESH
+    expansion against the CURRENT effective display name rather than the
+    settings snapshot, which can lag an identity change. Anything else --
+    template-less sessions, name-unresolved resumes, generic sessions --
+    keeps ``fallback`` (the settings-derived or base prompt). Callers pass
+    the kind-appropriate name/template for the session's bound kind.
+    """
+    name = identity_name.strip() if isinstance(identity_name, str) else ""
+    if (
+        not name
+        or not isinstance(identity_template, str)
+        or not identity_template.strip()
+    ):
+        return fallback
+    return expand_character_template(
+        identity_template,
+        user_name=effective_user_display_name(user_name_override, global_default),
+        character_name=name,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ConsolePresentationContext:
     """Identity inputs used to project one Console transcript message."""

@@ -294,6 +294,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     expand_character_template,
     resolve_console_message_presentation,
+    resolve_send_system_prompt,
 )
 from tldw_chatbook.Chat.console_turn_context import (
     capture_change_review_admission,
@@ -27359,11 +27360,21 @@ class ConsoleChatController:
             or not template.strip()
         ):
             return self.system_prompt
-        context = self._presentation_context_for(session_id)
-        return expand_character_template(
-            template,
-            user_name=context.user_name,
-            character_name=name.strip(),
+        # task-32484: route through the shared resolver so this path and the
+        # production provider-selection path can never drift apart. The
+        # expansion is identical to the pre-refactor inline version: the
+        # presentation context's user_name IS effective_user_display_name(
+        # override, global_default) with the same guarded global accessor.
+        try:
+            global_default = self._global_user_display_name()
+        except Exception:
+            global_default = "User"
+        return resolve_send_system_prompt(
+            identity_name=name,
+            identity_template=template,
+            user_name_override=session.user_display_name_override,
+            global_default=global_default,
+            fallback=self.system_prompt,
         )
 
     def _character_emote_authority(
