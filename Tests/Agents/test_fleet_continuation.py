@@ -45,6 +45,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from Tests.Agents.test_agent_service import fence
+from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_fleet_runtime import (
     _JOIN_TIMEOUT,
     _fs_local_provider,
@@ -74,6 +75,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCatalogEntry,
     ToolResult,
+    ToolReviewDecision,
     ToolSchema,
     definition_fingerprint,
     format_steering_message,
@@ -1645,6 +1647,93 @@ def test_a_finished_child_remains_continuable_after_prune_terminal(db):
     # The seed really carried the transcript (second call under the task).
     resumed_payload = chat.child_calls["pruned task"][1]["messages_payload"]
     assert {"role": "assistant", "content": "first answer"} in resumed_payload
+
+
+def test_resumed_denial_streak_is_fresh_and_seeds_complete_native_batch(db):
+    holder = {}
+
+    def native_denials(prefix, count):
+        return {
+            "role": "assistant",
+            "content": "partial denied batch",
+            "tool_calls": [
+                {
+                    "id": f"{prefix}-{index}",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": json.dumps({"expression": f"{index}+1"}),
+                    },
+                }
+                for index in range(count)
+            ],
+        }
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["run_id"], "message": "retry with a fresh streak"},
+        )
+
+    def deny(calls, _run_id):
+        return {
+            call.call_id: ToolReviewDecision("denied", "denied")
+            for call in calls
+            if call.name == "calculator"
+        }
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "denial task"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {
+            "denial task": [
+                native_denials("first", 3),
+                native_denials("second", 2),
+                "fresh run completed",
+            ]
+        },
+        review_tool_calls=deny,
+    )
+
+    def run_openai():
+        return service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=RESUME_CFG,
+            api_endpoint="openai",
+        )
+
+    try:
+        _, first = run_openai()
+    finally:
+        join_fleet_children(service)
+    assert first.status == RUN_DONE
+    original = _finished_child(coordinator)
+    assert original.status == RUN_STUCK
+    holder["run_id"] = original.run_id
+    _await_retained(coordinator, original.handle_id)
+
+    try:
+        _, second = run_openai()
+    finally:
+        join_fleet_children(service)
+    assert second.status == RUN_DONE
+    rows = _subagent_rows(db)
+    resumed = next(row for row in rows if row["resumed_from_run_id"] is not None)
+    assert resumed["resumed_from_run_id"] == original.run_id
+    assert resumed["status"] == RUN_DONE
+    resumed_payload = chat.child_calls["denial task"][1]["messages_payload"]
+    assert [
+        row["tool_call_id"] for row in resumed_payload if row.get("role") == "tool"
+    ] == ["first-0", "first-1", "first-2"]
+    assert len(chat.child_calls["denial task"]) == 3
 
 
 def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db):

@@ -12,10 +12,13 @@ from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
+    RUN_STUCK,
     SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
+    STEP_ERROR,
     AgentConfig,
     RunBudget,
+    ToolReviewDecision,
 )
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
@@ -252,6 +255,56 @@ def test_a_plain_run_writes_records_without_the_caller_wiring_anything(wired):
     assert [r.type for r in records] == ["model"]
     assert records[0].content == "hello"
     assert records[0].kind == "primary"
+
+
+def test_denial_breaker_persists_one_safe_error_in_sqlite_and_segment_log(wired):
+    db, registry, root = wired
+    private = "PRIVATE explicit denial payload"
+
+    def deny(calls, _run_id):
+        return {
+            call.call_id or call.name: ToolReviewDecision(private, "denied")
+            for call in calls
+        }
+
+    service = AgentService(
+        db,
+        registry,
+        chat_call=scripted_chat(
+            [
+                fence("calculator", {"expression": "1+1"}),
+                fence("calculator", {"expression": "2+2"}),
+                fence("calculator", {"expression": "3+3"}),
+                "must not run",
+            ]
+        ),
+        review_tool_calls=deny,
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="conv-denial",
+        messages=[{"role": "user", "content": "calculate"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(denial_circuit_breaker_limit=3),
+        ),
+        api_endpoint="openai",
+    )
+
+    assert outcome.status == RUN_STUCK and outcome.denial_count == 3
+    durable = db.get_run(run_id)
+    assert durable["status"] == RUN_STUCK
+    error_steps = [step for step in durable["steps"] if step["kind"] == STEP_ERROR]
+    assert len(error_steps) == 1
+    assert "3 consecutive tool calls were denied" in error_steps[0]["summary"]
+
+    error_records = [record for record in read_all(root) if record.type == "error"]
+    assert len(error_records) == 1
+    assert error_records[0].run_id == run_id
+    assert error_records[0].status == RUN_STUCK
+    assert "3 consecutive tool calls were denied" in error_records[0].content
+    assert private not in error_records[0].content
 
 
 def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
