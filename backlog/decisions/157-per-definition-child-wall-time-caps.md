@@ -1,6 +1,6 @@
 # ADR-157: Per-definition child wall-time caps
 
-Status: Accepted
+Status: Superseded by ADR-158 for migration sequencing; policy retained
 Date: 2026-09-12
 Task: TASK-13154.7
 Related decisions: ADR-131 (durable accounting), ADR-134 (fleet and automatic budgets), ADR-135 (delivery/recovery)

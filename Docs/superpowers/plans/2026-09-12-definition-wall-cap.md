@@ -1,18 +1,18 @@
 # Per-definition child wall-time cap implementation
 
 ADR required: yes
-ADR path: backlog/decisions/157-per-definition-child-wall-time-caps.md
+ADR path: backlog/decisions/157-per-definition-child-wall-time-caps.md; backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md
 Reason: durable optional policy, audit identity, and retained runtime bound supplement ADR-134/135; ADR-131 durable accounting is unchanged.
 
 **Spec:** Docs/superpowers/specs/2026-09-12-definition-wall-cap-design.md.
 
-Preconditions: root has accepted the design, recorded ADR-157 without modifying accepted ADR-134, and used Backlog CLI to put TASK-13154.7 In Progress and record this plan before source changes. Work on the existing isolated branch. Re-read actual schema after recovery worker integrates: v19 belongs to recovery; this feature uses v20. Coordinate Settings and RunBudget denial-field edits rather than overlapping ownership. Read only targeted test guidance and actual fixture APIs.
+Preconditions: root has accepted the design, recorded ADR-157 without modifying accepted ADR-134, and used Backlog CLI to put TASK-13154.7 In Progress and record this plan before source changes. Work on the existing isolated branch. Re-read actual schema before code: ADR-158 moves this independent feature to v18→v19 while worktree execution is unresolved. Coordinate Settings and RunBudget denial-field edits rather than overlapping ownership. Read only targeted test guidance and actual fixture APIs.
 
 ## Global Constraints
 
 - Work only in /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/agent-orchestration-pr, branch codex/agent-orchestration-remaining. Root owns allgit and Backlog status; workers leave edits unstaged and dispatch no subagents.
 - Use .superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python under pytest isolation; targeted tests only, no liveconfig/network/newdependencies or unrelated static debt cleanup.
-- This executes after worktree recovery schema19 and Settings preset integration. Recheck version before source edits. Existing accepted ADRs remain unchanged.
+- This executes after Settings preset integration, independently of unresolved worktree recovery. ADR-158 assigns v18→v19; recheck the actual version before source edits.
 - An optional definition cap can tighten but never widen the baseline budget applicable to that branch. Preserve threaded outlive-parent and inline parent-remainder semantics. Do not turn automatic elapsed deadlines into pausable per-run clocks.
 - Capped continuations receive fresh run time but retain their lineage's admitted ceiling even if the definition later raises/removes its cap. Never-capped/generic behavior stays unchanged.
 - Preserve every non-wall/non-spawn RunBudget field through helper reconstruction, including denial limit, retry count and warning fraction. Keep uncapped definition fingerprints byte-identical.
@@ -20,11 +20,11 @@ Preconditions: root has accepted the design, recorded ADR-157 without modifying 
 
 ### Task 1: Definition identity and real SQLite
 
-Files: Agents/agent_models.py; DB/AgentRuns_DB.py; new DB/migrations/agent_runs_v19_to_v20_definition_wall_seconds.sql; Tests/Agents/test_agent_models.py; Tests/DB/test_agent_runs_db.py.
+Files: Agents/agent_models.py; DB/AgentRuns_DB.py; new DB/migrations/agent_runs_v18_to_v19_definition_wall_seconds.sql; Tests/Agents/test_agent_models.py; Tests/DB/test_agent_runs_db.py.
 
 Add appended optional max_wall_seconds with None default; shared validation rejects bool/invalid/nonfinite/nonpositive values. definition_from_row tolerates missing optional key. Fingerprint conditionally adds normalized float only for present cap, proving pre-field byte compatibility for None. Fresh schema, guarded upgrade, version constant/table and parameterized create/update store nullable REAL. Existing SELECT * row conversion needs no special cast.
 
-Tests first: exact old fingerprint, valid fractional value, int/float fingerprint equivalence, invalid input no-write, file-backed v19->v20/reopen/idempotency and standalone SQL (using real preceding schema). Preserve existing definitions and recovery ownership records. Update current-version assertions in older migration tests, retaining their structural/data checks. Run only model + AgentRunsDB modules and formatter/linter on changed Python.
+Tests first: exact old fingerprint, valid fractional value, int/float fingerprint equivalence, invalid input no-write, file-backed v18->v19/reopen/idempotency and standalone SQL (using real preceding schema). Preserve existing definitions and all existing schema18 data; recovery ownership records are not implemented yet. Update current-version assertions in older migration tests, retaining their structural/data checks. Run only model + AgentRunsDB modules and formatter/linter on changed Python.
 
 ### Task 2: Frozen spawn restriction and retained continuation
 

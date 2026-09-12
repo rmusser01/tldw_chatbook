@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-03 11:45'
-updated_date: '2026-09-12 20:13'
+updated_date: '2026-09-12 20:16'
 labels:
   - agents
 dependencies: []
@@ -38,4 +38,6 @@ Constraint carried from the phase-2 rulings: implicit deletion of unmerged work 
 ADR required: yes. ADR path: backlog/decisions/155-agent-worktree-recovery.md. Reason: durable local worktree ownership/base, physical drain proof, uncertainty policy and controller-owned recovery lifetime. Execute the four reviewed slices of Docs/superpowers/plans/2026-09-12-agent-worktree-recovery.md under Docs/superpowers/specs/2026-09-12-agent-worktree-recovery-design.md. The selected product path is a Console recovery list for previous-turn work, leaving model tools scoped to current-turn handles and directing older work to the list. Verify real SQLite reopen, two-turn Git effects, consent/drift/cancellation/uncertainty and mounted wide/narrow behavior before closeout.
 
 Execution qualification remains open: actual Git2.39.5 temp-repository tests show linked administrative paths can reopen a replaced parent despite both root pins. Only the test-isolation prerequisite has been implemented and independently reviewed (32557b80f2; four affected tests passed). Do not enable the new mutation capability or mark these tasks Done until the execution boundary is redesigned and qualified. See backlog/docs/agent-orchestration-followups-2026-09-12.md for current status.
+
+ADR-158 (backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md) changes only migration order: caps18→19, recovery later19→20 after execution qualification. Recheck actual schema before source edits; all existing authority and definition-policy requirements remain binding.
 <!-- SECTION:PLAN:END -->

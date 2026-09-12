@@ -9,7 +9,7 @@
 **Spec:** Docs/superpowers/specs/2026-09-12-agent-worktree-recovery-design.md.
 
 ADR required: yes
-ADR path: backlog/decisions/155-agent-worktree-recovery.md
+ADR path: backlog/decisions/155-agent-worktree-recovery.md; backlog/decisions/158-agent-runs-migration-order-after-worktree-qualification.md
 Reason: durable ownership and recovery lifetime, closed mutating Git authority, physical drain and explicit discard retention.
 
 ## Execution qualification checkpoint
@@ -59,8 +59,8 @@ Run only these targeted nodes, changed-line lint and whitespace. Leave edits uns
 ### Task 2: Durable ownership, physical drain and uncertainty
 
 Files:
-- `DB/AgentRuns_DB.py`: version 19 and migration hook; narrow record/list/CAS APIs, structural projections only.
-- New `DB/migrations/agent_runs_v18_to_v19_worktree_recovery.sql` (recheck number first).
+- `DB/AgentRuns_DB.py`: version 20 after definition caps version19 and migration hook; narrow record/list/CAS APIs, structural projections only.
+- New `DB/migrations/agent_runs_v19_to_v20_worktree_recovery.sql` (recheck number first).
 - Optional `DB/agent_worktrees.py` repository class to keep large DB module small; no new database/file.
 - `Agents/agent_service.py`: record before starting child; normal/admission-failure/abandoned-owner transitions, no run when persistence fails.
 - `Agents/agent_worktree.py`: GC preserves all recorded unresolved/in-flight/uncertain and unknown work; stop destructive pathname cleanup for recorded trees.
@@ -68,7 +68,7 @@ Files:
 - Relevant AgentRuns export/sync projections: exclude new locators/identities from exported/model-facing run payloads.
 
 Tests:
-- New `Tests/DB/test_agent_worktree_recovery.py`: v18 reopen→v19, idempotence, rollback/corrupt state, FK conversation ownership, bounded pages, exact expected-state CAS, no text blob query.
+- New `Tests/DB/test_agent_worktree_recovery.py`: v19 reopen→v20, preserving definition-cap values, idempotence, rollback/corrupt state, FK conversation ownership, bounded pages, exact expected-state CAS, no text blob query.
 - Real two-turn/temp-Git tests: durable original base survives parent advancing; dirty and clean-unmerged preserved; failed apply leaves recoverable/uncertain durable record; another conversation's live run protected.
 - Crash-order injection around creation, DB initial record, worker admission, Git effect and DB completion: no automatic reapply, in-flight→uncertain on reopen, unknown legacy rows never adopted/deleted.
 - Gated `_settle_fleet` abandonment: DB terminal with still-live thread remains non-actionable; no owner-fence eviction during turn pruning.
