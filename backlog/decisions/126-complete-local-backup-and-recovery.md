@@ -3,6 +3,11 @@
 Status: Accepted — revision 4 approved by the user on 2026-09-07
 Date: 2026-09-07
 
+2026-09-12 user correction: the Go implementation/build/delivery choice in decision
+6 is superseded by the [Python encryption correction](../../Docs/superpowers/specs/2026-09-12-python-backup-encryption-design.md)
+(TASK-32495). The existing age v1 format, isolated worker, integrity checks and
+recovery boundaries remain. See the [verification record](../../Docs/Development/backup-python-verification-2026-09-12.md).
+
 Revision: 4 — incorporates the fourth user-requested design review.
 
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)

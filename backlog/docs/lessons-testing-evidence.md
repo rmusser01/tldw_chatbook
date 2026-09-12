@@ -9,6 +9,20 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Private test parents must be private too (TASK-32494/TASK-32495, 2026-09-12)
+
+**Incident.** The Linux Python backup run failed all 116 cases during setup:
+the remote umask left the harness run root and timestamp parent at 0775, although
+case/temp directories were 0700. The application's parent-path guard correctly
+refused them. Explicitly creating the harness parents at 0700 made all 116 cases
+pass; application checks stayed intact. Both attempts are recorded in
+`Docs/Development/backup-python-verification-2026-09-12.md`.
+
+Check every harness-owned ancestor when diagnosing private-path refusal. Setting
+the leaf directory's mode does not make its parents private.
+
+---
+
 ## Process-lived config bindings require coherent isolated imports (TASK-31993)
 
 **Incident.** Phase9 bound the actual installed config module to its selected profile.

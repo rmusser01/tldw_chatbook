@@ -1,7 +1,7 @@
 ---
 id: TASK-32495
 title: Replace backup Go encryption with Python
-status: In Progress
+status: Done
 created_date: 2026-09-12 15:09
 labels:
 - backup-recovery
@@ -10,7 +10,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md
 - backlog/decisions/126-complete-local-backup-and-recovery.md
-updated_date: 2026-09-12 16:13
+updated_date: 2026-09-12 16:30
 ---
 
 ## Description
@@ -21,21 +21,18 @@ User explicitly rejected Go as an oversight in the original backup plan. Replace
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Backup encryption and decryption use Python and existing project crypto dependencies, with no Go toolchain or Go executable required for source installs, packaging or runtime.
-- [ ] #2 Preserve the existing passphrase-encrypted .tldw-backup.zip.age format, streaming budgets, authentication, cancellation/cleanup and credential/rollback behavior; verify compatibility against independent existing vectors/artifacts.
-- [ ] #3 Remove obsolete Go packaging/test requirements and update affected documentation, qualification checks and PR2642 without adding unrelated features; run targeted regression and Linux verification with exact remaining native-platform limitations documented.
+- [x] #1 Backup encryption and decryption use Python and existing project crypto dependencies, with no Go toolchain or Go executable required for source installs, packaging or runtime.
+- [x] #2 Preserve the existing passphrase-encrypted .tldw-backup.zip.age format, streaming budgets, authentication, cancellation/cleanup and credential/rollback behavior; verify compatibility against independent existing vectors/artifacts.
+- [x] #3 Remove obsolete Go packaging/test requirements and update affected documentation, qualification checks and PR2642 without adding unrelated features; run targeted regression and Linux verification with exact remaining native-platform limitations documented.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Stage1 — Read the existing crypto/process/package contracts and select a Python replacement preserving the format. In Progress.
-Stage2 — Implement and verify streaming passphrase encryption using established primitives from the existing pycryptodomex dependency; retain a cancellable Python worker if needed by the existing process contract. Not Started.
-Stage3 — Remove Go build/distribution assumptions and adapt affected tests and capability checks, retaining fail-closed platform checks. Not Started.
-Stage4 — Run targeted interoperability, malformed-input, resource, cancellation, packaging and Linux regression checks; independent review and PR update. Not Started.
-No changes to native Linux publication or new crypto formats without resolving them as separate concrete requirements.
+Stages 1–4: Complete. Python worker, preserved parent transport, Go delivery removal, package tests, installed macOS F9/rollback, final Linux verification and PR update are complete.
+Plan: Docs/superpowers/plans/2026-09-12-python-backup-encryption.md.
+ADR required: no new ADR. Existing backlog/decisions/126-complete-local-backup-and-recovery.md now links the user's Python correction; archive/process/recovery boundaries are unchanged.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
@@ -51,13 +48,15 @@ Full release-gate module passed24cases3.19s through Python source backend. /priv
 Task3 frozen: all15Go-onlyassets removed, ordinaryPython wheel/sdist/editable delivery, workerLFattribute preserveschecksum, existingnativegates/workflowcells/12entrylists andartifactexclusions retained. Packaging10passed23.09s after boundedexistingoffline-cache read permission; static/YAML5embeddedPython/TOML/diffchecks pass, productioncheckerBandit0. Report /private/tmp/task32495-python-packaging-report.md; independentreviewactive. RootstartedinstalledF9three-mode verification againstfrozenPythonpackage.
 InstalledPythonF9create/restore/open passedall3modes106.47s: plaintext,encrypted,encryptedincludedcredentials. Realordinarywheel,installedoriginandfilepreservationassertionsretained; /private/tmp/task32495-f9-endtoend.log, fixture/JUnit /private/tmp/task32495-product-dk2y2ont. Combinedreplacement+laterrollbacknowrunning withunchangeddeadlines. Task3reviewidentifiedtwoCIcandidateprovisioningdefects(cachepopulation,Windowsuvscriptspath) andoverstatednetworkreceiptwording; scopedfixactive, applicationworker/transport/nativequalificationunchanged.
 CombinedF9 firstattempthit privatewrapper230s limit, not repositoryassertion. Receipt /private/tmp/task32495-f9-later-rollback.log; fixture /private/tmp/task32495-product-_tbubnj2. Firstreplacementresult succeeded/restoration_validated; laterrollback reached reviewed changedacknowledgement, with no childtraceback beforetermination. Laterchild had used ~122s ofitsunchanged180s allowance whenaggregatewrapperkilledpytest; seed110/replacement150/later180 alreadyallow440s serially. No remaining Python cwd underfixturefound. Ruling: privatewrapperaggregate480s onlyforthisexactcombinednode (440phasebudgets+40setup), preserve repository/innerdeadlinesandfirstfailedreceipt. This corrects harness cutoff without claimingfirstattemptpassed.
+CombinedinstalledF9replacement+laterrollbackPASSED1in207.23s (call199.63/setup7.27), allrepositorydeadlinesunchanged. Privateaggregatewrapper480 usedafterpreserved230s harnesscutoff; successfulrunalsofinishedbelowold230. JUnit/fixture /private/tmp/task32495-product-pvzjhf_4; log /private/tmp/task32495-f9-later-rollback-bounded.log. Wheel7e408f89dc4b154a3646fc69437cf28311bd19580b30ea811e012c8bae0f5dab;2027installedfilespreserved. Lastcheckpointlater_rollback_complete succeeded/restoration_validated. Finalcross-taskreviewapprovednoCritical/Importantfindings /private/tmp/task32495-final-review.md. Linuxcorrectedworker63pass18.2s; remainingcrypto/packageinprogress.
+Final Linux results against public revision 98b5d0b24: worker 63, crypto 42 and packaging 11 passed, with zero skips. Final evidence: Docs/Development/backup-python-verification-2026-09-12.md. All planned code and test work is complete; finalizing PR and records. Existing ADR-126 applies, with its Go integration choice superseded by the user's explicit Python correction and linked correction spec.
+PR2642 now describes the final Python implementation and actual tests. Final evidence: Docs/Development/backup-python-verification-2026-09-12.md. Worker 63, transport 42, packaging 11 and release gates 24 passed on macOS; all three installed F9 modes and combined replacement/later rollback passed with 2,027 installed files preserved per fixture. Linux 116 passed with no skips. Archive/credentials 132 passed plus one identical pre-Python plaintext metadata assertion failure. Reviews approved with no Critical/Important findings; scoped static/Bandit checks introduce no production findings. Retained checksum requires paired updates when worker changes. Only the private combined-test outer guard changed 230s to 480s; application deadlines unchanged and failed receipt retained. Source commits 0ffb1fdc3, 76a0f1657 and 98b5d0b24; final follow-up changes are documentation/tracking only. PR remains open against dev; merge conflicts and human-authored Change summary remain merge gates.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Removed Go from backup source/build/package/runtime and replaced encryption with Python using existing pycryptodomex, preserving age v1 compatibility and recovery behavior. Verified installed macOS flows and 116 Linux tests; updated PR2642 and documented the unchanged native-platform limitations and pre-existing test failure.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->

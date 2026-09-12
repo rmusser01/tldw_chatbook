@@ -241,7 +241,8 @@ do not use protocol-unaware older launchers against an interrupted recovery.
 
 The currently enabled platform is macOS Darwin 25.5.0, arm64, Python 3.12.11, with
 native protocol 2 and the qualified APFS configurations recorded in the
-[release evidence](../backlog/docs/backup-recovery-release-evidence.md). Complete
+[release evidence](../backlog/docs/backup-recovery-release-evidence.md) and
+[Python backend verification](Development/backup-python-verification-2026-09-12.md). Complete
 capture uses the host configuration (filesystem flags 76583040). Replacement also
 supports publication on the tested APFS image configuration (flags 76583448), while
 its recovery authority remains on qualified host storage. The image is not qualified

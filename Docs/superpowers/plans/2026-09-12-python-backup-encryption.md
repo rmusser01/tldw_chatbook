@@ -11,6 +11,12 @@ Architecture: a package-owned Python streaming worker using existing PyCryptodom
 primitives; the current parent transport retains cancellation and atomic output.
 Tech stack: Python>=3.11, existing pycryptodomex, stdlib pipes/files, pytest.
 
+ADR required: no new ADR; existing ADR-126 applies with the user's Python correction.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: the user superseded its language/delivery choice; the archive format,
+process boundary and recovery contracts remain intact. The linked correction spec
+records that decision.
+
 ## Global constraints
 
 - Preserve `crypto.transform(source, target, *, password, decrypt, cancel,
@@ -86,8 +92,10 @@ Success criteria: compatibility and package tests pass without Go; actual final
 macOS encrypted F9/rollback paths use Python; Linux crypto outcomes are recorded.
 Tests: final changed crypto/package modules, affected release gates/archive paths,
 three F9 modes, combined replacement/later rollback; Linux targeted crypto/package.
-Status: In Progress. Worker/transport/package/release gates and3installedF9 modes
-verified; combined rollback and Linux final results pending.
+Status: Complete. All three installed F9 modes and combined replacement/later
+rollback passed. Linux worker/crypto/packaging passed 116 tests without skips.
+Final review approved; known baseline failure and Linux filesystem limitations
+recorded in Docs/Development/backup-python-verification-2026-09-12.md and PR2642.
 
 Run serial native tests in private locations with NullKeyring/network guard.
 Record exact source/package identities; distinguish test fixture faults from native
