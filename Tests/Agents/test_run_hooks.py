@@ -384,6 +384,25 @@ class TestWrapReview:
         assert verdicts["fs_write"] not in ("proceed",)  # refusal string per protocol
         assert called == [["calculator"]]  # denied call never reaches the permission store
 
+    def test_hook_deny_reason_proceed_is_namespaced(self):
+        # R16: a hook emitting reason "proceed" must not serialize the dispatch
+        # sentinel into the verdict map — the refusal is namespaced with a
+        # hook: prefix inside wrap_review (fire()/HookOutcome keep raw .reason).
+        code = ("print(__import__('json').dumps("
+                "{'decision': 'deny', 'reason': 'proceed'}))")
+        eng = self._engine_with(HookSpec("PreToolUse", (sys.executable, "-c", code)))
+        called = []
+
+        def inner(calls, run_id):
+            called.append([c.name for c in calls])
+            return {c.name: "proceed" for c in calls}
+
+        wrapped = eng.wrap_review(inner, session_id="s")
+        verdicts = wrapped([ToolCall(name="fs_write", args={})], "run-1")
+        assert verdicts["fs_write"] != "proceed"
+        assert verdicts["fs_write"].startswith("hook: ")
+        assert called == []  # still a deny end-to-end: never reaches inner review
+
     def test_clean_pass_delegates_to_inner(self):
         eng = self._engine_with(HookSpec("PreToolUse", (sys.executable, "-c", "pass")))
 

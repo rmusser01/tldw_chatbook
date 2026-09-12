@@ -438,7 +438,9 @@ class RunHooksEngine:
         """Wrap a review_tool_calls callable so PreToolUse hooks deny first.
 
         Denied names are EXCLUDED from the inner review (no approval card for
-        a call a hook already refused) and merged back as refusal strings.
+        a call a hook already refused) and merged back as refusal strings,
+        namespaced with a "hook: " prefix (ruling R16): hook-produced text can
+        never equal the "proceed" dispatch sentinel, so a deny stays a deny.
         Hooks can never produce "proceed" — deny-only, enforced here.
         """
         if not any(h.event == "PreToolUse" for h in self._config_provider().hooks):
@@ -453,7 +455,7 @@ class RunHooksEngine:
                     data={"tool_name": call.name, "tool_args": call.args},
                 )
                 if outcome.blocked:
-                    refusals[call.name] = outcome.reason
+                    refusals[call.name] = f"hook: {outcome.reason}"
                 else:
                     surviving.append(call)
             verdicts = dict(inner(surviving, run_id)) if surviving else {}
