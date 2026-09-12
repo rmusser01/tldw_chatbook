@@ -48,6 +48,11 @@ class CustomEndpointSlugError(ValueError):
     Subclasses :class:`ValueError` so the F9 convert worker (and any other
     ``except ValueError`` boundary) surfaces ``str(exc)`` -- the collision
     copy -- in user-facing status surfaces as-is.
+
+    Args:
+        message: User-facing collision copy carried by ``str(exc)``;
+            defaults to the standard name-in-use message and may be
+            overridden by callers with context-specific copy.
     """
 
     def __init__(self, message: str = _SLUG_COLLISION_COPY) -> None:
@@ -262,8 +267,10 @@ def derive_slug(display_name: str, existing_slugs: Collection[str]) -> str:
 
     Lowercases, maps each run of non-``[a-z0-9]`` characters to a single
     ``-``, trims leading/trailing ``-``, and appends ``-2`` .. ``-9999`` on
-    collision with ``existing_slugs`` (candidates stay clamped to the
-    64-char :data:`SLUG_PATTERN` contract).
+    collision with ``existing_slugs``. Long bases are stem-truncated so
+    each suffix always fits whole inside the 64-char :data:`SLUG_PATTERN`
+    contract (clamping the assembled candidate instead would shear the
+    suffix off a long base and reject creatable names).
 
     Args:
         display_name: User-facing name to derive from.
@@ -274,10 +281,9 @@ def derive_slug(display_name: str, existing_slugs: Collection[str]) -> str:
 
     Raises:
         CustomEndpointSlugError: Every candidate -- the bare base and all
-            suffixed forms -- collides with ``existing_slugs`` (including
-            the degenerate case where the 64-char clamp leaves no room for
-            a suffix). Returning a colliding slug here would make the
-            creation path overwrite an existing entry's config section.
+            suffixed stem forms -- collides with ``existing_slugs``.
+            Returning a colliding slug here would make the creation path
+            overwrite an existing entry's config section.
     """
     base = re.sub(r"[^a-z0-9]+", "-", display_name.lower()).strip("-")
     # SLUG_PATTERN contract: 1..64 chars of [a-z0-9-]. A punctuation-only
@@ -291,7 +297,10 @@ def derive_slug(display_name: str, existing_slugs: Collection[str]) -> str:
     if SLUG_PATTERN.fullmatch(base) and base not in existing_slugs:
         return base
     for suffix in range(2, _MAX_SLUG_COLLISION_SUFFIX + 1):
-        candidate = f"{base}-{suffix}"[:64].rstrip("-")
+        suffix_text = f"-{suffix}"
+        # Truncate the stem before appending so the suffix survives whole:
+        # the base starts with an alphanumeric, so the stem cannot empty out.
+        candidate = f"{base[: 64 - len(suffix_text)].rstrip('-')}{suffix_text}"
         if SLUG_PATTERN.fullmatch(candidate) and candidate not in existing_slugs:
             return candidate
     raise CustomEndpointSlugError()

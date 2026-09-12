@@ -63,12 +63,22 @@ def test_derive_slug_exhaustion_raises_instead_of_returning_colliding_slug():
     with pytest.raises(CustomEndpointSlugError, match="already in use"):
         derive_slug("GPU box", taken)
 
-def test_derive_slug_exhaustion_raises_when_clamp_prevents_suffixed_candidates():
-    # A 64-char base cannot fit any suffix inside the 64-char clamp, so a
-    # taken base has no derivable candidate at all -- raise, never collide.
-    long_base = "g" * 64
-    with pytest.raises(CustomEndpointSlugError):
-        derive_slug(long_base, {long_base})
+def test_derive_slug_truncates_long_base_to_reserve_suffix_space():
+    # Clamping the assembled candidate shears the suffix off a long base
+    # (a 63/64-char base re-derives the already-taken base for every
+    # suffix), so the stem must be truncated first to keep each suffixed
+    # candidate distinct and creatable.
+    base63 = "g" * 63
+    assert derive_slug(base63, {base63}) == "g" * 62 + "-2"
+    base64 = "g" * 64
+    assert derive_slug(base64, {base64}) == "g" * 62 + "-2"
+
+def test_derive_slug_keeps_multi_digit_suffixes_whole_for_long_bases():
+    # A 62-char base plus "-10" overflows the 64-char clamp: the stem is
+    # truncated instead of shearing the suffix down to "-1".
+    base = "g" * 62
+    taken = {base} | {f"{base}-{n}" for n in range(2, 10)}
+    assert derive_slug(base, taken) == "g" * 61 + "-10"
 
 def test_slug_collision_error_is_value_error_with_user_facing_copy():
     # The F9 convert worker surfaces ValueError messages in its status line;

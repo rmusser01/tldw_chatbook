@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from rich.markup import escape as escape_markup
 from textual import on
@@ -43,7 +43,10 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     validate_entry,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.config import save_settings_to_cli_config
+from tldw_chatbook.config import (
+    AtomicConfigSnapshot,
+    apply_settings_mutation_to_cli_config,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 MODAL_ID = "console-endpoint-template-modal"
@@ -71,11 +74,21 @@ INVALID_SLUG_COPY = (
     "Enter a display name containing letters or numbers to derive an id."
 )
 MODAL_CONTROL_HEIGHT = 3
-#: Bounded attempts to (re-)derive a slug against a freshly loaded registry
-#: when a concurrent create takes the derived slug before our write lands.
+#: Bounded attempts to (re-)derive a slug when a concurrent create takes
+#: the derived slug before this modal's create-only write commits.
 _CREATE_DERIVE_ATTEMPTS = 3
+#: Suffix appended to a duplicated entry's display name.
+_DUPLICATE_NAME_SUFFIX = " (copy)"
+#: Source-name budget so the duplicate prefill fits the registry's
+#: 80-character display-name validation (``validate_entry``) without
+#: manual editing for names already at the maximum.
+_DUPLICATE_NAME_SOURCE_LIMIT = 80 - len(_DUPLICATE_NAME_SUFFIX)
 _LLAMA_FAMILY_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 _OLLAMA_FAMILY_PROVIDER_KEYS = frozenset({"ollama", "local_ollama"})
+
+#: Outcome of the create-only config write (see
+#: :func:`_create_entry_only_if_absent`).
+_CreateWriteOutcome = Literal["saved", "collision", "failed"]
 
 
 @dataclass(frozen=True)
@@ -166,6 +179,61 @@ def _configured_models_for(
             if isinstance(model, str) and model.strip()
         )
     return ()
+
+
+def _duplicate_display_name(source: str) -> str:
+    """Build the duplicate prefill: ``<source> (copy)``, capped at 80 chars.
+
+    The registry validates display names at 80 characters
+    (``validate_entry``), so the source is truncated to reserve the
+    seven-character suffix; sources that already fit with the suffix pass
+    through unchanged apart from the suffix.
+
+    Args:
+        source: The duplicated entry's display name.
+
+    Returns:
+        The prefilled duplicate display name, always within the limit.
+    """
+    trimmed = source[:_DUPLICATE_NAME_SOURCE_LIMIT].rstrip()
+    return f"{trimmed}{_DUPLICATE_NAME_SUFFIX}"
+
+
+def _create_entry_only_if_absent(
+    entry: CustomEndpointEntry,
+) -> _CreateWriteOutcome:
+    """Persist ``entry`` only when its slug's config section is absent.
+
+    One :func:`apply_settings_mutation_to_cli_config` transaction holds the
+    config writer lock while the locked-snapshot precondition checks the
+    authoritative raw config and the mutation applies, so a same-process
+    create that committed this slug after the modal's derivation aborts
+    here as ``"collision"`` instead of being overwritten by the later
+    write. The success/failure interpretation matches
+    ``save_settings_to_cli_config``.
+
+    Args:
+        entry: The entry to persist (from ``build_entry_mutation``).
+
+    Returns:
+        ``"saved"`` when the section was created; ``"collision"`` when the
+        section already exists under the lock; ``"failed"`` when the
+        transaction itself failed.
+    """
+
+    def _slug_absent(snapshot: AtomicConfigSnapshot) -> bool:
+        section = snapshot.values.get("custom_endpoints")
+        return not (isinstance(section, Mapping) and entry.slug in section)
+
+    result = apply_settings_mutation_to_cli_config(
+        build_entry_mutation(entry),
+        locked_snapshot_precondition=_slug_absent,
+    )
+    if result.conflict:
+        return "collision"
+    if result.failure_phase is None and not result.file_replaced:
+        return "saved"
+    return "saved" if result.fully_applied else "failed"
 
 
 class ConsoleEndpointTemplateModal(
@@ -309,7 +377,7 @@ class ConsoleEndpointTemplateModal(
                         family=entry.family,
                         base_url=entry.base_url,
                         models=entry.models,
-                        duplicate_name=f"{entry.display_name} (copy)",
+                        duplicate_name=_duplicate_display_name(entry.display_name),
                         api_key_env=entry.api_key_env,
                     )
                 )
@@ -452,13 +520,16 @@ class ConsoleEndpointTemplateModal(
     async def _create(self, event: Button.Pressed) -> None:
         """Persist the validated entry, announce it, and dismiss with its id.
 
-        Immediately before the atomic write the registry is re-loaded and
-        the slug re-derived when a concurrent same-process create took it
-        since derivation (bounded to :data:`_CREATE_DERIVE_ATTEMPTS`);
-        exhaustion surfaces the same inline name-in-use error as
-        ``derive_slug`` itself. The residual cross-process TOCTOU window
-        belongs to the config writer -- this closes the practical
-        same-process window.
+        Registry loading, slug derivation, and the write all run off the
+        event loop via ``asyncio.to_thread``. The write is a create-only
+        transaction sharing the config writer lock
+        (:func:`_create_entry_only_if_absent`): when a concurrent
+        same-process create already committed the derived slug, the
+        mutation aborts with a collision and the slug is re-derived
+        avoiding the collided slug (bounded to
+        :data:`_CREATE_DERIVE_ATTEMPTS`). Exhaustion surfaces the same
+        inline name-in-use error as ``derive_slug`` itself, not the
+        generic save-failure copy.
         """
         event.stop()
         if self._create_in_flight:
@@ -476,11 +547,16 @@ class ConsoleEndpointTemplateModal(
         entry: CustomEndpointEntry | None = None
         error_copy: str | None = None
         saved = False
+        collided = False
+        # Slugs whose create-only writes collided under the config writer
+        # lock; each retry derives around them so a stale in-memory
+        # registry cannot re-derive the same occupied slug forever.
+        collided_slugs: set[str] = set()
         try:
             for _attempt in range(_CREATE_DERIVE_ATTEMPTS):
                 try:
-                    slug = derive_slug(
-                        name, load_custom_endpoints(self._app_config).keys()
+                    slug = await asyncio.to_thread(
+                        self._derive_fresh_slug, name, frozenset(collided_slugs)
                     )
                 except CustomEndpointSlugError as error:
                     # Every derivable slug is taken: surface the collision
@@ -492,11 +568,6 @@ class ConsoleEndpointTemplateModal(
                     # A name with no alphanumeric characters derives an empty slug.
                     error_copy = INVALID_SLUG_COPY
                     break
-                # Re-load immediately before the atomic write: a concurrent
-                # same-process create may have taken this slug since the
-                # derivation above, so re-derive against the fresh slug set.
-                if slug in load_custom_endpoints(self._app_config):
-                    continue
                 entry = CustomEndpointEntry(
                     slug=slug,
                     display_name=name,
@@ -511,19 +582,30 @@ class ConsoleEndpointTemplateModal(
                     created_from=self._templates[self._active_template_index].provider_id,
                 )
                 try:
-                    saved = await asyncio.to_thread(
-                        save_settings_to_cli_config, build_entry_mutation(entry)
+                    outcome = await asyncio.to_thread(
+                        _create_entry_only_if_absent, entry
                     )
                 except Exception:
-                    saved = False
+                    outcome = "failed"
+                if outcome == "collision":
+                    # A concurrent create committed this slug while holding
+                    # the writer lock: re-derive around it on the next
+                    # bounded attempt (or surface the in-use error).
+                    collided = True
+                    collided_slugs.add(slug)
+                    continue
+                collided = False
+                saved = outcome == "saved"
                 break
         finally:
             self._create_in_flight = False
         if not saved:
             create_button.disabled = False
-            if entry is None:
-                # Derivation never survived to a write: a slug error or a
-                # concurrent create took every bounded attempt.
+            if entry is None or collided:
+                # Derivation never survived to a write (a slug error or an
+                # underivable name) or every bounded attempt collided with
+                # a concurrent create: the name-in-use copy is the truthful
+                # error, not a generic save failure.
                 self._show_errors([error_copy or str(CustomEndpointSlugError())])
             else:
                 self._show_errors([SAVE_FAILED_COPY])
@@ -532,6 +614,28 @@ class ConsoleEndpointTemplateModal(
         provider_id = f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}"
         self._announce_created(provider_id)
         self.dismiss(provider_id)
+
+    def _derive_fresh_slug(self, name: str, avoid: frozenset[str]) -> str:
+        """Derive a slug against the current in-memory registry plus ``avoid``.
+
+        Runs in a worker thread via ``asyncio.to_thread`` from ``_create``:
+        the registry load (Pydantic validation per entry) and the bounded
+        suffix search must never block the UI event loop, even for a
+        registry with thousands of occupied slugs.
+
+        Args:
+            name: Display name typed into the form.
+            avoid: Extra slugs to steer derivation around (collided
+                create-only writes from earlier attempts).
+
+        Returns:
+            The derived slug, unique against the loaded registry + ``avoid``.
+
+        Raises:
+            CustomEndpointSlugError: Every candidate collides.
+        """
+        existing = load_custom_endpoints(self._app_config).keys()
+        return derive_slug(name, set(existing) | set(avoid))
 
     def _family_value(self) -> str:
         """Return the selected family string (one of the three fixed ones)."""

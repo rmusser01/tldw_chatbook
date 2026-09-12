@@ -11911,27 +11911,30 @@ async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "server-model"}]})
 
-    gateway = ConsoleProviderGateway(
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-        config_provider=lambda: {
-            "custom_endpoints": {
-                "gpu": {
-                    "display_name": "GPU llama",
-                    "family": "llama_cpp",
-                    "base_url": "http://192.168.1.9:9090",
+    # The gateway deliberately leaves caller-owned clients open, so scope
+    # the client to an async-with for deterministic transport cleanup.
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            config_provider=lambda: {
+                "custom_endpoints": {
+                    "gpu": {
+                        "display_name": "GPU llama",
+                        "family": "llama_cpp",
+                        "base_url": "http://192.168.1.9:9090",
+                    }
                 }
-            }
-        },
-        environ={},
-    )
-
-    resolved = await gateway.resolve_for_send(
-        ConsoleProviderSelection(
-            provider="custom-ep:gpu",
-            explicit_model="m",
-            base_url="http://192.168.1.5:8080",
+            },
+            environ={},
         )
-    )
+
+        resolved = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="custom-ep:gpu",
+                explicit_model="m",
+                base_url="http://192.168.1.5:8080",
+            )
+        )
 
     assert resolved.ready is True
     assert resolved.execution_key == "llama_cpp"

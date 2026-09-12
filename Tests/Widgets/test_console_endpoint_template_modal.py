@@ -1,5 +1,6 @@
 """Component tests for the Console "New endpoint from template" modal (ADR-146)."""
 
+import threading
 import tomllib
 from pathlib import Path
 
@@ -171,35 +172,38 @@ def _registry_section() -> dict:
     }
 
 
+def _conflict_result() -> "config_module.ConfigMutationResult":
+    """A locked-snapshot precondition abort (slug taken under the lock)."""
+    return config_module.ConfigMutationResult(
+        False, False, None, conflict=True, conflict_reason="identity_changed"
+    )
+
+
+def _saved_result() -> "config_module.ConfigMutationResult":
+    return config_module.ConfigMutationResult(True, True, None)
+
+
 @pytest.mark.asyncio
 async def test_template_modal_rederives_slug_when_concurrent_create_takes_it(
     monkeypatch,
 ):
-    """A competing same-process create that lands between derivation and the
-    atomic write must not be overwritten: the slug is re-derived against the
-    fresh registry before writing."""
+    """A competing same-process create that commits the derived slug under
+    the config writer lock must not be overwritten: the create-only write
+    aborts with a collision and the slug is re-derived for a retry."""
     import tldw_chatbook.Widgets.Console.console_endpoint_template_modal as modal_module
 
-    loads = []
-
-    def fake_load(app_config):
-        # Load 1 is the picker build (modal init); load 2 is Create's
-        # initial derivation -- both see an empty registry, deriving
-        # "gpu-box". Every later load (the pre-write re-check and any
-        # re-derivation) sees a competitor that took "gpu-box" in between.
-        loads.append(1)
-        if len(loads) <= 2:
-            return {}
-        return {"gpu-box": _registry_section()}
-
     saved_mutations = []
+    write_results = [_conflict_result(), _saved_result()]
 
-    def fake_save(mutation):
-        saved_mutations.append(mutation)
-        return True
+    def fake_apply(section_values, **_kwargs):
+        # First create-only write collides (a competitor committed
+        # "gpu-box" under the lock); the retry for the re-derived slug
+        # succeeds.
+        saved_mutations.append(section_values)
+        return write_results.pop(0)
 
-    monkeypatch.setattr(modal_module, "load_custom_endpoints", fake_load)
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
+    monkeypatch.setattr(modal_module, "load_custom_endpoints", lambda _cfg: {})
+    monkeypatch.setattr(modal_module, "apply_settings_mutation_to_cli_config", fake_apply)
     app = _TemplateModalHarness(app_config={})
     async with app.run_test(size=(100, 40)) as pilot:
         modal = ConsoleEndpointTemplateModal(
@@ -213,9 +217,11 @@ async def test_template_modal_rederives_slug_when_concurrent_create_takes_it(
         await pilot.click("#endpoint-template-create")
         await pilot.pause()
 
-    # The write went to a re-derived slug, not the collided one.
-    assert saved_mutations, "entry was never persisted"
-    assert list(saved_mutations[0]) == ["custom_endpoints.gpu-box-2"]
+    # The successful write went to a re-derived slug, not the collided one.
+    assert [list(mutation) for mutation in saved_mutations] == [
+        ["custom_endpoints.gpu-box"],
+        ["custom_endpoints.gpu-box-2"],
+    ]
     assert app.created_provider_id == "custom-ep:gpu-box-2"
     assert "gpu-box-2" in load_custom_endpoints(app.app_config)
 
@@ -225,40 +231,20 @@ async def test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhau
     monkeypatch,
 ):
     """When every bounded re-derivation attempt collides with a concurrent
-    create, Create surfaces the inline name-in-use error and writes nothing."""
+    create, Create surfaces the inline name-in-use error and writes nothing
+    (not the generic save-failure copy)."""
     import tldw_chatbook.Widgets.Console.console_endpoint_template_modal as modal_module
-
-    loads = []
-
-    def fake_load(app_config):
-        # Loads 1-2 (picker build, initial derivation) see {} (->
-        # "gpu-box"); each pre-write re-check then reveals a competitor
-        # that sniped the candidate just derived.
-        loads.append(1)
-        n = len(loads)
-        if n <= 2:
-            return {}
-        if n <= 4:
-            return {"gpu-box": _registry_section()}
-        if n <= 6:
-            return {
-                "gpu-box": _registry_section(),
-                "gpu-box-2": _registry_section(),
-            }
-        return {
-            "gpu-box": _registry_section(),
-            "gpu-box-2": _registry_section(),
-            "gpu-box-3": _registry_section(),
-        }
 
     saved_mutations = []
 
-    def fake_save(mutation):
-        saved_mutations.append(mutation)
-        return True
+    def fake_apply(section_values, **_kwargs):
+        # Every create-only write collides: a competitor keeps committing
+        # each derived slug under the lock.
+        saved_mutations.append(section_values)
+        return _conflict_result()
 
-    monkeypatch.setattr(modal_module, "load_custom_endpoints", fake_load)
-    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
+    monkeypatch.setattr(modal_module, "load_custom_endpoints", lambda _cfg: {})
+    monkeypatch.setattr(modal_module, "apply_settings_mutation_to_cli_config", fake_apply)
     app = _TemplateModalHarness(app_config={})
     async with app.run_test(size=(100, 40)) as pilot:
         modal = ConsoleEndpointTemplateModal(
@@ -277,8 +263,106 @@ async def test_template_modal_surfaces_in_use_error_when_rederive_attempts_exhau
         create = app.screen.query_one("#endpoint-template-create", Button)
         assert create.disabled is False
 
-    assert saved_mutations == []
+    # All three bounded attempts collided and nothing was persisted.
+    assert [list(mutation) for mutation in saved_mutations] == [
+        ["custom_endpoints.gpu-box"],
+        ["custom_endpoints.gpu-box-2"],
+        ["custom_endpoints.gpu-box-3"],
+    ]
     assert app.created_provider_id is None
+
+
+@pytest.mark.asyncio
+async def test_template_modal_does_not_overwrite_disk_entry_missing_from_stale_view(
+    tmp_path, monkeypatch
+):
+    """A competitor entry committed to disk after this modal's in-memory view
+    was built must survive Create: the write shares the config writer lock,
+    so the occupied section aborts the mutation and the slug re-derives
+    instead of replacing the competitor's URL/models/credentials."""
+    config_path = tmp_path / "endpoint-template-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        # The competitor commits "gpu-box" to the real config file; the
+        # modal's in-memory app_config below stays stale (empty), exactly
+        # like a create racing a writer whose commit is not mirrored into
+        # this mapping.
+        assert config_module.save_settings_to_cli_config(
+            {
+                "custom_endpoints": {
+                    "gpu-box": {
+                        "display_name": "Competitor",
+                        "family": "llama_cpp",
+                        "base_url": "http://127.0.0.1:8080",
+                    }
+                }
+            }
+        )
+        app = _TemplateModalHarness(app_config={})
+        async with app.run_test(size=(100, 40)) as pilot:
+            modal = ConsoleEndpointTemplateModal(
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                template_provider="llama_cpp",
+            )
+            await app.push_screen(modal)
+            await pilot.click("#endpoint-template-name")
+            await pilot.press(*"GPU box")
+            await pilot.click("#endpoint-template-create")
+            await pilot.pause()
+
+        raw = tomllib.loads(config_path.read_text())
+        # The competitor's section is intact and ours went to a fresh slug.
+        assert raw["custom_endpoints"]["gpu-box"]["display_name"] == "Competitor"
+        assert raw["custom_endpoints"]["gpu-box-2"]["display_name"] == "GPU box"
+        assert app.created_provider_id == "custom-ep:gpu-box-2"
+    finally:
+        config_module.load_settings(force_reload=True)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
+@pytest.mark.asyncio
+async def test_template_modal_create_runs_registry_derivation_off_the_event_loop(
+    monkeypatch,
+):
+    """Registry loading and slug derivation during Create run in a worker
+    thread (asyncio.to_thread), never on the UI event loop -- a registry
+    with thousands of occupied slugs must not freeze the modal's controls."""
+    import tldw_chatbook.Widgets.Console.console_endpoint_template_modal as modal_module
+
+    loads_on_main_thread = []
+
+    def fake_load(_app_config):
+        loads_on_main_thread.append(
+            threading.current_thread() is threading.main_thread()
+        )
+        return {}
+
+    monkeypatch.setattr(modal_module, "load_custom_endpoints", fake_load)
+    monkeypatch.setattr(
+        modal_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda _section_values, **_kwargs: _saved_result(),
+    )
+    app = _TemplateModalHarness(app_config={})
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = ConsoleEndpointTemplateModal(
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            template_provider="llama_cpp",
+        )
+        await app.push_screen(modal)
+        await pilot.click("#endpoint-template-name")
+        await pilot.press(*"GPU box")
+        await pilot.click("#endpoint-template-create")
+        await pilot.pause()
+
+    assert app.created_provider_id == "custom-ep:gpu-box"
+    # Modal init loads on the UI thread; Create's derivation load must not.
+    assert loads_on_main_thread[0] is True
+    assert any(entry is False for entry in loads_on_main_thread[1:])
 
 
 @pytest.mark.asyncio
@@ -334,6 +418,54 @@ async def test_template_modal_duplicate_carries_env_ref_and_copy_name(
             load_custom_endpoints(app.app_config)["paid-copy"].api_key_env
             == "PAID_KEY"
         )
+    finally:
+        config_module.load_settings(force_reload=True)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
+@pytest.mark.asyncio
+async def test_template_modal_duplicate_prefill_respects_display_name_limit(
+    tmp_path, monkeypatch
+):
+    """Duplicating an entry named at the 80-character maximum must prefill a
+    still-valid duplicate name: the source is truncated to reserve the
+    seven-character ' (copy)' suffix instead of leaving Create disabled."""
+    config_path = tmp_path / "endpoint-template-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_settings(force_reload=True)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        app_config = {
+            "custom_endpoints": {
+                "long": {
+                    # Valid at exactly the registry's 80-char maximum.
+                    "display_name": "L" * 80,
+                    "family": "openai_compatible",
+                    "base_url": "https://api.example.com/v1",
+                }
+            }
+        }
+        app = _TemplateModalHarness(app_config=app_config)
+        async with app.run_test(size=(100, 40)) as pilot:
+            modal = ConsoleEndpointTemplateModal(
+                app_config=app.app_config,
+                providers_models={},
+                template_provider="custom-ep:long",
+            )
+            await app.push_screen(modal)
+            name = app.screen.query_one("#endpoint-template-name", Input)
+            # 73 truncated source chars + " (copy)" = exactly 80.
+            assert name.value == "L" * 73 + " (copy)"
+            create = app.screen.query_one("#endpoint-template-create", Button)
+            assert create.disabled is False
+            await pilot.click("#endpoint-template-create")
+            await pilot.pause()
+
+        assert app.created_provider_id == "custom-ep:" + "l" * 64
+        raw = tomllib.loads(config_path.read_text())
+        duplicated = raw["custom_endpoints"]["l" * 64]
+        assert duplicated["display_name"] == "L" * 73 + " (copy)"
+        assert duplicated["base_url"] == "https://api.example.com/v1"
     finally:
         config_module.load_settings(force_reload=True)
         config_module.load_cli_config_and_ensure_existence(force_reload=True)
