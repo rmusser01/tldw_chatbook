@@ -558,7 +558,9 @@ already streaming.
 - The run log durably records which definition ran, for future audit tooling
   — `agent_runs.agent_definition` (the definition's name) and
   `definition_fingerprint` (a content hash of its instructions, tools, and
-  model at spawn time) are written on every named-agent spawn. Neither is
+  model at spawn time, plus provider and params when the definition sets
+  them — a legacy provider-less preset keeps its pre-routing fingerprint
+  shape) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
 
 ### Change review — reviewing a turn's file changes
