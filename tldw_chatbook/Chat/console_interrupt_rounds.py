@@ -508,6 +508,23 @@ class InterruptRoundHost:
 
         Shared by early controller admission and the host lifecycle. A refused
         preregistration is removed only when it belongs to this exact state.
+
+        Args:
+            kind: Interrupt kind identifying the host's registry.
+            round_id: Identifier under which to register this round.
+            state: Mutable round state, including optional ``run_id`` and
+                ``revoked`` fields. Refusal stamps ``revoked=True``.
+            check_revoked: Whether to reject an already-revoked state or an
+                owner fenced for this kind. False opts out of both checks and
+                the unowned-arm warning for primary-only round lifecycles.
+
+        Returns:
+            True when the state is registered and admission may continue.
+            False when the state was already revoked or its owner was fenced;
+            callers must skip publication and return the normal denied outcome.
+
+        Raises:
+            KeyError: If ``kind`` has no host registry.
         """
         with self.lock:
             registry = self.registries[kind]
