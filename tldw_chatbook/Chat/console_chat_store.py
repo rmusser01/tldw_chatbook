@@ -1469,10 +1469,19 @@ class ConsoleChatSession:
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
     character_name: str | None = None
+    #: Persona-kind assistant display name (ADR-149). Set only when
+    #: ``assistant_kind == "persona"``; mutually exclusive with
+    #: ``character_name``. Never persisted on the conversation row --
+    #: re-resolved from ``assistant_id`` at resume.
+    assistant_name: str | None = None
     #: Per-chat human label, independently persisted in conversation metadata.
     user_display_name_override: str | None = None
     #: Trusted character system source; materialized into ``settings.system_prompt``.
     character_system_template: str | None = None
+    #: Trusted persona system-prompt source (ADR-149); materialized into
+    #: ``settings.system_prompt`` via the identity-template expander and
+    #: persisted as an optional key in the version-1 roleplay envelope.
+    persona_system_template: str | None = None
     speech_preferences: ConsoleSpeechPreferences = field(
         default_factory=ConsoleSpeechPreferences
     )
@@ -2134,6 +2143,8 @@ class ConsoleChatStore:
         assistant_default_notice: str = "",
         character_id: int | None = None,
         character_name: str | None = None,
+        assistant_name: str | None = None,
+        persona_system_template: str | None = None,
         ephemeral: bool = False,
         activate: bool = True,
         project_instruction_state: ProjectInstructionControlState | None = None,
@@ -2222,6 +2233,8 @@ class ConsoleChatStore:
             assistant_default_notice=assistant_default_notice,
             character_id=character_id,
             character_name=character_name,
+            assistant_name=assistant_name,
+            persona_system_template=persona_system_template,
             ephemeral=ephemeral,
             project_instruction_state=(
                 project_instruction_state
@@ -12413,6 +12426,7 @@ class ConsoleChatStore:
             ),
             assistant_kind=session.assistant_kind,
             character_name=session.character_name,
+            assistant_name=session.assistant_name,
             revision=session.identity_revision,
         )
 

@@ -9487,3 +9487,16 @@ def _create_staged_canvas_for_console(
         source=f"<!doctype html><html><body>{suffix}</body></html>",
         origin_message_id=f"assistant-{suffix}",
     )
+
+def test_presentation_context_carries_persona_display_name():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    context = store.presentation_context(session.id, "")
+    assert context.assistant_kind == "persona"
+    assert context.assistant_name == "Archivist"
+    assert context.character_name is None
