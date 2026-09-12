@@ -574,7 +574,8 @@ but only while local tools are enabled and the global model-tool kill switch is
 Off. This is not a silent model grant: MCP ▸ Tools exposes raw shell as **Ask or
 Off only**, and even a hand-edited Allow value is treated as Ask. Each model
 command must show its full command and host-authority warning for **Run once**,
-**Allow all raw shell commands for this Console session**, or **Deny**, unless
+**All shell · session** (one grant covering every later raw command in this
+live Console session), or **Deny**, unless
 that live Console session already has the temporary session grant. Disarm,
 locking raw CLI, shutdown, or restart clears every such grant. By contrast, a
 physically typed `! ` command is a direct user action: once armed, it executes
@@ -963,3 +964,8 @@ scoped "Enter opens … (Group)" / "Next: …" echo line. Driven live headless:
 "reduce motion" surfaced "Appearance › Reduce motion (Interface)" and Enter
 landed focus on the control; "theme" echoed both scoped matches. The rest of
 this page's content unchanged from the prior stamp.)*
+
+*Verified against `fix/approval-wave-b-card` @ e7409210cc — 2026-09-10
+(task-32290): the model `shell_exec` card's session choice is labelled
+**All shell · session** (`_RAW_SHELL_DECISION_OPTIONS`), not the longer
+sentence this page quoted.*

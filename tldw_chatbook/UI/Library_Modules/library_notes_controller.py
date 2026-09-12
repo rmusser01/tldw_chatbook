@@ -519,9 +519,9 @@ from ...DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...config import get_cli_setting
 from ...Library.library_browse_location import (
+    browse_start_directory,
     claim_browse_directory,
     remember_browse_directory,
-    validated_browse_directory,
 )
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_note_import_state import (
@@ -4759,10 +4759,13 @@ class LibraryNotesController:
         last-used directory. The stored value is persisted user state, so it
         is validated in ``library_browse_location`` before it is used.
         """
-        remembered = validated_browse_directory(
-            get_cli_setting("library.notes_sync", "last_directory", None)
+        # task-32251 AC#5: falls through to `[notes] sync_directory`, then
+        # home (`browse_start_directory`).
+        return str(
+            browse_start_directory(
+                get_cli_setting("library.notes_sync", "last_directory", None)
+            )
         )
-        return str(remembered) if remembered is not None else str(Path.home())
 
     def _persist_library_notes_sync_location(self, selected_path: Path) -> None:
         """Off the event loop: remember the picked sync-folder directory."""

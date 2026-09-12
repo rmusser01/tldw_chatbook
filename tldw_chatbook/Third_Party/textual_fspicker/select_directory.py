@@ -19,6 +19,7 @@ from textual.widgets import Button, Input, Label
 from .base_dialog import (
     ButtonLabel,
     FileSystemPickerScreen,
+    PathInput,
     resolve_default_location,
     resolve_typed_directory,
 )
@@ -85,7 +86,11 @@ class SelectDirectory(FileSystemPickerScreen):
         placeholder that vanishes the moment the user types.
         """
         yield Label("Folder path:", id="path-input-label")
-        yield Input(id="path_input", placeholder="Type path or select below")
+        # `PathInput`, not `Input`: the field arrives pre-filled with the
+        # browsed directory (`on_mount` below), so the click that focuses it
+        # must select that value rather than drop a cursor in the middle of
+        # it (task-32251).
+        yield PathInput(id="path_input", placeholder="Type path or select below")
 
     def _hint_text(self) -> str:
         """Directory-mode hint: Enter descends, Select confirms (task-32122)."""

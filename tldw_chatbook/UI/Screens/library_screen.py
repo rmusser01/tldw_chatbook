@@ -97,9 +97,9 @@ from ...Library.collections_capture_models import (
     CapturePageRequest,
 )
 from ...Library.library_browse_location import (
+    browse_start_directory,
     claim_browse_directory,
     remember_browse_directory,
-    validated_browse_directory,
 )
 from ...Library.library_content_evidence import (
     LibraryContentEvidence,
@@ -457,6 +457,7 @@ from ...Widgets.Library import (
     skill_editor_warning_lines,
 )
 from ...Widgets.Library.library_rail import (
+    LibraryDetailsRow,
     library_db_size_rows,
     library_diagnostics_disclosure,
 )
@@ -772,6 +773,8 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
+    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP,
+    LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
     LIBRARY_PROMPT_DIRTY_VETO_COPY,
     LIBRARY_SKILL_DIRTY_VETO_COPY,
     LIBRARY_SKILL_TRUST_MISMATCH_COPY,
@@ -2899,6 +2902,9 @@ class LibraryScreen(BaseAppScreen):
             refresh_local_source_snapshot=(
                 lambda *a, **k: self._refresh_local_source_snapshot(*a, **k)
             ),
+            register_footer_shortcuts=(
+                lambda *a, **k: self._register_footer_shortcuts(*a, **k)
+            ),
             run_library_service_call=(
                 lambda *a, **k: self._run_library_service_call(*a, **k)
             ),
@@ -4331,6 +4337,36 @@ class LibraryScreen(BaseAppScreen):
                     + trash_keys
                     + escape_chip
                 )
+            if self._library_prompt_editor_active():
+                # task-32393: while the prompt editor REFUSES Escape
+                # (``_exit_library_prompt_editor_guarded``'s two vetoes, which
+                # now both say so) the chip names the blocker rather than
+                # promising an exit the key will not make. The skill editor's
+                # own set two branches below is the same idiom.
+                #
+                # Order matches that seam's own checks -- an in-flight write is
+                # tested BEFORE ``dirty``, so a busy editor that is also dirty
+                # reports the blocker the key will actually hit (PR #2655, Qodo
+                # finding 1: a clean prompt deletion left this chip promising
+                # "back to list" for the whole write).
+                blocker = (
+                    LIBRARY_PROMPT_BUSY_ESCAPE_CHIP
+                    if self._prompts_state.mutation_in_flight
+                    else (
+                        LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP
+                        if self._prompts_state.dirty
+                        else ""
+                    )
+                )
+                if blocker:
+                    # Spliced, never re-literalled -- the Trash branch's rule
+                    # above (review round 1, F2): the constant stays the one
+                    # definition of the keys this set shares with it.
+                    return tuple(
+                        pair
+                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                        if pair[0] != "esc"
+                    ) + (("esc", blocker),)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -10412,6 +10448,8 @@ class LibraryScreen(BaseAppScreen):
                     getattr(row, "media_id", "")
                 ):
                     self.set_focus(row)
+                    if self.focused is not row:
+                        self._retry_library_list_entry_focus_while_armed()
                     return
         target = rows[0]
         media_return = self._library_pending_list_entry_media_return
@@ -10431,6 +10469,22 @@ class LibraryScreen(BaseAppScreen):
             # ``on_descendant_focus`` and activate the Reader before Enter.
             self._library_notes_programmatic_focus_target = target
         self.set_focus(target, scroll_visible=False)
+        if self.focused is not target:
+            # task-32302: a MOUNTED row is not necessarily a FOCUSABLE one --
+            # ``Widget.focusable`` is also false while it is disabled, hidden or
+            # loading, and ``set_focus`` on such a widget is a silent no-op. The
+            # Conversations regression was exactly that: dev's archive-scope
+            # recovery hop fires a second page request during route entry, and
+            # ``LibraryConversationRecovery.project`` folds ``loading`` into
+            # ``actions_disabled``, which the canvas paints onto every row
+            # (``button.disabled = actions_disabled``). The first load's rows
+            # were up, the arm's one attempt spent itself on a disabled row, and
+            # returning here made that indistinguishable from success -- the
+            # same rule the empty-list fallback above already applies to its
+            # controls. Keep the arm owed a landing instead; the retry chain is
+            # bounded by the arm's own window either way (task-32301 owns that).
+            self._retry_library_list_entry_focus_while_armed()
+            return
         if row_class == "library-media-row" and media_return is not None:
             scroll_offset = media_return.scroll_offset
             if scroll_offset is not None:
@@ -14123,12 +14177,12 @@ class LibraryScreen(BaseAppScreen):
                 id="library-details-group-workspace",
                 classes="library-details-group",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text("Active", state.workspace_name),
                 id="library-workspaces-active-workspace",
                 classes="library-details-row",
             ),
-            Static(
+            LibraryDetailsRow(
                 library_dim_label_text(
                     "Handoff", self._workspace_handoff_summary_label(state)
                 ),
@@ -14245,7 +14299,7 @@ class LibraryScreen(BaseAppScreen):
         # it joins the other Details actions and says what it does.
         widgets.extend(
             (
-                Static(
+                LibraryDetailsRow(
                     "Chunking Lab — compare how text is split for search",
                     id="library-details-chunking-gloss",
                     classes="library-details-row",
@@ -15448,7 +15502,9 @@ class LibraryScreen(BaseAppScreen):
                 existing[0].update(rendered)
                 previous = existing[0]
                 continue
-            row = Static(rendered, id=row_id, classes="library-details-row")
+            row = LibraryDetailsRow(
+                rendered, id=row_id, classes="library-details-row"
+            )
             try:
                 await parent.mount(row, after=previous)
             except Exception:
@@ -19154,6 +19210,7 @@ class LibraryScreen(BaseAppScreen):
             description=str(form.get("description", "")),
             media_quality=str(form.get("quality", DEFAULT_MEDIA_QUALITY)),
             destination=str(form.get("destination", "")),
+            destination_error=str(form.get("destination_error", "")),
             destination_exists=bool(form.get("destination_exists", False)),
             running=self._export_state.running,
             status_line=self._library_export_status_line(),
@@ -26702,10 +26759,13 @@ class LibraryScreen(BaseAppScreen):
         last-used directory. The stored value is persisted user state, so it
         is validated in ``library_browse_location`` before it is used.
         """
-        remembered = validated_browse_directory(
-            get_cli_setting("library.notes_import", "last_directory", None)
+        # task-32251 AC#5: falls through to `[notes] sync_directory`, then
+        # home (`browse_start_directory`).
+        return str(
+            browse_start_directory(
+                get_cli_setting("library.notes_import", "last_directory", None)
+            )
         )
-        return str(remembered) if remembered is not None else str(Path.home())
 
     def _persist_library_note_import_location(self, selected_path: Path) -> None:
         """Off the event loop: remember the picked Import once directory."""
@@ -27058,46 +27118,52 @@ class LibraryScreen(BaseAppScreen):
                         return str(candidate)
                 except Exception:
                     continue
-        remembered = get_cli_setting("library.ingest", "last_directory", None)
-        if remembered:
-            try:
-                candidate = Path(str(remembered)).expanduser()
-                if candidate.is_dir():
-                    return str(candidate)
-            except OSError:
-                pass
-        return str(Path.home())
-
-    @work(thread=True)
-    def _persist_library_ingest_location(self, selected_path: Path) -> None:
-        """Dispatch ``_remember_library_ingest_location`` off the loop.
-
-        task-15470: ``browse_callback`` used to call
-        ``_remember_library_ingest_location`` (a stat syscall plus a full
-        config.toml read+atomic-rewrite+cache-reload) straight on the event
-        loop, once per file picked via the Browse dialog. Kept as a thin
-        wrapper -- not folded into ``_remember_library_ingest_location``
-        itself -- so that method stays directly unit-testable (it is the
-        one existing tests call, and does not need a running app; its own
-        body is deliberately left without a broad guard on the save call
-        to preserve that). The guard lives here instead: an uncaught
-        exception in a ``@work(thread=True)`` worker is fatal to the app
-        by default (``exit_on_error=True``).
-        """
-        try:
-            self._remember_library_ingest_location(selected_path)
-        except Exception:
-            logger.error("Failed to persist Library ingest browse location")
-
-    def _remember_library_ingest_location(self, selected_path: Path) -> None:
-        """Persist the directory a source was picked from, for next time."""
-        try:
-            directory = (
-                selected_path if selected_path.is_dir() else selected_path.parent
+        # task-32242 AC#1: the remembered value is persisted user state --
+        # a relative or traversing one used to be resolved against the
+        # process working directory and handed straight to the picker.
+        # Same shared validator the three Notes pickers use.
+        return str(
+            browse_start_directory(
+                get_cli_setting("library.ingest", "last_directory", None)
             )
-        except OSError:
-            return
-        save_setting_to_cli_config("library.ingest", "last_directory", str(directory))
+        )
+
+    def _persist_library_ingest_location(self, selected_path: Path) -> None:
+        """Claim this selection's write slot, then dispatch it off the loop.
+
+        task-32242 AC#2: the claim has to happen HERE, on the event loop,
+        in selection order -- the worker below may run in either order.
+        Two picks made inside one config write then resolve latest-wins
+        instead of last-worker-to-finish.
+        """
+        generation = claim_browse_directory("library.ingest", "last_directory")
+        self.run_worker(
+            lambda: self._remember_library_ingest_location(
+                selected_path, generation
+            ),
+            thread=True,
+        )
+
+    def _remember_library_ingest_location(
+        self, selected_path: Path, generation: int | None = None
+    ) -> None:
+        """Persist the directory a source was picked from, for next time.
+
+        Blocking (a stat plus a config.toml rewrite) -- worker thread only.
+
+        Args:
+            selected_path: What the picker returned; a directory is kept as
+                is, a file contributes its parent.
+            generation: The slot ``claim_browse_directory`` reserved for
+                this selection, so a superseded write is dropped
+                (task-32242 AC#2). ``None`` claims one on the spot, for the
+                direct unit-test callers that have no racing peer.
+        """
+        if generation is None:
+            generation = claim_browse_directory("library.ingest", "last_directory")
+        remember_browse_directory(
+            "library.ingest", "last_directory", selected_path, generation
+        )
 
     @on(LibraryIngestCanvas.OptionPanelToggled)
     def sync_library_ingest_type_group_expanded(
