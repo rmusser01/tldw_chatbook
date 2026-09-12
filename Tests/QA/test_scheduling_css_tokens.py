@@ -9,6 +9,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_CSS = REPO_ROOT / "tldw_chatbook/css/features/_scheduling.tcss"
 GENERATED_CSS = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+# TASK-24459's screen-owned split moves scheduling-*-pure rules out of the
+# main bundle into this lazily loaded sheet; pane styling is checked there.
+SCREEN_CSS = REPO_ROOT / "tldw_chatbook/css/screen_feature_scheduling.tcss"
 AGENTIC_TERMINAL_CSS = REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 
 MODULE_BANNER = "/* ===== MODULE: features/_scheduling.tcss ===== */"
@@ -40,7 +43,9 @@ def test_generated_bundle_contains_scheduling_module_banner() -> None:
 
 
 def test_scheduling_panes_declare_design_grid_border() -> None:
-    for path in (SOURCE_CSS, GENERATED_CSS):
+    # Post-split (TASK-24459) the pane rules live in the screen-owned sheet;
+    # the source module keeps the canonical definitions.
+    for path in (SOURCE_CSS, SCREEN_CSS):
         css = path.read_text(encoding="utf-8")
         for selector in SELECTORS:
             rule = _rule_block(css, selector)

@@ -178,11 +178,12 @@
 /* Generic .sidebar (used by #chat-left-sidebar and potentially others) */
 .sidebar {
     dock: left;
-    width: 25%; /* Reduced from 35% for better chat area space */
-    min-width: 35; /* Reduced from 45 */
-    max-width: 80; /* Maximum width (optional) */
+    /* Layout law (ADR-150): standard shell sidebar geometry is tokenized. */
+    width: $ds-sidebar-width; /* Reduced from 35% for better chat area space */
+    min-width: $ds-sidebar-min-width; /* Reduced from 45 */
+    max-width: $ds-sidebar-max-width; /* Maximum width (optional) */
     background: $boost;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
     border-right: solid $surface;
     height: 100%;
     overflow-y: auto;

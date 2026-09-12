@@ -146,6 +146,84 @@ $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
 $ds-library-source-browser-width: 31;
 
+/* ========================================
+ * SPACING SCALE (ADR-150)
+ * ========================================
+ * The only legal whitespace values in new UI. Cells (horizontal) and rows
+ * (vertical) are the TUI's physical units; the scale is deliberately tiny.
+ * Raw numeric padding/margin in new stylesheets must come from this scale.
+ * ======================================== */
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+/* Semantic aliases — use these in components so intent is visible:
+ *   inline:  gap between siblings in a horizontal row (buttons, chips)
+ *   stack:   gap between vertically stacked fields/rows in a form
+ *   section: gap separating major sections or a section title from content
+ *   inset:   padding inside a panel, card, or bordered box */
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+/* ========================================
+ * CONTROL SIZING (ADR-150)
+ * ======================================== */
+/* Standard action control height (buttons). Compact strips (tab bars,
+ * status lines, chip rows) use the compact height. */
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+/* Default/minimum height for multi-line text inputs. */
+$ds-textarea-min-height: 5;
+
+/* ========================================
+ * MOTION (ADR-150)
+ * ========================================
+ * Transition durations. fast: hover/affordance feedback; medium: panel and
+ * visibility changes; slow: large layout shifts only. No duration outside
+ * this scale in new UI. */
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+/* ========================================
+ * OPACITY (ADR-150)
+ * ========================================
+ * Legacy de-emphasis only. The disabled state of action controls is NOT
+ * opacity: TASK-25822 measured opacity-on-dim-text compositing to 1.34:1
+ * (reads as absent, not unavailable) — disabled uses $ds-disabled-bg +
+ * $ds-text-disabled-readable with full opacity. */
+$ds-opacity-dim: 70%;
+
+/* ========================================
+ * TYPOGRAPHY EMPHASIS (ADR-150)
+ * ========================================
+ * TUI typography is weight/style, not size — one cell is one glyph.
+ * Scalar keywords only (Textual substitutes variables per token). */
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+/* ========================================
+ * COMPONENT STATE SURFACES (ADR-150)
+ * ========================================
+ * The resting/hover/disabled surface vocabulary for action controls.
+ * Focus is governed separately by the non-obscuring focus contract above
+ * ($ds-focus-bg/$ds-focus-fg) — hover must NOT reuse the focus surface. */
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+
+/* ========================================
+ * LAYOUT LAWS (ADR-150)
+ * ========================================
+ * App-shell geometry shared by every screen using the standard sidebar
+ * shell. Feature-specific geometry stays in its feature sheet until a
+ * second consumer appears, then it promotes here. */
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
 /* ===== MODULE: core/_reset.tcss ===== */
 /* ========================================
  * CORE: Reset/Normalize
@@ -557,11 +635,12 @@ Tabs:focus .-active {
 /* Generic .sidebar (used by #chat-left-sidebar and potentially others) */
 .sidebar {
     dock: left;
-    width: 25%; /* Reduced from 35% for better chat area space */
-    min-width: 35; /* Reduced from 45 */
-    max-width: 80; /* Maximum width (optional) */
+    /* Layout law (ADR-150): standard shell sidebar geometry is tokenized. */
+    width: $ds-sidebar-width; /* Reduced from 35% for better chat area space */
+    min-width: $ds-sidebar-min-width; /* Reduced from 45 */
+    max-width: $ds-sidebar-max-width; /* Maximum width (optional) */
     background: $boost;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
     border-right: solid $surface;
     height: 100%;
     overflow-y: auto;
@@ -971,9 +1050,9 @@ Button {
 
 /* Shared hover state with readable, non-obscuring cues */
 Button:hover {
-    background: $surface-lighten-1;
-    color: $text;
-    text-style: bold;
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+    text-style: $ds-text-strong;
 }
 
 /* Enhanced focus state with visible, non-obscuring cues */
@@ -1002,24 +1081,24 @@ Button.-style-flat:disabled {
     opacity: 100%;
     text-opacity: 100%;
     text-style: none;
-    background: $surface-darken-1;
+    background: $ds-disabled-bg;
     color: $ds-text-disabled-readable;
 }
 
 Button:disabled:hover {
-    background: $surface-darken-1;
+    background: $ds-disabled-bg;
     text-style: none;
 }
 
 .sidebar-toggle {
     width: 1fr;              /* Equal flexible width */
-    height: 3;
+    height: $ds-control-height;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;
-    background: $surface-darken-1;
-    color: $text;
+    background: $ds-disabled-bg;
+    color: $ds-text-primary;
 }
-.sidebar-toggle:hover { background: $surface; }
+.sidebar-toggle:hover { background: $ds-surface-raised; }
 
 /* ===== MODULE: components/_forms.tcss ===== */
 /* ========================================
@@ -1029,68 +1108,68 @@ Button:disabled:hover {
  * ======================================== */
 
 .form-label {
-    margin-bottom: 1;
-    text-style: bold;
+    margin-bottom: $ds-space-stack;
+    text-style: $ds-text-strong;
 }
 
 .form-section-title {
-    text-style: bold;
+    text-style: $ds-text-strong;
     color: $secondary;
-    margin: 2 0 1 0;
+    margin: $ds-space-section 0 $ds-space-stack 0;
     border-bottom: solid $primary-background;
-    padding-bottom: 1;
+    padding-bottom: $ds-space-stack;
 }
 
 .form-description {
-    color: $text-muted;
-    margin-bottom: 2;
-    text-style: italic;
+    color: $ds-text-muted;
+    margin-bottom: $ds-space-section;
+    text-style: $ds-text-emphasis;
 }
 
 .form-actions {
-    margin-top: 2;
+    margin-top: $ds-space-section;
     layout: horizontal;
     height: auto;
     align: center middle;
 }
 
 .form-actions Button {
-    margin: 0 1 0 0;
+    margin: 0 $ds-space-inline 0 0;
 }
 
 .provider-models-textarea {
-    height: 5;
-    margin-bottom: 1;
+    height: $ds-textarea-min-height;
+    margin-bottom: $ds-space-stack;
 }
 
 /* Standardized form components */
 .form-input {
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .form-textarea {
     width: 100%;
     height: auto;
-    min-height: 5;
-    margin-bottom: 1;
+    min-height: $ds-textarea-min-height;
+    margin-bottom: $ds-space-stack;
 }
 
 
 .form-checkbox {
-    margin: 1 0;
+    margin: $ds-space-stack 0;
 }
 
 /* Form layout helpers */
 .form-row {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .form-col {
     width: 1fr;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
 }
 
 .form-col:first-child {
@@ -1103,14 +1182,14 @@ Button:disabled:hover {
 
 /* Form sections */
 .form-section-collapsible {
-    margin: 1 0;
+    margin: $ds-space-stack 0;
 }
 
 /* Button groups */
 .button-group {
     width: 100%;
     height: auto;
-    margin: 2 0;
+    margin: $ds-space-section 0;
 }
 
 .button-group-left {
@@ -1126,29 +1205,29 @@ Button:disabled:hover {
 }
 
 .form-button {
-    margin: 0 1;
+    margin: 0 $ds-space-inline;
 }
 
 /* Status areas */
 .status-label {
-    margin-top: 2;
+    margin-top: $ds-space-section;
     margin-bottom: 0;
-    color: $text-muted;
+    color: $ds-text-muted;
 }
 
 .status-area {
     width: 100%;
-    background: $surface;
+    background: $ds-surface-raised;
     border: round $border;
-    padding: 1;
-    margin-top: 1;
+    padding: $ds-space-inset;
+    margin-top: $ds-space-stack;
 }
 
 /* Title/Author input fields fix */
 .title-author-row Input {
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 Input:focus,
@@ -1304,13 +1383,13 @@ Select:focus {
 ToggleButton:focus {
     outline: none;
     border: solid $ds-focus-accent;
-    background: $surface;
+    background: $ds-surface-raised;
 }
 
 ToggleButton.-textual-compact:focus {
     outline: none;
     border: none;
-    background: $surface;
+    background: $ds-surface-raised;
 }
 
 ToggleButton:focus > .toggle--label,
@@ -1328,11 +1407,11 @@ Switch:focus {
 
 /* New base media ingestion form styling */
 .form-input {
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
     border: solid $primary;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
 }
 
 .form-input:focus {
@@ -1348,13 +1427,13 @@ Switch:focus {
 }
 
 .form-select {
-    height: 3;
+    height: $ds-control-height;
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .form-checkbox {
-    margin: 1 0;
+    margin: $ds-space-stack 0;
 }
 
 /* Responsive metadata columns */
@@ -1362,7 +1441,7 @@ Switch:focus {
     layout: horizontal;
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .metadata-col {
@@ -1374,48 +1453,48 @@ Switch:focus {
 .mode-toggle-container {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
-    padding: 1;
+    margin-bottom: $ds-space-stack;
+    padding: $ds-space-inset;
 }
 
 .mode-title {
-    text-style: bold;
+    text-style: $ds-text-strong;
     color: $primary;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .mode-toggle {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 /* Essential container sections - CRITICAL for Input widget visibility */
 .essential-section {
     width: 100%;
     height: auto;        /* Allow container to size to content */
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-section;
+    padding: $ds-space-inset;
 }
 
 .media-options-section {
     width: 100%;
     height: auto;
-    margin-bottom: 2;
+    margin-bottom: $ds-space-section;
 }
 
 .options-section {
     width: 100%;
     height: auto;
-    margin-bottom: 2;
-    padding: 1;
+    margin-bottom: $ds-space-section;
+    padding: $ds-space-inset;
 }
 
 .process-button-section {
     width: 100%;
     height: auto;
-    margin-top: 2;
-    padding: 1;
+    margin-top: $ds-space-section;
+    padding: $ds-space-inset;
     align: center middle;
 }
 
@@ -1423,13 +1502,13 @@ Switch:focus {
 .time-range-row {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
 }
 
 .time-col {
     width: 1fr;
     height: auto;
-    padding: 0 1;
+    padding: 0 $ds-space-inline;
 }
 
 .time-col:first-child {
@@ -1456,11 +1535,11 @@ Switch:focus {
 /* Form textarea styling */
 .form-textarea {
     width: 100%;
-    min-height: 5;
+    min-height: $ds-textarea-min-height;
     max-height: 10;
-    margin-bottom: 1;
+    margin-bottom: $ds-space-stack;
     border: solid $primary;
-    padding: 1;
+    padding: $ds-space-inset;
 }
 
 .form-textarea:focus {
