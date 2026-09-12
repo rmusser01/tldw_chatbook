@@ -13425,3 +13425,10 @@ Six approval-card tests still reached a blocking provider-setup modal after the 
 ## Reusable workers change the test cleanup boundary
 
 **TASK-31511, 2026-09-12.** Replacing per-event webhook threads with a reusable worker left the old enabled-scheduler test passing while its module worker remained alive for 30 seconds after fake transports were restored. Independent review also found that polling a mutable current-thread field could return before the exact thread exited. The corrected tests inject an isolated worker, capture each started Thread under a delivery gate, and release/join those exact objects in finally before dependency restoration; all 25 webhook tests passed. When production resource lifetime grows, revisit existing test ownership, not only new tests.
+
+
+## Nested interpreter tests must inherit both dependencies and test isolation
+
+**TASK-31210 preparation, 2026-09-12.** Four workspace-executor tests failed because their temporary interpreter copied only `site.getsitepackages()` from a parent virtualenv whose dependencies came through a `.pth` file. Adding the missing dependency site in a test-only control exposed another defect: three harnesses replaced the environment with PATH and locale alone, losing the pytest-owned HOME/config boundary and reading the live config before returning an unrelated refusal. Preserving the owned config/data/keyring/offline values and installing the test network guard before product imports made all four original subprocess cases pass. The contained worker environment was unchanged.
+
+**What to do.** Inspect both the nested interpreter search path and the outer harness environment before running product imports. A parent pytest sandbox does not reach a subprocess whose explicit environment discards it; dependency repair can uncover that hidden leak. Preserve the worktree source-path assertion and keep test harness isolation separate from the production worker allowlist.
