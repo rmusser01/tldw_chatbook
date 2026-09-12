@@ -8511,6 +8511,22 @@ class ConsoleChatController:
             selection = replace(
                 selection, system_prompt=self._resolved_system_prompt(session_id)
             )
+        elif (
+            session is not None
+            and self.store._is_named_persona_session(session)
+            and isinstance(session.persona_system_template, str)
+            and session.persona_system_template.strip()
+        ):
+            # Persona sessions always carry settings, so without this override
+            # their sends would reuse the settings' last materialized
+            # projection. Swap in the per-turn re-expansion -- but only under
+            # exactly the conditions where `_resolved_system_prompt` returns a
+            # fresh expansion (named persona + trusted template). A
+            # template-less persona, or a resume whose name resolution failed
+            # (assistant_name=None), keeps the settings-derived prompt.
+            selection = replace(
+                selection, system_prompt=self._resolved_system_prompt(session_id)
+            )
         return selection
 
     def resolve_turn_execution_context(
