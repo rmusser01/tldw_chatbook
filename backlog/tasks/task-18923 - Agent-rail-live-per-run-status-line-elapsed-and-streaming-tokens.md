@@ -1,10 +1,11 @@
 ---
 id: TASK-18923
 title: 'Agent rail: live per-run status line (elapsed + streaming tokens)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-19 09:55'
-updated_date: '2026-08-19 09:55'
+updated_date: '2026-09-12 16:35'
 labels:
   - console
   - agents
@@ -31,11 +32,5 @@ Port of hermes-agent's live token-flow spinner idea (2026-08-19 hermes-release r
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no.
-ADR path: N/A.
-Reason: presentation over existing run/usage data; no storage or boundary change.
-
-1. Thread incremental per-turn usage (provider-reported where available) into the run status state
-2. Extend the 1/s rail tick to paint the live line for the primary run and live children
-3. Tests (cadence, teardown, labeling) + agent-runs-and-tools.md update
+ADR required: yes. ADR path: backlog/decisions/156-live-per-run-stream-usage-attribution.md. Reason: an additive AgentService-to-Console run-attribution and lifecycle contract. Execute Docs/superpowers/plans/2026-09-12-live-per-run-usage.md using Docs/superpowers/specs/2026-09-12-live-per-run-usage-design.md: exact run/call attribution and bounded scalar bridge, then existing-cadence UI rendering and documentation, with targeted tests and independent review. Final accounting and existing timers remain unchanged.
 <!-- SECTION:PLAN:END -->

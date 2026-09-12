@@ -115,6 +115,11 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-148](148-mcp-hub-rail-ia-and-responsive-triad.md) | Accepted | Split the agent tool catalog out of the built-in server rail row into its own Agent tools section, and stack the inspector as a bounded band below 120 columns. |
 | [ADR-150](150-mcp-hub-bulk-permission-actions.md) | Accepted | Add filter-scoped shift+space/C bulk permission actions executed as N ordinary profile-scoped set_tool_state writes. |
 | [ADR-149](149-offer-first-canvas-guide-and-inline-skill.md) | Accepted | Offer Canvas before proactive authoring; load bounded packaged guidance in the owning Console run and provide an optional trusted inline skill. |
+| [ADR-153](153-bounded-run-webhook-delivery.md) | Accepted | Reuse one lazy webhook delivery worker with finite admission, explicit best-effort drops and idle retirement. |
+| [ADR-154](154-agent-denial-streak-boundary.md) | Accepted | Count authoritative tool denials per run and stop at a coherent completed-batch boundary. |
+| [ADR-155](155-agent-worktree-recovery.md) | Accepted | Recover recorded agent work through exact consent, pinned operations and durable physical-owner proof; retain baseline checkouts after discard. |
+| [ADR-156](156-live-per-run-stream-usage-attribution.md) | Accepted | Attribute bounded current-call usage to each live run with explicit provider/local provenance and existing UI cadence. |
+| [ADR-157](157-per-definition-child-wall-time-caps.md) | Accepted | Allow definitions to tighten child time limits while preserving uncapped identity and capped continuation ceilings. |
 
 ## Historical Decision Material
 
