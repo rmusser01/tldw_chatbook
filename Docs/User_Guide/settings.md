@@ -361,36 +361,33 @@ converted endpoint will fail authentication.
 
 Application-wide speech and text-to-speech defaults — which TTS provider
 speaks by default, with what model, voice, output format, and speed — plus
-per-provider setup. The pane opens with its scope in a banner: "You are
-editing application-wide Speech & TTS defaults. The Speech Studio can keep
-separate Studio preferences without changing these values.", and an **Open
-Speech Lab** button, because this pane deliberately does *not* talk to any
-server: "Settings reuses accepted in-memory observations only. Open Speech
-Lab to test the server or refresh models and voices." Right below that
-button, a note points at the two surfaces this pane does not manage: "Voice
-profiles are managed in Lab > Speech > Voice Profiles — open Speech Lab,
-above, to get there. Per-character voices are assigned in the Roleplay
-character editor's Voice & Speech section, not here." Ordinary **Save**
-"validates and persists locally. Use Speech Lab for connection tests,
-discovery, generation, and playback."
+per-provider setup. The pane opens with a two-line scope banner — "Editing
+application-wide Speech & TTS defaults — Speech Studio preferences stay
+separate." and "Voice profiles: Speech Lab (open it from the actions below).
+Per-character voices: the Roleplay character editor." — because this pane
+deliberately does *not* talk to any server: "Settings reuses accepted
+in-memory observations only. Open Speech Lab to test the server or refresh
+models and voices." Ordinary **Save** "validates and persists locally. Use
+Speech Lab for connection tests, discovery, generation, and playback."
 
 | Card | What's in it |
 |---|---|
-| **Global defaults** | A status line ("Global default selection: … — effective source …"), the default voice-profile row, **Default TTS Provider** (audio.cpp, OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, AllTalk), model policy (**Exact** with an "Exact model ID" box / **First available**), voice policy (**Exact** / **Server default**), **Output format** (MP3 / Opus / AAC / FLAC / WAV), and **Speed** ("0.25 - 4.0"). Capability limits are stated inline — "audio.cpp requires WAV output and speed 1.0." — and validated before Save. |
-| **Provider setup** | A **Configure Provider** picker for editing any provider's setup without switching the default ("Configure Provider does not change the Default TTS Provider."). Credentials get Set / Replace / Clear dialogs: the editor "starts empty", stores "a local config secret; an environment variable is safer and more portable", and Clear "removes only the local-config value. It cannot change a process environment variable." |
+| **Global defaults** | A status line ("Default voice setup: …"), the default voice-profile row, **Default TTS provider** (audio.cpp, OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, AllTalk), model policy (**Exact** / **First available**), **Model value** — a dropdown of the provider's known models plus **Custom…** for an exact ID (a saved unknown ID stays selectable as "(custom)"), voice policy (**Exact** / **Server default**), **Voice value** — a dropdown of the provider's known labeled voices plus **Custom…**, with a **Browse in Speech Lab** button beside it to preview voices first, **Output format** (MP3 / Opus / AAC / FLAC / WAV), and **Speed (0.25-4.0)**. Capability limits are stated inline — "audio.cpp requires WAV output and speed 1.0." — and validated before Save. |
+| **Provider setup** | A **Configure provider** picker for editing any provider's setup without switching the default ("Configure provider does not change the Default TTS provider."), plus a "Current status: …" readiness line. Local providers (Kokoro, Chatterbox, Higgs) open with their install/readiness fact inline — "Local Kokoro: not installed — install the extra 'tldw_chatbook[local_tts]' and restart Chatbook first." — and the Kokoro form names its model files ("kokoro-v0_19.onnx (~300 MB) plus voices.json") with a pointer to the download utility. Credentials get Set / Replace / Clear dialogs: the editor "starts empty", stores "a local config secret; an environment variable is safer and more portable", and Clear "removes only the local-config value. It cannot change a process environment variable." Chatterbox and Higgs group their fields into collapsible sections (Compute and generation / Voice and processing / Streaming, and Model and voice / Compute / Generation). |
 | **Configuration inspector** | Read-out of the selected setup and where each value comes from ("Selected provider setup source: …"). |
 | **Realtime engine** | "Optional low-latency voice engine for the Console's hands-free loop (Ctrl+Shift+H)." — a switch plus its engine fields; off means the record → transcribe → reply → speak pipeline is used as before. |
 
-Buttons: **Save**, **Revert**, **Restore Non-secret Defaults** ("Non-secret
-defaults restored in the draft; choose Save to persist them." — credentials
-are left alone), **Open Speech Lab**.
+Buttons: **Save**, **Revert**, **Restore Non-secret Defaults** (draft-only;
+its tooltip and the result line name exactly what resets — global defaults
+and the selected provider, with saved credentials and environment-owned
+values untouched), **Open Speech Lab**.
 
 **This is the one draft category that will not let you walk away silently.**
 Leaving Speech & TTS with unsaved edits raises "Unsaved global Speech & TTS
 settings — Save these application-wide changes before continuing, or discard
 them?" with **Cancel** / **Discard and continue** / **Save and continue** —
-the draft is resolved, not kept (see Quirks: the State banner still claims
-otherwise, task-2708).
+the draft is resolved, not kept, and the State banner says so: "leaving
+Speech & TTS resolves this draft: save or discard first" (task-2708).
 
 ### Interface — Appearance
 
@@ -880,11 +877,6 @@ not open an editor.
   uses its own **Validate Raw TOML**, **Save Raw TOML**, and **Revert Raw TOML** controls. (Speech & TTS is
   the exception — it never leaves a **\*** behind, because leaving it forces
   the save/discard choice.)
-- **Speech & TTS's State banner promises what the category won't do.** While
-  its draft is dirty the shared banner reads "…switching categories keeps this
-  draft." — but leaving Speech & TTS raises "Unsaved global Speech & TTS
-  settings" and the draft is saved or discarded, never kept (backlog
-  task-2708).
 - **The Scope Inspector looks truncated.** Scroll it — "▼ more — scroll the
   inspector" at the bottom means there is more below.
 

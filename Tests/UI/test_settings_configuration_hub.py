@@ -12004,6 +12004,23 @@ def test_state_banner_dirty_branch_keeps_priority():
     )
 
 
+def test_speech_tts_dirty_banner_names_leave_resolution():
+    """Speech & TTS resolves its draft through the leave modal (task-2708),
+    so its dirty banner must not promise the generic 'switching categories
+    keeps this draft' contract that the other draft categories honor."""
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen._category_has_unsaved_changes = lambda category: (
+        category is SettingsCategoryId.SPEECH_TTS
+    )
+    text = screen._category_state_banner_text(SettingsCategoryId.SPEECH_TTS)
+    assert text == (
+        "State: Unsaved changes | Save (s) or Revert (r) — leaving "
+        "Speech & TTS resolves this draft: save or discard first."
+    )
+    assert "switching categories keeps this draft" not in text
+
+
 def test_workspaces_banner_names_reversal_paths():
     """Workspaces applies immediately; the banner says how each action is
     walked back instead of leaving 'no draft' unexplained (task-1717)."""
