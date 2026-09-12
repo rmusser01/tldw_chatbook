@@ -3,11 +3,11 @@ id: TASK-18601
 title: >-
   Agent run step log is a single JSON blob column and does not scale to the
   raised step budget
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-18 20:30'
-updated_date: '2026-09-12 17:35'
+updated_date: '2026-09-12 17:43'
 labels:
   - agents
   - database
@@ -41,9 +41,9 @@ which is why TASK-18600 shipped the number as specified instead of lowering it.
 <!-- AC:BEGIN -->
 - [x] #1 A run with 25000 recorded steps persists and re-opens without a user-visible stall in the run-log viewer.
 - [x] #2 Reading a run's metadata (status, budget, result) does not require parsing its full step log.
-- [ ] #3 The run-log viewer can render a long run without holding every step in memory at once.
+- [x] #3 The run-log viewer can render a long run without holding every step in memory at once.
 - [x] #4 Existing runs stored in the current blob format remain readable after the change.
-- [ ] #5 When an expanded rail checks a run before its first complete log record exists, the log action becomes available after a later append through bounded off-thread retries; a still-admitted probe is not restarted, cancelled generations cannot publish stale results, and collapsed steady-state ticks perform no log I/O.
+- [x] #5 When an expanded rail checks a run before its first complete log record exists, the log action becomes available after a later append through bounded off-thread retries; a still-admitted probe is not restarted, cancelled generations cannot publish stale results, and collapsed steady-state ticks perform no log I/O.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -134,4 +134,16 @@ bypassed the DB API and read `agent_runs` with raw SQL, so it under-reported
 steps once they moved. A pre-existing test-only bug -- fixed here, but worth
 noting as a pattern: a test that reaches around its own API stops testing the
 API and starts pinning the storage layout.
+
+### Part B completed (2026-09-12)
+
+The Console viewer now pages the actual lossless filesystem segments, preserving primary-tree and exact-child filtering. Each page contains at most 100 fragments and 256,000 content bytes; large UTF-8 records continue without truncation. The modal retains one current page and at most 256 previous cursors. First/Previous/Next run through workers; errors retain the last page and Close/Escape remain usable during reads. Empty advancing scan pages remain navigable.
+
+Target and parent ownership lookups use metadata-only reads on workers. Every page reacquires the owning scratch authority; neither a persisted ID nor a cursor recreates access. UI selection checks use existing in-memory turn/run identity and the attached runtime, without lazy initialization or database work. Availability retries negatives after one second on existing expanded ticks, never restarts a still-admitted probe, and settles stale/cancelled generations safely. Collapsed steady-state ticks perform no log I/O. No timer, migration, dependency or storage-format change was added. Existing ADR-082 applies.
+
+Verification: reader/codec/search/bridge selection passed 119 tests, including exact reconstruction of a 3,000,000-byte UTF-8 record, sparse segments and instrumented read budgets. The final integration-fix selection passed 61 tests (30 deselected) across Tests/Chat/test_console_agent_tool_result_cap.py and the log-related Tests/UI/test_console_agent_rail.py / test_console_run_log_paging.py nodes. It forbids full step hydration and covers primary/child later pages, queued/running cancellation, stale-target return, slow metadata lookup, absent-runtime behavior, history eviction and native-cell layout at 80x24/160x48. The earlier log-modal/dismissal scope passed 8 tests and CSS/token guards passed 6. These selections overlap and are not an aggregate unique test count. Scoped Ruff/format/whitespace checks pass without added diagnostics; the reviewed production diagnostic inventory reports no drift.
+
+Implementation commits: dbd04f9e5e, a8c4c1972e, 2174c927ac and a70687e176. Both independent task reviews and their scoped fix re-reviews are clean. The combined reader-to-bridge-to-modal review checked bounded framing, metadata-only ownership, per-page leases and cursor-only retention. User guide and design/plan document final behavior. Original Part A measurements and checked criteria above remain historical evidence, not a newly repeated database benchmark.
+
+Limits: load_run_log_text remains an explicitly unbounded compatibility API for a concrete non-viewer skill redaction consumer; production viewing uses pages. Verification used isolated real SQLite/files and mounted Textual with deterministic providers, not a live provider or full repository sweep. Three pre-existing Tests/UI/test_console_modal_dismissal.py inventory assertions remain: test_console_modal_launch_declarations_match_runtime_construction, test_console_modal_inventory_matches_runtime_ast_and_transitive_launches, and test_task2_modal_contract_table_is_complete_and_adopted. Their exact failures are unchanged with original product-source controls and branch-base declaration/table files; actual log-modal dismissal passes. Existing RequestsDependencyWarning and foreign pytest garbage-directory cleanup warnings remain visible.
 <!-- SECTION:NOTES:END -->
