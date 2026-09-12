@@ -29,6 +29,7 @@ from tldw_chatbook.Agents.agent_models import (
     validate_agent_definition,
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
+from tldw_chatbook.Chat.sampling_params import params_to_dict
 from .base_db import BaseDB
 if TYPE_CHECKING:
     from .automatic_work import AutomaticWorkLedger
@@ -214,7 +215,14 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 18
+    # Numbering note (v19): the routing snapshot was planned as v16 when this
+    # branch forked (ADR-147, TASK-32477); dev landed its own v16
+    # (budget_tokens), v17 (automatic_work), and v18 (runtime_owner) via
+    # #2641 in the meantime, so the routing migration renumbers to v19 and
+    # chains after v18. The guarded ALTERs below are idempotent either way,
+    # and the from-now-on contract only requires the constant to equal the
+    # HIGHEST recorded version.
+    _CURRENT_SCHEMA_VERSION = 19
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -401,7 +409,20 @@ class AgentRunsDB(BaseDB):
                     budget_tokens INTEGER CHECK (
                         budget_tokens IS NULL OR
                         (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)
-                    )
+                    ),
+                    -- v19 (ADR-147, TASK-32477; planned as v16, renumbered
+                    -- after dev landed its own v16-v18 via #2641): the
+                    -- resolved-target snapshot -- where this run's agent
+                    -- ACTUALLY went after preset routing resolved
+                    -- (provider, model, base_url, and the merged params as
+                    -- a raw JSON object string). Written once at spawn
+                    -- (Task 6); read back verbatim on resume/continuation
+                    -- (Task 8). NULL for every pre-v19 row and for runs
+                    -- spawned without routing resolution.
+                    resolved_provider TEXT,
+                    resolved_model TEXT,
+                    resolved_base_url TEXT,
+                    resolved_params_json TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -483,6 +504,12 @@ class AgentRunsDB(BaseDB):
                     instructions TEXT NOT NULL DEFAULT '',
                     tool_allowlist TEXT NOT NULL DEFAULT '[]',
                     model TEXT NOT NULL DEFAULT '',
+                    -- v16 (ADR-147, TASK-32477): preset routing -- the
+                    -- provider this definition pins ('' = inherit the
+                    -- caller's provider at spawn) and its sampling-param
+                    -- overrides as a JSON object string ('{}' = none).
+                    provider TEXT NOT NULL DEFAULT '',
+                    params_json TEXT NOT NULL DEFAULT '{}',
                     enabled INTEGER NOT NULL DEFAULT 1,
                     deleted INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
@@ -703,7 +730,39 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
                 )
             if "diff_line_text" not in note_columns:
-                conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
+                )
+            # v18->v19 (ADR-147, TASK-32477): preset routing fields on
+            # agent_definitions; resolved-target snapshot on agent_runs.
+            # Same idempotent-ALTER mechanism as every column above.
+            # (Numbering: planned as v16; renumbered after dev landed its
+            # own v16-v18 via #2641 -- see the note at
+            # _CURRENT_SCHEMA_VERSION.)
+            definition_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_definitions)"
+                ).fetchall()
+            }
+            if "provider" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN provider "
+                    "TEXT NOT NULL DEFAULT ''"
+                )
+            if "params_json" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN params_json "
+                    "TEXT NOT NULL DEFAULT '{}'"
+                )
+            for column in (
+                "resolved_provider", "resolved_model",
+                "resolved_base_url", "resolved_params_json",
+            ):
+                if column not in existing_columns:
+                    conn.execute(
+                        f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT"
+                    )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -750,6 +809,10 @@ class AgentRunsDB(BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (16)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (17)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (18)")
+            # v19 (ADR-147, TASK-32477): agent_definitions provider/params_json
+            # + agent_runs resolved-target snapshot (planned as v16;
+            # renumbered when dev landed its own v16-v18 via #2641).
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (19)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -1675,6 +1738,10 @@ class AgentRunsDB(BaseDB):
         spawn_event_id: str | None = None,
         run_id: str | None = None,
         work_chain_id: str | None = None,
+        resolved_provider: str | None = None,
+        resolved_model: str | None = None,
+        resolved_base_url: str | None = None,
+        resolved_params_json: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1706,6 +1773,15 @@ class AgentRunsDB(BaseDB):
             run_id: Preallocated stable identity; generated when omitted.
             work_chain_id: Immutable accepted-work lineage. Children inherit
                 their parent's chain when omitted; legacy roots remain NULL.
+            resolved_provider: v19 (ADR-147, TASK-32477): the provider the
+                spawn actually routed to after preset resolution; ``None``
+                when routing was not resolved at spawn time.
+            resolved_model: The resolved model id; ``None`` likewise.
+            resolved_base_url: The resolved endpoint base URL; ``None``
+                likewise.
+            resolved_params_json: The resolved sampling params as a raw
+                JSON object string, stored verbatim for resume to reuse;
+                ``None`` likewise.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -1737,8 +1813,10 @@ class AgentRunsDB(BaseDB):
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
                     assistant_message_id, agent_definition, definition_fingerprint,
-                    resumed_from_run_id, spawn_event_id, work_chain_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    resumed_from_run_id, spawn_event_id, work_chain_id,
+                    resolved_provider, resolved_model,
+                    resolved_base_url, resolved_params_json)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1754,6 +1832,10 @@ class AgentRunsDB(BaseDB):
                     resumed_from_run_id,
                     spawn_event_id,
                     work_chain_id,
+                    resolved_provider,
+                    resolved_model,
+                    resolved_base_url,
+                    resolved_params_json,
                 ),
             )
         return run_id
@@ -1774,8 +1856,9 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     """INSERT INTO agent_definitions
                        (id, name, description, instructions, tool_allowlist,
-                        model, enabled, deleted, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                        model, provider, params_json, enabled, deleted,
+                        created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
                     (
                         definition_id,
                         defn.name,
@@ -1783,6 +1866,8 @@ class AgentRunsDB(BaseDB):
                         defn.instructions,
                         json.dumps(list(defn.tool_allowlist)),
                         defn.model,
+                        defn.provider,
+                        json.dumps(params_to_dict(defn.params)),
                         1 if defn.enabled else 0,
                         now,
                         now,
@@ -1812,8 +1897,8 @@ class AgentRunsDB(BaseDB):
                 cursor = conn.execute(
                     """UPDATE agent_definitions
                        SET name = ?, description = ?, instructions = ?,
-                           tool_allowlist = ?, model = ?, enabled = ?,
-                           updated_at = ?
+                           tool_allowlist = ?, model = ?, provider = ?,
+                           params_json = ?, enabled = ?, updated_at = ?
                        WHERE id = ? AND deleted = 0""",
                     (
                         defn.name,
@@ -1821,6 +1906,8 @@ class AgentRunsDB(BaseDB):
                         defn.instructions,
                         json.dumps(list(defn.tool_allowlist)),
                         defn.model,
+                        defn.provider,
+                        json.dumps(params_to_dict(defn.params)),
                         1 if defn.enabled else 0,
                         _now_iso(),
                         definition_id,
@@ -1841,6 +1928,11 @@ class AgentRunsDB(BaseDB):
     def _definition_row_to_dict(self, row: sqlite3.Row) -> dict:
         data = {key: row[key] for key in row.keys()}
         data["tool_allowlist"] = json.loads(data["tool_allowlist"] or "[]")
+        # v16 (ADR-147, TASK-32477): hand ``definition_from_row`` a decoded
+        # params mapping under the ``params`` key -- the same contract
+        # ``tool_allowlist`` above follows (JSON text in, decoded value
+        # out). ``provider`` needs no decoding and flows through as-is.
+        data["params"] = json.loads(data.pop("params_json") or "{}")
         data.pop("deleted", None)
         return data
 

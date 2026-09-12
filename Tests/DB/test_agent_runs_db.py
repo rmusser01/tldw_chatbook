@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import AgentDefinition
+from tldw_chatbook.Agents.agent_models import AgentDefinition, definition_from_row
 from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
 from tldw_chatbook.DB.AgentRuns_DB import (
     AgentRunsDB,
@@ -1424,7 +1424,7 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert "spawn_event_id" in columns
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 19
     parent = first.create_run(conversation_id="c", agent_kind="primary")
     child = first.create_run(
         conversation_id="c",
@@ -1480,7 +1480,7 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
     assert "CHECK(transition_revision > 0)" in table_sql
     assert "CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL)" in table_sql
     assert "idx_console_activity_receipts_unseen" in indexes
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 18
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 19
     assert database.receipt_capability_available is True
 
 
@@ -1580,7 +1580,7 @@ def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
             is None
         )
         assert (
-            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 19
         )
         assert (
             conn.execute("SELECT 1 FROM schema_version WHERE version = 15").fetchone()
@@ -1754,3 +1754,182 @@ def test_receipt_operations_raise_focused_error_when_capability_is_unavailable(
 
     with pytest.raises(ConsoleActivityReceiptsUnavailable):
         database.list_unseen_console_activity()
+
+
+# --- Task 4 (ADR-147, TASK-32477): schema v19 -- preset routing columns on
+# agent_definitions, resolved-target snapshot on agent_runs. ---
+
+
+def test_schema_v19_definition_columns(db):
+    with db.connection() as conn:
+        cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(agent_definitions)"
+            ).fetchall()
+        }
+    assert {"provider", "params_json"} <= cols
+
+
+def test_schema_v19_run_snapshot_columns(db):
+    with db.connection() as conn:
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+    assert {
+        "resolved_provider",
+        "resolved_model",
+        "resolved_base_url",
+        "resolved_params_json",
+    } <= cols
+
+
+def test_definition_round_trip_with_routing(db):
+    defn = AgentDefinition(
+        name="implementer",
+        instructions="Implement the task.",
+        provider="custom-ep:qwen-local",
+        model="qwen3.8-27b",
+        params=(("temperature", 0.2),),
+    )
+    defn_id = db.create_agent_definition(defn)
+    # Row dicts carry the Task 3 contract: provider verbatim, params
+    # JSON-decoded (same contract as tool_allowlist).
+    loaded = db.get_agent_definition(defn_id)
+    assert loaded["provider"] == "custom-ep:qwen-local"
+    assert loaded["params"] == {"temperature": 0.2}
+    rebuilt = definition_from_row(loaded)
+    assert rebuilt.provider == "custom-ep:qwen-local"
+    assert rebuilt.params == (("temperature", 0.2),)
+
+
+def test_definition_legacy_defaults(db):
+    defn_id = db.create_agent_definition(
+        AgentDefinition(name="reader", instructions="Read files.")
+    )
+    loaded = db.get_agent_definition(defn_id)
+    assert loaded["provider"] == "" and loaded["params"] == {}
+    rebuilt = definition_from_row(loaded)
+    assert rebuilt.provider == "" and rebuilt.params == ()
+
+
+def test_run_snapshot_persists(db):
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_model="qwen3.8-27b",
+        resolved_base_url="http://127.0.0.1:8080",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    row = db.get_run(run_id)
+    assert row["resolved_provider"] == "custom-ep:qwen-local"
+    assert row["resolved_model"] == "qwen3.8-27b"
+    assert row["resolved_base_url"] == "http://127.0.0.1:8080"
+    assert row["resolved_params_json"] == '{"temperature": 0.2}'
+
+
+def test_run_snapshot_defaults_null(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    row = db.get_run(run_id)
+    assert row["resolved_provider"] is None
+    assert row["resolved_model"] is None
+    assert row["resolved_base_url"] is None
+    assert row["resolved_params_json"] is None
+
+
+#: The pre-v19 shape: both tables as the v12-era DDL left them -- every
+#: column EXCEPT the v19 routing/snapshot ones (and the v13-v18 columns
+#: the intervening dev migrations add, which this test does not assert on).
+_LEGACY_PRE_V19_DDL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        parent_run_id TEXT,
+        agent_kind TEXT NOT NULL,
+        task TEXT,
+        status TEXT NOT NULL,
+        steps TEXT NOT NULL DEFAULT '[]',
+        result TEXT,
+        budget TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        assistant_message_id TEXT,
+        agent_definition TEXT,
+        definition_fingerprint TEXT,
+        wake_delivered_at TEXT,
+        resumed_from_run_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_definitions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        instructions TEXT NOT NULL DEFAULT '',
+        tool_allowlist TEXT NOT NULL DEFAULT '[]',
+        model TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+"""
+
+
+def test_pre_v19_db_gains_v19_columns_on_open(tmp_path):
+    """ALTER path (the two PRAGMA tests above cover the fresh-DDL path): a
+    pre-v19 file gains all six columns via the guarded ALTERs on open, and
+    writes through them work."""
+    path = tmp_path / "legacy_pre_v19.db"
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(_LEGACY_PRE_V19_DDL)
+        conn.commit()
+    finally:
+        conn.close()
+
+    db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
+    with db.connection() as conn:
+        run_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+        }
+        def_cols = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(agent_definitions)"
+            ).fetchall()
+        }
+    assert {
+        "resolved_provider",
+        "resolved_model",
+        "resolved_base_url",
+        "resolved_params_json",
+    } <= run_cols
+    assert {"provider", "params_json"} <= def_cols
+
+    run_id = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resolved_provider="custom-ep:qwen-local",
+        resolved_params_json='{"temperature": 0.2}',
+    )
+    assert db.get_run(run_id)["resolved_provider"] == "custom-ep:qwen-local"
+    defn_id = db.create_agent_definition(
+        AgentDefinition(
+            name="implementer",
+            instructions="Implement the task.",
+            provider="custom-ep:qwen-local",
+            params=(("temperature", 0.2),),
+        )
+    )
+    assert db.get_agent_definition(defn_id)["params"] == {"temperature": 0.2}
