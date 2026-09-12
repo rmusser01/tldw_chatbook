@@ -6382,6 +6382,24 @@ class ConsoleAgentBridge:
         run_hooks_engine = (
             self._ensure_run_hooks() if self._ensure_run_hooks is not None else None
         )
+        # run-hooks (Task 6): layer the PreToolUse deny-only wrapper OUTSIDE
+        # this turn's whole review chain (the change-review baseline gate
+        # above, then the caller's permission-store round) -- spec §5: a
+        # hook deny short-circuits before the permission store, and a
+        # denied call never reaches the approval round. wrap_review consults
+        # config at wrap time and passes the callable through unchanged when
+        # no PreToolUse hooks exist, so wrapping per-turn keeps a live
+        # [hooks] edit effective on the next run (R17) while the
+        # unconfigured path stays byte-identical. Every run this service
+        # owns is covered: `_run_one` binds this same callable around both
+        # the primary run and each fleet child (with the FIRING run's id),
+        # so children's tool batches pass the hooks too. `None` review (a
+        # caller with no review chain) passes through unwrapped, exactly as
+        # before -- wrap_review has no None-inner contract.
+        if run_hooks_engine is not None and review_tool_calls is not None:
+            review_tool_calls = run_hooks_engine.wrap_review(
+                review_tool_calls, session_id=session_id
+            )
             if boundary_failed:
                 change_handle = None
                 successor_claim = None

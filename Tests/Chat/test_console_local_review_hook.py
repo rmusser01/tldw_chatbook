@@ -1587,3 +1587,187 @@ def test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial(tmp_path
     assert isinstance(seen[0], ApprovalDecisions)
     assert seen[0].unresolved_keys == frozenset({"call-1"})
     assert denials == [], "a headless fail-closed deny was audited as the user's"
+
+
+# -- PreToolUse hooks around the review chain (console run hooks Task 6) --------
+
+
+def _deny_fs_tools_engine(tmp_path):
+    """A RunHooksEngine with one exit-2 PreToolUse hook matching ``fs_*``.
+
+    The stub command is deliberately a real ``sys.executable`` process (spec
+    §5's protocol is subprocess-based; no in-process fakes here), and the
+    exit code is the spec's deny shorthand (exit 2, no JSON stdout).
+    """
+    import sys as _sys
+
+    from tldw_chatbook.Agents.run_hooks import HookSpec, RunHooksConfig, RunHooksEngine
+
+    return RunHooksEngine(
+        lambda: RunHooksConfig(
+            enabled=True,
+            hooks=(
+                HookSpec(
+                    "PreToolUse",
+                    (_sys.executable, "-c", "raise SystemExit(2)"),
+                    matcher="fs_*",
+                ),
+            ),
+        ),
+        lambda: str(tmp_path),
+    )
+
+
+def test_pretooluse_hook_denies_before_permission_store(tmp_path):
+    """A configured exit-2 PreToolUse hook denies the matched call and the
+    approval round never carries it (deny-only, spec §5).
+
+    Composition-level: the engine's wrap_review layers the real controller
+    review hook (build_local_review_hook) exactly the way the bridge does --
+    the matched ``fs_*`` call comes back as a namespaced ``hook: `` refusal
+    without ever entering the request_approvals round, while the
+    non-matching tool runs the normal ask -> approve -> proceed chain.
+    """
+    engine = _deny_fs_tools_engine(tmp_path)
+    p = provider(ASK, tmp_path)
+    rounds = []
+
+    def approvals(pending):
+        rounds.append([call.tool_name for call in pending])
+        return {call.tool_name: "approve_once" for call in pending}
+
+    wrapped = engine.wrap_review(
+        build_local_review_hook(p, approvals), session_id="session-1"
+    )
+    verdicts = wrapped(
+        [
+            ToolCall(name="fs_list", args={"path": "."}),
+            ToolCall(name="git_status", args={"path": "."}),
+        ],
+        RUN,
+    )
+    assert verdicts["fs_list"] != "proceed"
+    assert verdicts["fs_list"].startswith("hook: ")
+    assert verdicts["git_status"] == "proceed"
+    # ONE approval round trip, carrying only the non-matching call: the
+    # hook-denied call never reaches the permission store.
+    assert rounds == [["git_status"]]
+
+
+def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
+    """Task 6 bridge wiring: run_reply must wrap the caller's review chain
+    with the engine's PreToolUse layer when the bridge was built with an
+    ``ensure_run_hooks`` accessor.
+
+    Verified end-to-end through a real ``run_reply`` (scripted gateway, real
+    LocalToolProvider + real build_local_review_hook as the caller-supplied
+    chain): the matched ``fs_read`` call is refused with a namespaced
+    ``hook: `` verdict and the approval round only ever carries the
+    non-matching ``git_status`` call. Without the wrap, the batch arrives at
+    the review chain whole and no ``hook: `` refusal exists.
+    """
+    import json as _json
+
+    from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT
+    from tldw_chatbook.Agents.local_tool_provider import _default_specs
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderResolution,
+        ProviderToolCalls,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    engine = _deny_fs_tools_engine(tmp_path)
+
+    class _ScriptedGateway:
+        """Streams one scripted chunk-list per model call (fakes only)."""
+
+        def __init__(self, scripts):
+            self._scripts = list(scripts)
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            chunks = self._scripts[self.calls]
+            self.calls += 1
+            for chunk in chunks:
+                yield chunk
+
+    def _native_batch(*pairs):
+        return ProviderToolCalls(
+            tool_calls=tuple(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": _json.dumps(args)},
+                }
+                for name, args, call_id in pairs
+            )
+        )
+
+    gateway = _ScriptedGateway(
+        [
+            [
+                _native_batch(
+                    ("fs_read", {"path": "."}, "read-1"),
+                    ("git_status", {"path": "."}, "git-1"),
+                )
+            ],
+            ["done."],
+        ]
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    local = LocalToolProvider(
+        workspace_root=tmp_path,
+        specs=[
+            spec
+            for spec in _default_specs(tmp_path)
+            if spec.name in {"fs_read", "git_status"}
+        ],
+        resolve_state=lambda _hub: ASK,
+    )
+    rounds = []
+
+    def approvals(pending):
+        rounds.append([call.tool_name for call in pending])
+        return {call.tool_name: "approve_once" for call in pending}
+
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        ensure_run_hooks=lambda: engine,
+    )
+    _run_id, outcome = bridge.run_reply(
+        conversation_id="conv-1",
+        session_id=session.id,
+        resolution=ConsoleProviderResolution(
+            provider="Groq", execution_key="groq", base_url="", model=None, ready=True
+        ),
+        assistant_message_id=assistant.id,
+        model="test-model",
+        session_system_prompt="",
+        agent_messages=[{"role": "user", "content": "hi"}],
+        should_cancel=lambda: False,
+        local_provider=local,
+        review_tool_calls=build_local_review_hook(local, approvals),
+    )
+
+    assert outcome.status == "done", outcome.steps
+    # The hook denied fs_read BEFORE the review chain: the one approval
+    # round carried only the non-matching call.
+    assert rounds == [["git_status"]]
+    results = {
+        step.tool_name: step.result
+        for step in outcome.steps
+        if step.kind == STEP_TOOL_RESULT
+    }
+    assert results["fs_read"].startswith("hook: ")
+    assert "git_status" in results  # ran the normal chain and dispatched
