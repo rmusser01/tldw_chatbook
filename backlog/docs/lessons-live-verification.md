@@ -2657,3 +2657,29 @@ Put helper scripts in a per-task subdirectory (`scratchpad/wave3/tools-<group>/`
 and import them by that absolute path. A `NameError` for a symbol you know you
 defined means you are reading a different file, the same way an
 `AttributeError` for a symbol your feature defines means the wrong tree.
+
+## A provider can satisfy the response envelope and still ignore the task (2026-09-11)
+
+**What happened.** Live-verifying a new default "Improve My Prompt" optimizer
+template (four-section Situation/Task/Objective/Knowledge structure), the
+end-to-end flow looked green: real DeepSeek call, valid `prompt_rewrite` JSON,
+draft replaced, modal closed, Undo armed. But the rewritten prompt was a lazy
+near-copy ("write a short poem about tea" -> "Write a short poem about tea.").
+The suite was green; the strict-JSON envelope parse was green; the improvement
+was useless. `console_auxiliary_attempts` was empty, so the DB could not
+confirm the call — only replaying the EXACT app-built payload via curl
+reproduced it. Both deepseek-chat and deepseek-reasoner returned the near-copy.
+The same model given the template as a plain user message produced the full
+four sections, so the packaging (system role + untrusted-JSON payload +
+envelope instruction LAST) was the cause: the terminal "JSON object only"
+instruction is what the model recency-anchors on. Appending a final
+task-re-anchor line ("Now apply the full transformation defined above... never
+a minor edit, summary, or near-copy") restored full compliance on both models.
+
+**What to do.** For structured-output optimizer prompts, verify content
+quality, not just envelope validity: a schema-conformant response can still
+be a no-op. Put the output-contract instruction BEFORE the final task
+directive, and end the system prompt with a recency anchor that names the
+required output shape and forbids near-copies. When the DB has no attempt
+row, replay the exact request payload against the provider before believing
+any UI state.
