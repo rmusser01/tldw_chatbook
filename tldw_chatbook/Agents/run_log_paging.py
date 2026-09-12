@@ -175,8 +175,12 @@ def _load_page(
                 end = body_start + size
                 if end >= file_size:
                     diagnostics.add("incomplete_record")
-                    # A later segment can still contain complete records.
-                    break
+                    # An impossible length may be corruption before a later
+                    # complete frame. Recover with the same bounded scanner
+                    # used for torn records. A genuine append tail yields no
+                    # fragment; reload its original page cursor after append.
+                    current = RunLogPageCursor(index, body_start)
+                    continue
                 file.seek(end)
                 terminator = file.read(1)
                 scanned += 1

@@ -191,9 +191,14 @@ def test_incomplete_record_can_be_read_after_append(tmp_path):
     path = tmp_path / "logs.0001.txt"
     complete = encode_record(record(content="😀" * 100_000))
     path.write_bytes(complete[:-1])
-    assert not pages(tmp_path)[0].slices
+    from tldw_chatbook.Agents.run_log_paging import load_record_page
+
+    pending = load_record_page(tmp_path)
+    assert not pending.slices
     with path.open("ab") as file:
         file.write(b"\n")
+    retried = load_record_page(tmp_path, cursor=pending.start_cursor)
+    assert retried.slices[0].record.content == "😀" * 64_000
     assert (
         "".join(s.record.content for p in pages(tmp_path) for s in p.slices)
         == "😀" * 100_000
@@ -206,3 +211,21 @@ def test_cursor_object_type_rejected(tmp_path, cursor):
 
     with pytest.raises(ValueError):
         load_record_page(tmp_path, cursor=cursor)
+
+
+def test_oversized_positive_length_recovers_later_record_with_scan_budget(
+    tmp_path, reads
+):
+    broken = encode_record(record(content="")).replace(b"bytes=0", b"bytes=99999999")
+    (tmp_path / "logs.0001.txt").write_bytes(
+        broken + b"unframed\n" * 5000 + encode_record(record(2, "é😀 recovered"))
+    )
+    result = pages(tmp_path, max_scan_bytes=20_000)
+    assert (
+        "".join(s.record.content for p in result for s in p.slices) == "é😀 recovered"
+    )
+    assert all(s.record.number == 2 for p in result for s in p.slices)
+    assert not result[0].slices and result[0].next_cursor is not None
+    assert all(p.scanned_bytes <= 20_000 + 16_393 for p in result)
+    assert sum(reads) == sum(p.scanned_bytes for p in result)
+    assert "incomplete_record" in result[0].diagnostics
