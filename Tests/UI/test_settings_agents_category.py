@@ -8,11 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
-from textual.widgets import ListView
+from textual.widgets import Button, ListView, Select
 
 import tldw_chatbook
 from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook.Agents.agent_models import AgentDefinition
+from tldw_chatbook.Agents.agent_presets import AGENT_PRESETS
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.settings_agents_panel import AgentsSettingsPanel
 
@@ -174,37 +175,38 @@ async def test_panel_creates_definition_via_form(runs_db):
     assert [r["name"] for r in rows] == ["researcher"]
 
 
+@pytest.mark.parametrize("preset", AGENT_PRESETS, ids=lambda preset: preset.name)
 @pytest.mark.asyncio
-async def test_bulk_reader_button_prefills_unsaved_new_definition(runs_db):
+async def test_preset_load_prefills_unsaved_editable_definition(runs_db, preset):
     panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
-    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
-        await pilot.click("#agents-bulk-reader-button")
+    async with ProductionCssPanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        panel.query_one("#agents-preset-select", Select).value = preset.name
+        await pilot.click("#agents-load-preset-button")
         await pilot.pause()
 
-        assert panel.query_one("#agents-name-input").value == BULK_READER_NAME
-        assert (
-            panel.query_one("#agents-description-input").value
-            == BULK_READER_DESCRIPTION
-        )
-        assert (
-            panel.query_one("#agents-instructions-area").text
-            == BULK_READER_INSTRUCTIONS
-        )
+        assert panel.query_one("#agents-name-input").value == preset.name
+        assert panel.query_one("#agents-description-input").value == preset.description
+        assert panel.query_one("#agents-instructions-area").text == preset.instructions
         assert panel.query_one("#agents-model-input").value == ""
-        assert panel.query_one("#agents-tools-input").value == ", ".join(
-            BULK_READER_TOOLS
-        )
-        assert "cheaper" in _static_text(panel.query_one("#agents-status")).lower()
-        assert (
-            "same provider" in _static_text(panel.query_one("#agents-status")).lower()
-        )
+        assert panel.query_one("#agents-tools-input").value == ", ".join(preset.tool_allowlist)
         assert "save" in _static_text(panel.query_one("#agents-status")).lower()
+        if preset.name == BULK_READER_NAME:
+            assert "cheaper" in _static_text(panel.query_one("#agents-status")).lower()
+            assert (
+                "same provider"
+                in _static_text(panel.query_one("#agents-status")).lower()
+            )
+        else:
+            assert "editable" in _static_text(panel.query_one("#agents-status")).lower()
 
     assert runs_db.list_agent_definitions() == []
 
 
+@pytest.mark.parametrize("preset", AGENT_PRESETS, ids=lambda preset: preset.name)
 @pytest.mark.asyncio
-async def test_bulk_reader_save_creates_preset_without_overwriting_selection(runs_db):
+async def test_preset_save_creates_edited_definition_without_overwriting_selection(
+    runs_db, preset
+):
     existing_id = runs_db.create_agent_definition(
         AgentDefinition(
             name="researcher",
@@ -214,7 +216,7 @@ async def test_bulk_reader_save_creates_preset_without_overwriting_selection(run
         )
     )
     panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
-    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+    async with ProductionCssPanelHarness(panel).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         list_view = panel.query_one("#agents-definition-list", ListView)
         list_view.focus()
@@ -222,60 +224,175 @@ async def test_bulk_reader_save_creates_preset_without_overwriting_selection(run
         list_view.action_select_cursor()
         await pilot.pause()
 
-        await pilot.click("#agents-bulk-reader-button")
-        panel.query_one("#agents-model-input").value = "budget-reader-model"
+        panel.query_one("#agents-preset-select", Select).value = preset.name
+        await pilot.click("#agents-load-preset-button")
+        edited_name = f"{preset.name}-edited"
+        panel.query_one("#agents-name-input").value = edited_name
+        panel.query_one("#agents-model-input").value = "budget-model"
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
     rows = {row["name"]: row for row in runs_db.list_agent_definitions()}
-    assert set(rows) == {"researcher", BULK_READER_NAME}
+    assert set(rows) == {"researcher", edited_name}
     assert rows["researcher"]["id"] == existing_id
     assert rows["researcher"]["description"] == "Original description."
     assert rows["researcher"]["instructions"] == "Original instructions."
-    assert rows[BULK_READER_NAME]["description"] == BULK_READER_DESCRIPTION
-    assert rows[BULK_READER_NAME]["instructions"] == BULK_READER_INSTRUCTIONS
-    assert rows[BULK_READER_NAME]["tool_allowlist"] == BULK_READER_TOOLS
-    assert rows[BULK_READER_NAME]["model"] == "budget-reader-model"
+    assert rows[edited_name]["description"] == preset.description
+    assert rows[edited_name]["instructions"] == preset.instructions
+    assert rows[edited_name]["tool_allowlist"] == list(preset.tool_allowlist)
+    assert rows[edited_name]["model"] == "budget-model"
 
 
+@pytest.mark.parametrize("preset", AGENT_PRESETS, ids=lambda preset: preset.name)
 @pytest.mark.asyncio
-async def test_bulk_reader_duplicate_uses_existing_validation_message(runs_db):
+async def test_preset_duplicate_uses_existing_validation_and_preserves_original(
+    runs_db, preset
+):
     runs_db.create_agent_definition(
         AgentDefinition(
-            name=BULK_READER_NAME,
-            description=BULK_READER_DESCRIPTION,
-            instructions=BULK_READER_INSTRUCTIONS,
-            tool_allowlist=tuple(BULK_READER_TOOLS),
+            name=preset.name,
+            description="Original description.",
+            instructions="Original instructions.",
         )
     )
     panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
-    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
-        await pilot.click("#agents-bulk-reader-button")
-        panel.query_one("#agents-model-input").value = "budget-reader-model"
+    async with ProductionCssPanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        panel.query_one("#agents-preset-select", Select).value = preset.name
+        await pilot.click("#agents-load-preset-button")
+        panel.query_one("#agents-model-input").value = "budget-model"
         await pilot.click("#agents-save-button")
         await pilot.pause()
 
-        assert "an agent named 'bulk-reader' already exists" in _static_text(
+        assert f"an agent named '{preset.name}' already exists" in _static_text(
             panel.query_one("#agents-status")
         )
 
-    assert len(runs_db.list_agent_definitions()) == 1
+    rows = runs_db.list_agent_definitions()
+    assert len(rows) == 1
+    assert rows[0]["description"] == "Original description."
+    assert rows[0]["instructions"] == "Original instructions."
+    assert rows[0]["model"] == ""
 
 
 @pytest.mark.parametrize("size", [(120, 40), (70, 40)])
 @pytest.mark.asyncio
-async def test_bulk_reader_action_renders_with_production_css(runs_db, size):
+async def test_preset_actions_render_with_production_css(runs_db, size):
     panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
     async with ProductionCssPanelHarness(panel).run_test(size=size) as pilot:
         await pilot.pause()
-        button = panel.query_one("#agents-bulk-reader-button")
-        assert button.region.width > 0
-        assert button.region.height > 0
-        await pilot.click("#agents-bulk-reader-button")
+        controls = [
+            panel.query_one("#agents-preset-select", Select),
+            panel.query_one("#agents-load-preset-button", Button),
+            panel.query_one("#agents-new-button", Button),
+            panel.query_one("#agents-save-button", Button),
+            panel.query_one("#agents-delete-button", Button),
+        ]
+        for control in controls:
+            assert control.region.width > 0
+            assert control.region.height > 0
+        assert max(control.region.bottom for control in controls[:2]) <= min(
+            control.region.y for control in controls[2:]
+        )
+        await pilot.click("#agents-load-preset-button")
         await pilot.pause()
         status = panel.query_one("#agents-status")
         assert status.region.width > 0
         assert "same provider" in _static_text(status).lower()
+        painted = " ".join(
+            _painted_text(pilot.app.export_screenshot(simplify=True)).split()
+        )
+        for label in ("Preset", "bulk-reader", "Load preset", "New", "Save", "Delete"):
+            assert label in painted
+
+        instructions = panel.query_one("#agents-instructions-area")
+        instructions.focus()
+        await pilot.pause()
+        assert instructions.region.width > 0
+        assert instructions.region.height > 0
+        instructions_painted = " ".join(
+            _painted_text(pilot.app.export_screenshot(simplify=True)).split()
+        )
+        assert "Read the question" in instructions_painted, (
+            instructions.region,
+            instructions.content_region,
+            instructions.virtual_size,
+            instructions.scroll_offset,
+        )
+
+        focused_values = (
+            ("#agents-name-input", "bulk-reader", "bulk-reader", BULK_READER_NAME),
+            (
+                "#agents-description-input",
+                "Read selected workspace files",
+                "quoted evidence for a question.",
+                BULK_READER_DESCRIPTION,
+            ),
+            ("#agents-model-input", None, None, ""),
+            (
+                "#agents-tools-input",
+                "fs_list",
+                "fs_grep",
+                ", ".join(BULK_READER_TOOLS),
+            ),
+        )
+        for selector, rest_text, focused_text, expected_value in focused_values:
+            field = panel.query_one(selector)
+            assert field.content_region.height > 0
+            assert field.region.right <= size[0]
+            assert field.value == expected_value
+            if rest_text is not None:
+                assert rest_text in field.render_line(0).text, (
+                    selector,
+                    field.render_line(0).text,
+                    field.region,
+                    field.content_region,
+                )
+            field.focus()
+            field.scroll_visible()
+            await pilot.pause()
+            assert field.content_region.height > 0
+            assert field.region.right <= size[0]
+            assert field.value == expected_value
+            field_painted = " ".join(
+                _painted_text(pilot.app.export_screenshot(simplify=True)).split()
+            )
+            if focused_text is not None:
+                assert focused_text in field_painted, (
+                    selector,
+                    field.region,
+                    field.content_region,
+                    panel.query_one("#agents-form").scroll_offset,
+                )
+
+        enabled = panel.query_one("#agents-enabled-switch")
+        enabled_row = enabled.parent
+        enabled.focus()
+        enabled.scroll_visible()
+        await pilot.pause()
+        assert enabled.value is True
+        assert enabled.region.width > 0
+        assert enabled.region.height > 0
+        assert enabled.region.right <= size[0]
+        assert enabled_row.region.y <= enabled.content_region.y
+        assert enabled.content_region.bottom <= enabled_row.region.bottom
+        assert pilot.app.focused is enabled
+        on_paint = pilot.app.export_screenshot(simplify=True)
+        await pilot.press("space")
+        await pilot.pause(0.5)
+        off_paint = pilot.app.export_screenshot(simplify=True)
+        assert enabled.value is False
+        assert on_paint != off_paint
+        enabled.value = True
+        enabled_painted = " ".join(
+            _painted_text(pilot.app.export_screenshot(simplify=True)).split()
+        )
+        assert "Enabled" in enabled_painted
+
+        controls[0].focus()
+        await pilot.pause()
+        for expected in controls:
+            assert pilot.app.focused is expected
+            await pilot.press("tab")
 
 
 @pytest.mark.asyncio

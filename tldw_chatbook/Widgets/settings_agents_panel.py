@@ -13,13 +13,22 @@ from pathlib import Path
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, ListItem, ListView, Static, Switch, TextArea
+from textual.widgets import (
+    Button,
+    Input,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    Switch,
+    TextArea,
+)
 
 from tldw_chatbook.Agents.agent_models import (
     RUNTIME_TOOL_NAMES,
     AgentDefinition,
 )
-from tldw_chatbook.Agents.agent_presets import BULK_READER_PRESET
+from tldw_chatbook.Agents.agent_presets import AGENT_PRESETS
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: Soft ceiling before the status line warns about spawn-schema bloat
@@ -85,14 +94,14 @@ class AgentsSettingsPanel(Vertical):
         )
         yield ListView(id="agents-definition-list")
         with VerticalScroll(id="agents-form"):
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Name", classes="settings-input-label")
                 yield Input(
                     placeholder="researcher (lowercase slug)",
                     id="agents-name-input",
                     classes="settings-compact-input",
                 )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Description", classes="settings-input-label")
                 yield Input(
                     placeholder="One line the supervisor reads (max 200 chars)",
@@ -104,26 +113,37 @@ class AgentsSettingsPanel(Vertical):
                 classes="settings-input-label",
             )
             yield TextArea(id="agents-instructions-area")
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Model override", classes="settings-input-label")
                 yield Input(
                     placeholder="empty = parent's model (same provider)",
                     id="agents-model-input",
                     classes="settings-compact-input",
                 )
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static(
                     "Tools (comma-separated; empty = inherit all; names "
                     "only narrow, never grant)",
                     classes="settings-input-label",
                 )
                 yield Input(id="agents-tools-input", classes="settings-compact-input")
-            with Horizontal(classes="settings-input-row"):
+            with Horizontal(classes="settings-input-row agents-enabled-row"):
                 yield Static("Enabled", classes="settings-input-label")
                 yield Switch(value=True, id="agents-enabled-switch")
+            with Horizontal(
+                classes="settings-input-row settings-select-row agents-preset-row"
+            ):
+                yield Static("Preset", classes="settings-input-label")
+                yield Select(
+                    [(preset.name, preset.name) for preset in AGENT_PRESETS],
+                    value=AGENT_PRESETS[0].name,
+                    allow_blank=False,
+                    id="agents-preset-select",
+                    classes="settings-compact-select",
+                )
+                yield Button("Load preset", id="agents-load-preset-button")
             with Horizontal(classes="settings-input-row"):
                 yield Button("New", id="agents-new-button")
-                yield Button("Bulk reader", id="agents-bulk-reader-button")
                 yield Button("Save", variant="primary", id="agents-save-button")
                 yield Button("Delete", variant="error", id="agents-delete-button")
         yield Static(
@@ -191,8 +211,12 @@ class AgentsSettingsPanel(Vertical):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "agents-new-button":
             self._clear_form()
-        elif event.button.id == "agents-bulk-reader-button":
-            self._load_bulk_reader_preset()
+        elif event.button.id == "agents-load-preset-button":
+            selected_name = self.query_one("#agents-preset-select", Select).value
+            preset = next(
+                preset for preset in AGENT_PRESETS if preset.name == selected_name
+            )
+            self._load_preset(preset)
         elif event.button.id == "agents-save-button":
             await self._save()
         elif event.button.id == "agents-delete-button":
@@ -208,23 +232,24 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-enabled-switch", Switch).value = True
         self._set_status("")
 
-    def _load_bulk_reader_preset(self) -> None:
+    def _load_preset(self, preset: AgentDefinition) -> None:
         self._selected_id = None
-        self.query_one("#agents-name-input", Input).value = BULK_READER_PRESET.name
-        self.query_one(
-            "#agents-description-input", Input
-        ).value = BULK_READER_PRESET.description
-        self.query_one(
-            "#agents-instructions-area", TextArea
-        ).text = BULK_READER_PRESET.instructions
-        self.query_one("#agents-model-input", Input).value = ""
-        self.query_one("#agents-tools-input", Input).value = ", ".join(
-            BULK_READER_PRESET.tool_allowlist
-        )
-        self.query_one(
-            "#agents-enabled-switch", Switch
-        ).value = BULK_READER_PRESET.enabled
-        self._set_status("Choose a cheaper model from the same provider, then Save.")
+        name_input = self.query_one("#agents-name-input", Input)
+        name_input.value = preset.name
+        description_input = self.query_one("#agents-description-input", Input)
+        description_input.value = preset.description
+        self.query_one("#agents-instructions-area", TextArea).text = preset.instructions
+        model_input = self.query_one("#agents-model-input", Input)
+        model_input.value = ""
+        tools_input = self.query_one("#agents-tools-input", Input)
+        tools_input.value = ", ".join(preset.tool_allowlist)
+        self.query_one("#agents-enabled-switch", Switch).value = preset.enabled
+        if preset.name == "bulk-reader":
+            self._set_status(
+                "Choose a cheaper model from the same provider, then Save."
+            )
+        else:
+            self._set_status("Editable preset loaded; choose Save to create it.")
 
     def _form_definition(
         self, *, stored_tools: tuple[str, ...] | None = None

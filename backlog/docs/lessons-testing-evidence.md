@@ -13451,3 +13451,25 @@ During denial-breaker verification, a Console test initially used a real store a
 **TASK-31210/31211 qualification, 2026-09-12.** A real spawned worker held both source and linked-child directory pins, then waited on an owned Pipe. After the source was renamed and a temporary replacement received copied Git metadata, a commit from the still-pinned original child advanced the replacement repository's agent branch; the original repository stayed at its base. A separate CREATE probe similarly reopened a replacement through an absolute Git-dir argument. The races reproduced against actual Git2.39.5 on macOS, before any new product implementation.
 
 **What to do.** Verify bytes, index and refs in both original and replacement repositories, not just the worker cwd or command exit. Trace every administrative path Git follows. Treat top-level replacement through a linked worktree's metadata as part of the admitted-root boundary, not as the excluded hostile-descendant case. A source-local CREATE control only qualifies creation; it cannot establish later apply/merge/discard safety. Keep unsupported mutation paths closed until the complete boundary has evidence.
+
+
+## Pytest helpers outside Tests do not inherit the repository isolation
+
+**TASK-13154.6, agent preset verification, 2026-09-12.** Three artifact attempts
+used a helper under `.superpowers/sdd` rather than under `Tests/`. Although
+invoked with pytest and the isolated interpreter, they did not load
+`Tests/conftest.py`; importing the UI helper read and merged the real user
+configuration. The default sandbox then blocked an append-open of the data-root
+lock. The traces do not prove zero earlier import side effects. A later
+`-k regenerate` selection repeated the mistake because it matched the helper
+filename and selected sibling artifact nodes too. Final UI probes were moved
+under `Tests/UI`, run with its conftest isolation, and removed after capture.
+
+**What to do.** Put any temporary probe that imports product/UI code below
+`Tests/`, inspect its collected node list before execution, and select the exact
+node when a helper contains unrelated tests. Merely running `python -m pytest`
+or importing another test module does not activate that module's conftest. Keep
+exports under the plan's evidence directory, but keep the executable probe under
+the isolated test tree. Never retry an isolation failure by loosening the
+sandbox; qualify actual reads and failed writes from preserved traces without
+reopening user configuration.
