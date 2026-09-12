@@ -488,3 +488,54 @@ def test_definition_from_row_round_trip():
         model="m1",
         enabled=True,
     )
+
+
+def test_definition_provider_and_params_default_empty():
+    defn = AgentDefinition(name="reader", instructions="Read files.")
+    assert defn.provider == "" and defn.params == ()
+    assert validate_agent_definition(defn) == []
+
+def test_definition_rejects_unknown_provider():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.", provider="not-a-provider"
+    )
+    assert any("provider" in e for e in validate_agent_definition(defn))
+
+def test_definition_accepts_custom_ep_slug_form():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.", provider="custom-ep:qwen-local"
+    )
+    assert validate_agent_definition(defn) == []
+
+def test_definition_rejects_bad_custom_ep_slug():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.", provider="custom-ep:BAD SLUG"
+    )
+    assert validate_agent_definition(defn) != []
+
+def test_definition_rejects_unknown_param_key():
+    defn = AgentDefinition(
+        name="reader", instructions="Read files.",
+        params=(("temprature", 0.2),),
+    )
+    assert any("temprature" in e for e in validate_agent_definition(defn))
+
+def test_fingerprint_legacy_shape_unchanged_for_model_only_preset():
+    # provider/params enter the fingerprint ONLY when set, so a legacy
+    # model-only preset keeps its pre-ADR-147 fingerprint (the audit
+    # identity persisted on existing run rows stays comparable).
+    defn = AgentDefinition(name="reader", instructions="Read files.", model="m1")
+    import hashlib, json
+    legacy = hashlib.sha256(json.dumps({
+        "instructions": defn.instructions,
+        "tool_allowlist": sorted(defn.tool_allowlist),
+        "model": defn.model,
+    }, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    assert definition_fingerprint(defn) == legacy
+
+def test_fingerprint_changes_with_provider():
+    base = AgentDefinition(name="reader", instructions="Read files.", model="m1")
+    routed = AgentDefinition(
+        name="reader", instructions="Read files.", model="m1", provider="ollama"
+    )
+    assert definition_fingerprint(base) != definition_fingerprint(routed)

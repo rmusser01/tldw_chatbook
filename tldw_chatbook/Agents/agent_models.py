@@ -23,6 +23,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
+from tldw_chatbook.Chat.sampling_params import (
+    params_to_dict,
+    params_to_tuple,
+    validate_sampling_params,
+)
 
 
 class WorkOrigin(Enum):
@@ -651,8 +656,13 @@ class AgentDefinition:
     identity contract: console_agent_bridge detects sub-agent turns by
     prefix-matching it). ``tool_allowlist`` only ever narrows the child's
     inherited allow-list (intersection, never union); empty means inherit.
-    ``model`` overrides the parent's model on the SAME provider endpoint;
-    empty means inherit.
+    ``model`` overrides the parent's model on the preset's ``provider``
+    endpoint (ADR-147): ``provider`` is "" (inherit the parent's endpoint —
+    the legacy behavior), a bare provider id, or a ``custom-ep:<slug>``
+    registry id; ``model`` without ``provider`` keeps the legacy
+    same-endpoint behavior, and empty ``model`` means inherit the model.
+    ``params`` are the role-owned top layer of the child's sampling stack —
+    sorted ``(name, value)`` pairs; empty means the preset adds nothing.
     """
 
     name: str
@@ -661,6 +671,8 @@ class AgentDefinition:
     tool_allowlist: tuple[str, ...] = ()
     model: str = ""
     enabled: bool = True
+    provider: str = ""
+    params: tuple[tuple[str, object], ...] = ()
 
 
 def validate_agent_definition(defn: AgentDefinition) -> list[str]:
@@ -688,29 +700,58 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
         errors.append(
             f"instructions exceed {AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS} chars"
         )
+    if defn.provider:
+        if defn.provider.startswith("custom-ep:"):
+            # Lazy: keeps Agents/ -> Chat/ edges out of module import time.
+            from tldw_chatbook.Chat.custom_endpoint_registry import (
+                SLUG_PATTERN,
+                split_custom_endpoint_id,
+            )
+            slug = split_custom_endpoint_id(defn.provider)
+            if slug is None or not SLUG_PATTERN.fullmatch(slug):
+                errors.append("provider custom-ep id has an invalid slug")
+        else:
+            from tldw_chatbook.Chat.console_provider_support import (
+                supported_console_provider_readiness_keys,
+            )
+            from tldw_chatbook.Chat.provider_readiness import provider_config_key
+            if provider_config_key(defn.provider) not in set(
+                supported_console_provider_readiness_keys()
+            ):
+                errors.append(
+                    f"provider '{defn.provider}' is not a known provider id"
+                )
+    errors.extend(validate_sampling_params(params_to_dict(defn.params)))
     return errors
 
 
 def definition_fingerprint(defn: AgentDefinition) -> str:
     """16-hex-char content hash of the fields that shape a child run.
 
-    Covers instructions/tool_allowlist/model ONLY — the audit identity of
-    what actually ran (spec §4). description/enabled are presentation.
+    Covers instructions/tool_allowlist/model, plus provider/params WHEN SET
+    — the audit identity of what actually ran (spec §4, ADR-147).
+    description/enabled are presentation. The conditional inclusion keeps a
+    legacy provider-less/params-less preset's payload byte-identical to its
+    pre-ADR-147 shape, so fingerprints persisted on existing run rows stay
+    comparable.
     """
-    payload = json.dumps(
-        {
-            "instructions": defn.instructions,
-            "tool_allowlist": sorted(defn.tool_allowlist),
-            "model": defn.model,
-        },
-        sort_keys=True,
-    )
+    payload_dict = {
+        "instructions": defn.instructions,
+        "tool_allowlist": sorted(defn.tool_allowlist),
+        "model": defn.model,
+    }
+    if defn.provider:
+        payload_dict["provider"] = defn.provider
+    if defn.params:
+        payload_dict["params"] = [list(pair) for pair in defn.params]
+    payload = json.dumps(payload_dict, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def definition_from_row(row: dict) -> AgentDefinition:
     """Build an ``AgentDefinition`` from an ``agent_definitions`` DB row
-    (``tool_allowlist`` already JSON-decoded to a list by the DB layer)."""
+    (``tool_allowlist`` already JSON-decoded to a list and ``params`` to a
+    dict by the DB layer)."""
     return AgentDefinition(
         name=row["name"],
         description=row["description"],
@@ -718,6 +759,8 @@ def definition_from_row(row: dict) -> AgentDefinition:
         tool_allowlist=tuple(row["tool_allowlist"]),
         model=row["model"],
         enabled=bool(row["enabled"]),
+        provider=row.get("provider", ""),
+        params=params_to_tuple(row.get("params", {})),
     )
 
 
