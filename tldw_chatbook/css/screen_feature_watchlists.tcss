@@ -100,6 +100,7 @@ $ds-text-emphasis: italic;
 $ds-hover-bg: $surface-lighten-1;
 $ds-hover-fg: $ds-text-primary;
 $ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
 
 $ds-sidebar-width: 25%;
 $ds-sidebar-min-width: 35;

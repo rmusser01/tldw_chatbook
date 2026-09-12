@@ -32,7 +32,9 @@ Multi-value composite tokens are not used (ADR-150).
 ### 2.1 Color and semantic meaning (existing layer)
 
 - **Surfaces:** `$ds-surface-panel`, `$ds-surface-raised`,
-  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`
+  `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`,
+  `$ds-surface-sunken` (recessed resting surface for **enabled** chrome —
+  inactive toggles, sunken strips; never a disabled state)
 - **Text:** `$ds-text-primary`, `$ds-text-muted`, `$ds-text-disabled`
 - **Focus (non-obscuring focus contract):** `$ds-focus-bg`, `$ds-focus-fg`,
   `$ds-focus-accent`, `$ds-action-focus`, `$ds-input-focus-border`,
@@ -165,6 +167,10 @@ stacked form (`$ds-space-stack`) of `.form-input` fields, actions row at
 
 - The ~7,000 legacy dimension literals in feature sheets — migrate
   opportunistically when touching a file; new sheets must be token-clean.
+  **Migration reference:** `features/_chat.tcss` (TASK-32480) is the
+  canonical end-to-end example of the pattern — tokenize what maps 1:1,
+  keep feature-specific geometry literal with its comments, invent nothing
+  in the feature sheet.
 - Python-side `styles.*` mutations (~250 call sites) — new code assigns
   token-backed classes instead of ad-hoc literals.
 - Multi-value composite tokens (e.g. `border: round $border` as one token)

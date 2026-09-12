@@ -57,7 +57,9 @@ Button:disabled:hover {
     height: $ds-control-height;
     /* margin-right: 1; Removed default margin, apply specific below */
     border: none;
-    background: $ds-disabled-bg;
+    /* Enabled but recessed chrome: sunken resting surface, not the
+       disabled token (PR #2632 review follow-up). */
+    background: $ds-surface-sunken;
     color: $ds-text-primary;
 }
 .sidebar-toggle:hover { background: $ds-surface-raised; }

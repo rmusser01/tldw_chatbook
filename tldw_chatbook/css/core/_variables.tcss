@@ -201,6 +201,12 @@ $ds-text-emphasis: italic;
 $ds-hover-bg: $surface-lighten-1;
 $ds-hover-fg: $ds-text-primary;
 $ds-disabled-bg: $surface-darken-1;
+/* Recessed resting surface for ENABLED chrome that sits visually below the
+ * panel (inactive toggles, sunken strips). Not a disabled state — disabled
+ * action controls use $ds-disabled-bg + $ds-text-disabled-readable. Same
+ * hue, different semantics: re-theming disabled states must not drag
+ * enabled chrome with it (Qodo review, PR #2632). */
+$ds-surface-sunken: $surface-darken-1;
 
 /* ========================================
  * LAYOUT LAWS (ADR-150)
