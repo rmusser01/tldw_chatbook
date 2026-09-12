@@ -432,4 +432,5 @@ def hydrate_console_session(
     roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
     session.user_display_name_override = roleplay_context.user_name_override
     session.character_system_template = roleplay_context.character_system_template
+    session.persona_system_template = roleplay_context.persona_system_template
     return session

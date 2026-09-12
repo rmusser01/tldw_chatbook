@@ -157,6 +157,7 @@ class ConsoleWorkspaceController:
         subagent_counts_for_rows: Callable[[Any, Iterable[Any]], dict[str, int]],
         conversation_browser_collapse_preferences: Callable[[], dict[str, bool]],
         wake_retry_poke: Callable[[], None] | None = None,
+        resolve_resumed_persona_name: Callable[[str, str], Any] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -203,6 +204,9 @@ class ConsoleWorkspaceController:
             subagent_counts_for_rows: Compute sub-agent counts for browser rows.
             conversation_browser_collapse_preferences: Return collapse preferences.
             wake_retry_poke: Optionally request a staged-wake retry after resume.
+            resolve_resumed_persona_name: Optionally resolve a resumed persona's
+                display name from its live profile (bare-controller/test
+                construction leaves the session unlabeled).
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -225,6 +229,7 @@ class ConsoleWorkspaceController:
             session_settings_for_resume_accessor
         )
         self._resolve_resumed_character_name_fn = resolve_resumed_character_name
+        self._resolve_resumed_persona_name_fn = resolve_resumed_persona_name
         self._inject_resume_agent_markers_accessor = (
             inject_resume_agent_markers_accessor
         )
@@ -463,6 +468,18 @@ class ConsoleWorkspaceController:
     @property
     def _resolve_resumed_character_name(self) -> Any:
         return self._resolve_resumed_character_name_fn
+
+    @property
+    def _resolve_resumed_persona_name(self) -> Any:
+        resolver = self._resolve_resumed_persona_name_fn
+        if resolver is None:
+            # Bare-controller/test construction: best-effort resume simply
+            # leaves the session unlabeled.
+            async def _unresolved(_persona_id: str, _runtime_backend: str) -> str:
+                return ""
+
+            return _unresolved
+        return resolver
 
     @property
     def _inject_resume_agent_markers(self) -> Any:
@@ -2215,6 +2232,20 @@ class ConsoleWorkspaceController:
                 session.settings = replace(
                     session.settings, character_label=character_name
                 )
+        elif session.assistant_kind == "persona" and session.assistant_id:
+            # Persona sessions carry no local projection; the display name is
+            # re-resolved from the live profile on every resume (ADR-149),
+            # for local and server backends alike.
+            persona_name = await self._resolve_resumed_persona_name(
+                session.assistant_id, session.runtime_backend
+            )
+            session.assistant_name = persona_name or None
+            if persona_name:
+                # One-name invariant: a persona session never shows a stale
+                # character label.
+                session.character_name = None
+            if session.settings is not None:
+                session.settings = replace(session.settings, character_label="")
         elif session.settings is not None:
             session.settings = replace(session.settings, character_label="")
         self._set_active_workspace_for_console_session(session.id)

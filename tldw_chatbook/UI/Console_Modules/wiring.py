@@ -293,6 +293,11 @@ def build_console_controllers(
         resolve_resumed_character_name=(
             lambda character_id: screen._resolve_resumed_character_name(character_id)
         ),
+        resolve_resumed_persona_name=(
+            lambda persona_id, runtime_backend: screen._resolve_resumed_persona_name(
+                persona_id, runtime_backend
+            )
+        ),
         # Agent <-> workspace seam, same shape as the message seam above:
         # the resume flow's TOOL-marker re-derivation moved to
         # `ConsoleAgentController` (wave-4 task 3). This accessor already
