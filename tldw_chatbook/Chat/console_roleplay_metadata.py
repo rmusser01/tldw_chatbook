@@ -27,6 +27,7 @@ class ConsoleRoleplayContext:
 
     user_name_override: str | None = None
     character_system_template: str | None = None
+    persona_system_template: str | None = None
 
 
 def parse_console_roleplay_context(raw_metadata: object) -> ConsoleRoleplayContext:
@@ -57,9 +58,17 @@ def parse_console_roleplay_context(raw_metadata: object) -> ConsoleRoleplayConte
     ):
         return ConsoleRoleplayContext()
 
+    persona_system_template = owned_context.get("persona_system_template")
+    if persona_system_template is not None and (
+        not isinstance(persona_system_template, str)
+        or not persona_system_template.strip()
+    ):
+        return ConsoleRoleplayContext()
+
     return ConsoleRoleplayContext(
         user_name_override=user_name_override,
         character_system_template=character_system_template,
+        persona_system_template=persona_system_template,
     )
 
 
@@ -96,7 +105,18 @@ def merge_console_roleplay_context(
     ):
         character_system_template = None
 
-    if user_name_override is None and character_system_template is None:
+    persona_system_template = context.persona_system_template
+    if (
+        not isinstance(persona_system_template, str)
+        or not persona_system_template.strip()
+    ):
+        persona_system_template = None
+
+    if (
+        user_name_override is None
+        and character_system_template is None
+        and persona_system_template is None
+    ):
         metadata.pop(ROLEPLAY_CONTEXT_METADATA_KEY, None)
     else:
         metadata[ROLEPLAY_CONTEXT_METADATA_KEY] = {
@@ -109,6 +129,11 @@ def merge_console_roleplay_context(
             **(
                 {"character_system_template": character_system_template}
                 if character_system_template is not None
+                else {}
+            ),
+            **(
+                {"persona_system_template": persona_system_template}
+                if persona_system_template is not None
                 else {}
             ),
         }

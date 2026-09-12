@@ -360,6 +360,7 @@ class ConsoleChatPersistence(Protocol):
         conversation_id: str,
         user_name_override: str | None,
         character_system_template: str | None,
+        persona_system_template: str | None = None,
     ) -> bool:
         """Persist Console-owned roleplay identity context for a conversation."""
 
@@ -4001,14 +4002,17 @@ class ConsoleChatStore:
         writer = getattr(self.persistence, "update_conversation_roleplay_context", None)
         if not callable(writer):
             return False
+        context_kwargs: dict[str, Any] = {
+            "conversation_id": session.persisted_conversation_id,
+            "user_name_override": session.user_display_name_override,
+            "character_system_template": session.character_system_template,
+        }
+        # Declare-to-receive: narrow persistence fakes written before this
+        # kwarg existed keep the original three-keyword call shape.
+        if self._persistence_accepts_kwarg(writer, "persona_system_template"):
+            context_kwargs["persona_system_template"] = session.persona_system_template
         try:
-            return bool(
-                writer(
-                    conversation_id=session.persisted_conversation_id,
-                    user_name_override=session.user_display_name_override,
-                    character_system_template=session.character_system_template,
-                )
-            )
+            return bool(writer(**context_kwargs))
         except Exception as exc:
             logger.warning(
                 "Failed to persist Console roleplay identity context (error_type={}).",
@@ -5362,6 +5366,7 @@ class ConsoleChatStore:
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
+            or session.persona_system_template is not None
         ) and not self._persist_roleplay_context(session):
             logger.warning("Failed to flush Console roleplay context on first persist.")
             if strict_roleplay_context:
