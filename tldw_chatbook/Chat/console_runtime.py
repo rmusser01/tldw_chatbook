@@ -3443,6 +3443,12 @@ class ConsoleRuntime:
             ConsoleChatController,
         )
 
+        # Run hooks (spec 2026-09-11, Task 7): hand the controller this
+        # runtime's engine accessor exactly as `ensure_agent_bridge` hands
+        # it to the bridge (Task 5) -- the production path always wires it,
+        # while the optional param's `None` default keeps every direct
+        # (controller-only) construction, tests included, unchanged.
+        kwargs.setdefault("ensure_run_hooks", self.ensure_run_hooks)
         kwargs.update(
             chat_dictionary_applier=functools.partial(
                 _apply_chat_dictionaries_for_app, self._app

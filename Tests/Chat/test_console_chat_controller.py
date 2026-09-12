@@ -98,6 +98,7 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+from tldw_chatbook.Chat.message_metadata import MESSAGE_ORIGIN_HOOK
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -11573,3 +11574,183 @@ def test_pre_provider_setup_phase_marks_and_clears_the_bridge():
     with pytest.raises(RuntimeError):
         asyncio.run(_raising())
     assert bridge.cleared == ["c1", "c2"]
+
+
+# ---------------------------------------------------------------------------
+# Run hooks (spec 2026-09-11), Task 7: UserPromptSubmit in the submit path.
+# ---------------------------------------------------------------------------
+
+
+class TestUserPromptSubmitHooks:
+    """User-authored sends consult UserPromptSubmit hooks; wake notices never do.
+
+    The engine is injected the Task 5/6 way: a real ``RunHooksEngine`` built
+    over a temp config, handed to the controller through the optional
+    ``ensure_run_hooks`` accessor -- no ``ConsoleRuntime`` involved. Stub
+    commands are ``sys.executable -c`` snippets with real exit codes
+    (``raise SystemExit(2)`` -- not ``sys.exit(2)``, which NameErrors
+    under ``-c`` without an explicit import).
+    """
+
+    @staticmethod
+    def _engine(tmp_path, code):
+        import sys
+
+        from tldw_chatbook.Agents.run_hooks import RunHooksEngine, load_hooks_config
+
+        config = load_hooks_config(
+            {
+                "hooks": {
+                    "hook": [
+                        {
+                            "event": "UserPromptSubmit",
+                            "command": [sys.executable, "-c", code],
+                        }
+                    ]
+                }
+            }
+        )
+        return RunHooksEngine(
+            config_provider=lambda: config,
+            cwd_provider=lambda: str(tmp_path),
+        )
+
+    @pytest.mark.asyncio
+    async def test_block_rejects_send_without_assistant_row(self, tmp_path):
+        engine = self._engine(
+            tmp_path,
+            'import json; print(json.dumps({"decision": "block", "reason": "after hours"}))',
+        )
+        persistence = FakePersistence()
+        store = ConsoleChatStore(persistence=persistence)
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        assert result.accepted is False
+        assert result.should_clear_draft is False
+        assert result.visible_copy == "Blocked by hook: after hours"
+        messages = store.messages_for_session(store.active_session_id)
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.SYSTEM,
+        ]
+        # The echoed row was failed by the refusal cleanup and left with no
+        # durable record (TASK-485): it never reached a provider.
+        assert messages[0].status == "failed"
+        assert messages[0].persisted_message_id is None
+        block_row = messages[1]
+        assert block_row.content == "Send blocked by hook: after hours"
+        assert block_row.metadata is not None
+        assert block_row.metadata.origin == MESSAGE_ORIGIN_HOOK
+        assert block_row.persisted_message_id is not None
+        assert gateway.messages_seen is None
+
+    @pytest.mark.asyncio
+    async def test_stdout_injected_as_hook_origin_system_row(self, tmp_path):
+        engine = self._engine(tmp_path, "print('hook-supplied ctx')")
+        persistence = FakePersistence()
+        store = ConsoleChatStore(persistence=persistence)
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        assert result.accepted is True
+        messages = store.messages_for_session(store.active_session_id)
+        # The injected row lands AFTER the confirmed user echo and BEFORE
+        # the assistant row, as its own SYSTEM row -- never merged into the
+        # user's message.
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.SYSTEM,
+            ConsoleMessageRole.ASSISTANT,
+        ]
+        injected = messages[1]
+        assert injected.content == "hook-supplied ctx"
+        assert injected.metadata is not None
+        assert injected.metadata.origin == MESSAGE_ORIGIN_HOOK
+        assert injected.persisted_message_id is not None
+
+    @pytest.mark.asyncio
+    async def test_wake_notice_fires_nothing(self, tmp_path):
+        from tldw_chatbook.Chat import console_fleet_wake
+        from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+
+        # A hook that WOULD block every send: if the wake path ever
+        # consulted the engine, this wake turn would come back refused.
+        engine = self._engine(tmp_path, "raise SystemExit(2)")
+        accessor_calls = []
+
+        def accessor():
+            accessor_calls.append("called")
+            return engine
+
+        store = ConsoleChatStore()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=RecordingStreamingGateway(),
+            ensure_run_hooks=accessor,
+        )
+        session = store.ensure_session()
+        wake = controller.fleet_wake
+        token = console_fleet_wake.AgentWakeAuthorization(
+            wake, session.id, _key=console_fleet_wake._WAKE_AUTHORIZATION_KEY
+        )
+        # The token is live only while a delivery is in flight; hold the
+        # coordinator in that state across the submit, as `_attempt` does.
+        wake._delivering = "conv-1"
+        wake._delivering_session = session.id
+        try:
+            result = await controller.submit_draft(
+                "Sub-agent finished its run.",
+                session_id=session.id,
+                origin=ConsoleSubmissionOrigin.AGENT_WAKE,
+                wake_authorization=token,
+            )
+        finally:
+            wake._delivering = None
+            wake._delivering_session = None
+
+        assert result.accepted is True
+        assert accessor_calls == []
+        messages = store.messages_for_session(session.id)
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.SYSTEM,
+            ConsoleMessageRole.ASSISTANT,
+        ]
+        for message in messages:
+            origin = message.metadata.origin if message.metadata else ""
+            assert origin != MESSAGE_ORIGIN_HOOK
+
+    @pytest.mark.asyncio
+    async def test_hook_crash_send_proceeds(self, tmp_path):
+        engine = self._engine(tmp_path, "raise SystemExit(1)")
+        store = ConsoleChatStore()
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        # Fail-open: a crashing hook must not brick the composer -- the send
+        # proceeds, no hook SYSTEM row is appended.
+        assert result.accepted is True
+        messages = store.messages_for_session(store.active_session_id)
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.ASSISTANT,
+        ]
+        assert gateway.messages_seen == [{"role": "user", "content": "hello"}]

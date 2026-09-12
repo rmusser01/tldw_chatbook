@@ -342,6 +342,7 @@ from tldw_chatbook.Chat.console_fleet_wake import (
 )
 from tldw_chatbook.Chat.message_metadata import (
     MESSAGE_ORIGIN_AGENT_WAKE,
+    MESSAGE_ORIGIN_HOOK,
     MessageMetadata,
 )
 from tldw_chatbook.Chat.console_skill_resolver import (
@@ -411,6 +412,7 @@ from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 # (annotation-only `PersonaToolPolicy` under TYPE_CHECKING; the parsing and
 # floor helpers are imported inside their per-run use sites) so the module
 # stays out of the UI-ready module census.
+from tldw_chatbook.Agents.run_hooks import truncate_hook_text
 from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
     TodoChangeCallback,
@@ -3580,6 +3582,7 @@ class ConsoleChatController:
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
+        ensure_run_hooks: "Callable[[], Any] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -3704,6 +3707,15 @@ class ConsoleChatController:
             confirm_project_instruction_dispatch
         )
         self._select_project_instruction_binding = select_project_instruction_binding
+        #: Run hooks (spec 2026-09-11, Task 7): the runtime-owned engine
+        #: accessor (`ConsoleRuntime.ensure_run_hooks`), threaded exactly
+        #: the Task 5 way the bridge takes it -- the controller holds only
+        #: the callable, never the runtime, and ``None`` (the default, and
+        #: every controller-only construction) means the submit path never
+        #: consults hooks. Resolved per send via ``_run_hooks_engine`` so a
+        #: mid-session config edit (first-ever ``[hooks]`` entry) is picked
+        #: up without rebuilding the controller.
+        self._ensure_run_hooks = ensure_run_hooks
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
         ] = {}
@@ -9560,6 +9572,56 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
+        # Run hooks (spec 2026-09-11, Task 7): UserPromptSubmit fires for
+        # user-authored sends only -- a wake notice is machine text and
+        # never consults hooks (the same rule `_record_prompt_history`
+        # below documents). The fire sits BEFORE the acceptance boundary
+        # (`_notify_submission_accepted` next) deliberately: that call
+        # commits queue ownership and fires the screen's accepted hook,
+        # which CONSUMES the composer's inflight draft stash -- a refusal
+        # after it could not hand the blocked draft back (the Qodo finding
+        # 3 refusal contract), and the echoed USER row must still be
+        # optimistic/unpersisted here so the block's
+        # `mark_message_send_blocked` cleanup leaves no durable record of a
+        # never-sent message (TASK-485). `fire_async` always: this method
+        # runs on the event loop and a blocking subprocess would freeze the
+        # TUI. Fail-open: an engine-side crash already degrades to a
+        # no-opinion outcome, so only an explicit block refuses the send.
+        hook_context = ""
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+            hooks_engine = self._run_hooks_engine()
+            if hooks_engine is not None:
+                outcome = await hooks_engine.fire_async(
+                    "UserPromptSubmit",
+                    session_id=session.id,
+                    data={"prompt": truncate_hook_text(clean_draft)},
+                )
+                if outcome.blocked:
+                    # Same refusal shape as the queued-cancellation block
+                    # above: fail the echoed row (skipped by the next
+                    # send's provider context), record the reason as its
+                    # own hook-origin SYSTEM row, keep the draft.
+                    if echoed_user is not None:
+                        self.store.mark_message_send_blocked(echoed_user.id)
+                    self._set_run_state(
+                        ConsoleRunState.blocked(
+                            f"Blocked by hook: {outcome.reason}"
+                        ),
+                        session_id=session.id,
+                    )
+                    self.store.append_message(
+                        session.id,
+                        role=ConsoleMessageRole.SYSTEM,
+                        content=f"Send blocked by hook: {outcome.reason}",
+                        persist=self.store.persistence is not None,
+                        metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                    )
+                    return ConsoleSubmitResult(
+                        accepted=False,
+                        should_clear_draft=False,
+                        visible_copy=f"Blocked by hook: {outcome.reason}",
+                    )
+                hook_context = outcome.context
         if preparation is not None:
             current_preparation = self._preparation_by_id(preparation.preparation_id)
             if current_preparation is None or (
@@ -9660,6 +9722,20 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
+            if hook_context:
+                # Run hooks (spec 2026-09-11, Task 7): a UserPromptSubmit
+                # hook's captured stdout is recorded as its own hook-origin
+                # SYSTEM row -- appended only once the user echo is
+                # confirmed proceeding (same placement rule as the wake
+                # notice above) and BEFORE the assistant row, persisted
+                # like it, and never merged into the user's message.
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=hook_context,
+                    persist=self.store.persistence is not None,
+                    metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
+                )
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -21242,6 +21318,20 @@ class ConsoleChatController:
             accepted_attachments=(),
             staged_evidence_launch=request.staged_evidence_launch,
         )
+
+    def _run_hooks_engine(self):
+        """Resolve the app-owned run-hooks engine for this send, or ``None``.
+
+        Spec 2026-09-11 (Task 7): the submit path reaches the engine through
+        the optional ``ensure_run_hooks`` accessor (the Task 5 bridge seam --
+        a bound ``ConsoleRuntime.ensure_run_hooks``, or a test double).
+        ``None`` -- no accessor wired, or no ``[hooks]`` configured -- means
+        the fire site skips entirely; the accessor is consulted per send, so
+        an engine built after the first-ever ``[hooks]`` entry appears is
+        picked up without rebuilding this controller.
+        """
+        accessor = self._ensure_run_hooks
+        return accessor() if accessor is not None else None
 
     async def _record_prompt_history(self, text: str) -> None:
         """Append an accepted send's draft to the shared prompt history.
