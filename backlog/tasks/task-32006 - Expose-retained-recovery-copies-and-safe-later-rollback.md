@@ -1,7 +1,7 @@
 ---
 id: TASK-32006
 title: Expose retained recovery copies and safe later rollback
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-08 00:01
 labels:
@@ -11,7 +11,7 @@ dependencies:
 - task-32001
 - task-32004
 - task-32005
-updated_date: 2026-09-11 19:17
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -22,9 +22,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Users can inspect retained recovery copies and roll back later only after intervening changes are preserved.
-- [ ] #2 Pending evidence and held artifacts cannot be deleted or swept automatically.
-- [ ] #3 App-owned operation state survives navigation and closes without abandoning unsafe publication.
+- [x] #1 Users can inspect retained recovery copies and roll back later only after intervening changes are preserved.
+- [x] #2 Pending evidence and held artifacts cannot be deleted or swept automatically.
+- [x] #3 App-owned operation state survives navigation and closes without abandoning unsafe publication.
 <!-- AC:END -->
 
 ## Design references
@@ -81,3 +81,9 @@ Saved b662 exact diagnostic proves admission now succeeds; publication._finaliza
 2026-09-11 full fresh later-rollback UI4 now GREEN1/173.86s /private/tmp/later-ui-full-event-final.log: actual normal-app F9→minimal recovery replacement, explicit21 omission/Abort/newreview; later fresh host stale-preview refusal,8 real unchecked omissions,Abort,acknowledgement change/newreview,confirmed later execution, original/new verifiedcopy and actual encrypted inspection. Original b220 journal153 committed; later1b7 journal117 committed; both omission journals3 each aborted untouched. Root verified frozen4/receipt hashes, all276 native record hashes and both ciphertext byte hashes. Final patch90edd06d1c3df692afc616e6ee1ad5a030211632bf0ef7332aaaa10b5404e63c, /private/tmp/chatbook-later-credential-ui-final-report.md and /private/tmp/later-credential-ui-independent-review.md approved. Prior component2/7.64s preserved; productionRuff0/Bandit0/compile/testformatpass. Failed86.63 observer and134.51 buttoncooldown runs explicitly retained; exact tinyButton0.28s reproduced suppression. Only measured secondwait90/child150 and <=1s actualbutton readiness/newopassertions corrected tests; no productnative deadlines changed. Scope UIservice/screen/newlater test/existingF9 test + task ready commit; overallrelease matrix remains open.
 Final later-rollback UI workflow passed 1 test in 173.86s and committed e6150b7d3; original F9 replacement, explicit later omission review, untouched Abort, new reviewed plan, fresh operation and verified encrypted safety copy covered. Updating stale user guide statements only; broader platform/release qualification remains open.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed retained-copy inspection/deletion protection and later rollback that first preserves intervening edits in a new encrypted safety copy. Evidence: b403aa55a,9e0762de0,e6150b7d3,6f7dd9dab and existing retention/native recovery checks. Pending evidence remains protected. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

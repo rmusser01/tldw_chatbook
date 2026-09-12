@@ -1,11 +1,11 @@
 ---
 id: TASK-31993
 title: Integrate maintenance participants across persistence owners
-status: In Progress
+status: Done
 assignee:
 - '@codex'
 created_date: 2026-09-07 23:53
-updated_date: 2026-09-11 06:44
+updated_date: 2026-09-12 02:26
 labels:
 - backup-recovery
 dependencies:
@@ -25,9 +25,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every participating persistence owner drains safely and is covered by the shared admission protocol.
-- [ ] #2 Unsaved drafts and unfinished cross-store work are neither discarded nor falsely reported captured.
-- [ ] #3 Real multi-process evidence proves coherent ownership boundaries and safe resumption without deadlocks.
+- [x] #1 Every participating persistence owner drains safely and is covered by the shared admission protocol.
+- [x] #2 Unsaved drafts and unfinished cross-store work are neither discarded nor falsely reported captured.
+- [x] #3 Real multi-process evidence proves coherent ownership boundaries and safe resumption without deadlocks.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -1260,3 +1260,9 @@ Exact-index owner census passed all 11 tests in 7.13s (/private/tmp/console-vide
 - [Approved specification](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-09-07-backup-recovery-02-inventory-admission.md#task-10)
 - [ADR-126](../decisions/126-complete-local-backup-and-recovery.md)
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed installed maintenance participants with owner-native retirement, dirty/scope refusal, cross-store settlement and resumed writes; subsequent public capture and packaged F9 receipts close earlier integration notes. Evidence: 77fb2cce5, c992c1781, 5f529fba7, 763183fd5 and prior recorded participant cohorts. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

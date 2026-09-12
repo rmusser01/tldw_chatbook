@@ -1,10 +1,10 @@
 ---
 id: TASK-32002
 title: Gate restored projections and invalidate stale retrieval state
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-07 23:58
-updated_date: 2026-09-11 14:44
+updated_date: 2026-09-12 02:26
 labels:
 - backup-recovery
 dependencies:
@@ -24,9 +24,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No stale or incompatible projection can serve restored source data, including after relaunch or rollback.
-- [ ] #2 Omitted/shared indexes obey explicit previewed retirement/quarantine and scope rules.
-- [ ] #3 Retrieval resumes only after qualified compatibility and reconciliation, without automatic rebuilds.
+- [x] #1 No stale or incompatible projection can serve restored source data, including after relaunch or rollback.
+- [x] #2 Omitted/shared indexes obey explicit previewed retirement/quarantine and scope rules.
+- [x] #3 Retrieval resumes only after qualified compatibility and reconciliation, without automatic rebuilds.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -125,3 +125,9 @@ Ordinary compatibility corrected using backend-only helper output (validated dig
 Final core3+UI2 exact clean73e5file snapshot /private/tmp/local-model-core-yLmzWN:10passed62.17s /private/tmp/local-model-core-ui-final.log (seven new identity/ordinary, two existing approved/retire, actual isolated Settings ownerreviews→backfill.ready→semanticquery). Finalcore3 hashes32e0ea5c model_recovery,8e84bbab recovery,8d03c42a test; /private/tmp/local-model-core-final-review.patch. Ruff0/Bandit0 source, scoped compile/diffcheck pass. Ordinary correction reviewed as resolved; final A verdict after final log; UI2 independently approved separately. No new producer/storage edge/census or generation.py changes.
 Final independent core3 APPROVED /private/tmp/local-model-core-independent-review.md after exact snapshot hashes and tenpass log review. Ordinary compatibility finding resolved with baselinepass→candidatebehaviorred→finalgreen. Tests Bandit0, sourceBandit0, Ruff0/compile/diff clean. Ready scoped core3+Task32002 commit; other task scope unmodified.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed per-generation projection gating, retained/omitted-root handling and explicit qualified reconciliation without automatic rebuild. Evidence: 45cfb7dc7,8589ce59e,e35bf800e,b71a37edb,39cfec085,78bd37031,4f7bb0a5a. Fresh local-HF projection reuse remains unavailable; retained bytes do not imply retrieval readiness. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

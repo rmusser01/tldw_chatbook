@@ -1,7 +1,7 @@
 ---
 id: TASK-32005
 title: Replace selected local data with verified encrypted rollback
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-08 00:00
 labels:
@@ -16,7 +16,7 @@ dependencies:
 - task-32002
 - task-32003
 - task-32004
-updated_date: 2026-09-11 18:59
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -27,9 +27,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Replacement cannot mutate live data before exact affected stored data and supported credentials have a verified encrypted rollback copy.
-- [ ] #2 Maintenance spans the entire safety-copy/publication/validation interval and final active inventory matches the approved generation.
-- [ ] #3 Interrupted or failed replacement retains recovery evidence and never boots ambiguous or automatically active state.
+- [x] #1 Replacement cannot mutate live data before exact affected stored data and supported credentials have a verified encrypted rollback copy.
+- [x] #2 Maintenance spans the entire safety-copy/publication/validation interval and final active inventory matches the approved generation.
+- [x] #3 Interrupted or failed replacement retains recovery evidence and never boots ambiguous or automatically active state.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -92,3 +92,9 @@ Six-file publication/builtin safety frozen unit independently APPROVED /private/
 2026-09-11: Continue original credential-aware interrupted rollback matrix after d3bfb469f ordinary rename recovery fix. Source review confirms private recovery admission currently rejects credential_retire/publish/unpublish gaps despite journal already validating those exact native steps. Bounded next work: new focused registered-file namespace tests reusing actual persistent test keyring/native child boundaries in test_rollback_credentials; if regression demonstrated, extend only replacement recovery alias proof to typed existing rollback credential plan artifacts, retaining exact current held metadata/parents/raw originals and all prior negative guards. No credential store behavior change or generalized missing-root fallback. Root owns test/product correction and review; C fresh UI uses clean committed snapshot unaffected.
 2026-09-11 credential-specific interrupted rollback fix frozen: /private/tmp/credential-admission-gap-final-report.md, patchSHA f6fc899c271a1d2276a8391cdd1dede7b9970d3640fbd083750cbc8db182fcc7. Two files replacement.py+new credential admission tests. Typed preceding plans bind exact retire/publish/historical unpublish holders; preserve live bytes/metadata/parent identities and raw originals. Actual exactfile+symlink namespaces, persistent synthetic keyring, real process exits: intendedred1/7.36s; wrong-snapshot repeatedred1/6.57s retained as harness error; corrected5/33.56s. Added2 adverse held/parent identity cases plus prior14 ordinarygap +2existing amended/carried scope guards18/64.53s. Ruff0/Banditprod0; test9B101 only; compile/format/diffpass; exact source/tested snapshot hashes checked. Final independent review /private/tmp/credential-admission-gap-final-independent-review.md. No user credentials/native backend behavior changes; full release matrix remains separate.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed selected replacement with independently verified encrypted pre-move safety copy, continuous maintenance and recoverable interrupted state. Evidence: 39f984ac5,26292ed27,9dd9c34fd,d3bfb469f,ed411564f,4c0297453. Default config-parent/control overlap still refuses; supported private custom binding does not broaden that boundary. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -258,3 +258,19 @@ The test-only legacy-context cohort on committed `3dda85cf2` passes1 in21.98s. A
 An initial physical-baseline assertion failed because ordinary second app composition grew the SQLite DB from3354624 to3362816 bytes with the same inode. Selector and sidecar bytes remained exact. The corrected test preserves seed sidecar/selector/message semantics and records the physical DB state after normal reopen/capture close; it does not claim live SQLite bytes stay unchanged across startup. Root verified every payload in the54-file archive, all four executed child programs, the1212-byte sidecar across source/archive/restored paths and all25 journal hash links ending committed. Exact command/output: `/private/tmp/task26-legacy-chat-context-native-corrected.log`; report: `/private/tmp/task26-legacy-chat-context-report.md`; root checks: `/private/tmp/legacy-chat-context-root-verification.json`. Original Task26 release wiring and final checks remain open.
 
 Legacy-context scoped Ruff, formatting, compilation and whitespace checks pass. Unsuppressed `/private/tmp/task26-legacy-chat-context-bandit.json` reports three low-severity pytest assertions, no medium/high findings and no scan errors. Source remained unchanged after the green run;17 root source/report/scan/log/child/receipt hashes bind the reviewed artifacts.
+
+## Dependency completion reconciliation
+
+The remaining In Progress dependency records were reconciled against their original
+acceptance criteria and the committed receipts above at `7db576163`. Tasks31993,
+31993.20,31994,31997,31998 and32001–32008 now record their completed behavior and
+superseding integration evidence. Earlier failed or partial receipts remain history;
+this bookkeeping does not combine them into one current-build result. The independent
+per-criterion mapping is `/private/tmp/task26-dependency-completion-reconciliation.md`.
+
+This closes stale dependency statuses, not Task26. Final availability wiring,
+packaged product checks and the manual qualification workflow remain open. Execution
+capabilities without a released owner-review path remain inactive; fresh local-HF
+projection reuse, physical detach and power-loss qualification remain unavailable.
+Replacement ENOSPC equivalence remains source inference. No additional dependency
+feature or native matrix was inferred from this reconciliation.

@@ -1,7 +1,7 @@
 ---
 id: TASK-32004
 title: Restore and reopen an isolated profile
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-08 00:00
 labels:
@@ -12,7 +12,7 @@ dependencies:
 - task-32001
 - task-32002
 - task-32003
-updated_date: 2026-09-11 17:05
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -23,9 +23,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Isolated recovery creates and reopens a separate profile without altering original local data.
-- [ ] #2 Damaged current configuration and databases do not prevent archive-only recovery.
-- [ ] #3 Fresh launch respects relocated paths, credential/device isolation, durable activation, and projection readiness.
+- [x] #1 Isolated recovery creates and reopens a separate profile without altering original local data.
+- [x] #2 Damaged current configuration and databases do not prevent archive-only recovery.
+- [x] #3 Fresh launch respects relocated paths, credential/device isolation, durable activation, and projection readiness.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,3 +66,9 @@ Stage2b exact test-only isolated execution/fresh paired mounted two-profile open
 Actual next-generation MCP backup/restore regression reaches isolated stage credential processing and fails storage_scope_not_enrolled (/private/tmp/mcp-next-generation-red2.log,1failed11.74s). Root source review confirms ordinary unbound mounted apps hold UNBOUND leases, so unconditional exclusive UNBOUND staging would add an unnecessary drain/contention. Release isolated_restore.py finite composition: inspect actual acquired source lease.execution_context(None), retain unchanged session=None preview staging for UNBOUND/unqualified context, use existing native UNBOUND private staging maintenance/session only for positively bound source namespaces excluding UNBOUND. Retain/recheck real source selection as appropriate through stage, close source lease before existing publication maintenance. No config parsing/default fallback, storage/admission APIs, namespace enrollment or archive/stage guard changes. Validate actual bound next-restore prerequisite, existing ordinary mounted startup-readmission success/pendingfailure, and malformed-source service isolated route. Mapping of repeated MCP definition data remains separate owner unit; no new qualification claim.
 Root independently APPROVED isolated private-stage two-file unit after source/context/ordinary-live-lock analysis and full new native test review. Exact working and clean7fde+only2 snapshot hashes verified; patch7b28a480f4a66f00329b410bd58ce738478821b7d563b6497bec52ea1fcda1cc. New actual replacement-bound source→new isolated restore+verified descriptor/source unchanged1passed7.30s /private/tmp/isolated-stage-only-bound.log. Separate combined receipt has existing mounted ordinary success+pendingfailure and malformed-source service3passes17.69s, new case initially failed only expected str/Path comparison after successful publication; correct type rerun above. Ruff0/Bandit0/compile/diff clean. Report /private/tmp/chatbook-isolated-bound-stage-report.md. Commit only source/test2+task. Actual MCP next restore now reaches distinct finite mcp.context retained destination refusal, not completed by this prerequisite.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed isolated publication and separate profile reopening with explicit selectors, new identities, source preservation and inactive setup. Evidence: 2aec95fd3,6f7dd9dab,bfb1d437a,782e7becd,763183fd5,fb64239ad and retained cohorts through7db576163. Metadata normalization and ordinary SQLite reopen effects remain disclosed. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

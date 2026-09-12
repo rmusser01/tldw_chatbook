@@ -1,7 +1,7 @@
 ---
 id: TASK-31998
 title: Capture a coherent final inventory with optional external content
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-07 23:56
 labels:
@@ -13,7 +13,7 @@ dependencies:
 - task-31995
 - task-31996
 - task-31997
-updated_date: 2026-09-11 14:32
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -24,9 +24,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A completed capture reflects the final inventory under maintenance, including valid in-scope growth and coherent DB/asset dependencies.
-- [ ] #2 Changed scope or budget renews preview safely; partial and optional coverage is accurately reported.
-- [ ] #3 Ordinary writers resume after verified capture, before encryption or output transfer.
+- [x] #1 A completed capture reflects the final inventory under maintenance, including valid in-scope growth and coherent DB/asset dependencies.
+- [x] #2 Changed scope or budget renews preview safely; partial and optional coverage is accurately reported.
+- [x] #3 Ordinary writers resume after verified capture, before encryption or output transfer.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -88,3 +88,9 @@ Concrete public multi-profile capture RED15.34s on clean73e419 + Task26Stage1 te
 Root continuation: exact clean 73e419651 snapshot plus only capture.py shared-directory alias fix and two-profile regression now passes both module tests (2 passed, 18.48s; /private/tmp/complete-stage1-final.log). Corrected test to distinguish canonical validated manifest from archive raw manifest, checking both. Native profile content/deletions/shared directories and prompts/queue/archive payloads/resumed writes verified. No broad release or later rollback qualification claimed.
 Final independent bounded capture review APPROVED by rag_enhanced_qualification: /private/tmp/shared-directory-capture-independent-review.md. Reviewer verified exact two source/test hashes match clean73e tested snapshot, all semantic assertions, no invented inventory or authority; A-live/B-closed and finite Stage1 scope explicitly retained. Ready scoped capture/test/related tracking commit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed coherent final capture with scope/budget checks, optional/Partial coverage and ordinary writer resumption before packaging. Evidence: 146-case final capture integration, 3578727a3, c992c1781, 77ea5c253, 5f529fba7, 006cddd18 and 763183fd5. External per-file consistency remains Partial. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

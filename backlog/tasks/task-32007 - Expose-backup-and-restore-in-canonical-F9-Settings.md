@@ -1,7 +1,7 @@
 ---
 id: TASK-32007
 title: Expose backup and restore in canonical F9 Settings
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-08 00:01
 labels:
@@ -12,7 +12,7 @@ dependencies:
 - task-32004
 - task-32005
 - task-32006
-updated_date: 2026-09-11 20:06
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -23,9 +23,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Users can discover and execute create/inspect/both restore modes from F9 with truthful coverage, risks, and progress.
-- [ ] #2 Recovery copies and isolated profiles are inspectable and actionable through the canonical UI.
-- [ ] #3 Product-level mounted/live evidence verifies actual services and keyboard/navigation behavior without unintended execution.
+- [x] #1 Users can discover and execute create/inspect/both restore modes from F9 with truthful coverage, risks, and progress.
+- [x] #2 Recovery copies and isolated profiles are inspectable and actionable through the canonical UI.
+- [x] #3 Product-level mounted/live evidence verifies actual services and keyboard/navigation behavior without unintended execution.
 <!-- AC:END -->
 
 ## Design references
@@ -70,3 +70,9 @@ Actual PTY F9 create/isolated restore/open integration at base63a plus frozen li
 List refresh correction verified independently and ready for incremental commit: accepted delivery token + freshness recheck after removal + one batched widget mount. Actual red3/1.24s -> final frozen green3/0.81s, narrow local list and actual recovery-copy confirmation/tombstone compatibility also pass (5 distinct cases). Production Ruff/Bandit0; new test6 expected B101 only. Exact source matches tested snapshot; P independent review approved /private/tmp/profile-list-render-independent-review.md. Does not claim parent terminal suspend failure or full F9 flow resolved.
 Terminal2 ready for incremental commit: outer batch_update defers actual redraw until suspended terminal resumes; expected synchronous service errors caught inside suspend and reported after resume. Existing shielded service settlement/cancellation preserved. Actual PTY red2fail17.54 -> finalclean4pass8.17s; success/cancel/failedservice/start-error all resume real writer. Root independently reviewed full source/test and frozen source/testedAST/patch/11receipts /private/tmp/profile-terminal-independent-review.md. App baselineRuff404→404/Bandit35→35, testRuff0/3B101 only. No native/source/admission semantics changed; full actual F9 launch rerun running separately.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed canonical F9 create/inspect/isolated/open/replace/later controls, copies, inert extraction, setup state, navigation and terminal behavior. Evidence: 81f056e52,aa9579d17,98e2a7f6a,3afae0913,808988d86,33ddac172,3c4500d74,763183fd5,fb64239ad,e6150b7d3. Final shared release availability remains TASK-32009 work. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

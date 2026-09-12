@@ -1,7 +1,7 @@
 ---
 id: TASK-31997
 title: Implement staged credential exclusion and encrypted credential recovery
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-07 23:56
 labels:
@@ -13,7 +13,7 @@ dependencies:
 - task-31991
 - task-31992
 - task-31996
-updated_date: 2026-09-10 22:17
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -70,5 +70,5 @@ Root final gate: unchanged ownership inventory guard passed 11 tests in the exis
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Staged managed credentials now exclude safely by default, preserve encrypted recovery material when selected, and avoid overwriting shared scopes. Focused credential, shared resolver and SQLite inventory checks pass; full backup/restore orchestration remains separate original tasks.
+Completed staged credential exclusion/inclusion, encrypted safety recovery and independently scoped omission review without overwriting global credentials. Already checked criteria now have downstream public integration evidence: 2196768bc, 26292ed27, ed411564f, fb64239ad and e6150b7d3. Unexportable credentials and remote token validity remain disclosed limitations. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
 <!-- SECTION:FINAL_SUMMARY:END -->

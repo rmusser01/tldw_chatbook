@@ -1,7 +1,7 @@
 ---
 id: TASK-31994
 title: Persist recovered media references and deletion tombstones
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-07 23:53
 labels:
@@ -12,7 +12,7 @@ dependencies:
 - task-31987
 - task-31992
 - task-31993
-updated_date: 2026-09-11 17:46
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -23,7 +23,7 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Included temporary media becomes durable and resolves correctly across restart and subsequent backups.
+- [x] #1 Included temporary media becomes durable and resolves correctly across restart and subsequent backups.
 - [x] #2 Intentional deletion survives as a tombstone without partial-backup status; unexpected missing required bytes still block completeness.
 - [x] #3 Shared references, recovery holds, explicit cleanup, and interrupted publication/deletion preserve recoverable state.
 <!-- AC:END -->
@@ -73,3 +73,9 @@ Root independently APPROVED six-file recovered-message lifecycle after full sour
 After committed Console lifecycleec8137d93, release bounded original direct-message compatibility follow-up per /private/tmp/recovered-media-direct-message-routes-preflight.md. LocalCharacterPersonaService public/alias route is shipped through app factory/scope dispatcher: keep actual native deletion in existing chat-source guard, invoke ancillary exact-bound recovered reference release only after that guarded operation retires; capture finite source binding at actual service composition. Preserve success and report fixed pending outcome on ancillary failure. Public Character_Chat_Lib.remove_message_from_conversation may reuse same finite per-call binding, no object registry; keep its successful bool after cleanup failure. Source scope local_character_persona_service.py, Character_Chat_Lib.py, recovered_media_messages.py only if necessary shared finite helper, named direct-route tests. No conversation semantics, new DB callback, activation/enrollment or payload deletion. Verify factory/guard, exact message tombstone/shared/historical references, native failure and foreign/changed source refusal; legacy API has no shipped internal caller and no invented UI route.
 Direct Character/legacy message lifecycle follow-up complete and independently reviewed: exact3product+newtest on clean ec8137d93. Installed native guard moved into fixed helper so ancillary cleanup runs after retirement; direct/alias returnshape unchanged; legacy per-callbinding preserves committednativeTrue on ownerfailure. Positive tombstones only, other/historical refs and payloadbytes retained, no conversation-only semantic change. Actual12new +3compatibility +11census pass across namedruns; intendedred2.89s, firstpositive2.01s, corrected2negativefixture boundaries4.54s with productionunchanged. ForeignordinaryDBconstruction vs installedretarget and configchangedafterper-callbinding were verifiedagainst actualsourcebeforefixingtests. Ruff316→316 no new, productionBandit0, compile/format/diffpass. Rootverified4 current/snapshot/11receipt hashes and patchfae70c3aff46d0ed51aed0a1be01a65d2954413dbc42702ef7955c026f7b0a08. Reports /private/tmp/chatbook-recovered-direct-message-report.md and /private/tmp/recovered-direct-message-independent-review.md; manifest /private/tmp/recovered-direct-message-frozen-hashes.json. No fullmountedapp/freshrestoredgeneration claim.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed recovered-media ownership, second restore/rebackup retention, explicit deletion/holds and interrupted deletion recovery. Evidence: b7d638a58, d067f3e41, 2071cd8da, fb9cf69d6, ec8137d93 and 446530525. Message-reference cleanup does not claim conversation-only deletion semantics. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -1,7 +1,7 @@
 ---
 id: TASK-32008
 title: Expose startup-independent recovery and first-run restore
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-08 00:02
 labels:
@@ -14,7 +14,7 @@ dependencies:
 - task-32005
 - task-32006
 - task-32007
-updated_date: 2026-09-11 11:27
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -25,9 +25,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 First-run and damaged-installation users can inspect and restore without normal startup succeeding.
-- [ ] #2 Minimal recovery reuses qualified services and never bypasses admission, target verification, or activation gates.
-- [ ] #3 CLI and UI credentials stay out of process arguments, environment, logs, and persisted requests.
+- [x] #1 First-run and damaged-installation users can inspect and restore without normal startup succeeding.
+- [x] #2 Minimal recovery reuses qualified services and never bypasses admission, target verification, or activation gates.
+- [x] #3 CLI and UI credentials stay out of process arguments, environment, logs, and persisted requests.
 <!-- AC:END -->
 
 ## Design references
@@ -69,3 +69,9 @@ Root controlled restart preflight /private/tmp/chatbook-f9-controlled-restart-pr
 Console provider derivation two-file unit independently approved (/private/tmp/chatbook-console-provider-derivation-independent-review.md). Root exact committed production snapshot plus unit:15 passed29.83s, /private/tmp/console-provider-derivation-root-index.log; frozen source hashes reverified. Existing guard admission remains unchanged and temporary memo clears synchronously. Ruff/Bandit normalized deltas zero. Preparing scoped commit of chat_screen method and new test only. Controlled replacement restart remains in progress; actual production CLI success/unmount-failure pair both passed15.20s on unchanged WIP, so preliminary recorded-shutdown finding withdrawn, no speculative code added. Repeated-click guard qualification ongoing.
 Controlled replacement restart six-file unit independently APPROVED /private/tmp/chatbook-recovery-restart-independent-review.md; fixed fresh process via existing minimal recovery host carries only archive/target hints, requires new inspection/review, clears passwords, preserves ordinary guarded quit. Actual repeated-click RED WorkerCancelled /private/tmp/recovery-restart-duplicate-red.log; synchronous guard before worker creation correction final12passed51.52s /private/tmp/recovery-restart-final.log. Frozen focused repeat/exec +11census13passed11.95s /private/tmp/recovery-restart-frozen-check.log. Actual production CLI success/unmount-failure both pass; speculative shutdown predicate not added. Ruff404->404/Bandit35->35 normalized no new findings (fixed native exec B606 reviewed explicitly). Frozen patch371153cccbce0dec79ec54fc5b937892fc9ac22972059fe3a7c3b8615c176d4c. Full F9 fresh recovery now reaches new plan and actual credential_unreadable acknowledgement blocker; missing original UI review inputs remain separate originalTask24 followup, feature not complete.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed startup-independent recovery/first-run Restore, damaged-current inspection, checked selectors and explicit pending actions/password/restart handling. Evidence: c3d8200a7,a19114179,034fac04d,53f78f502 and later real F9/packaged fresh-reader receipts. Final shared release availability remains TASK-32009 work. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

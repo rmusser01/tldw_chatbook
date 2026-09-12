@@ -1,7 +1,7 @@
 ---
 id: TASK-32001
 title: Implement durable publication journal and crash reconciliation
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-07 23:58
 labels:
@@ -11,7 +11,7 @@ dependencies:
 - task-31987
 - task-31988
 - task-32000
-updated_date: 2026-09-10 23:25
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -22,9 +22,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Interrupted publication is classified using durable journal and actual filesystem evidence.
-- [ ] #2 No supported startup opens an ambiguous mixed generation, and original/candidate/rollback evidence is retained.
-- [ ] #3 Native crash tests cover every durable transition and refuse unqualified filesystem semantics.
+- [x] #1 Interrupted publication is classified using durable journal and actual filesystem evidence.
+- [x] #2 No supported startup opens an ambiguous mixed generation, and original/candidate/rollback evidence is retained.
+- [x] #3 Native crash tests cover every durable transition and refuse unqualified filesystem semantics.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -73,3 +73,9 @@ Next original Task18 unit: implement cohesive internal publication.finalize_cand
 Finalization initial qualification141unique passes; root independently reran23new cases (23passed8.69s). Root review raised missing unbound guard across pending retirement: require actual bootstrap.unbound maintenance hold alongside profile namespaces so a new selector cannot write after fence unlink before session exits; existing native writer test exercises only explicit profile admission. Implementer verifying with real unbound storage writer and adding guard regression. Not approved/committed pending scoped fix. API remains internal/unwired; Journal.recover conservative.
 Finalization review fix1 addressed: source and two behavioral reds confirmed profile-only finalization allowed an actual new-selector unbound StorageLease writer afterpendingunlink beforemaintenanceexit. Finalizer now requires bootstrap.unbound in the actual minted held namespace group. Guard remains excluded from pending and paired profile binding; exact profile footprints asserted. Updated25newtests pass; prior118existing pass remain unchanged, total143unique qualified cases. Root independently reviewed initial3-filediff and guardfix; initial23tests also passed8.69s in rootrun. No new Ruff/Bandit findings; producer deltaonly finalize_candidate/os.unlink +1. API is internalconfig-led; no publicexecutor/catalog/launch/SQLiterollback completion claim. /private/tmp/chatbook-publication-finalization-report.md and fix1diff contain exact evidence.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed durable publication/reconciliation, pending fences and qualified native forward/reverse recovery. Evidence: becb4946b, 39f984ac5, d3bfb469f, ed411564f and four actual two-device cases4c0297453. Finite native/process evidence does not establish physical power-loss/detachment; replacement ENOSPC equivalence remains explicitly source inference. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->

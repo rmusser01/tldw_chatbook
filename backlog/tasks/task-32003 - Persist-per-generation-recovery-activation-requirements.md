@@ -1,7 +1,7 @@
 ---
 id: TASK-32003
 title: Persist per-generation recovery activation requirements
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-09-07 23:59
 labels:
@@ -12,7 +12,7 @@ dependencies:
 - task-31991
 - task-31992
 - task-32001
-updated_date: 2026-09-11 18:42
+updated_date: 2026-09-12 02:26
 ---
 
 ## Description
@@ -23,9 +23,9 @@ Deliver the approved local recovery behavior for this independently reviewable s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Restored capabilities remain inactive across every supported launch until their own owner review completes.
-- [ ] #2 Missing/corrupt activation records and imported approvals cannot grant execution authority.
-- [ ] #3 Safe local inspection works and one owner approval never activates unrelated automation or queued work.
+- [x] #1 Restored capabilities remain inactive across every supported launch until their own owner review completes.
+- [x] #2 Missing/corrupt activation records and imported approvals cannot grant execution authority.
+- [x] #3 Safe local inspection works and one owner approval never activates unrelated automation or queued work.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -163,3 +163,9 @@ Exact config-prerequisite2 independently APPROVED /private/tmp/mcp-config-prereq
 Root review of frozen MCPUI3 found new _apply_view_state indentation regression: selected_server_key assignment escaped key/type/snapshot guards, causing absent-key UnboundLocalError and accepting invalidvalues. P exactUI3 reopened for narrow correction and actualviewstate absent/invalid/None/valid guards, plus invalidate actualrail target transitions. Earlier15pass30.24 remainslimitedreviewflow evidence; no finalapproval/commituntilcorrection. No additionalfeature scope.
 2026-09-11 MCP Permissions UI3 final review approved: /private/tmp/mcp-recovery-controls-final-independent-review.md. Actual restored-root explicit review creates fresh Ask/local defaults; no implicit connect/tool grants/config approval. Root caught misplaced selected-server assignment, now corrected preserving None/string/known-target validation; actual rail round-trip invalidates review. New red1/2.29s → affected5/16.07s; prior complete15/30.24s retained separately. Frozen full3 SHA ff48ef4af2a475d1dee9791ceb1c86f755d7eb293911d0bc03ed6318123c27db, exact source/receipts verified. Ruff57→57/Bandit3→3 no additions, compile/testformat/diffcheck pass. Report /private/tmp/chatbook-mcp-recovery-controls-correction1-report.md. Minimal actual Textual host/service/stdio qualified; no full-production-app claim. Scoped UI3 + task ready for commit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed durable generation activation requirements, missing/imported-authority refusal, passive reads and independent owner review. Evidence: ddf569164,dd7a0dfa1,0f55ce981,67a65c592,31e0034d2,78bd37031,a9b710a6a,8911cddbc,7fca99799,3ab0e5ac2. Capabilities without released review controls remain inactive; this does not claim all providers/schedulers/sync can reactivate. Independent AC reconciliation: /private/tmp/task26-dependency-completion-reconciliation.md; committed evidence index: backlog/docs/backup-recovery-release-evidence.md. This closes stale dependency bookkeeping against recorded revisions; it is not a current-build test claim or completion of TASK-32009.
+<!-- SECTION:FINAL_SUMMARY:END -->
