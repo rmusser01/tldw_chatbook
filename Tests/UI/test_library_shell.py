@@ -12038,7 +12038,14 @@ async def test_library_paged_empty_recovery_is_painted_and_keyboard_reachable(
             for selector in absent_selectors:
                 assert not screen.query(selector)
             painted = "\n".join(_painted_rows(screen))
-            assert "0 of 0" not in painted
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                assert (
+                    str(screen.query_one("#library-media-scope-line", Static).content)
+                    == "Media · 0 of 0 · all types · sort: Newest"
+                )
+                assert "Item 0-0 of 0" not in painted
+            else:
+                assert "0 of 0" not in painted
             assert "Page 1 of 1" not in painted
             assert "Nothing here to select yet." not in painted
 
@@ -24965,19 +24972,29 @@ async def test_library_note_compact_labels_round_trip_without_recompose() -> Non
 
 
 @pytest.mark.asyncio
-async def test_library_note_database_purpose_round_trips_at_breakpoint_without_recompose() -> (
-    None
-):
-    """TASK-3317: supporting purpose copy yields only in compact Notes."""
+@pytest.mark.parametrize("navigator_state", ("normal", "selection"))
+async def test_library_note_database_purpose_round_trips_across_navigator_shapes(
+    navigator_state: str,
+) -> None:
+    """TASK-3317: supporting purpose copy follows each navigator shape.
+
+    Args:
+        navigator_state: Normal or selection-mode navigator chrome.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
+    expected_copy = (
+        "These notes live in the Library's own database — for notes "
+        "that live in a folder on disk, switch to Folder files. To copy "
+        "or keep a folder synced, choose Add from files."
+    )
 
     async with host.run_test(size=(60, 20)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
-        await _enter_task8_navigator_state(screen, pilot, "normal")
+        await _enter_task8_navigator_state(screen, pilot, navigator_state)
 
         canvas = screen.query_one("#library-notes-canvas")
         purpose = screen.query_one("#library-notes-database-purpose", Static)
@@ -24987,17 +25004,29 @@ async def test_library_note_database_purpose_round_trips_at_breakpoint_without_r
         await pilot.resize_terminal(170, 48)
         await _wait_for_library_notes_compact(screen, pilot, False)
         assert screen.query_one("#library-notes-canvas") is canvas
-        assert screen.query_one("#library-notes-database-purpose") is purpose
-        assert purpose.display is True
-        assert purpose.region.height > 0
-        assert "Library's own database" in str(purpose.renderable)
+        wide_purpose = screen.query_one("#library-notes-database-purpose", Static)
+        if navigator_state == "normal":
+            assert purpose.is_attached is False
+            assert wide_purpose is not purpose
+        else:
+            assert wide_purpose is purpose
+        assert wide_purpose.is_attached is True
+        assert wide_purpose.display is True
+        assert wide_purpose.region.height > 0
+        assert str(wide_purpose.renderable) == expected_copy
 
         await pilot.resize_terminal(60, 20)
         await _wait_for_library_notes_compact(screen, pilot, True)
         assert screen.query_one("#library-notes-canvas") is canvas
-        assert screen.query_one("#library-notes-database-purpose") is purpose
-        assert purpose.display is False
-        assert purpose.region.height == 0
+        compact_purpose = screen.query_one("#library-notes-database-purpose", Static)
+        if navigator_state == "normal":
+            assert wide_purpose.is_attached is False
+            assert compact_purpose is not wide_purpose
+        else:
+            assert compact_purpose is purpose
+        assert compact_purpose.is_attached is True
+        assert compact_purpose.display is False
+        assert compact_purpose.region.height == 0
 
 
 @pytest.mark.asyncio
@@ -33028,17 +33057,33 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
+        "terminal_width",
         "region",
         "owner_selector",
         "fixed_selectors",
         "expected_fixed_heights",
-        "owner_height_at_80x24",
-        "owner_height_at_100x30",
+        "owner_height_at_24",
+        "owner_height_at_30",
     ),
     (
-        # TASK-19000 reserves two rows for authority at both compact sizes.
-        # Surplus still goes only to the named owner: +6 for +6 terminal rows.
         (
+            80,
+            "navigator",
+            "#library-notes-list",
+            (
+                "#library-notes-header",
+                "#library-notes-filter-row",
+                "#library-notes-browse-actions",
+                "#library-notes-browse-actions-overflow",
+                "#library-notes-transfer-actions",
+                "#library-notes-status-row",
+            ),
+            (1, 1, 1, 1, 1, 1),
+            9,
+            15,
+        ),
+        (
+            100,
             "navigator",
             "#library-notes-list",
             (
@@ -33053,6 +33098,7 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
             16,
         ),
         (
+            80,
             "editor",
             "#library-note-body",
             (
@@ -33067,6 +33113,38 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
             16,
         ),
         (
+            100,
+            "editor",
+            "#library-note-body",
+            (
+                "#library-note-heading",
+                "#library-note-title-row",
+                "#library-note-body-label",
+                "#library-note-status",
+                "#library-note-primary-actions",
+            ),
+            (1, 1, 1, 1, 2),
+            10,
+            16,
+        ),
+        (
+            80,
+            "context",
+            "#library-note-context-region",
+            (
+                # task-32177: #library-note-context-status was removed (dead
+                # duplicate of #library-note-status) -- dropped from the
+                # fixed-row list along with its expected-height entry below.
+                "#library-note-heading",
+                "#library-note-status",
+                "#library-note-primary-actions",
+            ),
+            (1, 1, 2),
+            12,
+            18,
+        ),
+        (
+            100,
             "context",
             "#library-note-context-region",
             (
@@ -33084,18 +33162,30 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
     ),
 )
 async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
+    terminal_width: int,
     region: str,
     owner_selector: str,
     fixed_selectors: tuple[str, ...],
     expected_fixed_heights: tuple[int, ...],
-    owner_height_at_80x24: int,
-    owner_height_at_100x30: int,
+    owner_height_at_24: int,
+    owner_height_at_30: int,
 ) -> None:
+    """Six extra rows grow only the named owner at a fixed compact width.
+
+    Args:
+        terminal_width: Compact terminal width held constant during the resize.
+        region: Notes region to display and measure.
+        owner_selector: Selector for the region that owns surplus height.
+        fixed_selectors: Selectors for rows that must retain exact heights.
+        expected_fixed_heights: Required height for each fixed selector.
+        owner_height_at_24: Exact owner height at 24 terminal rows.
+        owner_height_at_30: Exact owner height at 30 terminal rows.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
 
-    async with host.run_test(size=(80, 24)) as pilot:
+    async with host.run_test(size=(terminal_width, 24)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, True)
@@ -33114,19 +33204,23 @@ async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
         fixed_heights = tuple(
             screen.query_one(selector).region.height for selector in fixed_selectors
         )
+        if region == "navigator" and terminal_width == 100:
+            assert not screen.query("#library-notes-browse-actions-overflow")
 
-        await pilot.resize_terminal(100, 30)
+        await pilot.resize_terminal(terminal_width, 30)
         await _wait_for_library_notes_compact(screen, pilot, True)
         await pilot.pause()
 
-        assert owner_height == owner_height_at_80x24
+        assert owner_height == owner_height_at_24
         assert fixed_heights == expected_fixed_heights
         assert screen.query_one(owner_selector) is owner
-        assert owner.region.height == owner_height_at_100x30
+        assert owner.region.height == owner_height_at_30
         resized_fixed_heights = tuple(
             screen.query_one(selector).region.height for selector in fixed_selectors
         )
         assert resized_fixed_heights == fixed_heights
+        if region == "navigator" and terminal_width == 100:
+            assert not screen.query("#library-notes-browse-actions-overflow")
         growth_by_named_region = {
             owner_selector: owner.region.height - owner_height,
             **{
@@ -33345,16 +33439,23 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         await round_trip("#library-notes-filter", "filter", "navigator")
         note_row = await _wait_for_selector(screen, pilot, ".library-notes-row")
+        note_row_id = note_row.id
+        note_placement_id = note_row.placement_id
         # task-32175: the tree's semantic role is "note-placement:<id>"
         # (library_screen.py's focus-identity capture), not the flat
         # list's "note-row:<note_id>" this used to hardcode.
         await round_trip(
-            f"#{note_row.id}",
-            f"note-placement:{note_row.placement_id}",
+            f"#{note_row_id}",
+            f"note-placement:{note_placement_id}",
             "navigator",
         )
 
-        note_row.press()
+        current_note_row = screen.query_one(f"#{note_row_id}")
+        assert current_note_row.placement_id == note_placement_id
+        assert current_note_row.is_attached is True
+        assert current_note_row is screen.focused
+        assert note_row.is_attached is False
+        current_note_row.press()
         await _wait_for_selector(screen, pilot, "#library-note-body")
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "\n\n".join(

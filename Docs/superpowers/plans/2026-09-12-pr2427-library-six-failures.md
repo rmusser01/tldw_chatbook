@@ -256,3 +256,19 @@ to six Workspace nodes and 38 Shell nodes (the backlinks selector has five
 parameters). The prior controls split into one Crit10Details node and 15 Shell
 nodes. No original selector is omitted; this avoids an unnecessary separate
 44-case replay after both complete-file runs qualify the same frozen source.
+
+### Complete Shell terminal result
+
+The separate complete Shell run at
+`/private/tmp/pr2427-resize-shell-complete.CAd9yu` exited one after
+**862 passed / 6 failed / 10 warnings in 1954.66 seconds**. Final native
+inventory: four descriptors, zero SQLite and zero instance-lock handles.
+All original 44 regression cases and prior 16 controls are covered and pass;
+none of the six current failed IDs overlaps that earlier inventory.
+
+The six additional findings are two Media empty-state whole-frame `0 of 0`
+exclusions, one delayed-entry/Retry focus case, and three Notes tests concerning
+purpose-widget identity, compact surplus allocation, and a retained row across
+breakpoint rebuilds. These remain under diagnosis, not hidden by the passing
+original controls. The 50-route-cycle and other complete-file stress checks
+passed. Complete Shell qualification is not yet green.
