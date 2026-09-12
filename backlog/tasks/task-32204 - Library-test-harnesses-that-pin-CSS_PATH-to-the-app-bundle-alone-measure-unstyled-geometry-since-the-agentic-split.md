@@ -98,7 +98,38 @@ five above), batch 4 11 branch / 0 dev -- of which 10 are
 as task-32453, and 1 is `test_library_core_loop_modes_are_actionable_without_
 leaving_library`, which fails identically on dev when run alone.
 
+Fix round 1 (task-8 review finding 3). The guard had two holes, both closed:
+(a) the pin check was a substring test for `APP_STYLESHEETS`, so
+`str(APP_STYLESHEETS[0])` -- the bundle alone, spelled differently -- passed;
+the scan now folds a subscript of a real sheet sequence to the one path it
+names before inlining (mutation re-run: that spelling on `_ChipsOverflowApp`
+fails the guard, `fix2-guard-mutation-a.txt`); (b) the owner exemption matched
+the whole FILE, so a module that merely imported `LibraryScreen` exempted
+every harness in it -- it is now scoped to the harness class body plus its
+same-module bases, the three screen-pushing harness bases are named as owners
+(`ConsoleHarness`: all seven module-local ones push `ChatScreen` in
+`on_mount`; `LibraryHarness`; `DestinationHarness`), and an imported
+`OtherHarness.CSS_PATH` is read off the real class. The tightened scan run
+against the pre-flip tree reported 19 more bundle-only harnesses in 16 files
+(`fix2-guard-mutation-b.txt`); all 19 now load `APP_STYLESHEETS`. Two
+assertions that pinned the old spelling were re-pinned to the same set
+(`test_skill_editor_production_geometry_contains_basic_and_advanced_workflows`:
+`app.CSS_PATH == [str(p) for p in APP_STYLESHEETS]`;
+`test_production_bundle_applies_speech_disclosure_styles`, whose selector
+contract also moved from the bundle text to `app_css_text()` -- those rules
+live in the settings split sheet now, and the node was red on the baseline
+for exactly that reason). Name-set comparison of the 79 test functions that
+reach the 19 harnesses (two chunks, branch vs detached HEAD 74db68de77):
+chunk A 1 failed / 52 passed vs 11 / 42; chunk B 3 / 80 vs 14 / 69 before
+the tts contract repair, and that node passes after it -- 21 baseline reds
+fixed by the sheets, 0 introduced. The survivors fail identically on the
+baseline: `test_raw_cli_collapsed_state_retains_danger_label_and_one_row_
+geometry` (task-27018) and `test_high_stakes_file_notes_states_are_legible_
+in_shipped_themes[size0|size1]` ('Save failed' at 3.89:1 on both trees).
+Captures `fix2-chunk{A,B}-{branch,base}.txt`.
+
 Files: `Tests/UI/test_consolidated_css_harness.py` (+ the scan and guard), 30
 harness files (one-line pins), `Tests/UI/test_library_adaptive_reader_shell.py`
-(the re-pin).
+(the re-pin); fix round 1: 16 more test files (19 pins) and
+`Tests/UI/test_settings_speech_tts_panel.py`'s text contract.
 <!-- SECTION:NOTES:END -->

@@ -21,7 +21,7 @@ from textual.screen import ModalScreen, Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -125,12 +125,7 @@ class _WorkspaceHarness(ConsolidatedCSSApp):
 class _CssTrueWorkspaceHarness(_WorkspaceHarness):
     """Mount File Notes with the production bundle and shipped themes."""
 
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def on_mount(self) -> None:
         for theme in ALL_THEMES:

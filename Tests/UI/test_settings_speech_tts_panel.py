@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from Tests.UI.consolidated_css import APP_STYLESHEETS, app_css_text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
@@ -282,7 +283,7 @@ class _StyledDestinationHarness(DestinationHarness):
 
 
 class _StyledPanelHarness(_PanelHarness):
-    CSS_PATH = _BUNDLE
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 def test_speech_tts_is_a_first_class_core_settings_category() -> None:
@@ -3285,7 +3286,9 @@ async def test_details_and_scope_start_collapsed_on_every_mount() -> None:
 
 @pytest.mark.asyncio
 async def test_production_bundle_applies_speech_disclosure_styles() -> None:
-    bundled_css = _BUNDLE.read_text(encoding="utf-8")
+    # task-32204: these rules live in the settings split sheet now, so the
+    # contract is the app's stylesheet union, not the boot bundle alone.
+    app_css = app_css_text()
     for selector in (
         "#settings-speech-details,\n#settings-speech-scope-inspector",
         "#settings-speech-details > CollapsibleTitle,\n"
@@ -3293,10 +3296,12 @@ async def test_production_bundle_applies_speech_disclosure_styles() -> None:
         "#settings-speech-details > Contents,\n"
         "#settings-speech-scope-inspector > Contents",
     ):
-        assert selector in bundled_css
+        assert selector in app_css
 
     app = _StyledPanelHarness(configure_provider="audio_cpp")
-    assert Path(app.CSS_PATH).resolve() == _BUNDLE.resolve()
+    assert [Path(path).resolve() for path in app.CSS_PATH] == [
+        path.resolve() for path in APP_STYLESHEETS
+    ]
 
     async with app.run_test(size=(120, 40)):
         details = app.query_one("#settings-speech-details", Collapsible)

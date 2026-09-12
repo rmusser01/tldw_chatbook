@@ -25,7 +25,7 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.selection import Selection
@@ -3347,7 +3347,7 @@ async def test_library_onboarding_hanging_owner_times_out_to_retry(
 class _ConversationCanvasHarness(App):
     """Mount the conversations canvas with the production stylesheet."""
 
-    CSS_PATH = LibraryHarness.CSS_PATH
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, canvas: LibraryConversationsCanvasState) -> None:
         super().__init__()

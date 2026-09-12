@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.widgets import Button, Markdown, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -856,7 +856,7 @@ def test_legacy_set_messages_preserves_same_id_activity_expansion() -> None:
 
 
 class StyledRoleplayTranscriptHarness(ConsolidatedCSSApp):
-    CSS_PATH = str(_BUNDLE)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
@@ -2299,7 +2299,7 @@ async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
 @pytest.mark.asyncio
 async def test_console_more_focus_falls_back_to_composer_after_row_removal():
     class ComposerFallbackHarness(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLE)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             transcript = ConsoleTranscript(id="console-native-transcript")
@@ -2653,7 +2653,7 @@ async def test_console_transcript_rule_spans_full_width_on_wide_terminals():
     """
 
     class _BundledTranscriptHarness(TranscriptHarness):
-        CSS_PATH = str(_BUNDLE)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     app = _BundledTranscriptHarness()
     async with app.run_test(size=(250, 20)) as pilot:

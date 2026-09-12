@@ -18,13 +18,19 @@
 from __future__ import annotations
 
 import ast
+import copy
+import importlib
 import re
 from pathlib import Path
 
 import pytest
 from textual.color import Color
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    BUNDLED_STYLESHEET,
+    ConsolidatedCSSApp,
+)
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Note_Widgets.note_selection_dialog import (
     NoteSelectionDialog,
@@ -266,13 +272,35 @@ _TESTS_ROOT = Path(__file__).resolve().parent.parent
 #: that names one of these pushes the real screen, so Textual (or
 #: `TldwCli._ensure_screen_owned_css`) loads the sheet exactly as production
 #: does and the harness is correct as written.
+# A harness is exempt from a sheet's check when ITS OWN class body (same-module
+# bases included) names the screen that owns the sheet -- pushing that screen
+# loads the sheet through the screen's ``CSS_PATH``. The imported harness bases
+# that push a screen in ``on_mount`` are named too, because a subclass reaches
+# them only through its base list: ``ConsoleHarness`` (three module-local
+# production Console harnesses), ``LibraryHarness`` (``test_library_shell``) and
+# ``DestinationHarness`` (``test_destination_shells``; pushes the route's screen).
 _SPLIT_SHEET_OWNERS = {
-    "screen_agentic_console.tcss": ("ChatScreen",),
-    "screen_agentic_library.tcss": ("LibraryScreen",),
-    "screen_agentic_settings.tcss": ("SettingsScreen",),
-    "screen_feature_evals.tcss": ("EvalsScreen",),
-    "screen_feature_scheduling.tcss": ("SchedulesScreen", "SchedulingScreen"),
-    "screen_feature_watchlists.tcss": ("WatchlistsCollectionsScreen",),
+    "screen_agentic_console.tcss": (
+        "ChatScreen",
+        "ConsoleHarness",
+        "DestinationHarness",
+    ),
+    "screen_agentic_library.tcss": (
+        "LibraryScreen",
+        "LibraryHarness",
+        "DestinationHarness",
+    ),
+    "screen_agentic_settings.tcss": ("SettingsScreen", "DestinationHarness"),
+    "screen_feature_evals.tcss": ("EvalsScreen", "DestinationHarness"),
+    "screen_feature_scheduling.tcss": (
+        "SchedulesScreen",
+        "SchedulingScreen",
+        "DestinationHarness",
+    ),
+    "screen_feature_watchlists.tcss": (
+        "WatchlistsCollectionsScreen",
+        "DestinationHarness",
+    ),
 }
 
 _SELECTOR_TOKEN_RE = re.compile(r"[#.]([A-Za-z][\w-]*)")
@@ -315,34 +343,90 @@ def _module_string_literals(tree: ast.AST) -> str:
     )
 
 
+_REAL_SHEET_SEQUENCES: dict[str, tuple[Path, ...]] = {
+    "APP_STYLESHEETS": tuple(APP_STYLESHEETS),
+    "TldwCli.CSS_PATH": tuple(Path(entry) for entry in TldwCli.CSS_PATH),
+}
+
+
+class _ResolveSheetSubscripts(ast.NodeTransformer):
+    """Fold ``APP_STYLESHEETS[0]`` (and friends) to the ONE path it names.
+
+    Task-8 review, finding 3: the scan used to exempt any pin whose source
+    mentioned ``APP_STYLESHEETS`` -- so ``str(APP_STYLESHEETS[0])``, the
+    bundle alone spelled differently, slipped through. Indexing a real
+    sequence is resolved to its element before the name-inlining below, so
+    that pin now expands to the bundle path only and is reported.
+    """
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        sequence = _REAL_SHEET_SEQUENCES.get(ast.unparse(node.value))
+        if (
+            sequence is not None
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, int)
+        ):
+            try:
+                return ast.Constant(str(sequence[node.slice.value]))
+            except IndexError:
+                return self.generic_visit(node)
+        return self.generic_visit(node)
+
+
+def _unparse_resolved(value: ast.AST) -> str:
+    return ast.unparse(_ResolveSheetSubscripts().visit(copy.deepcopy(value)))
+
+
 def _expanded_css_path_source(value: ast.AST, tree: ast.AST, text: str) -> str:
     """``value``'s source with the names it references inlined.
 
     Harnesses spell their pin a dozen ways (``str(BUNDLE)``,
-    ``_REAL_CSS_PATH``, ``OtherHarness.CSS_PATH``, ``TldwCli.CSS_PATH``), so
-    the literal source segment is not enough to tell which sheets a pin
-    carries. Two substitution passes over module-level assignments (plus
-    same-module ``Class.CSS_PATH`` references and the real
-    ``TldwCli.CSS_PATH``) resolve every shape in this repo; anything still
-    unresolved simply keeps its name and is treated as carrying nothing,
-    which can only produce a report, never a silent pass.
+    ``_REAL_CSS_PATH``, ``OtherHarness.CSS_PATH``, ``TldwCli.CSS_PATH``,
+    ``[str(p) for p in APP_STYLESHEETS]``), so the literal source segment is
+    not enough to tell which sheets a pin carries. Two substitution passes
+    over module-level assignments (plus same-module ``Class.CSS_PATH``
+    references and the real ``TldwCli.CSS_PATH`` / ``APP_STYLESHEETS``
+    sequences) resolve every shape in this repo; anything still unresolved
+    simply keeps its name and is treated as carrying nothing, which can only
+    produce a report, never a silent pass.
     """
     bindings: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    bindings[target.id] = ast.unparse(node.value)
+                    bindings[target.id] = _unparse_resolved(node.value)
         elif isinstance(node, ast.ClassDef):
             for stmt in node.body:
                 if isinstance(stmt, ast.Assign) and any(
                     isinstance(t, ast.Name) and t.id == "CSS_PATH"
                     for t in stmt.targets
                 ):
-                    bindings[f"{node.name}.CSS_PATH"] = ast.unparse(stmt.value)
-    bindings["TldwCli.CSS_PATH"] = " ".join(str(entry) for entry in TldwCli.CSS_PATH)
+                    bindings[f"{node.name}.CSS_PATH"] = _unparse_resolved(stmt.value)
+    for name, sequence in _REAL_SHEET_SEQUENCES.items():
+        bindings[name] = " ".join(str(entry) for entry in sequence)
+    # ``OtherModuleHarness.CSS_PATH``: read the real attribute off the imported
+    # class rather than guessing. Unresolvable stays unresolved (a report).
+    imported = {
+        alias.asname or alias.name: node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module
+        and node.module.startswith("Tests.")
+        for alias in node.names
+    }
+    for name, module_name in imported.items():
+        key = f"{name}.CSS_PATH"
+        if key in bindings or not re.search(rf"\b{re.escape(key)}\b", text):
+            continue
+        try:
+            pinned = getattr(importlib.import_module(module_name), name).CSS_PATH
+        except Exception:
+            continue
+        entries = pinned if isinstance(pinned, (list, tuple)) else [pinned]
+        bindings[key] = " ".join(str(entry) for entry in entries)
 
-    source = ast.unparse(value)
+    source = _unparse_resolved(value)
     for _ in range(3):
         expanded = source
         for name, replacement in bindings.items():
@@ -355,6 +439,27 @@ def _expanded_css_path_source(value: ast.AST, tree: ast.AST, text: str) -> str:
             break
         source = expanded
     return source
+
+
+def _harness_source_with_bases(node: ast.ClassDef, tree: ast.AST, text: str) -> str:
+    """``node``'s source plus that of every same-module base, transitively."""
+    classes = {
+        cls.name: cls for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)
+    }
+    seen: set[str] = set()
+    pending = [node]
+    parts: list[str] = []
+    while pending:
+        cls = pending.pop()
+        if cls.name in seen:
+            continue
+        seen.add(cls.name)
+        parts.append(ast.get_source_segment(text, cls) or "")
+        for base in cls.bases:
+            name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
+            if name in classes:
+                pending.append(classes[name])
+    return "\n".join(parts)
 
 
 def scan_bundle_only_harnesses() -> list[tuple[str, str, str, tuple[str, ...]]]:
@@ -389,12 +494,18 @@ def scan_bundle_only_harnesses() -> list[tuple[str, str, str, tuple[str, ...]]]:
                 ):
                     continue
                 pin = _expanded_css_path_source(stmt.value, tree, text)
-                if "APP_STYLESHEETS" in pin:
-                    continue
+                # Scoped to the HARNESS CLASS and its same-module bases, not
+                # the file (review finding 3): a module that merely imports
+                # ``LibraryScreen`` must not exempt every harness in it from
+                # the library-sheet check, while a subclass of a harness that
+                # pushes the screen in ITS ``on_mount`` is still exempt.
+                harness_text = _harness_source_with_bases(node, tree, text)
                 for sheet, owners in _SPLIT_SHEET_OWNERS.items():
                     if sheet in pin:
                         continue
-                    if any(re.search(rf"\b{owner}\b", text) for owner in owners):
+                    if any(
+                        re.search(rf"\b{owner}\b", harness_text) for owner in owners
+                    ):
                         continue
                     used = sorted(
                         token

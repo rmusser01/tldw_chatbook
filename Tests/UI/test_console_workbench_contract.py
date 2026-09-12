@@ -1,11 +1,10 @@
 import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.containers import Vertical
 from textual.widgets import Static
 
@@ -40,10 +39,6 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
-
 
 class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
@@ -1869,7 +1864,7 @@ async def test_console_header_inline_css_renders_single_row():
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
     class _HeaderApp(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(
@@ -1899,7 +1894,7 @@ async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
     class _NarrowHeaderApp(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(
@@ -1940,7 +1935,7 @@ async def test_console_header_inline_subtitle_visible_in_compact_density():
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
     class _CompactHeaderApp(ConsolidatedCSSApp):
-        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             # The density class is applied to an ancestor (#console-shell); mirror
