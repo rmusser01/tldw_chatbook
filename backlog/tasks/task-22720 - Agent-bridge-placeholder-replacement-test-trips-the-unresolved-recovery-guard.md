@@ -93,3 +93,19 @@ Reason: remove a stale expected-failure marker from an existing passing recovery
 2. Remove the stale xfail marker without weakening the assertions or changing product code; retain the task correction identifying the original recovery-guard exception.
 3. Run the exact regression normally and its nearby agent citation cases, then static checks and independent review before closing.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+Current merged behavior makes the corrected regression pass normally: the
+agent bridge replaces the missing placeholder with its runtime row, citation
+repair does not dispatch, the replacement becomes complete, and visible output
+matches it. The stale non-strict xfail was removed without changing those
+assertions or the unresolved-recovery guard. The earlier task correction
+remains the root-cause record: its old double had raised `RuntimeError:
+Unresolved temporary dispatch recovery cannot be replaced.` while attempting
+an invalid restore. No production code changed.
+
+Verification used `.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python
+-m pytest -q Tests/Chat/test_console_local_citation_boundary.py -k
+citation_repair_agent`: 7 passed, 96 deselected. ADR required: no; this removes
+stale expected-failure metadata from an existing recovery regression.

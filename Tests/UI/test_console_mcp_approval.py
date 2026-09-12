@@ -5055,7 +5055,7 @@ def test_revoked_arm_is_refused_before_configuration_read(kind):
         ctrl.skill_script_confirm_timeout_seconds = configuration
     with use_run_id("late-config"):
         _revocation_request(ctrl, sid, kind)
-    assert all(not registry for registry in observed)
+    assert observed == []
 
 
 def test_revocation_cannot_split_a_batch_snapshot(monkeypatch):

@@ -37,3 +37,20 @@ Reason: test-harness repair preserving existing durable acceptance and dictionar
 3. Verify substituted model payload and raw transcript through both dictionary send branches. Do not weaken production authority or persistence checks.
 4. Run targeted static checks and independent review, record evidence and close.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+The failure was stale harness setup, not agent routing: both dictionary send
+branches reached durable commit and were refused with `RuntimeError: Durable
+Console Library policy no longer matches acceptance.` The manually assigned
+conversation ID had no persisted policy row; hydration alone could not create
+one. The shared test helper now inserts revision 1 through the real policy
+repository and hydrates the session before Send, matching the world-info
+integration harness. Provider and agent payloads still receive substituted
+text, while both persisted USER rows are asserted to retain the raw draft.
+No production contract changed.
+
+Verification used `.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python`.
+The pre-edit module reproduced 2 failures; the final focused run passed both
+dictionary tests. ADR required: no; this is test setup for existing durable
+acceptance.
