@@ -84,6 +84,14 @@ including registry lookup for `custom-ep:` ids), the fully resolved sampling
 params (see below), plus a `source` tag (`override` / `preset` / `default` /
 `inherit`) for logging and persistence.
 
+A second new pure module, `Chat/sampling_params.py`, owns the known
+sampling-param key set, the per-key value validator, and the layer-merge
+helpers (extracted from `build_default_console_session_settings`' private
+helpers). Both param validators (presets, registry entries) and the resolver
+share it, avoiding any new import edge between `Agents/` and the registry —
+whose relationship with `console_session_settings` is already a managed
+lazy-import cycle.
+
 ### Resolution order (provider + model)
 
 Each level fills only blanks left by the levels above:
@@ -92,6 +100,10 @@ Each level fills only blanks left by the levels above:
    Honored only when `spawn_override_enabled` is true; when `provider` is
    given it must appear in `spawn_override_allowlist`. A model-only ad-hoc
    arg swaps the model on whatever provider levels 2–4 resolve.
+   **Final-provider guard:** whenever ANY ad-hoc arg is present, the final
+   resolved provider must be allowlisted or equal to the parent's provider —
+   otherwise `provider_not_allowlisted`. (Closes the hole where a model-only
+   arg rides a paid `subagent_default_provider` the user never allowlisted.)
 2. **Preset routing fields** — the spawned `AgentDefinition`'s `provider`
    and `model`.
 3. **Sub-agent default** — `[agents] subagent_default_provider` /
@@ -116,16 +128,18 @@ spawn tool's error result and no fleet slot is consumed.
 
 A child **never** inherits sampling or API params (temperature, top_p, min_p,
 top_k, max_tokens, seed, presence/frequency penalty, reasoning/verbosity/
-thinking knobs, streaming) from the parent's `ConsoleProviderSelection`. Its
-params are built fresh for its resolved provider+model through the same
-layering a brand-new Console session to that provider would get
+thinking knobs) from the parent's `ConsoleProviderSelection`. Its params are
+built fresh for its resolved provider+model through the same layering a
+brand-new Console session to that provider would get
 (`build_default_console_session_settings`,
 `Chat/console_session_settings.py:509`), extended with the two new sources.
 Precedence, highest first:
 
 1. **Preset `params`** — only when the spawn names a preset that sets them.
 2. **Per-model profile** — `[api_settings.<provider>].model_defaults.<model>`.
-3. **Console saved defaults** — `[console.provider_defaults.<provider>]`.
+3. **Console saved defaults** — `[console.provider_defaults.<provider>]`
+   (empty for `custom-ep:` targets today: PR #2617 writes registry-provider
+   saves to `chat_defaults`; layers degrade gracefully when empty).
 4. **Registry entry `params`** — `[custom_endpoints.<slug>.params]`, projected
    into the provider-settings layer (custom-ep targets only; slots above the
    global chat_defaults because endpoint-authored tuning is more specific
@@ -134,18 +148,28 @@ Precedence, highest first:
 6. **Raw `[api_settings.<provider>]` scalars**, then function fallbacks
    (0.7 / 0.95 / …).
 
+The known-param set excludes transport-level keys (`streaming`): child runs
+keep the run loop's own streaming policy.
+
 This is a **uniform rule**: even a plain same-provider child gets fresh
 provider-default params rather than the parent's session-tweaked values.
 **Behavior change:** today a plain spawn inherits the session's live sampling
 params; after this change it gets the provider's configured defaults. Called
 out in the ADR and the user guide.
 
-The merged params pass through the same capability filtering as a fresh send
-(`model_capabilities`), so provider-specific knobs (e.g. a Kimi
-`reasoning_effort`) never leak onto a model that doesn't support them; a
-dropped knob is noted in the run log. Oversized `max_tokens` for a small
-local model is handled by the existing `repair_request_fits_model_window`
-path. Ad-hoc spawn args carry **no** params (see Security policy).
+The merged params get exactly the capability treatment a fresh send to that
+provider/model would get — the gateway already consults `model_capabilities`
+per send (`console_provider_gateway.py:1436-1449`; per-family predicates in
+`model_capabilities.py`), so provider-specific knobs (e.g. a Kimi
+`reasoning_effort`) never leak onto a model that doesn't support them, and no
+new filter layer is introduced. Oversized `max_tokens` for a small local
+model is handled by the existing `repair_request_fits_model_window` path.
+Ad-hoc spawn args carry **no** params (see Security policy).
+
+Implementation note: `build_default_console_session_settings`' source tuple
+and merge helpers (`_float_setting_from_sources` etc.) are private. The plan
+extracts them into `Chat/sampling_params.py` so the resolver composes the
+six layers while session defaults stay byte-identical.
 
 ## Data model changes
 
@@ -156,8 +180,8 @@ path. Ad-hoc spawn args carry **no** params (see Security policy).
   `model` set **without** `provider` keeps today's exact same-endpoint
   behavior — existing presets are unaffected.
 - New field `params`: optional mapping of sampling-param name → value.
-  Validated against the known param-name set (typo guard) with per-key type
-  checks; unknown keys are validation errors.
+  Validated via `Chat/sampling_params.py` (known-name typo guard + per-key
+  type checks); unknown keys are validation errors.
 - No `base_url` field: built-in providers resolve URLs from `api_settings`;
   additional local endpoints are `custom-ep:` registry entries (their
   entries carry URL + credentials, ADR-146). Presets name the slug.
@@ -173,8 +197,9 @@ path. Ad-hoc spawn args carry **no** params (see Security policy).
 
 - `CustomEndpointEntry` gains `params`: an optional mapping loaded from a
   `[custom_endpoints.<slug>.params]` TOML sub-table; validated with the same
-  known-name/type rules as preset params. Secret-handling unchanged
-  (`api_key` stays repr-excluded; params hold no secrets by validation).
+  `Chat/sampling_params.py` rules as preset params. Secret-handling
+  unchanged (`api_key` stays repr-excluded; params hold no secrets by
+  validation).
 - `build_entry_mutation` / `load_custom_endpoints` round-trip the table;
   entries without it behave exactly as today.
 
@@ -236,8 +261,10 @@ not move an already-spawned child — snapshot semantics.)
   presets, so a prompt-injected master can neither point a child at an
   arbitrary endpoint to exfiltrate context nor crank params (e.g. max
   reasoning budget) on a paid provider.
-- The allowlist is the cost/injection guard for ad-hoc routing; presets are
-  trusted because the user authored them.
+- The allowlist is the cost/injection guard for ad-hoc routing, strengthened
+  by the final-provider guard (resolution level 1): with ad-hoc args present,
+  the child lands only on an allowlisted provider or the parent's own.
+  Presets are trusted because the user authored them.
 - No credential material flows through the resolver's outputs beyond what
   the existing gateway already handles; registry entries' `api_key` is
   repr-excluded upstream (ADR-146).
@@ -249,7 +276,8 @@ the master can pick another target or ask the user:
 
 - `override_disabled` — ad-hoc args present while the flag is off
   (defense-in-depth; the args are also absent from the schema).
-- `provider_not_allowlisted` — ad-hoc `provider` not in the allowlist.
+- `provider_not_allowlisted` — ad-hoc `provider` not in the allowlist, or
+  final-provider guard tripped by a model-only ad-hoc arg.
 - `unknown_provider` — id matches no built-in provider.
 - `unknown_endpoint_slug` — `custom-ep:<slug>` not in the registry.
 - `provider_not_ready` — missing credential or no reachable endpoint.
@@ -282,11 +310,12 @@ gains an optional `params` section for the same known sampling keys.
 
 - **Unit:** pure resolver matrix — every resolution level, blank-filling,
   each `RoutingError` variant, custom-ep slug resolution, model-only ad-hoc
-  args.
+  args, and the final-provider guard (model-only ad-hoc onto a
+  non-allowlisted paid default is refused).
 - **Unit (params):** the six-layer precedence stack, incl. preset-over-entry
-  and entry-over-chat_defaults ordering; unknown/mistyped param keys rejected
-  for both presets and registry entries; capability filtering drops
-  unsupported knobs with a run-log note.
+  and entry-over-chat_defaults ordering; shared-validator typo/type
+  rejection for both presets and registry entries; `streaming` excluded
+  from the known set.
 - **Integration:** spawn through `AgentService` with routed preset, with
   sub-agent default, and with override on/off; assert the child's
   `ConsoleProviderSelection` (provider, model, base_url, **and merged
@@ -295,7 +324,9 @@ gains an optional `params` section for the same known sampling keys.
 - **Migration tests** for schema v16: column defaults, legacy rows unchanged.
 - **Backward-compat regression:** existing preset with `model` but no
   `provider` keeps same-endpoint override behavior; registry entries without
-  `params` load unchanged.
+  `params` load unchanged; session defaults from
+  `build_default_console_session_settings` are byte-identical before/after
+  the helper extraction.
 - **Settings panel/modal tests:** picker populations include custom-ep
   display names; stale allowlist slug flagging; params editing round-trips.
 - **Live verification** (per `backlog/docs/lessons-live-verification.md`):
@@ -306,11 +337,13 @@ gains an optional `params` section for the same known sampling keys.
 
 ## Expected touch list
 
-- New: `Agents/agent_routing.py`, spec/plan docs, ADR.
+- New: `Agents/agent_routing.py`, `Chat/sampling_params.py`, spec/plan docs,
+  ADR.
 - Modified: `Agents/agent_models.py`, `Agents/agent_service.py` (spawn hook,
   schema gating), `DB/AgentRuns_DB.py` (v16 migration), `config.py`
-  (template comments), `Chat/custom_endpoint_registry.py` (entry params),
-  `Widgets/settings_agents_panel.py`,
+  (template comments), `Chat/console_session_settings.py` (helper extraction
+  only — behavior-preserving), `Chat/custom_endpoint_registry.py` (entry
+  params), `Widgets/settings_agents_panel.py`,
   `Widgets/Console/console_endpoint_template_modal.py` (params editing),
   `Chat/console_agent_bridge.py` (rail summary target display).
 - Tests: new `Tests/Agents/test_agent_routing.py` plus integration,
