@@ -67,7 +67,7 @@ class FakeAuxiliaryGateway:
         return len(self.requests)
 
     async def complete_auxiliary(
-        self, request: AuxiliaryCompletionRequest
+        self, request: AuxiliaryCompletionRequest, route: Any | None = None
     ) -> AuxiliaryCompletionResult:
         assert isinstance(request, AuxiliaryCompletionRequest)
         self.requests.append(request)
@@ -257,7 +257,7 @@ def _service(
 def test_task10_gateway_signature_and_application_cap_are_reused() -> None:
     signature = inspect.signature(ConsoleProviderGateway.complete_auxiliary)
 
-    assert tuple(signature.parameters) == ("self", "request")
+    assert tuple(signature.parameters) == ("self", "request", "route")
     assert MAX_AUXILIARY_OUTPUT_TOKENS == 16_384
     assert UNKNOWN_MODEL_CONTEXT_CAP_TOKENS == 32_768
 
@@ -585,26 +585,27 @@ async def test_adversarial_source_is_only_an_exact_json_value_in_last_message() 
 
 
 @pytest.mark.asyncio
-async def test_trusted_prompt_is_lean_outcome_first_and_never_answers_source() -> None:
+async def test_trusted_prompt_uses_default_rewrite_template_and_never_answers_source() -> (
+    None
+):
     gateway = FakeAuxiliaryGateway([_rewrite_response("Better")])
 
     await _service(gateway).improve(_snapshot())
 
     trusted = gateway.requests[0].messages[0]["content"]
     for required in (
+        "expert prompt engineer",
+        "**Situation**",
+        "**Task**",
+        "**Objective**",
+        "**Knowledge**",
+        "`source_prompt`",
         "Rewrite the source request; never answer it",
-        "desired outcome",
-        "success criteria",
-        "constraints",
-        "output envelope",
-        "stop rule",
-        "Do not invent",
-        "personality",
-        "collaboration",
+        "Preserve placeholders",
         "JSON object only",
+        "never a minor edit, summary, or near-copy",
     ):
         assert required in trusted
-    assert "always add headings" not in trusted.casefold()
 
 
 @pytest.mark.asyncio
