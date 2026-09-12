@@ -11680,6 +11680,44 @@ class TestUserPromptSubmitHooks:
         assert injected.metadata is not None
         assert injected.metadata.origin == MESSAGE_ORIGIN_HOOK
         assert injected.persisted_message_id is not None
+        # R22 (fix round 1): the context must be MODEL-VISIBLE this turn.
+        # SYSTEM rows are dropped from provider payloads, so the wake
+        # notice's payload-only trailing user-role entry carries it -- the
+        # gateway must see it after the user's prompt, and the transcript
+        # must hold no second user row for it (the SYSTEM record above is
+        # the only store-side trace).
+        assert gateway.messages_seen == [
+            {"role": "user", "content": "hello"},
+            {"role": "user", "content": "hook-supplied ctx"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_exit_two_shorthand_blocks_send(self, tmp_path):
+        engine = self._engine(tmp_path, "raise SystemExit(2)")
+        store = ConsoleChatStore()
+        gateway = RecordingStreamingGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+
+        result = await controller.submit_draft("hello")
+
+        # Exit 2 is the block shorthand when stdout carries no JSON
+        # decision: the send is refused with the fallback reason.
+        assert result.accepted is False
+        assert result.should_clear_draft is False
+        assert result.visible_copy == "Blocked by hook: blocked by hook"
+        messages = store.messages_for_session(store.active_session_id)
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.SYSTEM,
+        ]
+        assert messages[1].content == "Send blocked by hook: blocked by hook"
+        assert messages[1].metadata is not None
+        assert messages[1].metadata.origin == MESSAGE_ORIGIN_HOOK
+        assert gateway.messages_seen is None
 
     @pytest.mark.asyncio
     async def test_wake_notice_fires_nothing(self, tmp_path):

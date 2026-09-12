@@ -9736,6 +9736,23 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+                # R22 (fix round 1): the SYSTEM row is the AUDITABLE record
+                # only -- `_provider_messages_for_session` drops SYSTEM
+                # rows from every payload, and THIS turn's payload was
+                # assembled before the hook fired, so the model-visible
+                # half rides the wake notice's delivery shape instead: a
+                # PAYLOAD-ONLY trailing user-role entry, never written to
+                # the store and gone on the next history rebuild
+                # (turn-scoped, spec 2026-09-11 §5 -- see the fleet-wake
+                # delivery-path decision record cited above for why
+                # neither the system fold nor a turn bundle can carry it).
+                provider_messages = [
+                    *provider_messages,
+                    {
+                        "role": ConsoleMessageRole.USER.value,
+                        "content": hook_context,
+                    },
+                ]
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
