@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ContinuationDurabilityResult,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
@@ -1228,3 +1229,150 @@ def test_ephemeral_event_writes_no_checkpoint_and_offers_no_recovery() -> None:
         )
     finally:
         database.close_connection()
+
+
+def test_resolved_system_prompt_re_expands_persona_template() -> None:
+    """The send path re-expands the trusted persona template per turn."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        settings=ConsoleSessionSettings(
+            provider="anthropic", model="claude-3-haiku"
+        ),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    store.seed_persona_roleplay(
+        session.id,
+        system_template="Guide {{user}} as {{persona}}.",
+        global_default="Rowan",
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+
+    # The bare controller is constructed without a `global_user_display_name`
+    # accessor, so the constructor default (`lambda: "User"`, line 1760)
+    # applies and the per-turn re-expansion uses "User" — not the seed-time
+    # "Rowan". This pins that send-time expansion always wins.
+    assert (
+        controller._resolved_system_prompt(session.id)
+        == "Guide User as Archivist."
+    )
+
+
+def test_resolved_system_prompt_leaves_generic_sessions_untouched() -> None:
+    """Non-identity sessions keep the controller's configured prompt."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat",
+        settings=ConsoleSessionSettings(
+            provider="anthropic", model="claude-3-haiku"
+        ),
+    )
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), system_prompt="Base prompt."
+    )
+
+    assert controller._resolved_system_prompt(session.id) == "Base prompt."
+
+
+def test_provider_selection_re_expands_persona_template_per_send() -> None:
+    """Persona sends re-expand the trusted template with the CURRENT user name.
+
+    The seeded settings projection ("Guide Rowan as Archivist.") is stale by
+    construction: the bare controller's `global_user_display_name` default
+    resolves to "User", so the selection must carry the per-turn re-expansion
+    from `_resolved_system_prompt`, not the settings snapshot.
+    """
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        settings=ConsoleSessionSettings(
+            provider="anthropic", model="claude-3-haiku"
+        ),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    store.seed_persona_roleplay(
+        session.id,
+        system_template="Guide {{user}} as {{persona}}.",
+        global_default="Rowan",
+    )
+    assert session.settings is not None
+    assert session.settings.system_prompt == "Guide Rowan as Archivist."
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+
+    selection = controller._provider_selection_for_session(session.id)
+
+    assert selection.system_prompt == "Guide User as Archivist."
+
+
+def test_provider_selection_keeps_settings_prompt_for_template_less_persona() -> None:
+    """A persona session with no trusted template keeps the settings prompt."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Archivist",
+        settings=ConsoleSessionSettings(
+            provider="anthropic",
+            model="claude-3-haiku",
+            system_prompt="Custom persona prompt.",
+        ),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+
+    selection = controller._provider_selection_for_session(session.id)
+
+    assert selection.system_prompt == "Custom persona prompt."
+
+
+def test_provider_selection_keeps_settings_prompt_for_name_failed_persona() -> None:
+    """A persona resume whose name resolution failed keeps the settings prompt."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat",
+        settings=ConsoleSessionSettings(
+            provider="anthropic",
+            model="claude-3-haiku",
+            system_prompt="Guide Rowan.",
+        ),
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name=None,
+        persona_system_template="Guide {{user}}.",
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+
+    selection = controller._provider_selection_for_session(session.id)
+
+    assert selection.system_prompt == "Guide Rowan."
+
+
+def test_provider_selection_re_expands_character_template_per_send() -> None:
+    """Regression guard: the character path already re-expands per send."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Chat with Alraune",
+        settings=ConsoleSessionSettings(
+            provider="anthropic", model="claude-3-haiku"
+        ),
+        assistant_kind="character",
+        assistant_id="local-character-alraune",
+        character_name="Alraune",
+    )
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Be {{char}} for {{user}}.",
+        greeting_template="",
+        global_default="Rowan",
+    )
+    assert session.settings is not None
+    assert session.settings.system_prompt == "Be Alraune for Rowan."
+    controller = ConsoleChatController(store=store, provider_gateway=object())
+
+    selection = controller._provider_selection_for_session(session.id)
+
+    assert selection.system_prompt == "Be Alraune for User."

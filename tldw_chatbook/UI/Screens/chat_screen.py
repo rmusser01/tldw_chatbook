@@ -9996,6 +9996,36 @@ class ChatScreen(BaseAppScreen):
             return ""
         return str(card.get("name") or "").strip()
 
+    async def _resolve_resumed_persona_name(
+        self, persona_id: str, runtime_backend: str
+    ) -> str:
+        """Return a resumed persona's display name from its profile, or ``""``.
+
+        Best-effort mirror of ``_resolve_resumed_character_name``: any
+        failure (missing scope service, missing profile, fetch error)
+        returns an empty string and the caller keeps the session unlabeled.
+        """
+        scope_service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        get_persona_profile = getattr(scope_service, "get_persona_profile", None)
+        if not callable(get_persona_profile):
+            return ""
+        try:
+            profile = await get_persona_profile(persona_id, mode=runtime_backend)
+            if hasattr(profile, "model_dump"):
+                profile = profile.model_dump(mode="json")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Resume: persona profile fetch failed; identity row falls back."
+            )
+            return ""
+        if not isinstance(profile, Mapping):
+            return ""
+        return str(profile.get("name") or "").strip()
+
     def _set_console_conversation_row_loading(
         self, conversation_id: str, loading: bool
     ) -> None:
@@ -14271,14 +14301,17 @@ class ChatScreen(BaseAppScreen):
         try:
             payload = claim.value
 
-            # The native Console composes no legacy tab surface. A
-            # Personas Start-Chat character handoff gets a dedicated
-            # character-bound session with its greeting seeded
-            # (task-427); anything else -- or a character session that
-            # failed to build -- stages into the Console live-work lane
-            # so the context lands in Staged Context instead of being
-            # dropped with a warning.
+            # The native Console composes no legacy tab surface. Personas
+            # Start-Chat handoffs get a dedicated identity-bound session:
+            # character cards seed a greeting (task-427); persona cards bind
+            # name + system template without one (task-32481). Anything else
+            # -- or an identity session that failed to build -- stages into
+            # the Console live-work lane so the context lands in Staged
+            # Context instead of being dropped with a warning.
             if await self._session._start_character_console_session(payload):
+                store.acknowledge(claim)
+                return
+            if await self._session._start_persona_console_session(payload):
                 store.acknowledge(claim)
                 return
             self._stage_handoff_as_console_live_work(payload)

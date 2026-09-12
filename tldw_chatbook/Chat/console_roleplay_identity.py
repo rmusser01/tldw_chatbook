@@ -98,6 +98,24 @@ def effective_user_display_name(override: object, global_default: object) -> str
     return normalize_chat_display_name(global_default, blank_means_none=False) or "User"
 
 
+def session_assistant_display_name(session: object) -> str | None:
+    """Return the session's kind-appropriate assistant display name.
+
+    Character sessions read ``character_name``; persona sessions read
+    ``assistant_name`` (ADR-149); anything else has no bound identity.
+    Blank values are treated as absent.
+    """
+    kind = getattr(session, "assistant_kind", None)
+    if kind == "character":
+        value = getattr(session, "character_name", None)
+    elif kind == "persona":
+        value = getattr(session, "assistant_name", None)
+    else:
+        return None
+    text = value.strip() if isinstance(value, str) else ""
+    return text or None
+
+
 _TEMPLATE_TOKEN_RE = re.compile(
     r"\{\{user\}\}|\{\{random_user\}\}|<USER>|"
     r"\{\{char\}\}|\{\{character\}\}|\{\{persona\}\}|<CHAR>"
@@ -108,7 +126,12 @@ _USER_TOKENS = frozenset({"{{user}}", "{{random_user}}", "<USER>"})
 def expand_character_template(
     source: str, *, user_name: str, character_name: str
 ) -> str:
-    """Expand trusted character template aliases in one non-recursive pass."""
+    """Expand trusted character template aliases in one non-recursive pass.
+
+    This is the identity-template expander for both character and persona
+    sessions (ADR-149); ``character_name`` carries the persona name for
+    persona-kind content.
+    """
     def replacement(match: re.Match[str]) -> str:
         return user_name if match.group(0) in _USER_TOKENS else character_name
 
@@ -122,6 +145,7 @@ class ConsolePresentationContext:
     user_name: str = "User"
     assistant_kind: str | None = "generic"
     character_name: str | None = None
+    assistant_name: str | None = None
     revision: int = 0
     transcript_style: ConsoleTranscriptStyle = DEFAULT_CONSOLE_TRANSCRIPT_STYLE
 
@@ -147,11 +171,23 @@ def resolve_console_message_presentation(
         if isinstance(context.character_name, str)
         else ""
     )
+    raw_persona_name = (
+        context.assistant_name.strip()
+        if isinstance(context.assistant_name, str)
+        else ""
+    )
     is_character_session = (
         context.assistant_kind == "character" and bool(raw_character_name)
     )
+    is_persona_session = (
+        context.assistant_kind == "persona" and bool(raw_persona_name)
+    )
     character_display_name = sanitize_character_display_label(
         raw_character_name,
+        max_characters=CHARACTER_SPEAKER_LABEL_MAX_CHARACTERS,
+    )
+    persona_display_name = sanitize_character_display_label(
+        raw_persona_name,
         max_characters=CHARACTER_SPEAKER_LABEL_MAX_CHARACTERS,
     )
     transcript_style = normalize_console_transcript_style(context.transcript_style)
@@ -172,13 +208,20 @@ def resolve_console_message_presentation(
                 else "console-transcript-message-role-user"
             )
     elif message.role is ConsoleMessageRole.ASSISTANT:
-        speaker_label = character_display_name if is_character_session else "Assistant"
+        if is_character_session:
+            speaker_label = character_display_name
+        elif is_persona_session:
+            speaker_label = persona_display_name
+        else:
+            speaker_label = "Assistant"
         speaker_tone = "character" if is_character_session else "assistant"
         row_class = None
         if role_accents:
             row_class = (
                 "console-transcript-message-roleplay-character"
                 if is_character_session
+                # Persona rows keep the standard assistant treatment:
+                # personas are not roleplay characters (ADR-149).
                 else "console-transcript-message-role-assistant"
             )
         metadata: MessageMetadata | None = message.metadata

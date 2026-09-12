@@ -76,6 +76,7 @@ import tldw_chatbook.UI.Console_Modules.message as message_module
 import tldw_chatbook.UI.Console_Modules.session as session_module
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.session import _persona_session_identity_from_handoff, _persona_session_prompt_seed
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -4401,12 +4402,46 @@ def _character_start_handoff(
     )
 
 
+def _persona_start_handoff(
+    *,
+    runtime_backend: str = "local",
+    active_server_profile_id: str | None = None,
+    persona_id: object = "local-persona-abc",
+) -> ChatHandoffPayload:
+    return ChatHandoffPayload(
+        source="personas",
+        item_type="persona-card",
+        title="Archivist",
+        body="Persona summary",
+        runtime_backend=runtime_backend,
+        source_owner=runtime_backend,
+        source_selector_state=runtime_backend,
+        active_server_profile_id=active_server_profile_id,
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": "persona",
+            "selected_record_id": persona_id,
+            "selected_name": "Archivist",
+            "selected_target_id": f"{runtime_backend}:persona:{persona_id}",
+            "backend": runtime_backend,
+        },
+    )
+
+
 def _character_card() -> dict:
     return {
         "id": 7,
         "name": "Elara",
         "first_message": "Hello {{user}}, I am {{char}}.",
         "system_prompt": "Stay curious.",
+    }
+
+
+def _persona_profile() -> dict:
+    return {
+        "id": "local-persona-abc",
+        "name": "Archivist",
+        "system_prompt": "Guide {{user}} as {{persona}}.",
     }
 
 
@@ -4472,6 +4507,53 @@ def _character_handoff_runtime(
         capture_context=capture_context,
         capture_is_current=capture_is_current,
         resolve_captures=resolve_captures,
+    )
+
+
+def _persona_handoff_runtime(
+    *,
+    active_server_id: str | None = None,
+    profile=_DEFAULT_HANDOFF_VALUE,
+) -> SimpleNamespace:
+    """Persona mirror of `_character_handoff_runtime` with sentinel seams."""
+    scoped_profile = _persona_profile() if profile is _DEFAULT_HANDOFF_VALUE else profile
+    scope_service = SimpleNamespace(
+        get_persona_profile=AsyncMock(return_value=scoped_profile),
+        # The persona flow must never touch the character fetch seam.
+        get_character=AsyncMock(side_effect=AssertionError("character seam touched")),
+    )
+    db = SimpleNamespace(
+        # Personas are authority-free: no local authority lookup either.
+        get_local_authority_id=Mock(return_value="local-authority"),
+    )
+    initial_capture = SimpleNamespace(account="A")
+    authority_context_state = {"current": initial_capture}
+    capture_context = Mock(
+        side_effect=lambda *, expected_server_id: authority_context_state["current"]
+    )
+    capture_is_current = Mock(
+        side_effect=lambda capture: capture is authority_context_state["current"]
+    )
+    resolver = AsyncMock(
+        side_effect=AssertionError("persona flow must not resolve authority")
+    )
+    app = SimpleNamespace(
+        app_config={},
+        active_server_id=active_server_id,
+        chachanotes_db=db,
+        character_persona_scope_service=scope_service,
+        server_context_provider=SimpleNamespace(
+            capture_character_authority_context=capture_context,
+            is_character_authority_context_current=capture_is_current,
+            resolve_character_authority_id=resolver,
+        ),
+    )
+    return SimpleNamespace(
+        app=app,
+        db=db,
+        scope_service=scope_service,
+        resolver=resolver,
+        authority_context_state=authority_context_state,
     )
 
 
@@ -4594,6 +4676,78 @@ def test_character_start_handoff_requires_matching_record_and_target_ids(
     payload.metadata["selected_target_id"] = target_id
 
     assert session_module._character_session_identity_from_handoff(payload) is None
+
+
+def test_persona_handoff_accepts_exact_coherent_payload():
+    payload = _persona_start_handoff()
+    assert _persona_session_identity_from_handoff(payload) == (
+        "local",
+        "local-persona-abc",
+        "Archivist",
+        "local-persona-abc",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        pytest.param("item_type", "character-card", id="character-item-type"),
+        pytest.param("runtime_backend", "LOCAL", id="non-exact-runtime-source"),
+        pytest.param("source_owner", "server", id="contradictory-owner"),
+    ),
+)
+def test_persona_handoff_rejects_incoherent_envelope(field, value):
+    payload = _persona_start_handoff()
+    setattr(payload, field, value)
+
+    assert _persona_session_identity_from_handoff(payload) is None
+
+
+def test_persona_handoff_rejects_character_kind_and_target_mismatch():
+    character_payload = _character_start_handoff()
+    assert _persona_session_identity_from_handoff(character_payload) is None
+    mismatched = _persona_start_handoff()
+    mismatched.metadata["selected_target_id"] = "local:persona:someone-else"
+    assert _persona_session_identity_from_handoff(mismatched) is None
+
+
+def test_persona_handoff_preserves_opaque_string_id():
+    payload = _persona_start_handoff(persona_id="srv-persona-7")
+    payload.metadata["selected_target_id"] = "local:persona:srv-persona-7"
+    identity = _persona_session_identity_from_handoff(payload)
+    assert identity is not None
+    assert identity[1] == "srv-persona-7"  # never int-coerced
+
+
+def test_persona_seed_expands_user_and_persona_macros():
+    seed = _persona_session_prompt_seed(
+        {"id": "local-persona-abc", "name": "Archivist",
+         "system_prompt": "Guide {{user}} as {{persona}} ({{char}})."},
+        user_name="Rowan",
+    )
+    assert seed.name == "Archivist"
+    assert seed.system_template == "Guide {{user}} as {{persona}} ({{char}})."
+    assert seed.system_prompt == "Guide Rowan as Archivist (Archivist)."
+
+
+def test_persona_seed_without_system_prompt_stays_empty():
+    seed = _persona_session_prompt_seed(
+        {"id": "local-persona-abc", "name": "Archivist"}, user_name="Rowan"
+    )
+    assert seed.system_template == ""
+    assert seed.system_prompt == ""
+
+
+def test_persona_seed_uses_name_hint_and_stays_single_pass():
+    seed = _persona_session_prompt_seed(
+        {"id": "p1", "system_prompt": "Hi {{user}}"},
+        name_hint=" {{char}} ",
+        user_name="{{user}}",
+    )
+    # The hint is sanitized but never macro-expanded; the user name is
+    # substituted literally exactly once (ADR-046 single-pass rule).
+    assert seed.name == "{{char}}"
+    assert seed.system_prompt == "Hi {{user}}"
 
 
 @pytest.mark.asyncio
@@ -5106,6 +5260,129 @@ async def test_persona_start_chat_does_not_create_character_session(monkeypatch)
     runtime.resolver.assert_not_awaited()
     runtime.scope_service.get_character.assert_not_awaited()
     assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_binds_local_persona_session(monkeypatch):
+    runtime = _persona_handoff_runtime()
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff()
+    )
+
+    assert started is True
+    session = store.session
+    assert session is not None
+    assert session.runtime_backend == "local"
+    assert session.assistant_kind == "persona"
+    assert session.assistant_id == "local-persona-abc"
+    # ADR-037: persona sessions never carry an authority id, local included.
+    assert session.assistant_authority_id is None
+    assert session.assistant_name == "Archivist"
+    assert session.character_name is None
+    assert session.character_ref() is None
+    assert session.persona_system_template == "Guide {{user}} as {{persona}}."
+    assert session.settings is not None
+    # app_config={} -> global display name falls back to "User".
+    assert session.settings.system_prompt == "Guide User as Archivist."
+    # Personas have no greeting: seeding appends no message.
+    assert store.messages == []
+    runtime.scope_service.get_persona_profile.assert_awaited_once_with(
+        "local-persona-abc", mode="local"
+    )
+    runtime.scope_service.get_character.assert_not_awaited()
+    runtime.resolver.assert_not_awaited()
+    runtime.db.get_local_authority_id.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_fails_closed_when_profile_missing(monkeypatch):
+    runtime = _persona_handoff_runtime(profile=None)
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff()
+    )
+
+    assert started is False
+    assert store.session is None
+    assert store.create_kwargs is None
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_fails_closed_when_profile_fetch_raises(monkeypatch):
+    runtime = _persona_handoff_runtime()
+    runtime.scope_service.get_persona_profile.side_effect = RuntimeError("boom")
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff()
+    )
+
+    assert started is False
+    assert store.session is None
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_binds_server_persona_without_authority(monkeypatch):
+    runtime = _persona_handoff_runtime(active_server_id="server-1")
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff(
+            runtime_backend="server", active_server_profile_id="server-1"
+        )
+    )
+
+    assert started is True
+    session = store.session
+    assert session.runtime_backend == "server"
+    assert session.assistant_kind == "persona"
+    assert session.assistant_authority_id is None
+    runtime.resolver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persona_start_chat_server_fence_flip_mid_fetch_fails_closed(
+    monkeypatch,
+):
+    runtime = _persona_handoff_runtime(active_server_id="server-1")
+
+    async def flip_then_return(*_args, **_kwargs):
+        runtime.authority_context_state["current"] = SimpleNamespace(account="B")
+        return _persona_profile()
+
+    runtime.scope_service.get_persona_profile.side_effect = flip_then_return
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+
+    started = await screen._session._start_persona_console_session(
+        _persona_start_handoff(
+            runtime_backend="server", active_server_profile_id="server-1"
+        )
+    )
+
+    assert started is False
+    assert store.session is None
+    assert store.create_kwargs is None
+
+
+@pytest.mark.asyncio
+async def test_persona_payload_rejected_by_character_starter_accepted_by_persona_starter(
+    monkeypatch,
+):
+    runtime = _persona_handoff_runtime()
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+    payload = _persona_start_handoff()
+
+    assert await screen._session._start_character_console_session(payload) is False
+    assert await screen._session._start_persona_console_session(payload) is True
 
 
 @pytest.mark.asyncio
@@ -10367,6 +10644,92 @@ def test_native_console_state_round_trip_preserves_source_aware_character_identi
     assert restored_session.character_ref() is not None
 
 
+def test_native_console_state_round_trip_preserves_persona_identity():
+    """Screen state keeps persona provenance and its trusted template."""
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-p",
+        title="Chat with Archivist",
+        runtime_backend="local",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+        persona_system_template="Guide {{user}} as {{persona}}.",
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = _console_snapshot_with_sessions(screen)
+    assert payload is not None
+    assert {
+        key: payload["sessions"][0][key]
+        for key in (
+            "runtime_backend",
+            "assistant_kind",
+            "assistant_id",
+            "assistant_name",
+            "persona_system_template",
+        )
+    } == {
+        "runtime_backend": "local",
+        "assistant_kind": "persona",
+        "assistant_id": "local-persona-abc",
+        "assistant_name": "Archivist",
+        "persona_system_template": "Guide {{user}} as {{persona}}.",
+    }
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.runtime_backend == "local"
+    assert restored_session.assistant_kind == "persona"
+    assert restored_session.assistant_id == "local-persona-abc"
+    assert restored_session.assistant_name == "Archivist"
+    assert (
+        restored_session.persona_system_template
+        == "Guide {{user}} as {{persona}}."
+    )
+    assert restored_session.character_name is None
+    assert restored_session.character_ref() is None
+
+
+def test_native_console_state_restore_drops_stray_character_name_on_persona():
+    """A contradictory payload keeps only the kind-appropriate name."""
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-p",
+        title="Chat with Archivist",
+        runtime_backend="local",
+        assistant_kind="persona",
+        assistant_id="local-persona-abc",
+        assistant_name="Archivist",
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = _console_snapshot_with_sessions(screen)
+    assert payload is not None
+    payload["sessions"][0]["character_name"] = "Stale Character"
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.assistant_name == "Archivist"
+    assert restored_session.character_name is None
+
+
 def test_live_server_session_never_exposes_local_character_projection():
     """A stray server-side numeric ID cannot drive local rail/card state."""
     session = ConsoleChatSession(
@@ -12460,3 +12823,134 @@ async def test_console_routine_send_fires_no_success_toast():
 
     success_toasts = [m for m, severity in notifications if severity == "success"]
     assert success_toasts == []
+
+
+@pytest.mark.asyncio
+async def test_console_resume_rehydrates_persona_name_from_profile():
+    """A resumed persona session re-resolves its display name, both backends."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-persona": {
+                "conversation": {
+                    "id": "local-persona",
+                    "title": "Chat with Archivist",
+                    "runtime_backend": "local",
+                    "assistant_kind": "persona",
+                    "assistant_id": "local-persona-abc",
+                    # No assistant_authority_id: personas are authority-free.
+                    # No character_id: personas carry no local projection.
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        name_lookup = AsyncMock(return_value="Archivist")
+        console._resolve_resumed_persona_name = name_lookup
+
+        assert (
+            await console._workspace._resume_console_workspace_conversation(
+                "local-persona"
+            )
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.runtime_backend == "local"
+        assert session.assistant_kind == "persona"
+        assert session.assistant_id == "local-persona-abc"
+        assert session.assistant_authority_id is None
+        assert session.assistant_name == "Archivist"
+        assert session.character_name is None
+        assert session.character_ref() is None
+        name_lookup.assert_awaited_once_with("local-persona-abc", "local")
+
+
+@pytest.mark.asyncio
+async def test_console_resume_persona_name_lookup_failure_stays_unlabeled():
+    """A failed profile lookup resumes the session without a persona name."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-persona": {
+                "conversation": {
+                    "id": "local-persona",
+                    "title": "Chat with Archivist",
+                    "runtime_backend": "local",
+                    "assistant_kind": "persona",
+                    "assistant_id": "local-persona-abc",
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        console._resolve_resumed_persona_name = AsyncMock(return_value="")
+
+        assert (
+            await console._workspace._resume_console_workspace_conversation(
+                "local-persona"
+            )
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.assistant_kind == "persona"
+        assert session.assistant_name is None
+
+
+@pytest.mark.asyncio
+async def test_console_resume_restores_persona_system_template_from_metadata():
+    """The trusted persona template rides the roleplay metadata envelope."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-persona": {
+                "conversation": {
+                    "id": "local-persona",
+                    "title": "Chat with Archivist",
+                    "runtime_backend": "local",
+                    "assistant_kind": "persona",
+                    "assistant_id": "local-persona-abc",
+                    "metadata": {
+                        "console_roleplay_context": {
+                            "version": 1,
+                            "persona_system_template": "Guide {{user}}.",
+                        },
+                    },
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        console._resolve_resumed_persona_name = AsyncMock(return_value="Archivist")
+
+        assert (
+            await console._workspace._resume_console_workspace_conversation(
+                "local-persona"
+            )
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.persona_system_template == "Guide {{user}}."

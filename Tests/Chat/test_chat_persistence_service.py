@@ -2414,6 +2414,27 @@ class TestChatPersistenceService:
         assert extra[0]["data"] == b"img-1"
         assert extra[0]["display_name"] == "b.jpg"
 
+    def test_roleplay_context_round_trips_persona_template(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            conversation_title="Chat with Archivist",
+            runtime_backend="local",
+            assistant_kind="persona",
+            assistant_id="local-persona-abc",
+        )
+        assert service.update_conversation_roleplay_context(
+            conversation_id=conversation_id,
+            user_name_override=None,
+            character_system_template=None,
+            persona_system_template="Guide {{user}}.",
+        )
+        record = db_instance.get_conversation_by_id(conversation_id)
+        owned = json.loads(record["metadata"])["console_roleplay_context"]
+        assert owned["version"] == 1
+        assert owned["persona_system_template"] == "Guide {{user}}."
+
 
 class _RoleplayConflictDB:
     """Small optimistic-lock seam whose first write preserves a sibling."""
