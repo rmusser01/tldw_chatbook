@@ -306,3 +306,77 @@ def test_every_query_taking_tool_validates_its_query():
             unvalidated.append(node.name)
 
     assert not unvalidated, f"tools taking a query without validating: {unvalidated}"
+
+
+# ===================================================================
+# PR #2624 review (Qodo): the limit guard must be strictly integral.
+# A float-based range check accepts fractional/Boolean/numeric-string
+# values and its float() conversion raises OverflowError on huge ints
+# -- both escaping the error-dict contract. The local runtime delegate
+# must also pass raw arguments through so the boundary sees the
+# caller's original types instead of pre-coerced ones.
+# ===================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_limit",
+    [10**400, 5.5, True, False, "1.5", "10", None, float("inf")],
+)
+async def test_malformed_limits_return_error_without_reaching_backend(bad_limit):
+    tools, stub = _make_tools()
+
+    result = await tools.perform_rag_search(query="dragons", limit=bad_limit)
+
+    assert isinstance(result, list) and "error" in result[0], (
+        f"limit={bad_limit!r} must produce the documented error item, not {result!r}"
+    )
+    assert stub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_numeric_and_list_queries_return_error_not_coerced_strings():
+    tools, stub = _make_tools()
+
+    for bad_query in (["not", "a", "string"], 12345, {"q": "dragons"}, None):
+        result = await tools.perform_rag_search(query=bad_query, limit=5)
+        assert isinstance(result, list) and "error" in result[0], (
+            f"query={bad_query!r} must produce the error item, not {result!r}"
+        )
+
+    assert stub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_local_runtime_delegate_passes_raw_search_arguments():
+    """PR #2624 review: _tool_search_rag used to str()/int()-coerce its
+    arguments before the tool could inspect them, so a list query became
+    "['not', 'a', 'string']" and a fractional limit crashed int() in the
+    delegate. Raw pass-through lets perform_rag_search's boundary
+    validation answer with its documented error item."""
+    from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
+
+    tools, stub = _make_tools()
+    delegate = LocalMCPRuntimeDelegate.__new__(LocalMCPRuntimeDelegate)
+    delegate._get_tools = lambda: tools  # type: ignore[method-assign]
+
+    result = await delegate._tool_search_rag(
+        {"query": ["not", "a", "string"], "limit": 1.5}
+    )
+
+    assert isinstance(result, list) and "error" in result[0]
+    assert stub.calls == []
+
+    ok = await delegate._tool_search_rag({"query": "dragons", "limit": 5})
+    assert stub.calls == [("profile", "dragons", 5, None)]
+    assert ok[0]["title"] == "Semantic Result"
+
+
+def test_validate_number_range_reports_huge_ints_as_invalid():
+    """PR #2624 review: float(10**400) overflows; the helper must report
+    not-numeric (False) instead of letting OverflowError escape to callers
+    that validate outside their exception handlers."""
+    from tldw_chatbook.Utils.input_validation import validate_number_range
+
+    assert validate_number_range(10**400, min_val=1, max_val=100) is False
+    assert validate_number_range(10**400) is False

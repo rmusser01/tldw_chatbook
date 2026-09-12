@@ -1045,6 +1045,18 @@ class LocalResearchService:
         return self._awaitable_list(self._normalize_run(dict(row)) for row in rows)
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
+        """Return one research run record by id.
+
+        Args:
+            run_id: The run to look up, in either backing mode.
+
+        Returns:
+            The normalized run record, or None when the run does not
+            exist. Both not-found conventions are honored: the
+            path-backed branch sees no row, and the external-db branch
+            accepts an injected db that either returns None or raises
+            KeyError for a missing run (TASK-18811).
+        """
         if self._uses_external_db:
             try:
                 record = self.db.get_run(run_id)

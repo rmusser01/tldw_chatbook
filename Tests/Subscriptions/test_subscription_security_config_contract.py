@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
 import io
-from pathlib import Path
 import tokenize
 import tomllib
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.config import CONFIG_TOML_CONTENT
-
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 CANONICAL_METADATA_ENDPOINTS = frozenset(
@@ -356,6 +355,38 @@ def test_disallowed_url_scheme_collections_are_not_duplicated(
     )
 
 
+def _scheme_policy_names(source_tree: ast.Module) -> set[str]:
+    """Names of scheme/metadata policy assignments anywhere in a module.
+
+    Uses ``_assignment_names_and_value`` so both ``Assign`` and ``AnnAssign``
+    targets are seen (PR #2624 review): an annotated ``ALLOWED_SCHEMES``
+    declaration must not evade the sentinel.
+    """
+    flagged: set[str] = set()
+    for node in ast.walk(source_tree):
+        assignment = _assignment_names_and_value(node)
+        if assignment is None:
+            continue
+        names, _value = assignment
+        flagged.update(
+            names & {"ALLOWED_SCHEMES", "BLOCKED_SCHEMES", "METADATA_ENDPOINTS"}
+        )
+    return flagged
+
+
+def test_scheme_policy_sentinel_catches_annotated_assignments() -> None:
+    """An ``AnnAssign`` scheme table is flagged, not just plain assigns."""
+    source_tree = ast.parse(
+        'ALLOWED_SCHEMES: frozenset[str] = {"http", "https"}\n'
+        "BLOCKED_SCHEMES: set[str] = set()\n"
+    )
+
+    assert _scheme_policy_names(source_tree) == {
+        "ALLOWED_SCHEMES",
+        "BLOCKED_SCHEMES",
+    }
+
+
 def test_subscription_security_declares_no_scheme_policy() -> None:
     """TASK-591: with SecurityValidator deleted, no scheme policy remains here.
 
@@ -365,14 +396,7 @@ def test_subscription_security_declares_no_scheme_policy() -> None:
     """
     source_tree = _source_tree(PACKAGE_ROOT / SUBSCRIPTION_SECURITY_PATH)
 
-    scheme_assignments = {
-        target.id
-        for node in ast.walk(source_tree)
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Name)
-        and target.id in {"ALLOWED_SCHEMES", "BLOCKED_SCHEMES", "METADATA_ENDPOINTS"}
-    }
+    scheme_assignments = _scheme_policy_names(source_tree)
     validator_classes = {
         node.name
         for node in ast.walk(source_tree)

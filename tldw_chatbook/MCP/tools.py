@@ -306,9 +306,21 @@ class MCPTools:
                     )
                 }
             ]
-        if not validate_number_range(
-            limit, min_val=1, max_val=MAX_SEARCH_RESULTS_LIMIT
-        ):
+        # Strict integer check (PR #2624 review): a float-based range
+        # helper accepts fractional/Boolean/numeric-string values, and its
+        # float() conversion raises OverflowError on huge ints -- both
+        # escape the error-dict contract. Bools are ints by subclass, so
+        # they are excluded explicitly.
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            return [
+                {
+                    "error": (
+                        "limit must be an integer between 1 and "
+                        f"{MAX_SEARCH_RESULTS_LIMIT}"
+                    )
+                }
+            ]
+        if not 1 <= limit <= MAX_SEARCH_RESULTS_LIMIT:
             return [
                 {
                     "error": (
@@ -316,7 +328,6 @@ class MCPTools:
                     )
                 }
             ]
-        limit = int(limit)
 
         try:
             if use_semantic:

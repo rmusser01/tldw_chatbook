@@ -24,7 +24,7 @@ from tldw_chatbook.Web_Scraping import Article_Extractor_Lib as AEL
 BASE_URL = "http://example.test/"
 
 
-class _FakePage:
+class FakePage:
     def __init__(self) -> None:
         self.close_calls = 0
 
@@ -41,87 +41,87 @@ class _FakePage:
         self.close_calls += 1
 
 
-class _FakeContext:
+class FakeContext:
     def __init__(self) -> None:
-        self.pages: list[_FakePage] = []
+        self.pages: list[FakePage] = []
 
     async def add_cookies(self, cookies: Any) -> None:
         return None
 
-    async def new_page(self) -> _FakePage:
-        page = _FakePage()
+    async def new_page(self) -> FakePage:
+        page = FakePage()
         self.pages.append(page)
         return page
 
 
-class _FakeBrowser:
+class FakeBrowser:
     def __init__(self) -> None:
-        self.context = _FakeContext()
+        self.context = FakeContext()
 
-    async def new_context(self, **kwargs: Any) -> _FakeContext:
+    async def new_context(self, **kwargs: Any) -> FakeContext:
         return self.context
 
     async def close(self) -> None:
         return None
 
 
-class _FakeChromium:
+class FakeChromium:
     def __init__(self) -> None:
-        self.browser = _FakeBrowser()
+        self.browser = FakeBrowser()
 
-    async def launch(self, **kwargs: Any) -> _FakeBrowser:
+    async def launch(self, **kwargs: Any) -> FakeBrowser:
         return self.browser
 
 
-class _FakePlaywright:
+class FakePlaywright:
     def __init__(self) -> None:
-        self.chromium = _FakeChromium()
+        self.chromium = FakeChromium()
 
 
-class _FakeAsyncPlaywright:
+class FakeAsyncPlaywright:
     """`async_playwright()` async-context-manager double."""
 
-    def __call__(self) -> _FakeAsyncPlaywright:
+    def __call__(self) -> FakeAsyncPlaywright:
         return self
 
-    async def __aenter__(self) -> _FakePlaywright:
-        return _FakePlaywright()
+    async def __aenter__(self) -> FakePlaywright:
+        return FakePlaywright()
 
     async def __aexit__(self, *exc_info: object) -> bool:
         return False
 
 
 @pytest.fixture()
-def fake_browser_pages(monkeypatch: pytest.MonkeyPatch) -> list[_FakePage]:
+def fake_browser_pages(monkeypatch: pytest.MonkeyPatch) -> list[FakePage]:
     """Patch the playwright seam; return the list of pages the crawl opened."""
-    pages_holder: list[_FakePage] = []
+    pages_holder: list[FakePage] = []
 
-    class _RecordingContext(_FakeContext):
-        async def new_page(self) -> _FakePage:
-            page = _FakePage()
+    class RecordingContext(FakeContext):
+        async def new_page(self) -> FakePage:
+            page = FakePage()
             pages_holder.append(page)
             return page
 
-    class _RecordingBrowser(_FakeBrowser):
+    class RecordingBrowser(FakeBrowser):
         def __init__(self) -> None:
             super().__init__()
-            self.context = _RecordingContext()
+            self.context = RecordingContext()
 
-    class _RecordingChromium(_FakeChromium):
+    class RecordingChromium(FakeChromium):
         def __init__(self) -> None:
             super().__init__()
-            self.browser = _RecordingBrowser()
+            self.browser = RecordingBrowser()
 
-    class _RecordingPlaywright(_FakePlaywright):
+    class RecordingPlaywright(FakePlaywright):
         def __init__(self) -> None:
             super().__init__()
-            self.chromium = _RecordingChromium()
+            self.chromium = RecordingChromium()
 
-    class _RecordingAsyncPlaywright(_FakeAsyncPlaywright):
-        async def __aenter__(self) -> _RecordingPlaywright:
-            return _RecordingPlaywright()
+    class RecordingAsyncPlaywright(FakeAsyncPlaywright):
+        async def __aenter__(self) -> RecordingPlaywright:
+            return RecordingPlaywright()
 
-    monkeypatch.setattr(AEL, "async_playwright", _RecordingAsyncPlaywright())
+    monkeypatch.setattr(AEL, "async_playwright", RecordingAsyncPlaywright())
     monkeypatch.setattr(AEL, "scrape_article_async", lambda *a, **k: _async_none())
     return pages_holder
 
@@ -131,7 +131,7 @@ async def _async_none() -> None:
 
 
 async def test_blocked_link_discovery_page_is_closed(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, fake_browser_pages: list[_FakePage]
+    tmp_path, monkeypatch: pytest.MonkeyPatch, fake_browser_pages: list[FakePage]
 ) -> None:
     async def _raise_blocked(*args: Any, **kwargs: Any) -> None:
         raise PermissionError("blocked by egress policy")
@@ -155,7 +155,7 @@ async def test_blocked_link_discovery_page_is_closed(
 
 
 async def test_successful_link_discovery_page_is_closed_once(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, fake_browser_pages: list[_FakePage]
+    tmp_path, monkeypatch: pytest.MonkeyPatch, fake_browser_pages: list[FakePage]
 ) -> None:
     async def _allow(*args: Any, **kwargs: Any) -> None:
         return None
