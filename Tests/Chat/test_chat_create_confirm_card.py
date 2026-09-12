@@ -213,7 +213,13 @@ async def test_task_cards_mount_and_round_trip_a_chat_create_decision():
     app = _CardsHarnessApp()
     async with app.run_test() as pilot:
         cards = app.query_one(ChatTaskCards)
-        assert cards.query_one(ChatCreateConfirmCard).display is False
+        # ADR-097 lazy mount: the card module is not resident until a
+        # pending payload first mounts it (same pattern as the question
+        # card), so an idle ChatTaskCards has NO card to query.
+        from textual.css.query import NoMatches
+
+        with pytest.raises(NoMatches):
+            cards.query_one(ChatCreateConfirmCard)
 
         cards.sync_state(
             TaskResumeState(pending_chat_create=_payload(request_id="round-42"))

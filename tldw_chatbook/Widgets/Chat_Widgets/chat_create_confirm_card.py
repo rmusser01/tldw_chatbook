@@ -33,28 +33,11 @@ class ChatCreateConfirmCard(Container):
     _request_id: Optional[str] = None
     _payload: Optional[dict[str, Any]] = None
 
-    class ChatCreateDecided(Message):
-        """Posted when the user allows, allows-for-session, or denies."""
+    # The decision message lives on ChatTaskCards (ADR-097: this module
+    # is NOT resident at boot; hosting it there lets the screen's @on
+    # handler avoid importing us at class-definition time).
+    ChatCreateDecided = None  # replaced below after import resolution
 
-        def __init__(
-            self, allow: bool, remember: bool, request_id: Optional[str] = None
-        ) -> None:
-            """Initialize the decision payload.
-
-            Args:
-                allow: True to create the chat this once.
-                remember: True to also grant this session standing
-                    permission (no further cards this session).
-                request_id: The pending confirm round's id, as read from
-                    the payload passed to `set_payload`. Must be echoed
-                    back unchanged to
-                    `ConsoleChatController.resolve_pending_chat_create`,
-                    or that call silently drops the decision.
-            """
-            self.allow = allow
-            self.remember = remember
-            self.request_id = request_id
-            super().__init__()
 
     def compose(self) -> ComposeResult:
         """Build the card's header, body, and button row."""
@@ -186,3 +169,13 @@ class ChatCreateConfirmCard(Container):
         self.post_message(
             self.ChatCreateDecided(allow, remember, request_id=request_id)
         )
+
+# Late alias: the message class is defined on ChatTaskCards; expose it
+# here for existing imports/tests.
+def _bind_chat_create_decided():
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+    ChatCreateConfirmCard.ChatCreateDecided = ChatTaskCards.ChatCreateDecided
+
+
+_bind_chat_create_decided()

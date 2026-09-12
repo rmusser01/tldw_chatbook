@@ -525,7 +525,6 @@ from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
-from ...Widgets.Chat_Widgets.chat_create_confirm_card import ChatCreateConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Chat_Widgets.watchlists_operation_card import (
     WatchlistsOperationCard,
@@ -23998,7 +23997,7 @@ class ChatScreen(BaseAppScreen):
             except Exception:  # noqa: BLE001
                 pass
 
-    @on(ChatCreateConfirmCard.ChatCreateDecided)
+    @on(ChatTaskCards.ChatCreateDecided)
     def handle_console_chat_create_decided(self, event: Any) -> None:
         event.stop()
         self._skill.handle_console_chat_create_decided(
