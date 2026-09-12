@@ -52,7 +52,12 @@ def controller():
     ctrl.mcp_approval_timeout_seconds = lambda: 30.0
     ctrl.session_a = store.create_session(title="A").id
     store.switch_session(ctrl.session_a)
-    return ctrl
+    ctrl._test_workers = []
+    ctrl._test_worker_errors = []
+    try:
+        yield ctrl
+    finally:
+        _finish_controller_workers(ctrl)
 
 
 def _call(name):
@@ -68,13 +73,29 @@ def _call(name):
 
 def _arm(ctrl, name, session_id, results, key):
     def worker():
-        results[key] = ctrl.request_mcp_approvals(
-            [_call(name)], session_id=session_id
-        )
+        try:
+            results[key] = ctrl.request_mcp_approvals(
+                [_call(name)], session_id=session_id
+            )
+        except BaseException as exc:  # noqa: BLE001 -- fixture reports worker failures
+            ctrl._test_worker_errors.append(exc)
 
     thread = threading.Thread(target=worker, daemon=True)
+    ctrl._test_workers.append(thread)
     thread.start()
     return thread
+
+
+def _finish_controller_workers(ctrl):
+    """Cancel every fixture-owned round and prove its waiter has exited."""
+    ctrl.begin_shutdown()
+    for thread in ctrl._test_workers:
+        thread.join(timeout=5.0)
+    alive = [thread.name for thread in ctrl._test_workers if thread.is_alive()]
+    assert not alive, f"controller fixture leaked worker threads: {alive}"
+    assert not ctrl._test_worker_errors, (
+        f"controller fixture workers raised: {ctrl._test_worker_errors!r}"
+    )
 
 
 def _round_ids(ctrl):
@@ -113,7 +134,9 @@ def test_arming_a_second_same_session_round_does_not_evict_the_first_card(
     )
 
     for round_id in _round_ids(controller):
-        controller.resolve_pending_approval({"alpha": "approve_once", "beta": "approve_once"}, round_id=round_id)
+        controller.resolve_pending_approval(
+            {"alpha": "approve_once", "beta": "approve_once"}, round_id=round_id
+        )
     first.join(timeout=5)
     second.join(timeout=5)
 
@@ -164,9 +187,15 @@ def test_last_round_teardown_clears_the_card(controller):
 
 def _arm_install(ctrl, url, session_id, results, key):
     def worker():
-        results[key] = ctrl.request_skill_install_confirm(url, session_id=session_id)
+        try:
+            results[key] = ctrl.request_skill_install_confirm(
+                url, session_id=session_id
+            )
+        except BaseException as exc:  # noqa: BLE001 -- fixture reports worker failures
+            ctrl._test_worker_errors.append(exc)
 
     thread = threading.Thread(target=worker, daemon=True)
+    ctrl._test_workers.append(thread)
     thread.start()
     return thread
 
@@ -181,7 +210,12 @@ def install_controller():
     ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
     ctrl.session_a = store.create_session(title="A").id
     store.switch_session(ctrl.session_a)
-    return ctrl
+    ctrl._test_workers = []
+    ctrl._test_worker_errors = []
+    try:
+        yield ctrl
+    finally:
+        _finish_controller_workers(ctrl)
 
 
 def test_install_second_same_session_round_does_not_evict_the_first(
@@ -213,11 +247,15 @@ def test_install_second_same_session_round_does_not_evict_the_first(
 
 def _arm_script(ctrl, script, session_id, results, key):
     def worker():
-        results[key] = ctrl.request_skill_script_confirm(
-            {"skill": "demo", "script": script}, session_id=session_id
-        )
+        try:
+            results[key] = ctrl.request_skill_script_confirm(
+                {"skill": "demo", "script": script}, session_id=session_id
+            )
+        except BaseException as exc:  # noqa: BLE001 -- fixture reports worker failures
+            ctrl._test_worker_errors.append(exc)
 
     thread = threading.Thread(target=worker, daemon=True)
+    ctrl._test_workers.append(thread)
     thread.start()
     return thread
 
@@ -232,7 +270,12 @@ def script_controller():
     ctrl.skill_script_confirm_timeout_seconds = lambda: 30.0
     ctrl.session_a = store.create_session(title="A").id
     store.switch_session(ctrl.session_a)
-    return ctrl
+    ctrl._test_workers = []
+    ctrl._test_worker_errors = []
+    try:
+        yield ctrl
+    finally:
+        _finish_controller_workers(ctrl)
 
 
 def test_script_second_same_session_round_does_not_evict_the_first(
@@ -277,22 +320,29 @@ def test_bridges_do_not_share_a_head(controller):
     install_mounted = []
     ctrl.set_pending_skill_install = install_mounted.append
     ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
+    # Exercise the host's documented setter-based, per-kind projection seam.
+    ctrl._publish_pending_decision = None
 
     results = {}
     approval = _arm(ctrl, "alpha", ctrl.session_a, results, "alpha")
     assert _wait_until(lambda: len(_round_ids(ctrl)) == 1)
     approval_round = _round_ids(ctrl)[0]
+    assert _wait_until(lambda: _mounted_round(ctrl) == approval_round)
 
     install = _arm_install(ctrl, "https://x/one", ctrl.session_a, results, "one")
     assert _wait_until(lambda: len(ctrl.pending_skill_install_ids()) == 1)
     install_round = ctrl.pending_skill_install_ids()[0]
+    assert _wait_until(lambda: install_round in ctrl._parked_skill_install_payloads)
 
     # The approvals payload names its id `round_id`; the install payload
     # names its own `request_id`. Neither bridge renames the other's.
-    assert approvals_mounted[-1]["round_id"] == approval_round
-    assert _wait_until(lambda: len(install_mounted) == 1)
-    assert install_mounted[-1]["request_id"] == install_round
-
+    assert _wait_until(
+        lambda: (
+            bool(install_mounted)
+            and install_mounted[-1] is not None
+            and install_mounted[-1].get("request_id") == install_round
+        )
+    )
     ctrl.resolve_pending_approval({"alpha": "approve_once"}, round_id=approval_round)
     approval.join(timeout=5)
 
@@ -305,41 +355,59 @@ def test_bridges_do_not_share_a_head(controller):
     install.join(timeout=5)
 
 
-def test_promoted_round_mounts_with_remaining_time_not_original_timeout(controller):
-    """Qodo PR #1836 finding 1: a queued round's worker deadline starts at
-    ARM time, so mounting it at promotion with the arm-time
-    ``timeout_seconds`` overstates the decision window ("Auto-denies in
-    2:00" on a card that denies in seconds). The mounted payload must carry
-    the REMAINING time, derived from the round's monotonic deadline; the
-    retained payload itself stays unmutated (each later re-derive computes
-    its own snapshot).
-    """
+def test_queued_round_spends_timeout_only_while_answerable(controller):
+    """Queued and hidden time preserve a round's answerable-time budget."""
+    now = [100.0]
+    controller.decision_monotonic_clock = lambda: now[0]
     results = {}
     first = _arm(controller, "alpha", controller.session_a, results, "alpha")
     assert _wait_until(lambda: len(_round_ids(controller)) == 1)
     round_1 = _round_ids(controller)[0]
     assert _wait_until(lambda: _mounted_round(controller) == round_1)
+    assert controller.set_answerable_decision(controller.session_a, round_1)
 
     second = _arm(controller, "beta", controller.session_a, results, "beta")
     assert _wait_until(lambda: len(_round_ids(controller)) == 2)
-    round_2 = [r for r in _round_ids(controller) if r != round_1][0]
+    round_2 = next(r for r in _round_ids(controller) if r != round_1)
+    assert _wait_until(lambda: round_2 in controller._parked_approval_payloads)
+    assert (
+        controller.pending_decision_projection(controller.session_a).decision_id
+        == round_1
+    )
+
+    now[0] += 10.0
+    with controller._approval_state_lock:
+        queued_state = controller._pending_approval_rounds[round_2]
+        assert queued_state["remaining_active_seconds"] == 30.0
+        assert queued_state["active_since"] is None
 
     controller.resolve_pending_approval({"alpha": "approve_once"}, round_id=round_1)
     first.join(timeout=5)
     assert _wait_until(lambda: _mounted_round(controller) == round_2)
+    promoted = controller.pending_decision_projection(controller.session_a)
+    assert promoted is not None
+    assert promoted.decision_id == round_2
+    assert promoted.remaining_active_seconds == 30.0
+    assert promoted.payload["timeout_seconds"] == 30.0
 
-    promoted = controller.mounted[-1]
-    # The fixture arms 30.0s rounds; queue time has necessarily elapsed by
-    # promotion, so an accurate snapshot is strictly below the original.
-    assert 0.0 < promoted["timeout_seconds"] < 30.0, (
-        "a promoted round must mount with its REMAINING decision window, "
-        f"not the arm-time timeout (got {promoted['timeout_seconds']!r})"
-    )
+    assert controller.set_answerable_decision(controller.session_a, round_2)
+    now[0] += 7.0
+    answerable = controller.pending_decision_projection(controller.session_a)
+    assert answerable is not None
+    assert answerable.remaining_active_seconds == 23.0
+    assert answerable.payload["timeout_seconds"] == 23.0
+
+    controller.on_console_view_visibility_changed(False)
+    assert controller.set_answerable_decision(controller.session_a, None)
+    now[0] += 11.0
+    hidden = controller.pending_decision_projection(controller.session_a)
+    assert hidden is not None
+    assert hidden.remaining_active_seconds == 23.0
+    assert hidden.payload["timeout_seconds"] == 23.0
     with controller._approval_state_lock:
         stored = controller._parked_approval_payloads[round_2]
     assert stored["timeout_seconds"] == 30.0, (
-        "the retained payload must stay unmutated; only the mounted "
-        "snapshot carries the adjusted remaining time"
+        "projecting remaining answerable time must not rewrite the retained payload"
     )
 
     controller.resolve_pending_approval({"beta": "approve_once"}, round_id=round_2)
