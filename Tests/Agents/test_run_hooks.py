@@ -7,6 +7,7 @@ import sys
 import time
 
 import pytest
+from loguru import logger as _loguru_logger
 
 from tldw_chatbook.Agents.run_hooks import (
     HOOK_DEFAULT_TIMEOUT_S,
@@ -18,6 +19,18 @@ from tldw_chatbook.Agents.run_hooks import (
     RunHooksEngine,
     load_hooks_config,
 )
+
+
+@pytest.fixture
+def caplog(caplog):
+    """Bridge loguru records into pytest's caplog (loguru's documented recipe).
+
+    loguru does not propagate to stdlib logging in this repo, so tests that
+    assert on engine log output attach caplog.handler as a loguru sink.
+    """
+    handler_id = _loguru_logger.add(caplog.handler, format="{message}")
+    yield caplog
+    _loguru_logger.remove(handler_id)
 
 
 def _cfg(enabled=True, **hook_kwargs):
@@ -103,10 +116,17 @@ def _engine(*hooks, enabled=True):
 
 
 class TestFire:
-    def test_exit0_clean_pass_logs_stdout(self):
+    def test_exit0_clean_pass_logs_stdout(self, caplog):
         eng = _engine(HookSpec("Stop", (sys.executable, "-c", "print('done')")))
         out = eng.fire("Stop", session_id="s", run_id="r", data={})
         assert out == HookOutcome(blocked=False, reason="", context="")
+        # R13: non-blocking events log captured stdout/stderr at INFO carrying
+        # session_id/run_id/hook event.
+        info_records = [r for r in caplog.records
+                        if r.levelname == "INFO" and "event=Stop" in r.getMessage()]
+        assert info_records, f"no INFO record for the Stop hook: {[r.getMessage() for r in caplog.records]}"
+        msg = info_records[0].getMessage()
+        assert "done" in msg and "session_id=s" in msg and "run_id=r" in msg
 
     def test_json_decision_beats_exit_code(self):
         code = "import sys; print(__import__('json').dumps({'decision': 'deny', 'reason': 'nope'}))"
@@ -131,10 +151,15 @@ class TestFire:
         out = eng.fire("PreToolUse", session_id="s", data={"tool_name": "t"})
         assert out.blocked is True and "failed" in out.reason
 
-    def test_userpromptsubmit_crash_fails_open(self):
+    def test_userpromptsubmit_crash_fails_open(self, caplog):
         eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c", "sys.exit(1)")))
         out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
         assert out.blocked is False
+        # Fail-open paths log at WARNING (spec §5), not silently at INFO.
+        assert any(r.levelname == "WARNING" and "UserPromptSubmit" in r.getMessage()
+                   and "failing open" in r.getMessage() for r in caplog.records), (
+            f"expected WARNING for UPS crash fail-open, got: "
+            f"{[(r.levelname, r.getMessage()) for r in caplog.records]}")
 
     def test_userpromptsubmit_stdout_is_context(self):
         eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c", "print('extra ctx')")))
@@ -146,6 +171,61 @@ class TestFire:
             "print(__import__('json').dumps({'decision': 'block', 'reason': 'no'}))")))
         out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
         assert out.blocked is True and out.reason == "no"
+
+    def test_userpromptsubmit_timeout_fails_open_warns(self, caplog):
+        eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c",
+                                                   "import time; time.sleep(2)"),
+                               timeout_s=0.5))
+        out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
+        assert out.blocked is False  # timeout fails open
+        assert any(r.levelname == "WARNING" and "UserPromptSubmit" in r.getMessage()
+                   and "timed out" in r.getMessage() and "failing open" in r.getMessage()
+                   for r in caplog.records), (
+            f"expected WARNING for UPS timeout fail-open, got: "
+            f"{[(r.levelname, r.getMessage()) for r in caplog.records]}")
+
+    def test_nonblocking_logged_output_truncated(self, caplog):
+        eng = _engine(HookSpec("Stop", (sys.executable, "-c", "print('z' * 999999)")))
+        eng.fire("Stop", session_id="s", run_id="r", data={})
+        stop_records = [r for r in caplog.records
+                        if r.levelname == "INFO" and "event=Stop" in r.getMessage()]
+        assert stop_records, f"no INFO record for the Stop hook: {[r.getMessage() for r in caplog.records]}"
+        assert "…[truncated]" in stop_records[0].getMessage()
+
+    # --- Ruling R12: a JSON object with a "decision" key suppresses exit codes ---
+
+    def test_pretooluse_allow_with_exit2_not_blocked(self, caplog):
+        code = ("import sys; print(__import__('json').dumps({'decision': 'allow'})); "
+                "sys.exit(2)")
+        eng = _engine(HookSpec("PreToolUse", (sys.executable, "-c", code)))
+        out = eng.fire("PreToolUse", session_id="s", data={"tool_name": "t"})
+        assert out.blocked is False  # explicit allow suppresses the exit-2 deny shorthand
+        assert any(r.levelname == "WARNING" and "ignored" in r.getMessage()
+                   and "allow" in r.getMessage() for r in caplog.records), (
+            f"expected WARNING for ignored allow decision, got: "
+            f"{[(r.levelname, r.getMessage()) for r in caplog.records]}")
+
+    def test_userpromptsubmit_deny_word_is_not_block(self):
+        code = "print(__import__('json').dumps({'decision': 'deny'}))"
+        eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c", code)))
+        out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
+        assert out.blocked is False  # "deny" is not a UserPromptSubmit decision word
+
+    def test_userpromptsubmit_block_json_reason_wins_over_exit2(self):
+        code = ("import sys; print(__import__('json').dumps("
+                "{'decision': 'block', 'reason': 'json wins'})); sys.exit(2)")
+        eng = _engine(HookSpec("UserPromptSubmit", (sys.executable, "-c", code)))
+        out = eng.fire("UserPromptSubmit", session_id="s", data={"prompt": "hi"})
+        assert out.blocked is True and out.reason == "json wins"
+
+    def test_pretooluse_junk_stdout_warns(self, caplog):
+        eng = _engine(HookSpec("PreToolUse", (sys.executable, "-c", "print('not json')")))
+        out = eng.fire("PreToolUse", session_id="s", data={"tool_name": "t"})
+        assert out.blocked is False  # exit 0 = pass
+        assert any(r.levelname == "WARNING" and "unrecognized stdout" in r.getMessage()
+                   and "not json" in r.getMessage() for r in caplog.records), (
+            f"expected WARNING for unrecognized stdout on clean pass, got: "
+            f"{[(r.levelname, r.getMessage()) for r in caplog.records]}")
 
     def test_payload_envelope_on_stdin(self, tmp_path):
         payload_file = tmp_path / "hook_payload.json"
@@ -246,3 +326,24 @@ class TestNotify:
         while time.monotonic() < deadline and not marker.exists():
             time.sleep(0.05)
         assert marker.exists()
+
+
+class TestPoolIsolation:
+    def test_blocking_fire_not_delayed_by_queued_notify_hooks(self):
+        # Ruling R14: blocking-event hook executions must never queue behind
+        # non-blocking (notify-driven) ones. Queue 4 slow notify hooks, then
+        # check a PreToolUse fire completes within its normal time. If notify
+        # hooks shared the blocking pool, all 4 workers would be busy ~1s and
+        # the fire would wait behind them.
+        eng = _engine(
+            *[HookSpec("PostToolUse", (sys.executable, "-c",
+                                       "import time; time.sleep(1.0)")) for _ in range(4)],
+            HookSpec("PreToolUse", (sys.executable, "-c", "pass")),
+        )
+        eng.notify("PostToolUse", session_id="s", data={"tool_name": "t"})
+        time.sleep(0.05)  # let the notify work start consuming capacity
+        start = time.monotonic()
+        out = eng.fire("PreToolUse", session_id="s", data={"tool_name": "t"})
+        elapsed = time.monotonic() - start
+        assert out.blocked is False
+        assert elapsed < 0.6, f"blocking fire queued behind notify hooks: {elapsed:.2f}s"

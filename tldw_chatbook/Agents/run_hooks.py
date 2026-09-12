@@ -18,7 +18,8 @@ import signal
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Iterable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -131,7 +132,12 @@ class _Decision:
 def _decide(event: str, proc: subprocess.CompletedProcess) -> _Decision:
     """Map a finished hook process to a deny/pass/context decision.
 
-    JSON stdout decisions beat exit codes; exit 2 is the deny/block shorthand.
+    Ruling R12: when stdout parses as a JSON object containing a "decision"
+    key, that literal decision is the hook's whole opinion — the exit code is
+    suppressed entirely. deny/block map to their denial; allow or any other
+    value is a no-opinion (ignored + logged). The exit-2 shorthand applies
+    only when no decision key was parsed.
+
     Only UserPromptSubmit (fail-open, stdout-as-context) and PreToolUse
     (fail-closed) have decision semantics; every other event is pass-through.
     """
@@ -144,18 +150,41 @@ def _decide(event: str, proc: subprocess.CompletedProcess) -> _Decision:
         candidate = None
     if isinstance(candidate, dict):
         parsed = candidate
-    decision = (parsed or {}).get("decision")
+    has_decision = parsed is not None and "decision" in parsed
+    decision_value = parsed.get("decision") if has_decision else None
     if event == "UserPromptSubmit":
-        if decision == "block" or proc.returncode == 2:
+        if has_decision:
+            if decision_value == "block":
+                reason = str(parsed.get("reason") or stderr or "blocked by hook")
+                return _Decision(denied=True, reason=_truncate(reason))
+            logger.warning("run-hooks: UserPromptSubmit hook decision {!r} ignored; "
+                           "exit code {} suppressed", decision_value, proc.returncode)
+            return _Decision(context=_truncate(stdout.strip()))
+        if proc.returncode == 2:
             reason = str((parsed or {}).get("reason") or stderr or "blocked by hook")
             return _Decision(denied=True, reason=_truncate(reason))
+        if proc.returncode != 0:
+            logger.warning("run-hooks: UserPromptSubmit hook exited {} — failing open",
+                           proc.returncode)
         return _Decision(context=_truncate(stdout.strip()))
     if event == "PreToolUse":
-        if decision == "deny" or proc.returncode == 2:
+        if has_decision:
+            if decision_value == "deny":
+                reason = str(parsed.get("reason") or stderr or "denied by hook")
+                return _Decision(denied=True, reason=_truncate(reason))
+            logger.warning("run-hooks: PreToolUse hook decision {!r} ignored (deny-only); "
+                           "exit code {} suppressed", decision_value, proc.returncode)
+            return _Decision()
+        if proc.returncode == 2:
             reason = str((parsed or {}).get("reason") or stderr or "denied by hook")
             return _Decision(denied=True, reason=_truncate(reason))
         if proc.returncode != 0:
             return _Decision(denied=True, reason=f"hook failed (exit {proc.returncode}); failing closed")
+        if stdout.strip():
+            # Clean pass, but the hook tried to speak the decision protocol and
+            # we could not parse it — surface that instead of silently ignoring.
+            logger.warning("run-hooks: PreToolUse hook exited 0 with unrecognized stdout "
+                           "(expected empty or JSON decision): {!r}", _truncate(stdout.strip()))
         return _Decision()
     return _Decision()
 
@@ -184,9 +213,11 @@ def _run_hook(spec: HookSpec, payload: dict[str, Any]) -> tuple[HookSpec, _Decis
 
     Returns None as the decision for non-blocking events whose hook crashed or
     timed out: those outcomes are logged and dropped (fail-open), while
-    PreToolUse fails closed per spec.
+    PreToolUse fails closed per spec. UserPromptSubmit fail-open paths
+    (start-failure, timeout) log at WARNING (spec §5).
     """
     started = time.monotonic()
+    cmd0 = spec.command[0] if spec.command else "<empty>"
     try:
         proc = subprocess.Popen(
             spec.command,
@@ -201,43 +232,74 @@ def _run_hook(spec: HookSpec, payload: dict[str, Any]) -> tuple[HookSpec, _Decis
         logger.warning("run-hooks: failed to start {}: {}", spec.command, exc)
         if spec.event == "PreToolUse":
             return spec, _Decision(denied=True, reason="hook failed to start; failing closed")
+        if spec.event == "UserPromptSubmit":
+            logger.warning("run-hooks: UserPromptSubmit hook failed to start — failing open")
         return spec, None
+    stdout = ""
+    stderr = ""
     decision: _Decision | None
+    timed_out = False
     try:
         stdout, stderr = proc.communicate(json.dumps(payload), timeout=spec.timeout_s)
         completed = subprocess.CompletedProcess(spec.command, proc.returncode,
                                                 stdout=stdout, stderr=stderr)
         decision = _decide(spec.event, completed)
     except subprocess.TimeoutExpired:
+        timed_out = True
         _kill_process_group(proc)
         try:
-            proc.communicate()
+            stdout, stderr = proc.communicate()
         except Exception:  # noqa: BLE001 - post-kill reaping must never mask the timeout
-            pass
+            stdout, stderr = "", ""
+        stdout, stderr = stdout or "", stderr or ""
         if spec.event == "PreToolUse":
             decision = _Decision(denied=True,
                                  reason=f"hook timed out after {spec.timeout_s}s; failing closed")
         else:
             decision = None
-    logger.info("run-hooks: event={} hook={} exit={} took_ms={}",
-                spec.event, spec.command[0] if spec.command else "<empty>", proc.returncode,
-                int((time.monotonic() - started) * 1000))
+            if spec.event == "UserPromptSubmit":
+                logger.warning("run-hooks: UserPromptSubmit hook timed out after {}s — failing open",
+                               spec.timeout_s)
+    took_ms = int((time.monotonic() - started) * 1000)
+    if spec.event in BLOCKING_EVENTS:
+        logger.info("run-hooks: event={} hook={} exit={} timed_out={} took_ms={}",
+                    spec.event, cmd0, proc.returncode, timed_out, took_ms)
+    else:
+        # Ruling R13: non-blocking events log captured, truncated output at
+        # INFO carrying session_id/run_id/hook event for observability.
+        logger.info("run-hooks: event={} session_id={} run_id={} hook={} exit={} timed_out={} "
+                    "stdout={!r} stderr={!r} took_ms={}",
+                    spec.event, payload.get("session_id"), payload.get("run_id"), cmd0,
+                    proc.returncode, timed_out,
+                    _truncate((stdout or "").strip()), _truncate((stderr or "").strip()), took_ms)
     return spec, decision
+
+
+def _hook_raised_decision(spec: HookSpec) -> _Decision | None:
+    """Decision substituted when a hook invocation raises instead of returning."""
+    return (_Decision(denied=True, reason="hook raised; failing closed")
+            if spec.event == "PreToolUse" else None)
 
 
 class RunHooksEngine:
     """Executes configured hooks for lifecycle events. Never raises to callers.
 
-    fire()/fire_async() run all matching hooks concurrently and block until a
-    decision is needed: the first deny wins and remaining results are discarded
-    (their processes still run to completion in the pool). notify() is
-    fire-and-forget on a single-worker pool.
+    fire()/fire_async() run all matching hooks and block until a decision is
+    needed: the first deny wins and remaining results are discarded (their
+    processes still run to completion in the pool).
+
+    Pool isolation (ruling R14): blocking events (UserPromptSubmit,
+    PreToolUse) execute on a dedicated 4-worker pool that nothing else uses.
+    Non-blocking events execute inline on the calling thread — for notify()
+    that is the dedicated single notify worker — so blocking fires can never
+    queue behind notify-driven hooks. notify() is fire-and-forget.
     """
 
     def __init__(self, config_provider: Callable[[], RunHooksConfig],
                  cwd_provider: Callable[[], str]) -> None:
         self._config_provider = config_provider
         self._cwd_provider = cwd_provider
+        # Blocking-event pool only (ruling R14); never shared with notify work.
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="run-hook")
         self._notify_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="run-hook-notify")
 
@@ -292,16 +354,42 @@ class RunHooksEngine:
         if not specs:
             return HookOutcome()
         payload = self._payload(event, session_id, run_id, data if isinstance(data, dict) else {})
-        futures = {self._pool.submit(_run_hook, spec, payload): spec for spec in specs}
-        context = ""
+        if event in BLOCKING_EVENTS:
+            futures = {self._pool.submit(_run_hook, spec, payload): spec for spec in specs}
+            results = self._results_from_futures(futures)
+        else:
+            # Ruling R14: non-blocking events run inline on the calling thread
+            # (the notify worker for notify()-driven fires) and never consume
+            # blocking-pool capacity.
+            results = self._results_inline(specs, payload)
+        return self._reduce(results)
+
+    @staticmethod
+    def _results_from_futures(
+            futures: dict[Future[tuple[HookSpec, _Decision | None]], HookSpec],
+    ) -> Iterator[tuple[HookSpec, _Decision | None]]:
         for fut in as_completed(futures):
             spec = futures[fut]
             try:
-                _, decision = fut.result()
+                yield fut.result()
             except Exception as exc:  # noqa: BLE001 - a hook crash never propagates
                 logger.warning("run-hooks: hook {} raised: {}", spec.command, exc)
-                decision = (_Decision(denied=True, reason="hook raised; failing closed")
-                            if spec.event == "PreToolUse" else None)
+                yield spec, _hook_raised_decision(spec)
+
+    @staticmethod
+    def _results_inline(specs: list[HookSpec],
+                        payload: dict[str, Any]) -> Iterator[tuple[HookSpec, _Decision | None]]:
+        for spec in specs:
+            try:
+                yield _run_hook(spec, payload)
+            except Exception as exc:  # noqa: BLE001 - a hook crash never propagates
+                logger.warning("run-hooks: hook {} raised: {}", spec.command, exc)
+                yield spec, _hook_raised_decision(spec)
+
+    @staticmethod
+    def _reduce(results: Iterable[tuple[HookSpec, _Decision | None]]) -> HookOutcome:
+        context = ""
+        for _spec, decision in results:
             if decision is None:
                 continue
             if decision.denied:
