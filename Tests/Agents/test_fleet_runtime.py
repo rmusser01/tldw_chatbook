@@ -4453,7 +4453,8 @@ def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
         assert not (created.worktree_path / "child.txt").exists()
 
         release.set()
-        _wait_until(coordinator.all_finished, "the gated child never finished")
+        join_fleet_children(service)
+        assert coordinator.all_finished()
         assert (created.worktree_path / "child.txt").read_text() == "owned\n"
         assert (
             repository.get_for_conversation(child["id"], "c")["writer_state"]
@@ -4661,6 +4662,16 @@ def test_provider_admission_failure_retains_real_created_checkout(
         assert created.worktree_path.is_dir()
         assert _git(git_repo, "branch", "--list", created.branch).strip()
         assert provider._agent_roots == {}
+        child = _child_row(db)
+        reopened = AgentRunsDB(db.db_path, client_id="reopened-admit-failure")
+        record = AgentWorktreeRepository(reopened).get_for_conversation(
+            child["id"], "c"
+        )
+        assert record is not None
+        assert record["base_sha"] == created.base_sha
+        assert record["binding_id"] == "selected"
+        assert record["execution_id"]
+        assert record["writer_state"] == "drained"
     finally:
         for created in service._agent_worktrees.values():
             agent_worktree.discard_agent_worktree(git_repo, created)
@@ -4716,6 +4727,16 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
         assert _git(git_repo, "branch", "--list", created.branch).strip()
         assert provider._agent_roots == {}
         assert coordinator.all_finished()
+        child = _child_row(db)
+        reopened = AgentRunsDB(db.db_path, client_id="reopened-start-failure")
+        record = AgentWorktreeRepository(reopened).get_for_conversation(
+            child["id"], "c"
+        )
+        assert record is not None
+        assert record["base_sha"] == created.base_sha
+        assert record["binding_id"] == "selected"
+        assert record["execution_id"]
+        assert record["writer_state"] == "drained"
     finally:
         for created in service._agent_worktrees.values():
             agent_worktree.discard_agent_worktree(git_repo, created)
