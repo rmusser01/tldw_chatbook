@@ -32,6 +32,22 @@ Independent review of changed boundaries and evidence; targeted static/Bandit
 checks; update existing PR2642 with exact results and platform support.
 
 ## Stage 5 — Resolve current dev conflicts
+
+Continuation status: conflicts are resolved and current native backup
+verification passes. At production `6c0f613f21`, macOS passes installed encrypted
+F9 and the native scheduler-pause regression; Linux passes 33 cases including
+all three installed F9 modes; Windows passes installed encrypted F9, 141 support
+cases and 84 native checks. Exact source, installed payloads and receipt hashes
+verify. Earlier `9cdba197eb` replacement/later rollback results remain recorded
+in the verification document. The narrow scheduler correction preserves due
+work when real native backup intent refuses the emergency-stop config lookup.
+
+Stage 5 remains open for verification-inventory approval: automatic approval
+review rejected persistent path-rule edits, and the requester has been asked
+to approve the exact metadata updates. Those files remain unchanged. Broader
+startup module-budget and Windows GGUF timing failures are recorded, with no
+budget increase or unapproved startup refactor. The PR remains open against
+`dev`; the supplied human Change summary is preserved verbatim.
 **Goal**: Integrate current dev into the existing backup PR without adding feature scope. The initial merge parent is a3142cb3569370bfb201d09fef26f288dd5d657c; dev advanced to b2e31e4b14fa2ede7e840f44541fcc0910e4f4d7 during verification.
 **Success Criteria**: Resolve the 99 conflicted paths, preserve current application services and Python platform support, verify the merged backup workflows, and push the merge commit to PR2642 against dev. Do not merge the PR into dev.
 **Tests**: Current constructor/schema qualification; package contents; CI structure; producer pause/drain/resume and native borrower retention; actual backup, isolated restore, replacement and rollback on macOS, the supplied Linux host and the authorized Windows Actions runner; scoped lint and Bandit.

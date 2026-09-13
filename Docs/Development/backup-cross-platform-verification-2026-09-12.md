@@ -2,7 +2,45 @@
 
 ## Current verification status
 
-Latest production revision `9cdba197eb0a5d21f0c8ea69cf656fa56a05d7c1`
+Production revision `6c0f613f21df970e2c97c8e4c3028e31a0bce958` passes the
+native scheduler-pause regression on macOS, Linux and Windows. The correction
+holds queued scheduler work while backup intent temporarily prevents resolving
+the emergency-stop path. The independently reproduced real scheduler loop stays
+alive and dispatches its retained reminder exactly once after intent release.
+
+- Windows [encrypted run 34765490042](https://github.com/rmusser01/tldw_chatbook/actions/runs/34765490042)
+  passes the installed encrypted F9 backup/restore/open flow (302.742s).
+  [Support run 34765491380](https://github.com/rmusser01/tldw_chatbook/actions/runs/34765491380)
+  passes all 141 cases (429.250s), including the native scheduler regression
+  (3.842s). Both groups pass all 42 native checks. There are no failures, errors
+  or skips. All 52 artifact hashes, clean 16,028-file source and 2,838 installed
+  source-file matches per group verify. Receipts:
+  `/private/tmp/backup-scheduler-windows`.
+- The supplied Linux host passes 30 correction cases (32.05s) and all three
+  installed F9 modes (200.62s): 33 passed, no failures, errors or skips.
+  All 16,028 source files match archive SHA256
+  `ed386abd830c7d018e75a98da6c12e2353a5313ca4eea59f03c1ff69088a6c91`.
+  Its 2,849 installed files pass fixture immutability verification, with 2,843
+  wheel payload and 2,838 source-file matches independently checked. Evidence:
+  `/private/tmp/backup-scheduler-linux-verified.json`.
+- macOS passes the installed encrypted F9 flow (66.68s) and the native scheduler
+  regression (2.06s). The 2,849 installed files verify, including 2,843 wheel
+  payload and 2,838 source-file matches. Evidence:
+  `/private/tmp/backup-scheduler-macos-verified.json`.
+
+Replacement, later rollback and other complete-flow results at the preceding
+revision remain below. The latest UI latency job passes all ten latency cases;
+its boot step passes 16 cases with two optional skips and only the two unchanged
+module caps failing. The four Windows GGUF app cases still exceed 60 seconds.
+No limits are raised or broader startup refactor included. The path-inventory
+and legacy-index census edits remain unapplied while requester approval is
+pending following automatic approval review's allowlist rejection. The PR is
+conflict-free against `dev`, retains the requester's summary verbatim, and is
+not merged. No full-repository or all-CI-green claim is made.
+
+## Admission correction and scheduler diagnosis
+
+Preceding production revision `9cdba197eb0a5d21f0c8ea69cf656fa56a05d7c1`
 passes **33 native Linux cases** on the supplied SSH host: 29 correction checks,
 all three installed F9 modes, and installed replacement/later rollback. There
 are no failures, errors or skips. The groups take 30.30s, 200.02s and 342.71s.
@@ -42,7 +80,7 @@ have recovered the missing Windows traceback. Targeted stop/heartbeat checks
 retain the same 13 passes and seven failures on a clean `421ad93e32` archive;
 the correction introduces no new Ruff or Bandit findings. The new native
 regression is included in Windows support. Published platform verification of
-the scheduler correction remains pending.
+the scheduler correction now passes as recorded above.
 
 The config admission correction passes all ten native Linux latency checks.
 The subsequent boot checks expose profile-lifetime fixture errors and the
