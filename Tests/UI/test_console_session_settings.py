@@ -6508,6 +6508,182 @@ async def test_console_settings_modal_sentinel_never_reaches_saved_settings() ->
     assert app.saved_settings.provider != NEW_CUSTOM_ENDPOINT_SENTINEL
 
 
+def test_endpoint_command_action_is_guarded_and_dispatches_worker() -> None:
+    """/endpoint (Qodo PR-2646): the command action honors the first-run
+    setup guard every other Console action respects, then dispatches the
+    flow as a worker coroutine."""
+    screen = ChatScreen.__new__(ChatScreen)
+    dispatched: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    screen.run_worker = lambda *args, **kwargs: dispatched.append((args, kwargs))
+
+    screen._console_setup_modal_blocking = lambda: True
+    screen.action_open_console_new_endpoint()
+    assert dispatched == []
+
+    screen._console_setup_modal_blocking = lambda: False
+    screen.action_open_console_new_endpoint()
+    assert len(dispatched) == 1
+    args, kwargs = dispatched[0]
+    assert asyncio.iscoroutine(args[0])
+    args[0].close()
+    assert kwargs.get("exclusive") is False
+
+
+def _endpoint_command_screen_double(
+    monkeypatch,
+    *,
+    stack: list[object],
+    pushes: list[object],
+    mount_result,
+    provider_calls: list[str],
+) -> ChatScreen:
+    """Constructor-free ChatScreen double for the ``/endpoint`` command flow.
+
+    Mirrors the seam set of ``test_open_console_settings_real_callback_stages_typed_credential_route``
+    so ``_open_console_settings`` runs for real against a fake app stack.
+    """
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    store = ConsoleChatStore()
+    store.create_session(settings=settings)
+    screen = ChatScreen.__new__(ChatScreen)
+
+    def push_screen(modal, callback=None):
+        stack.append(modal)
+        pushes.append(modal)
+        return mount_result()
+
+    fake_app = SimpleNamespace(screen_stack=stack, push_screen=push_screen)
+    monkeypatch.setattr(ChatScreen, "app", property(lambda _self: fake_app))
+    screen.app_instance = SimpleNamespace(
+        pending_handoffs=chat_screen_module.PendingHandoffStore()
+    )
+    screen._session = SimpleNamespace(
+        _ensure_active_console_session_settings=lambda: settings
+    )
+    screen._ensure_console_chat_store = lambda: store
+    screen._console_settings_context_estimate_for_session = lambda *_a, **_k: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_settings_context_estimate = lambda: (
+        ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    screen._active_console_context_control_state = lambda **_k: None
+    screen._console_context_control_state_for_session = lambda *_a, **_k: None
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
+        effective_thinking_history_policy_for_session=(
+            lambda _session_id: _async_return("auto")
+        ),
+        reset_active_context_memory=lambda _session_id: None,
+        undo_context_memory_reset=lambda: None,
+        reset_all_context_memories=lambda _session_id: None,
+        compact_context_now=lambda _session_id: None,
+        rebase_console_settings_draft=lambda draft, **_k: draft,
+    )
+    screen._provider_readiness_app_config = lambda: {
+        "api_settings": {"llama_cpp": {}}
+    }
+    screen._global_chat_display_name = lambda: "Ada"
+    screen._console_run_active = lambda: False
+
+    async def provider_models(provider, **_kwargs):
+        provider_calls.append(str(provider))
+        return {"llama_cpp": ["model-a"]}
+
+    screen._providers_models_for_console_settings = provider_models
+    return screen
+
+
+async def _async_return(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_endpoint_command_layers_template_on_exact_settings_modal(
+    monkeypatch,
+) -> None:
+    """/endpoint (Qodo PR-2646 High): Conversation settings opens first and
+    the endpoint template layers directly on top of that exact modal, seeded
+    from the active provider with the already-resolved provider models."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    stack: list[object] = []
+    pushes: list[object] = []
+    provider_calls: list[str] = []
+
+    class MountResult:
+        def __await__(self):
+            async def _mounted():
+                return None
+
+            return _mounted().__await__()
+
+    screen = _endpoint_command_screen_double(
+        monkeypatch,
+        stack=stack,
+        pushes=pushes,
+        mount_result=MountResult,
+        provider_calls=provider_calls,
+    )
+
+    await ChatScreen._open_console_new_endpoint(screen)
+
+    assert len(pushes) == 2
+    settings_modal, template = pushes
+    assert isinstance(settings_modal, ConsoleSettingsModal)
+    assert isinstance(template, ConsoleEndpointTemplateModal)
+    # The exact settings modal this flow opened sits directly beneath the
+    # template: EndpointCreated reaches its handler, never ChatScreen.
+    assert stack[-2] is settings_modal
+    assert stack[-1] is template
+    assert template._template_provider == "llama_cpp"
+    # Provider-model options are resolved once for the settings modal and
+    # reused for the template -- no second async resolution window.
+    assert provider_calls == ["llama_cpp"]
+
+
+@pytest.mark.asyncio
+async def test_endpoint_command_aborts_when_settings_dismissed_before_template(
+    monkeypatch,
+) -> None:
+    """/endpoint (Qodo PR-2646 High): if the settings modal is dismissed
+    while its mount settles, the template is never pushed over ChatScreen
+    (an orphaned EndpointCreated would skip provider selection)."""
+    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
+        ConsoleEndpointTemplateModal,
+    )
+
+    stack: list[object] = []
+    pushes: list[object] = []
+    provider_calls: list[str] = []
+
+    class DismissDuringMount:
+        def __await__(self):
+            async def _dismissed():
+                # The user dismissed Conversation settings while the mount
+                # awaitable resolved; the modal leaves the stack.
+                assert isinstance(stack[-1], ConsoleSettingsModal)
+                stack.pop()
+
+            return _dismissed().__await__()
+
+    screen = _endpoint_command_screen_double(
+        monkeypatch,
+        stack=stack,
+        pushes=pushes,
+        mount_result=DismissDuringMount,
+        provider_calls=provider_calls,
+    )
+
+    await ChatScreen._open_console_new_endpoint(screen)
+
+    assert len(pushes) == 1
+    assert isinstance(pushes[0], ConsoleSettingsModal)
+    assert not any(isinstance(m, ConsoleEndpointTemplateModal) for m in stack)
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_prefers_api_base_url_alias_over_default_api_url() -> (
     None

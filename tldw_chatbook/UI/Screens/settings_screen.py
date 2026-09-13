@@ -16700,17 +16700,40 @@ class SettingsScreen(BaseAppScreen):
         Mirrors the Console settings modal's ``_open_endpoint_template_modal``
         seam: the shared app config mapping plus configured provider models.
         The modal reports back through ``EndpointCreated``, confirmed above.
+        Qodo PR-2646: the visible rows render from the freshest on-disk
+        registry (``_custom_endpoints_view_config``), so seed the modal from
+        that same truth -- the shared in-memory snapshot can lag the disk
+        (its mirror is best-effort and read-only configs skip it), and a
+        stale snapshot would silently open a blank template. A slug that no
+        longer resolves anywhere is reported instead of a blank fallback.
         """
+        provider_id = f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}"
+        config = self._app_config_mapping()
+        if isinstance(config, MutableMapping):
+            # Mirror the fresh registry section into the shared mapping so
+            # the modal sees -- and pokes -- the mapping the app shares.
+            self._poke_custom_endpoints_into_app_config()
+            config = self._app_config_mapping()
+        if entry_for(config, provider_id) is None:
+            fresh = self._custom_endpoints_view_config()
+            if entry_for(fresh, provider_id) is None:
+                self._custom_endpoints_status_update(
+                    f"Endpoint '{slug}' is no longer available; "
+                    "the list was refreshed."
+                )
+                self._refresh_custom_endpoints_section()
+                return
+            config = fresh
         providers_models = getattr(self.app_instance, "providers_models", None)
         self.app.push_screen(
             ConsoleEndpointTemplateModal(
-                app_config=self._app_config_mapping(),
+                app_config=config,
                 providers_models=(
                     dict(providers_models)
                     if isinstance(providers_models, Mapping)
                     else {}
                 ),
-                template_provider=f"{CUSTOM_ENDPOINT_ID_PREFIX}{slug}",
+                template_provider=provider_id,
             )
         )
 
