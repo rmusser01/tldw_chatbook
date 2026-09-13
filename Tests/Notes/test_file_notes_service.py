@@ -285,6 +285,44 @@ def test_dot_directories_are_hidden_from_the_tree(
     ]
 
 
+def test_a_file_indexed_under_a_dot_directory_is_forgotten_not_recently_deleted(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """task-32552 AC#2, upgrade path: the replica remembers what the walk no
+    longer visits. Live on a profile that had indexed ``.trash/Old idea.md``
+    before the rule, the first scan after it listed that file under
+    "Recently deleted" -- it was still on disk, and Restore would refuse it
+    as "exists". A hidden file is forgotten, not tombstoned, and it leaves
+    the search index with it."""
+    root = tmp_path / "vault"
+    (root / ".trash").mkdir(parents=True)
+    (root / ".trash" / "Old idea.md").write_text("old idea body", encoding="utf-8")
+    (root / "visible.md").write_text("visible", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    raw = b"old idea body"
+    replica.upsert_file(
+        service.root_key,
+        ".trash/Old idea.md",
+        raw,
+        content_hash=_digest(raw),
+        decoded_text="old idea body",
+        size=len(raw),
+        mtime_ns=0,
+    )
+    assert replica.search(service.root_key, "idea") == [".trash/Old idea.md"]
+
+    assert [entry.relative_path for entry in service.scan().entries] == [
+        "visible.md"
+    ]
+    result = service.reconcile()
+
+    assert [entry.relative_path for entry in result.entries] == ["visible.md"]
+    assert result.deleted == ()
+    assert replica.list_deleted(service.root_key) == []
+    assert replica.search(service.root_key, "idea") == []
+
+
 def test_service_uses_shared_path_confinement(
     tmp_path: Path,
     replica: FileNotesReplica,

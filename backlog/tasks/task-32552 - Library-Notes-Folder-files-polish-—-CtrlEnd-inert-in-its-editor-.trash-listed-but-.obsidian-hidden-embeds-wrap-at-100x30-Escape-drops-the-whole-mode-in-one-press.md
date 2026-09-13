@@ -35,7 +35,7 @@ Critique #3 (dev 5fd502dbac), both assessors, personas Jordan and Riley, Folder 
 - [ ] #1 Ctrl+End and Ctrl+Home work in the Folder files editor and its footer advertises them, as the Library editor's does
 - [ ] #2 The hidden-folder rule is stated in file-notes.md and applied consistently (.obsidian and .trash both hidden or both shown)
 - [ ] #3 Escape from the Folder files editor first returns to the tree; a second Escape leaves the mode, and the footer says which
-- [ ] #4 Embed lines do not wrap mid-token at 100x30
+- [ ] #4 An embed line no longer than the editor pane does not wrap mid-token at 100x30 (controller ruling, wave 4: a token longer than the pane cannot fit any row, so the criterion is qualified to lines the pane can hold)
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -6358,10 +6358,15 @@ class LibraryFileNotesWorkspace(Vertical):
         self._rebuild_search_results(tuple(paths))
 
     @property
+    def editor_focused(self) -> bool:
+        """Whether the file editor holds focus (the footer's Ctrl+End gate)."""
+        return self._editor_widget.has_focus
+
+    @property
     def editor_returns_to_tree(self) -> bool:
         """Whether Escape in the editor steps back to the files tree (task-32552)."""
         return (
-            self._editor_widget.has_focus
+            self.editor_focused
             and self._path_task == "none"
             and not self.reload_confirmation_active
             and self._visible_files_tree() is not None

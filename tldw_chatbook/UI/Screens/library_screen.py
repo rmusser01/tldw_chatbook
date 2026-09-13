@@ -4191,9 +4191,13 @@ class LibraryScreen(BaseAppScreen):
             if workspace is not None and workspace.reload_confirmation_active:
                 return self.LIBRARY_NOTES_FILES_RELOAD_CONFIRM_SHORTCUTS
             shortcuts = list(self.LIBRARY_NOTES_FILES_SHORTCUTS)
-            # task-32552 AC#1: Ctrl+End/Ctrl+Home are live once a file is
-            # open, as the Library editor advertises its own (task-32247).
-            if workspace is not None and workspace.current_path:
+            # task-32552 AC#1: Ctrl+End/Ctrl+Home are live while the editor
+            # has focus, as the Library editor advertises its own
+            # (task-32247). Focus-gated rather than open-file-gated because
+            # a focus move is what re-registers this footer: live, the
+            # open-file gate left "ctrl+end end of file" standing after a
+            # folder change had closed the file.
+            if workspace is not None and workspace.editor_focused:
                 shortcuts.append(("ctrl+end", "end of file"))
             # task-32552 AC#3: the two-step Escape ladder, named per step.
             shortcuts.append(
@@ -4440,7 +4444,15 @@ class LibraryScreen(BaseAppScreen):
             focused: The newly focused widget.
         """
         typing = isinstance(focused, (Input, TextArea))
-        context = (typing, self._library_focus_enter_label(focused))
+        # task-32552: the Folder files editor is a third axis -- its Escape
+        # chip ("files" inside it, "notes" anywhere else) and its Ctrl+End
+        # chip follow whether THAT widget has focus, and a move from the
+        # editor to the "File contents…" box flips neither of the other two.
+        context = (
+            typing,
+            self._library_focus_enter_label(focused),
+            getattr(focused, "id", None) == "file-notes-editor",
+        )
         if context != getattr(self, "_library_footer_focus_context", None):
             self._library_footer_focus_context = context
             self._library_footer_typing_context = typing

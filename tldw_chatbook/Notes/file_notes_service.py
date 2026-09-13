@@ -1149,18 +1149,26 @@ class FileNotesService:
         )
         deleted: list[str] = []
         if old_files is not None and not had_walk_error:
-            deleted = sorted(
+            missing = sorted(
                 set(old_files)
                 - set(observed)
                 - uncertain_paths
                 - pending_move_sources
             )
-            for relative_path in deleted:
+            for relative_path in missing:
                 try:
                     assert self._replica is not None
+                    if _under_hidden_directory(relative_path):
+                        # task-32552: indexed before dot-directories were
+                        # hidden; the file is still on disk, so it is
+                        # forgotten, not tombstoned as "Recently deleted".
+                        self._replica.forget_file(self.root_key, relative_path)
+                        continue
                     self._replica.mark_deleted(self.root_key, relative_path)
                 except Exception as error:
                     warning = _merge_warnings(warning, _replica_warning(error))
+                    continue
+                deleted.append(relative_path)
         entries.sort(key=lambda entry: entry.relative_path)
         self._entry_cache = {
             entry.relative_path: entry
@@ -1741,6 +1749,11 @@ def _decode_for_replica(raw_bytes: bytes) -> str | None:
 
 def _digest(raw_bytes: bytes) -> str:
     return hashlib.sha256(raw_bytes).hexdigest()
+
+
+def _under_hidden_directory(relative_path: str) -> bool:
+    """Whether any directory component of ``relative_path`` starts with a dot."""
+    return any(part.startswith(".") for part in relative_path.split("/")[:-1])
 
 
 def _is_symlink(path: Path) -> bool:
