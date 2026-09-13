@@ -19290,6 +19290,33 @@ class ConsoleChatController:
                 turn_context=configuration,
                 publish_mcp_counts=False,
             )
+            preview_admitted_roots = capture_run_admitted_workspace_roots(
+                session=session,
+                registry=getattr(self.app, "workspace_registry_service", None),
+                project_selection=project_selection,
+            )
+            virtual_cli_provider, _virtual_cli_review_hook = (
+                self._compose_virtual_cli_provider(
+                    session_id=session.id,
+                    turn_context=configuration,
+                    project_root=(
+                        project_selection.root if project_selection else None
+                    ),
+                    project_root_identity=(
+                        project_selection.root_identity if project_selection else None
+                    ),
+                    admitted_roots=preview_admitted_roots,
+                )
+            )
+            raw_shell_provider, _raw_shell_review_hook = (
+                self._compose_raw_shell_provider(
+                    session_id=session.id,
+                    turn_context=configuration,
+                    project_root=(
+                        project_selection.root if project_selection else None
+                    ),
+                )
+            )
             model = str(
                 getattr(resolution, "model", "")
                 or provider_selection.explicit_model
@@ -19324,6 +19351,7 @@ class ConsoleChatController:
         try:
             return await asyncio.to_thread(
                 build_preview,
+                session_id=session.id,
                 workspace_id=session.workspace_id,
                 ephemeral=session.ephemeral,
                 resolution=resolution,
@@ -19337,6 +19365,8 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
+                virtual_cli_provider=virtual_cli_provider,
+                raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_authority,
                 profile_provider=profile_provider,

@@ -3951,8 +3951,6 @@ class ConsoleRuntime:
     ) -> Any | None:
         """Drain already-claimed voice publication before closing its session."""
 
-        if self._worktree_recovery is not None:
-            self._worktree_recovery.cancel_session(session_id)
         owner = self._voice_promotion_owner
         if owner is None:
             if session_id in self._voice_promotion_pending_closes:
@@ -4008,6 +4006,9 @@ class ConsoleRuntime:
         except BaseException:
             self._admission_fenced_sessions.discard(session_id)
             raise
+
+        if self._worktree_recovery is not None:
+            self._worktree_recovery.cancel_session(session_id)
 
         # The exact close ticket makes this owner's fence irreversible. Keep
         # recoveries on a refused/provisional close, but not through its drain.

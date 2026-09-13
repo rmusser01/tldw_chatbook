@@ -4668,7 +4668,9 @@ def build_console_first_request_plan(
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
-        progress_available=progress_inbox_exists,
+        # Live fleet construction opens an inbox before the first request.
+        # Reserve that schema without allocating anything for a preview.
+        progress_available=progress_inbox_exists or fleet_max_live > 1,
         worktree_merge_enabled=worktree_merge_enabled,
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
@@ -5333,6 +5335,7 @@ class ConsoleAgentBridge:
     def build_personal_context_preview_snapshot(
         self,
         *,
+        session_id: str | None = None,
         workspace_id: str | None,
         ephemeral: bool,
         resolution: Any,
@@ -5342,6 +5345,8 @@ class ConsoleAgentBridge:
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
         local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         profile_provider: Any | None = None,
@@ -5381,6 +5386,8 @@ class ConsoleAgentBridge:
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
             local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
             library_provider=library_provider,
             library_authority=library_authority,
             profile_provider=profile_provider,
@@ -5405,6 +5412,10 @@ class ConsoleAgentBridge:
             fleet_max_live=fleet_max_live,
             run_budget=run_budget,
             profile_context_service=profile_context_service,
+            progress_inbox_exists=(
+                session_id is not None
+                and self._session_progress_inbox(session_id) is not None
+            ),
         )
         return plan.profile_context_snapshot
 

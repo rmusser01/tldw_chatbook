@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-from types import SimpleNamespace
 from typing import Any
 
 from tldw_chatbook.Agents.agent_models import ToolCall
@@ -144,10 +143,8 @@ def _controller_provider_hook(
     controller.set_pending_approval = lambda _payload: None
     provider, hook = controller._compose_raw_shell_provider(
         session_id=session.id,
-        turn_context=SimpleNamespace(
-            tool_configuration={"local_tools_enabled": True},
-            scratch_space=SimpleNamespace(root=tmp_path),
-        ),
+        turn_context=controller.resolve_turn_execution_context(session.id),
+        project_root=tmp_path,
     )
     assert provider is not None
     assert hook is not None
@@ -162,6 +159,7 @@ def test_disarm_denies_only_pending_raw_shell_approval_rounds(
     assert runtime.arm().armed is True
     controller, _provider, raw_hook = _controller_provider_hook(tmp_path, runtime)
     rounds = _RoundRegistry()
+    controller._interrupt_host.registries["approval"] = rounds
     controller._pending_approval_rounds = rounds
     decisions: dict[str, dict[str, str]] = {}
 
@@ -197,30 +195,31 @@ def test_disarm_denies_only_pending_raw_shell_approval_rounds(
 
     other_thread = threading.Thread(target=wait_for_other)
     raw_thread = threading.Thread(target=wait_for_raw)
-    other_thread.start()
-    assert rounds.other_registered.wait(2.0)
-    raw_thread.start()
-    assert rounds.raw_registered.wait(2.0)
+    try:
+        other_thread.start()
+        assert rounds.other_registered.wait(2.0)
+        raw_thread.start()
+        assert rounds.raw_registered.wait(2.0)
 
-    runtime.disarm()
-    raw_thread.join(1.0)
-    raw_released_by_disarm = not raw_thread.is_alive()
-    other_preserved_by_disarm = other_thread.is_alive()
-
-    # Always release any still-pending test rounds before asserting.
-    for round_id, state in list(rounds.items()):
-        names = tuple(state.get("names") or ())
-        controller.resolve_pending_approval(
-            {name: "deny" for name in names}, round_id=round_id
-        )
-    raw_thread.join(2.0)
-    other_thread.join(2.0)
+        runtime.disarm()
+        raw_thread.join(1.0)
+        raw_released_by_disarm = not raw_thread.is_alive()
+        other_preserved_by_disarm = other_thread.is_alive()
+    finally:
+        # Release every owned waiter even when registration/assertion fails.
+        controller.begin_shutdown()
+        for thread in (raw_thread, other_thread):
+            if thread.ident is not None:
+                thread.join(3.0)
+        assert not raw_thread.is_alive() and not other_thread.is_alive()
 
     assert raw_released_by_disarm is True
     assert other_preserved_by_disarm is True
     # Derived from the shared constant, not hardcoded: three modules keep this
     # wording in sync (TASK-26011) and a literal here would silently drift.
-    assert decisions["raw"] == {"raw-call": user_denial_refusal("shell_exec")}
+    assert set(decisions["raw"]) == {"raw-call"}
+    assert decisions["raw"]["raw-call"].verdict == user_denial_refusal("shell_exec")
+    assert decisions["raw"]["raw-call"].approval_decision is None
     assert decisions["other"] == {"other-call": "deny"}
     assert executor.calls == 0
 
@@ -346,10 +345,10 @@ def test_saved_unlock_off_disarms_and_removes_later_schema(tmp_path: Path) -> No
     runtime.disarm()
     provider, hook = controller._compose_raw_shell_provider(
         session_id=controller.store.active_session_id,
-        turn_context=SimpleNamespace(
-            tool_configuration={"local_tools_enabled": True},
-            scratch_space=SimpleNamespace(root=tmp_path),
+        turn_context=controller.resolve_turn_execution_context(
+            controller.store.active_session_id
         ),
+        project_root=tmp_path,
     )
 
     assert runtime.armed is False
