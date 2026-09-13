@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -189,7 +190,13 @@ class ConsoleWorktreeRecovery:
             conversation_id=intent.persisted_conversation_id or session_id,
         )
 
+        handoff: Future[None] = Future()
+
         def worker():
+            # A failed submit may already have queued this wrapper. Only an
+            # unrevoked claim may acquire DB or engine authority.
+            if not handoff.set_running_or_notify_cancel():
+                return None
             db = None
             try:
                 with owner.activate():
@@ -214,11 +221,28 @@ class ConsoleWorktreeRecovery:
                         should_cancel=cancel.is_set,
                     )
             finally:
-                if db is not None:
-                    db.close()
-                owner.finish_root()
+                try:
+                    if db is not None:
+                        db.close()
+                finally:
+                    owner.finish_root()
+                    handoff.set_result(None)
 
-        task = asyncio.create_task(asyncio.to_thread(worker))
+        async def submit():
+            try:
+                return await asyncio.to_thread(worker)
+            except BaseException:
+                if handoff.cancel():
+                    # Positive non-entry, even if the executor queued a wrapper
+                    # before raising: the cancelled gate forbids later entry.
+                    owner.finish_root()
+                else:
+                    # Submission may raise after entry. Keep the operation
+                    # registered until its admitted worker physically finishes.
+                    await asyncio.shield(asyncio.wrap_future(handoff))
+                raise
+
+        task = asyncio.create_task(submit())
         self.operations[session_id] = RecoveryOperation(cancel, task)
 
         def completed(done):

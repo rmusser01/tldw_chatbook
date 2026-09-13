@@ -48,24 +48,6 @@ def run_git(root: Path, *args: str, output: BinaryIO | None = None) -> bytes:
     executable = shutil.which("git", path=os.defpath)
     if executable is None:
         raise OperationError("git_unavailable", "Git is unavailable.")
-    proc = subprocess.Popen(
-        [
-            executable,
-            "-c",
-            f"core.hooksPath={os.devnull}",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "merge.gpgsign=false",
-            *args,
-        ],
-        cwd=root,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=os.name == "posix",
-    )
     data = [bytearray(), bytearray()]
     overflow = threading.Event()
     failed = threading.Event()
@@ -86,16 +68,39 @@ def run_git(root: Path, *args: str, output: BinaryIO | None = None) -> bytes:
         except (OSError, ValueError):
             failed.set()
 
-    readers = [
-        threading.Thread(target=read_pipe, args=(pipe, index), daemon=True)
-        for index, pipe in enumerate((proc.stdout, proc.stderr))
-    ]
-    for reader in readers:
-        reader.start()
-    deadline = time.monotonic() + TIMEOUT
+    readers = []
+    started_readers = []
     problem = None
+    proc = subprocess.Popen(
+        [
+            executable,
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "merge.gpgsign=false",
+            *args,
+        ],
+        cwd=root,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=os.name == "posix",
+    )
     try:
-        while proc.poll() is None or any(reader.is_alive() for reader in readers):
+        for index, pipe in enumerate((proc.stdout, proc.stderr)):
+            reader = threading.Thread(target=read_pipe, args=(pipe, index), daemon=True)
+            readers.append((reader, pipe))
+            try:
+                reader.start()
+            finally:
+                # A start implementation may raise after admitting its thread.
+                if reader.ident is not None:
+                    started_readers.append(reader)
+        deadline = time.monotonic() + TIMEOUT
+        while proc.poll() is None or any(reader.is_alive() for reader in started_readers):
             if overflow.is_set() or failed.is_set() or time.monotonic() > deadline:
                 problem = "output_limit" if overflow.is_set() else "git_interrupted"
                 break
@@ -118,9 +123,13 @@ def run_git(root: Path, *args: str, output: BinaryIO | None = None) -> bytes:
                 else:
                     proc.kill()
                     _cleanup_unproven()
-                proc.wait(timeout=5)
             except ProcessLookupError:
                 pass
+            except (OSError, subprocess.TimeoutExpired):
+                _cleanup_unproven()
+                problem = "cleanup_unproven"
+            try:
+                proc.wait(timeout=5)
             except (OSError, subprocess.TimeoutExpired):
                 _cleanup_unproven()
                 problem = "cleanup_unproven"
@@ -140,9 +149,18 @@ def run_git(root: Path, *args: str, output: BinaryIO | None = None) -> bytes:
                         problem = "cleanup_unproven"
                         break
                     time.sleep(0.01)
-        for reader in readers:
+        for reader in started_readers:
             reader.join(timeout=1)
-        if any(reader.is_alive() for reader in readers):
+        for pipe in (proc.stdout, proc.stderr):
+            # Closing a BufferedReader held by a live reader can block forever.
+            if any(reader.is_alive() and owned is pipe for reader, owned in readers):
+                continue
+            try:
+                pipe.close()
+            except (OSError, ValueError):
+                _cleanup_unproven()
+                problem = "cleanup_unproven"
+        if any(reader.is_alive() for reader in started_readers):
             _cleanup_unproven()
             problem = "cleanup_unproven"
     if problem:

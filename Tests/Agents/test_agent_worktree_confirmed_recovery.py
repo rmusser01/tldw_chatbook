@@ -546,3 +546,146 @@ def test_incorporated_child_with_new_dirty_work_still_merges(work):
         child_head,
     ]
     assert (root / "a.txt").read_text() == "additional child work\n"
+
+
+@pytest.mark.parametrize("boundary", ["construct", "start"])
+@pytest.mark.parametrize("reader_number", [1, 2])
+@pytest.mark.parametrize("retirement_denied", [False, True])
+def test_git_partial_reader_startup_retires_gated_mutation(
+    tmp_path, monkeypatch, boundary, reader_number, retirement_denied
+):
+    """A failed reader must not publish proven drain over a live Git mutation."""
+    import os
+    import select
+    import signal
+    import sys
+    import threading
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents import agent_worktree_git as module
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-b", "main")
+    git(
+        root,
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "base",
+    )
+    gate_read, gate_write = os.pipe()
+    ready_read, ready_write = os.pipe()
+    processes = []
+    readers = []
+    real_popen = subprocess.Popen
+    real_killpg = os.killpg
+    attempts = 0
+
+    def gated_popen(argv, **kwargs):
+        # Preserve the real Git argv; only delay exec until the parent opens its gate.
+        script = (
+            "import os,sys; "
+            f"os.write({ready_write}, b'R'); os.close({ready_write}); "
+            f"os.read({gate_read}, 1); os.close({gate_read}); "
+            "os.execv(sys.argv[1], sys.argv[1:])"
+        )
+        proc = real_popen(
+            [sys.executable, "-c", script, *argv],
+            pass_fds=(gate_read, ready_write),
+            **kwargs,
+        )
+        processes.append(proc)
+        assert select.select([ready_read], [], [], 3)[0], (
+            "owned child did not reach gate"
+        )
+        assert os.read(ready_read, 1) == b"R"
+        return proc
+
+    def make_reader(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        fail = attempts == reader_number
+        if fail and boundary == "construct":
+            raise RuntimeError("reader construction refused")
+        reader = threading.Thread(*args, **kwargs)
+        readers.append(reader)
+        if fail and boundary == "start":
+
+            def refused():
+                raise RuntimeError("reader start refused")
+
+            reader.start = refused
+        return reader
+
+    def denied_killpg(pid, sig):
+        assert pid == processes[0].pid
+        if sig == signal.SIGKILL:
+            raise PermissionError("owned retirement refused")
+        return real_killpg(pid, sig)
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="chat")
+    drained = []
+    owner.on_drained(drained.append)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module.subprocess, "Popen", gated_popen)
+            patch.setattr(
+                module,
+                "threading",
+                SimpleNamespace(Thread=make_reader, Event=threading.Event),
+            )
+            if retirement_denied:
+                patch.setattr(module.os, "killpg", denied_killpg)
+            try:
+                with (
+                    owner.activate(),
+                    pytest.raises((RuntimeError, module.OperationError)),
+                ):
+                    module.run_git(
+                        root, "update-ref", "refs/heads/startup-proof", "HEAD"
+                    )
+                owner.finish_root()
+                assert drained == [not retirement_denied]
+                proc = processes[0]
+                if retirement_denied:
+                    assert proc.poll() is None, (
+                        "fake cleanup must retain the real live child"
+                    )
+                else:
+                    assert proc.poll() == -signal.SIGKILL, (
+                        "proven drain left gated Git alive"
+                    )
+                    with pytest.raises(ProcessLookupError):
+                        real_killpg(proc.pid, 0)
+                    assert all(not reader.is_alive() for reader in readers)
+                    assert proc.stdout.closed and proc.stderr.closed
+                    os.write(gate_write, b"G")
+                    assert not (root / ".git/refs/heads/startup-proof").exists()
+            finally:
+                # Reap only our exact group before restoring patched helpers.
+                for proc in processes:
+                    try:
+                        real_killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proc.wait(timeout=3)
+                for reader in readers:
+                    if reader.ident is not None:
+                        reader.join(timeout=3)
+                        assert not reader.is_alive()
+                for proc in processes:
+                    proc.stdout.close()
+                    proc.stderr.close()
+        assert git(root, "branch", "--list", "startup-proof") == b""
+    finally:
+        for fd in (gate_read, gate_write, ready_read, ready_write):
+            os.close(fd)
+        owner.finish_root()
+        capacity.close()
