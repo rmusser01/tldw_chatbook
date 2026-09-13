@@ -196,7 +196,11 @@ async def test_test_routing_reports_readiness(runs_db, isolated_config):
         await pilot.pause()
         # The routing block sits at the bottom of the form's VerticalScroll;
         # pilot.click refuses out-of-view targets, so scroll it in first.
-        panel.query_one("#agents-test-routing-button", Button).scroll_visible()
+        # animate=False: the default animated scroll races the click — the
+        # pilot can compute target coordinates mid-animation and miss.
+        panel.query_one("#agents-test-routing-button", Button).scroll_visible(
+            animate=False
+        )
         await pilot.pause()
         await pilot.click("#agents-test-routing-button")
         await pilot.pause()
