@@ -79,3 +79,11 @@ resumed-character worker uses the existing native ownership context; four real
 SQLite lifetime regressions pass after reproducing three leaks. Diagnostic
 inventory changes were reviewed statement by statement: six upstream diagnostic
 calls, no new persistent destination. Final published platform runs are pending.
+
+Native Windows rerun at `0ad001911` exposed a mixed file-ID representation in
+the merged named-identity observation and a missing inherited native TTS proof
+field. Two one-line corrections preserve exact comparison and uncertain resource
+retention; 39 SQLite and 8 cleanup regressions pass with independent reviews and
+no new static findings. The canonical TTS reference fixture initializes its exact
+configured lazy Research store; its full archive/restore/readback passes. Final
+corrected Windows qualification remains in progress.

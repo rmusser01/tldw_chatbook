@@ -64,6 +64,8 @@ def projection(profile,reference):
 async def main():
  app=TldwCli()
  try:
+  # This fixture explicitly selects a Research path; initialize its lazy store.
+  assert app.local_research_service.list_sessions()==[]
   source=fixture/'canonical-source.wav'
   with wave.open(str(source),'wb') as output:
    output.setnchannels(1);output.setsampwidth(2);output.setframerate(16000);output.writeframes(b'\x17\x00'*1600)
@@ -115,7 +117,7 @@ async def main():
   assert profile.value.revision==seed['profile']['revision']
   options={'staging_parent':fixture};preview=preview_capture((selector,),options=options)
   (fixture/'blob-preview.json').write_text(json.dumps({'complete':preview.complete,'issues':preview.issues},indent=2))
-  assert preview.complete,preview.issues
+  assert preview.complete,(preview.issues,[(item.owner,item.status,str(item.path)) for item in preview.items if item.status in {'missing_required','unsupported','unavailable'}])
   destination=fixture/'tts-blob.tldw-backup.zip'
   captured=await asyncio.to_thread(capture,(selector,),preview.scope_digest,destination,options=options,cancel=cancel)
   async with asyncio.timeout(10):

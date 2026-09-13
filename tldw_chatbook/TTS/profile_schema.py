@@ -357,6 +357,7 @@ class _NativeExactCurrentProfileConnection(_ExactCurrentProfileConnection):
         self.sidecar_fds = sidecar_fds
         self.sidecar_identities = sidecar_identities
         self._delete_mode_partial_cleanup = False
+        self._proof_lost = False
 
         self.leases: list[Any] = []
         self.native_descriptors: set[int] = set()

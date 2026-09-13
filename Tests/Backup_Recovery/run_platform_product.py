@@ -73,6 +73,7 @@ _PRODUCT_TESTS = (
     "Tests/Backup_Recovery/test_database_default_spelling.py",
     "Tests/Backup_Recovery/test_restart_observation.py",
     "Tests/Backup_Recovery/test_console_resume_character_lifetime.py",
+    "Tests/TTS/test_profile_migration_native_maintenance.py::test_native_exact_cleanup_preserves_failure_and_exclusion",
     "Tests/Backup_Recovery/test_tts_profile_lock_inventory.py",
     "Tests/Backup_Recovery/test_file_inventory.py::test_native_leaf_refusal_keeps_explicit_classification",
     "Tests/Backup_Recovery/test_tts_retained_references_roundtrip.py::test_canonical_tts_reference_blob_restores_with_fresh_native_getters",

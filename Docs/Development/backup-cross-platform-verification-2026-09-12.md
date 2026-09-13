@@ -1,5 +1,40 @@
 # Cross-platform backup verification — 2026-09-12
 
+Conflict resolution is published as `0ad0019114ceb763a49e089a3675939cb4e7796d`,
+including dev `5fd502dba`; GitHub reports the PR mergeable. Exact installed macOS
+F9 plaintext, encrypted and credential-inclusive backup/restore pass in 61.48s,
+59.75s and 75.04s. Two-profile restore passes in 102.05s, replacement in 113.88s,
+and later rollback in 248.40s. Committed wheel/sdist build, Twine and manifest
+validation pass. Native Windows reruns found the integration issues below; the
+merged cross-platform implementation is not yet declared verified.
+
+[Windows run 34741849535](https://github.com/rmusser01/tldw_chatbook/actions/runs/34741849535)
+uses exact `0ad001911`, clean source and an independently hashed installed package.
+Every native group passes its 42 cases. The six product flows fail at a shared
+core-copy identity check: a new upstream `Path.lstat` used a different Windows
+file-ID representation from the retained native handle. The correction uses the
+existing native no-follow stat with the same strict comparison; real same-file
+and replacement-refusal regressions reproduce the failure and then pass (39
+focused cases total). TTS cleanup additionally exposed an uninitialized inherited
+proof-state field in its native owner. Initializing that existing field preserves
+the original failure, quarantine and native lease retention; two regressions
+reproduce the masked failure and all eight focused cleanup checks then pass.
+Both one-line production corrections have independent reviews and no new
+Bandit findings. Two cleanup cases now run directly in Windows support. A first dispatch selected the previous
+branch head and was cancelled; none of its results qualify this revision.
+
+The supplied Linux host now has the current wheel's declared dependencies and a
+clean `pip check`; its old virtual environment initially lacked `rfc8785` from the
+merged shared-profile package. Current tests pass 92 merge/lifetime cases, 49
+native cases, 68 private-path cases (two platform-specific skips), 7 projection
+cases, mounted backup, all three F9 modes and replacement. A retained-reference
+fixture explicitly selected a Research DB that current dev creates lazily; its
+seed now initializes that exact store through the real service before backup.
+The same failure reproduced on macOS; the corrected full retained-reference
+archive/restore/native-readback test passes in 34.25s without changing inventory
+requirements. Native Windows and remaining final Linux results follow below.
+
+
 TASK-32496; PR2642 targets dev. The published cross-platform correction has the
 platform evidence recorded below. Integration includes dev `5fd502dba`; final native reruns are in progress;
 those earlier receipts do not qualify the merged implementation. The requester

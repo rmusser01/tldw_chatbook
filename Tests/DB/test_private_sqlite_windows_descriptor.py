@@ -18,6 +18,58 @@ class _WindowsRoute:
         return getattr(native_os, name)
 
 
+class _NativeIdentityProjection:
+    """Model a native identity namespace while retaining real file operations."""
+
+    def __getattr__(self, name):
+        return getattr(native_os, name)
+
+    @staticmethod
+    def _project(info):
+        values = list(info)
+        values[2] = info.st_dev ^ (1 << 32)
+        return native_os.stat_result(
+            values,
+            {"st_mtime_ns": info.st_mtime_ns, "st_ctime_ns": info.st_ctime_ns},
+        )
+
+    def fstat(self, descriptor):
+        return self._project(native_os.fstat(descriptor))
+
+    def stat(self, path, *, follow_symlinks=True):
+        assert not follow_symlinks
+        return self._project(native_os.stat(path, follow_symlinks=False))
+
+
+@pytest.mark.parametrize("identity_kind", ["stat", "protocol"])
+@pytest.mark.parametrize("projected", [False, True], ids=["native", "distinct-stat"])
+def test_named_identity_accepts_held_file_and_rejects_replacement(
+    tmp_path, monkeypatch, identity_kind, projected
+):
+    """Named checks and native pins must use the same identity representation."""
+    from tldw_chatbook.DB.private_sqlite_protocol import FileIdentity
+
+    path = tmp_path / "named.sqlite3"
+    descriptor = native_os.open(
+        path, native_os.O_RDWR | native_os.O_CREAT | native_os.O_EXCL, 0o600
+    )
+    facade = _NativeIdentityProjection() if projected else native_os
+    monkeypatch.setattr(private_sqlite, "os", facade)
+    try:
+        native_os.write(descriptor, _database_bytes("original"))
+        identity = facade.fstat(descriptor)
+        if identity_kind == "protocol":
+            identity = FileIdentity.from_stat(identity)
+        private_sqlite.verify_expected_named_identity(path, identity)
+        native_os.rename(path, path.with_suffix(".retained"))
+        path.write_bytes(_database_bytes("replacement"))
+        with pytest.raises(private_sqlite.private_paths.PrivatePathError) as error:
+            private_sqlite.verify_expected_named_identity(path, identity)
+        assert error.value.result.reason == "private_sqlite_expected_identity_changed"
+    finally:
+        native_os.close(descriptor)
+
+
 def _database_bytes(value):
     with contextlib.closing(sqlite3.connect(":memory:")) as database:
         database.execute("CREATE TABLE sample(value TEXT)")

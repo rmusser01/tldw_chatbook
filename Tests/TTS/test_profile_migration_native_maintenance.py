@@ -895,6 +895,97 @@ _partial_nonwal_child(Path(sys.argv[1]), False, sys.argv[2])
     )
 
 
+async def _native_exact_cleanup_failure_child(root, fault):
+    import time
+
+    from Tests.DB.test_sqlite_source_pin_lifetime import _probe
+    from Tests.TTS.test_profile_schema import _build_candidate_version
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.TTS import profile_repository as repository
+    from tldw_chatbook.TTS import profile_schema as schema
+    from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+    from tldw_chatbook.TTS.profile_store_lock import ProfileStoreLockMode
+
+    active = root / "profiles.sqlite"
+    _build_candidate_version(active, 4).close()
+    active.chmod(0o600)
+    original_connect = schema.connect_private_sqlite
+    original_raise = repository._raise_with_cleanup_precedence
+    signal = OSError("native outcome unavailable")
+    natives, errors, closes = [], [], []
+
+    class Live:
+        def __init__(self, native):
+            self.native = native
+
+        def __getattr__(self, name):
+            return getattr(self.native, name)
+
+        def close(self):
+            closes.append(self.native)
+            raise signal
+
+    def connect(*args, **kwargs):
+        native = original_connect(*args, **kwargs)
+        natives.append(native)
+        if fault == "open":
+            raise signal
+        return Live(native)
+
+    def raise_with_cleanup(primary, *cleanup):
+        errors.append(primary)
+        original_raise(primary, *cleanup)
+
+    # Exercise the actual Windows owner on every platform without changing
+    # platform detection or replacing its native descriptor/SQLite operations.
+    repository.open_exact_current_profile_store = (
+        schema._open_native_exact_current_profile_store
+    )
+    schema.connect_private_sqlite = connect
+    repository._raise_with_cleanup_precedence = raise_with_cleanup
+    repo = repository.TTSProfileRepository(active)
+    with pytest.raises(ProfileRepositoryError):
+        await repo.open()
+    assert len(natives) == 1
+    owner = repo._connection
+    assert isinstance(owner, schema._NativeExactCurrentProfileConnection)
+    assert any(
+        isinstance(error, schema.ExactProfileStoreCleanupError)
+        and error.connection is owner
+        for error in errors
+    ), [repr(error) for error in errors]
+    assert not any(isinstance(error, AttributeError) for error in errors)
+    assert repo._exact_authority_quarantined and not repo._helper_restart_required
+    assert repo._lease.acquired and repo._lease.mode is ProfileStoreLockMode.SHARED
+    assert owner.uncertain and owner.leases
+    if fault == "open":
+        assert owner.body_error is signal and owner.pending == {"live"}
+        assert not closes
+    else:
+        assert isinstance(owner.body_error, schema.ExactProfileStoreNotCurrentError)
+        assert owner.cleanup_errors == [signal] and not owner.pending
+        assert closes == natives
+    hold = storage._holds[owner.leases[0]._key]
+    repo._maintenance_close_admission()
+    assert not await repo._maintenance_drain(time.monotonic() + 3)
+    storage._shutdown()
+    assert _probe(hold.authority.control_root, hold.names) == "blocked"
+
+
+@pytest.mark.parametrize("fault", ["open", "close"])
+def test_native_exact_cleanup_preserves_failure_and_exclusion(tmp_path, fault):
+    _run_private_child(
+        tmp_path,
+        """
+import asyncio, sys
+from pathlib import Path
+from Tests.TTS.test_profile_migration_native_maintenance import _native_exact_cleanup_failure_child
+asyncio.run(_native_exact_cleanup_failure_child(Path(sys.argv[1]), sys.argv[2]))
+""",
+        fault,
+    )
+
+
 async def _initialize_remaining_child(root, role, after):
     import os
     import time

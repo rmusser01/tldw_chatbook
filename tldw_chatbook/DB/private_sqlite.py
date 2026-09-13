@@ -1390,7 +1390,7 @@ def verify_expected_named_identity(
     """Keep the last stat-only check; SQLite's pathname-open race still exists."""
     if expected_identity is None:
         return
-    observed = selected.lstat()
+    observed = os.stat(selected, follow_symlinks=False)
     matches = (
         (observed.st_dev, observed.st_ino)
         == (expected_identity.dev, expected_identity.ino)
