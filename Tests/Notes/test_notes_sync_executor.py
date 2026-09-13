@@ -4235,3 +4235,115 @@ async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operatio
     assert store.active_binding_note_ids is blocking
     store.active_binding_note_ids = real
     assert store.active_binding_note_ids("root-1") == ()
+
+
+class PlacingNoteAuthority(CreatingNoteAuthority):
+    """A creating authority that also records the sync subfolders it ensures."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.folders: list[tuple[str, str, str]] = []
+        self.keywords: tuple[str, ...] | None = None
+
+    async def create(
+        self,
+        *,
+        note_id: str,
+        title: str,
+        content: str,
+        keywords: tuple[str, ...] = (),
+    ) -> NotesSyncNoteSnapshot:
+        self.keywords = keywords
+        return await super().create(note_id=note_id, title=title, content=content)
+
+    async def ensure_sync_subfolder(
+        self, *, folder_id: str, parent_id: str, name: str
+    ) -> str:
+        self.folders.append((folder_id, parent_id, name))
+        return folder_id
+
+
+@pytest.mark.asyncio
+async def test_create_note_places_the_note_under_the_files_folder_path(
+    tmp_path: Path,
+) -> None:
+    """task-32535 AC#4: People/Sam.md lands in <root folder> / People."""
+    store, _ = _store(tmp_path)
+    notes = PlacingNoteAuthority()
+    file = _file_at("People/Sam.md", content="# Sam\n")
+    files = FakeFilesystem(file)
+    request = NotesSyncExecutionRequest(
+        operation_id="operation-1",
+        root_id="root-1",
+        logical_folder_id="folder-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        binding_id="binding-1",
+        observation_token="observation-1",
+        action_kind=NotesSyncActionKind.CREATE_NOTE,
+        note=None,
+        file=file,
+        desired_title="Sam",
+        recovery_id="recovery-operation-1",
+        recovery_expires_at=100_000,
+        candidate_note_scope_id="local_note",
+        candidate_note_id="note-1",
+    )
+
+    result = await NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=4096,
+    ).execute(request)
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    assert len(notes.folders) == 1
+    people_id, parent_id, name = notes.folders[0]
+    assert (parent_id, name) == ("folder-1", "People")
+    assert people_id != "folder-1"
+    assert notes.memberships == [("root-1", ((people_id, "note-1"),))]
+    assert store.get_binding("binding-1").normalized_relative_path == "People/Sam.md"
+
+
+@pytest.mark.asyncio
+async def test_create_note_lifts_frontmatter_title_and_tags_into_the_note(
+    tmp_path: Path,
+) -> None:
+    """task-32535 AC#3: title/keywords come from the request; the body stays exact."""
+    store, _ = _store(tmp_path)
+    notes = PlacingNoteAuthority()
+    content = "---\ntitle: Library ▸ Notes review\ntags: [project, ux]\n---\n# Body\n"
+    file = _file(content=content)
+    files = FakeFilesystem(file)
+    request = NotesSyncExecutionRequest(
+        operation_id="operation-1",
+        root_id="root-1",
+        logical_folder_id="folder-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        binding_id="binding-1",
+        observation_token="observation-1",
+        action_kind=NotesSyncActionKind.CREATE_NOTE,
+        note=None,
+        file=file,
+        desired_title="Library ▸ Notes review",
+        desired_keywords=("project", "ux"),
+        recovery_id="recovery-operation-1",
+        recovery_expires_at=100_000,
+        candidate_note_scope_id="local_note",
+        candidate_note_id="note-1",
+    )
+
+    result = await NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=4096,
+    ).execute(request)
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    assert notes.snapshot.title == "Library ▸ Notes review"
+    assert notes.keywords == ("project", "ux")
+    # The frontmatter block is kept byte-exact: sync writes the body back.
+    assert notes.snapshot.content == content
+    assert notes.folders == []
+    assert notes.memberships == [("root-1", (("folder-1", "note-1"),))]

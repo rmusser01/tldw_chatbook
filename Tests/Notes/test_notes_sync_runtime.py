@@ -3318,3 +3318,260 @@ async def test_cancelled_setup_review_releases_the_lease_and_the_root_path(
     assert owner._leases == {}
     assert coordinator.events[-1:] == ["lease-released"]
     await owner.shutdown()
+
+
+class _TreeFolders(_Folders):
+    """A folder repository that keeps a tree, for the wave-4 sync-review pins."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.folders: dict[str, object] = {}
+        self.reconciled: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+
+    def create_folder(
+        self,
+        *,
+        name: str,
+        parent_id: str | None,
+        folder_id: str | None = None,
+        sync_owned: bool = False,
+    ):
+        from tldw_chatbook.Notes.note_folder_models import NoteFolder
+
+        parent = self.folders.get(parent_id) if parent_id is not None else None
+        parent_path = "" if parent is None else parent.path
+        folder = NoteFolder(
+            folder_id=folder_id or f"folder-{len(self.folders) + 1}",
+            parent_id=parent_id,
+            name=name,
+            path=f"{parent_path}/{name}",
+            normalized_path=f"{parent_path}/{name}".casefold(),
+            version=1,
+            deleted=False,
+        )
+        self.created.append(name)
+        self.folders[folder.folder_id] = folder
+        return folder
+
+    def get_folder(self, folder_id: str, *, include_deleted: bool = True):
+        return self.folders.get(folder_id)
+
+    def get_folder_by_path(self, segments):
+        wanted = "/" + "/".join(segments)
+        return next(
+            (item for item in self.folders.values() if item.path.casefold() == wanted.casefold()),
+            None,
+        )
+
+    def has_managed_folder_ownership(self, folder_id: str) -> bool:
+        return False
+
+    def reconcile_managed(self, *, owner_id: str, desired=()) -> tuple[object, ...]:
+        self.reconciled.append((owner_id, tuple(desired)))
+        return ()
+
+
+class _ManyLocalNotes:
+    """Several caller-identified notes with a keyword store."""
+
+    def __init__(self) -> None:
+        self.notes: dict[str, dict[str, object]] = {}
+        self.keywords: dict[str, str] = {}
+        self.links: dict[str, list[str]] = {}
+
+    def get_note_by_id(self, _user_id: str, note_id: str):
+        note = self.notes.get(note_id)
+        return dict(note) if note is not None else None
+
+    def add_note(self, _user_id: str, title: str, content: str, *, note_id: str) -> str:
+        self.notes[note_id] = {
+            "id": note_id,
+            "title": title,
+            "content": content,
+            "version": 1,
+            "deleted": False,
+        }
+        return note_id
+
+    def update_note(self, _user_id: str, note_id: str, values, expected_version: int) -> bool:
+        note = self.notes[note_id]
+        if note["version"] != expected_version:
+            return False
+        note.update(values)
+        note["version"] = expected_version + 1
+        return True
+
+    def get_keywords_for_note(self, _user_id: str, note_id: str):
+        return [
+            {"id": keyword_id, "keyword": self.keywords[keyword_id]}
+            for keyword_id in self.links.get(note_id, [])
+        ]
+
+    def get_keyword_by_text(self, _user_id: str, text: str):
+        for keyword_id, keyword in self.keywords.items():
+            if keyword.casefold() == text.casefold():
+                return {"id": keyword_id, "keyword": keyword}
+        return None
+
+    def add_keyword(self, _user_id: str, text: str) -> str:
+        keyword_id = f"kw-{len(self.keywords) + 1}"
+        self.keywords[keyword_id] = text
+        return keyword_id
+
+    def link_note_to_keyword(self, _user_id: str, note_id: str, keyword_id: str) -> None:
+        self.links.setdefault(note_id, []).append(keyword_id)
+
+    def unlink_note_from_keyword(self, _user_id: str, note_id: str, keyword_id: str) -> None:
+        self.links[note_id].remove(keyword_id)
+
+    def note_keywords(self, note_id: str) -> tuple[str, ...]:
+        return tuple(self.keywords[keyword_id] for keyword_id in self.links.get(note_id, []))
+
+
+def _vault_owner(tmp_path: Path):
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    folders = _TreeFolders()
+    local_notes = _ManyLocalNotes()
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=NotesScopeService(
+            local_notes, None, folder_repository=folders
+        ),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+    return owner, folders, local_notes
+
+
+@pytest.mark.asyncio
+async def test_binding_labels_returns_relative_path_and_destination_per_binding(
+    tmp_path: Path,
+) -> None:
+    """task-32535 AC#1: every reviewed binding can be named by path and folder."""
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        RuntimeBindingLabel,
+    )
+
+    root_path = tmp_path / "vault"
+    (root_path / "Daily").mkdir(parents=True)
+    (root_path / "People").mkdir()
+    (root_path / "Daily" / "2026-09-06.md").write_text("# Day\n", encoding="utf-8")
+    (root_path / "People" / "Sam.md").write_text("# Sam\n\nHi.\n", encoding="utf-8")
+    (root_path / "top.md").write_text("plain\n", encoding="utf-8")
+    _store(tmp_path)
+    owner, _folders, _notes = _vault_owner(tmp_path)
+    await owner.start()
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Vault",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+    binding_ids = tuple(action.binding_id for action in review.safe_actions)
+    assert len(binding_ids) == 3
+    requested = binding_ids[::-1]
+
+    labels = await owner.binding_labels(review.root_id, requested)
+
+    assert all(type(label) is RuntimeBindingLabel for label in labels)
+    assert tuple(label.binding_id for label in labels) == requested
+    by_path = {label.relative_path: label for label in labels}
+    assert by_path["Daily/2026-09-06.md"].destination_folder == "Vault / Daily"
+    assert by_path["People/Sam.md"].destination_folder == "Vault / People"
+    assert by_path["top.md"].destination_folder == "Vault"
+    assert by_path["People/Sam.md"].note_title == "Sam"
+    assert by_path["top.md"].note_title == "top"
+    assert "Sam" not in repr(labels[0])
+    # A review that no longer matches the folder is refused, not mislabelled.
+    (root_path / "People" / "Sam.md").write_text("# Sam changed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.binding_labels(review.root_id, requested)
+    await owner.abandon_setup(review.root_id)
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_setup_review_under_obsidian_mode_skips_vault_folders_lifts_frontmatter_and_keeps_the_tree(
+    tmp_path: Path,
+) -> None:
+    """task-32535 AC#3/#4 on the real adapter, executor and folder chain."""
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
+    root_path = tmp_path / "vault"
+    for folder in (".obsidian", ".trash", "Templates", "Inbox", "Projects", "People"):
+        (root_path / folder).mkdir(parents=True)
+    (root_path / ".obsidian" / "app.json").write_text("{}", encoding="utf-8")
+    (root_path / ".trash" / "Old idea.md").write_text("# Old\n", encoding="utf-8")
+    (root_path / "Templates" / "Daily.md").write_text("# {{date}}\n", encoding="utf-8")
+    (root_path / "Inbox" / "Untitled.md").write_bytes(b"")
+    (root_path / "Untitled 1.md").write_text("\n\n", encoding="utf-8")
+    review_text = (
+        "---\ntitle: Library ▸ Notes review\ntags: [project, ux]\n---\n# Heading\n"
+    )
+    (root_path / "Projects" / "Library review.md").write_text(review_text, encoding="utf-8")
+    (root_path / "People" / "Sam.md").write_text("# Sam\n", encoding="utf-8")
+    _store(tmp_path)
+    owner, folders, local_notes = _vault_owner(tmp_path)
+    await owner.start()
+
+    def setup(obsidian_mode: bool) -> NotesSyncRootSetup:
+        return NotesSyncRootSetup(
+            display_name="Vault",
+            canonical_path=str(root_path),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            obsidian_mode=obsidian_mode,
+        )
+
+    off = await owner.review_setup(setup(False))
+    assert len(off.safe_actions) == 6
+    assert off.item_skips == ()
+
+    on = await owner.review_setup(setup(True))
+    assert len(on.safe_actions) == 2
+    assert sorted((skip.relative_path, skip.reason_code) for skip in on.item_skips) == [
+        (".trash/Old idea.md", "obsidian_trash"),
+        ("Inbox/Untitled.md", "empty_file"),
+        ("Templates/Daily.md", "obsidian_template"),
+        ("Untitled 1.md", "empty_file"),
+    ]
+    labels = await owner.binding_labels(
+        on.root_id, tuple(action.binding_id for action in on.safe_actions)
+    )
+    assert {label.relative_path: label.note_title for label in labels} == {
+        "Projects/Library review.md": "Library ▸ Notes review",
+        "People/Sam.md": "Sam",
+    }
+
+    result = await owner.activate_root(on.root_id, on.observation_token)
+
+    assert result.accepted is True
+    assert result.applied_count == 2
+    notes_by_title = {note["title"]: note for note in local_notes.notes.values()}
+    assert set(notes_by_title) == {"Library ▸ Notes review", "Sam"}
+    # The frontmatter block stays byte-exact: sync writes the body back.
+    assert notes_by_title["Library ▸ Notes review"]["content"] == review_text
+    assert local_notes.note_keywords(str(notes_by_title["Library ▸ Notes review"]["id"])) == (
+        "project",
+        "ux",
+    )
+    # Each note sits under <root> / <its folder>.
+    by_path = {folder.path: folder for folder in folders.folders.values()}
+    assert set(by_path) == {"/Vault", "/Vault/Projects", "/Vault/People"}
+    root_folder = by_path["/Vault"]
+    assert by_path["/Vault/Projects"].parent_id == root_folder.folder_id
+    placements = dict(folders.reconciled[-1][1])
+    assert placements[str(notes_by_title["Library ▸ Notes review"]["id"])] == by_path[
+        "/Vault/Projects"
+    ].folder_id
+    assert placements[str(notes_by_title["Sam"]["id"])] == by_path["/Vault/People"].folder_id
+    # The mode is remembered for later checks of the persisted root.
+    assert owner._store.get_setting(f"obsidian_mode:{on.root_id}").value == "on"
+    await owner.shutdown()
