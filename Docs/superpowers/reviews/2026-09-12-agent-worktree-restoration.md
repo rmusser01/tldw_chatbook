@@ -1,6 +1,6 @@
 # Agent worktree restoration review record
 
-Status: implementation continues. Creation and durable-record prerequisites are reviewed; ownership call sites, confirmed operations and the Console flow are not yet complete. This supplements the earlier agent-orchestration-remaining review rather than replacing its historical findings or rulings.
+Status: implementation continues. Creation, durable-record prerequisites and actual ownership call sites are reviewed; confirmed operations and the Console flow are not yet complete. This supplements the earlier agent-orchestration-remaining review rather than replacing its historical findings or rulings.
 
 ## Completed review gates
 
@@ -172,3 +172,96 @@ Ruling: Treat card/list as an Operate-mode local Console extension — user alre
 Ruling: Do not expand work into Impeccable metadata repair or a design-world exercise — context reports stale sidecar/deprecated Register/unset buildPath but these do not affect native confirmation behavior — cost is existing design metadata drift remains for a separate requested cleanup.
 Ruling: Reuse the task-scoped independent reviewer for both code and provided native screenshot evidence — one review seat avoids duplicate audits while retaining the visual review requirement — cost is the review packet must explicitly contain all viewport captures and native craft floor.
 
+
+## Ownership call-site integration gate
+
+Production8efca6ee05; test improvements c8e1d119b8 and eed41ac5d2. Final14 targeted tests passed with the inherited Requests warning; review-fix selections3 and2 passed. Root inspected exact output and zero added diagnostic/format failures. The real child stores ownership before its first write; delayed physical workers remain held after logical timeout; cleanup uncertainty survives reopen; callback-owned connections close while borrowed connections remain usable; failed insertion preserves work and prevents execution.
+
+### task-1-review.md
+
+### Spec Compliance
+
+- ✅ Spec compliant for the creation/drain integration. `agent_service.py:4158` binds the supplied child owner before creation; `agent_service.py:4197`–`4242` captures matching source/child Git common-directory structure and inserts exact source authority, child identity, branch/base and execution ID before routing at `agent_service.py:4302`.
+- ✅ Physical completion is the persistence trigger (`agent_service.py:4254`–`4270`), and cleanup uncertainty marks the captured owner before attempting persistence (`agent_service.py:4272`). Provider observer delivery precedes refusal translation (`local_tool_provider.py:1899`). No recovery UI or mutation was added.
+- ✅ Failed ownership insertion returns refusal without routing, retaining the checkout (`agent_service.py:4190`, `4303`). Existing failed-launch finally completes the exact owner (`agent_service.py:5536`–`5546`); callback registration occurs only after insertion.
+
+### Strengths
+
+- Full structural record fields are supplied explicitly, with fixed `rev-parse --git-common-dir` queries and canonical relative-path handling (`agent_worktree.py:167`–`179`). This fits the approved ordinary Git command-boundary contract.
+- Callback connection handling preserves an existing per-thread connection and closes one opened by the callback (`agent_service.py:4244`–`4252`). This matches `AgentRuns_DB.py:324`–`361`, where transactions retain the current thread's handle.
+- Cleanup failure remains conservative even when persistence raises: owner marking precedes the DB call; repository state transitions cannot upgrade uncertain to drained (`agent_service.py:4272`–`4286`; `DB/agent_worktrees.py:258`–`276`). Observer exceptions preserve the original refusal (`local_tool_provider.py:1905`–`1911`).
+- Real temporary Git and reopened SQLite tests cover held ownership, exact owner binding, real child execution before first write, physical timeout completion and durable uncertainty (`Tests/Agents/test_fleet_runtime.py:4160`, `4293`, `4403`, `4469`).
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None.
+
+#### Important (Should Fix)
+
+- None.
+
+#### Minor (Nice to Have)
+
+- `Tests/Agents/test_fleet_runtime.py:4456` waits for `coordinator.all_finished` and immediately asserts durable drain at line 4459. That predicate can become true at `agent_service.py:5421`, before `run_child_owned` calls `child_owner.finish_root` at line 5488. The test can therefore fail under a legitimate scheduling interleaving despite correct production behavior. Join the child before asserting drain, or wait for the durable drained predicate. Static ordering establishes the race; no stress loop is needed.
+- `Tests/Agents/test_fleet_runtime.py:4621` and `4669`: existing provider-admission/thread-start failure tests now exercise durable admission but still assert only retained Git and absent routing. Adding reopened durable-row assertions would directly guard the new failed-start ownership contract; the production finally/callback ordering is correct by inspection.
+- `.superpowers/sdd/2026-09-12-agent-worktree-ownership-integration/final-evidence/final-targeted-3/stdout.txt:4`: reported verification includes a RequestsDependencyWarning from the existing environment. This is pre-existing dependency noise, not a regression from this patch, but the output is not pristine. No dependency changes are requested within this task.
+
+### Checks
+
+- Read task brief, report, Global Constraints, and the provided diff package once; recovered a tool-truncated middle section without re-reading production hunks. No Git commands or test suites run.
+- Named lifetime risk: whether callback persistence closes borrowed DB handles or nests transactions unsafely. Checked `DB/AgentRuns_DB.py:290`–`361` and `DB/agent_worktrees.py:247`–`277`; borrowed handles survive, and persistence failures are contained conservatively.
+- Named sticky-state risk: whether drain callbacks run before owned operations finish or can upgrade uncertainty. Checked `Agents/execution_capacity.py:277`–`331`; callbacks follow root plus operation drain outside the capacity lock, with sticky outcome.
+- Named failed-start/synchronization risk: the diff cuts off admission caller teardown. Checked `agent_service.py:5250`–`5546` to establish exact owner propagation, failed-launch finish and fleet-terminal-before-drain ordering. Inspected existing failed-start test bodies because their diff hunks omit assertions.
+- Read stored final targeted output: 14 passed, one pre-existing Requests dependency warning, no stderr. Root independently verified the static baseline comparison; not duplicated here.
+
+### Assessment
+
+**Task quality:** Approved with minor test improvements.
+
+**Reasoning:** The integration records ownership before exposure and connects durable release to the exact child execution's physical lifetime. No production correctness blocker was found; the new gated-child test should synchronize on physical completion instead of the earlier fleet terminal transition.
+
+### task-1-rereview-1.md
+
+### Finding Verdicts
+
+- **The gated real-child regression can assert durable drain before physical child completion** — ADDRESSED. `Tests/Agents/test_fleet_runtime.py:4456` now calls `join_fleet_children(service)` before the durable `writer_state == "drained"` assertion at line 4461; the intervening `coordinator.all_finished()` check occurs only after the child thread has joined.
+- **Failed provider-admission and thread-start tests do not reopen SQLite and verify retained durable ownership** — NOT ADDRESSED. Both tests now reopen SQLite and exactly compare `base_sha`, `binding_id`, and `writer_state` (`Tests/Agents/test_fleet_runtime.py:4665-4674`, `Tests/Agents/test_fleet_runtime.py:4730-4739`), but each checks only that `record["execution_id"]` is truthy at lines 4673 and 4738. Neither captures the failed child owner's expected execution ID and compares equality, so a wrong nonempty owner ID would pass and the requested exact execution binding remains unproved.
+
+### New Breakage in the Fix Diff
+
+None.
+
+### Out-of-Scope Observations
+
+None.
+
+### Verdict
+
+**Fix round:** Findings remain open — the failed provider-admission and `Thread.start` regressions must compare the reopened row's `execution_id` with the exact captured child `ExecutionOwner.execution_id`, rather than asserting only nonemptiness.
+
+### task-1-rereview-2.md
+
+### Finding Verdicts
+
+- **Failed provider-admission and thread-start tests do not reopen SQLite and verify retained durable ownership** — ADDRESSED. Each regression now wraps the real `AgentService._admit_agent_worktree`, captures the exact `ExecutionOwner` supplied for the child, asserts exactly one owner was admitted, and compares the independently reopened durable row's `execution_id` with `admitted_owners[0].execution_id` (`Tests/Agents/test_fleet_runtime.py:4652-4659,4678-4682` and `Tests/Agents/test_fleet_runtime.py:4724-4731,4751-4755`). The wrapper forwards the original handle, child run ID, and owner unchanged, so it observes rather than substitutes the admission path. The reopened lookup remains keyed by the sub-agent run row and conversation, while the production admission records that same `child_run_id` with the supplied owner's exact execution ID.
+
+### New Breakage in the Fix Diff
+
+None.
+
+### Out-of-Scope Observations
+
+None.
+
+### Verdict
+
+**Fix round:** Approved — all scoped findings are addressed, and the exact retained owner equality is now proved in both failed-start regressions.
+
+
+### Additional ownership rulings
+
+Ruling: Include callback connection-ownership proof before review — the last tool callback can open a DB connection on a thread that then exits — cost is small callback wrapper bookkeeping; tests require newly opened connections close and borrowed ones remain usable.
+Ruling: Start confirmed-operation implementation while read-only re-review finishes the committed minor test fixes — no production blocker or source-writing overlap remains — cost is possible focused test rework if the small fix has a defect.
+Ruling: Let disjoint engine work continue while the small failed-start test-only correction is made — no production overlap and the shared test file has one explicit owner — cost is serialization of that file's later operation tests.
