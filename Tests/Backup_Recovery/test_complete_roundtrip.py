@@ -591,6 +591,7 @@ asyncio.run(main())
 
 def _run_profile_child(root, name, script, environment, *, timeout=60):
     """Run one fixed private fixture program and preserve its full native output."""
+    environment = {**environment, "PYTHONIOENCODING": "utf-8"}
     # Windows' native per-file barriers made the finite seed exceed 60 seconds
     # while still creating records. Retain a stack at the previous observer bound.
     if sys.platform == "win32" and name.startswith("seed-"):

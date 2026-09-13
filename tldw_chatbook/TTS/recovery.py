@@ -1,5 +1,6 @@
 """Installed TTS profiles and voice inventory, without runtime constructors."""
 
+import errno
 import hashlib
 import sqlite3
 import stat
@@ -71,7 +72,12 @@ class _Profiles(_SQLiteDeclaration):
                 lock = replace(
                     lock, status="intentionally_excluded" if empty else "unsupported"
                 )
-            except (OSError, ValueError, RuntimeError):
+            except OSError as error:
+                lock = replace(
+                    lock,
+                    status="unsupported" if error.errno == errno.ELOOP else "unavailable",
+                )
+            except (ValueError, RuntimeError):
                 lock = replace(lock, status="unavailable")
         elif lock.status == "unused":
             lock = replace(lock, status="intentionally_excluded")

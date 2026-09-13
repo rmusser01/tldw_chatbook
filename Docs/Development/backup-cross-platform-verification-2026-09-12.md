@@ -43,6 +43,24 @@ findings remain across the three large TTS modules. Before these import changes,
 the broader native-maintenance/lifecycle/schema baseline was373 passed,18 failed,
 two skipped in295.78 seconds; that suite is not represented as green.
 
+Revision `b17ece821669d72b062db0462c62c47b866f07fd` passes the final local
+reference roundtrip plus current-store revalidation and native parent retirement
+checks:8 cases in23.86 seconds. The supplied Linux host passes all130 reader and
+reference roundtrip cases in55.89 seconds, with no failures, errors or skips;
+source archive SHA256
+`5bd5e6870c6393084ceab4ea85563ccca5bce9b0d9fdc127e37ef6f515cfabb0`.
+The113-case native Windows support run is
+[34732838084](https://github.com/rmusser01/tldw_chatbook/actions/runs/34732838084).
+It passes42/42 native and111/113 support cases; all28 artifact hashes verify.
+The original TTS startup failures are resolved. A symlink lock remains refused
+but was labeled unavailable because native no-reparse stat reports `ELOOP`; only
+that error is now classified unsupported, preserving other unavailable errors.
+The canonical reference seed exits successfully, then its parent fails to decode
+Windows-encoded stdout as UTF-8. The fixture helper now copies its environment and
+sets `PYTHONIOENCODING=utf-8`, preserving strict decoding and subprocess checks.
+A forced CP1252 child reproduces the decoding failure before and passes after;
+the caller's environment remains unchanged. Independent review has no findings.
+
 Revision `892e11484b6436f0d554ad1a2b591ed6de69632e` passes actual Windows
 replacement, including21 displayed credential omissions, untouched abort,
 explicit acknowledgement and `restoration_validated`. Full
