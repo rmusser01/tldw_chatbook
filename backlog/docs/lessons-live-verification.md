@@ -2780,6 +2780,27 @@ the incumbents in that surface are also truncated, say so in the guide rather
 than assuming the copy on screen is the copy in the source. Choosing a label
 that fits is a one-line fix; widening a shared menu for one row is not.
 
+## Appending a `[table]` to a scratch config the app has already expanded silently lands you in the REAL profile (task-32271 docs sweep, 2026-09-12)
+
+**What happened.** The scratch profile's `config.toml` was written by
+`mkprofile.sh` as ~30 lines. By the time the Console leg needed a provider,
+the app had rewritten it to ~1,400 lines with every default table present —
+including `[api_settings.openai]`. Appending a second `[api_settings.openai]`
+block made the file invalid TOML ("Cannot declare ('api_settings', 'openai')
+twice"). The app did not stop: it renamed the file to `config.toml.corrupt-…`,
+ran on built-in defaults, and opened `~/.local/share/tldw_cli/default_user`
+— the user's real databases — where dev's ChaChaNotes schema migration
+(v72 → v73) ran at once. A toast said so, but only after boot, and only in the
+corner of a 235x52 pane the driver was not reading.
+
+**What to do.** Never append tables to a scratch config; edit the existing
+table in place (parse with `tomllib` after every edit), or pass the credential
+as the env var the table already names (`api_key_env_var`) on the tmux launch
+line. Before any launch that follows a config edit, `tomllib.loads` the file;
+after the launch, grep the pane for "Config file failed to load" before doing
+anything else. `TLDW_CONFIG_PATH` protects the profile only while its file
+parses.
+
 ## A click-by-text driver lands on the status copy that echoes the button (task-32519 sync-tail walk, 2026-09-12)
 
 **What happened.** Driving Manage sync folders with a find-the-text-then-SGR-click

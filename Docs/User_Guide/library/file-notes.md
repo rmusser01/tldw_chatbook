@@ -222,7 +222,9 @@ The panel is headed "Prepare session for commit" with the scope line
 it shows "Repository: not checked" / "Status: NOT CHECKED".
 
 **Trust first.** Press **Trust and check status** and a confirmation dialog
-titled "Trust Session Git repository?" appears:
+titled "Trust repository for session changes?" appears (was "Trust Session
+Git repository?" — superseded by task-32271 below; the title was read off the
+live dialog on dev):
 
 > Repository: \<path\>
 >
@@ -439,8 +441,8 @@ save shortcut. File edits save automatically.
   session appear in the panel, and staging records each file's complete
   current state — not a partial diff. A path you already staged outside
   Chatbook shows BLOCKED here on purpose: finish it in Git, then **Refresh**.
-- **Trust doesn't persist.** The "Trust Session Git repository?" dialog
-  returns after every app restart — trust lasts only for the running
+- **Trust doesn't persist.** The "Trust repository for session changes?"
+  dialog returns after every app restart — trust lasts only for the running
   process, by design.
 - **Guarded push is deliberately narrow.** It publishes only the exact guarded
   commit created in this app process, to its one existing tracking upstream,
@@ -480,6 +482,7 @@ save shortcut. File edits save automatically.
 *Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Folder files mode
 stays inside the Library rail/canvas frame instead of replacing the whole
 shell; Escape returns to Library notes)*
+
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
 Folder files mode's canvas states in-app that it edits the folder directly,
 unlike a managed Library relationship).*
@@ -574,3 +577,12 @@ editor discloses hidden-but-preserved YAML frontmatter. The folder picker now
 falls back to `[notes] sync_directory` before your home directory. Verified
 live against a real git-backed vault: keyboard staging and a real commit
 (`git log`: `e69848b w3 round2 commit`).)*
+
+*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271: the
+Session Git chapter re-walked on dev 7159fc0b99 at 235x52 against a
+git-backed vault — Trust and check status → "Trust repository for session
+changes?" (the title corrected above; this page used to say "Trust Session
+Git repository?") → focus on the row list → Tab to **Stage** → **Commit
+staged (1)** → the commit review → committed; the "Choose File Notes Folder"
+picker's pre-filled **Folder path** selects on the click that focuses it; the
+hidden-frontmatter line reads as described.)*

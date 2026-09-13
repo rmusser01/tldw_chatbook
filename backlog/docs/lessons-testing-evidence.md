@@ -9,6 +9,17 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Retaining a disclosure does not prove its streaming body stays mounted
+
+**TASK-32522, thinking flicker, 2026-09-12.** The existing same-widget test
+pinned the Assistant turn, answer, and Thinking disclosure, while every thinking
+delta still removed and remounted the text child. A mounted compositor probe
+observed 22 empty-body paints across 102 frames. Pinning the actual text widget
+and observing streaming paints caught the defect; updating that widget in place
+passed both narrow-width regressions and 215 native live-provider frames without
+blanking. Check the child that paints the changing content and intermediate
+frames, not only its stable wrapper and settled final text.
+
 ## A shared counter's value does not name which side moved it
 
 **TASK-32302, Library Conversations entry focus, 2026-09-11.** The task's

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-13 00:35'
-updated_date: '2026-09-13 03:24'
+updated_date: '2026-09-13 03:40'
 labels:
   - library
   - notes
@@ -27,9 +27,15 @@ changes" with the status line "Action needs attention. Review settings, then
 Check changes."; every **Check changes** after that reports "Manual check
 failed. Review root status, then try again."; and **Review** opens a review
 that says "That folder is paused. Resume it, then Check again." with
-"0 safe · 0 need attention" and a stale flag — a loop with no exit. The only
-way out today is to restart the app and leave the root paused, or disconnect
-(which is itself disabled in this release).
+"0 safe · 0 need attention" and a stale flag — a loop with no exit. **A
+restart does not recover it**: the row comes back as "Ⅱ Paused · Next:
+Resume" (the ✕ Failed status is not persisted), **Check changes** while
+paused fails ("Manual check failed"; `check_root` raises
+`sync_root_not_active`), **Resume** fails identically
+(`binding_review_required`), and a file edited on disk after the restart is
+never synced. The stored state is root `paused` with all 60 bindings
+`paused` (`tldw_chatbook_notes_sync_state.db`). Disconnect is disabled in
+this release, so a paused root stays paused for good.
 
 **Cause (proven, dev 7159fc0b99).** `NotesSyncRuntimeOwner.pause_root`
 (`tldw_chatbook/Notes/notes_sync_runtime.py`) calls
@@ -64,6 +70,11 @@ after restart) → `b12-paused` (Ⅱ Paused · Next: Resume) → `b13-resume-no-
 check failed") → `b15-review-after-failed-resume` (review says paused, 0
 items, stale). Earlier run with a two-sided edit: `56-paused` → `61-resume-attempt`
 → `62-check-after-resume` → `63-conflict-review` → `67-resolution-history`.
+Restart after the failed Resume:
+`b16-roots-after-restart-following-failed-resume` (Ⅱ Paused) →
+`b17-check-after-restart` ("Manual check failed") → `b18-resume-after-restart`
+(✕ Failed) → `b19-check-after-second-resume`; that run's probe log is
+appended to `resume-trace.log`.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
