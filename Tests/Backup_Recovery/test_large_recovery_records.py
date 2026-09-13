@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from textwrap import indent
 from threading import Event
 
 import pytest
@@ -179,4 +180,12 @@ def test_large_collection_completes_actual_isolated_publication(tmp_path):
     script = script.replace("'root':dest/'config',", "'external':dest/'research','root':dest/'config',")
     script += "\nassert len(list((dest/'research').glob('note*.txt')))==1800\n"
     script += "assert (dest/'research'/'note1799.txt').read_bytes()==b'[general]\\nusers_name=\"original\"\\n'\n"
+    script = (
+        "from pathlib import Path\n"
+        "from Tests.Backup_Recovery.thread_diagnostics import observe_threads\n"
+        "stop_stacks=observe_threads(Path.home()/'large-isolated-stacks.log',interval=30)\n"
+        "print('LARGE_ISOLATED_STARTED',flush=True)\ntry:\n"
+        + indent(script, " ")
+        + "\nfinally:stop_stacks()\nprint('LARGE_ISOLATED_COMPLETED',flush=True)\n"
+    )
     _run(tmp_path, "complete", "large-isolated", script=script, timeout=180)
