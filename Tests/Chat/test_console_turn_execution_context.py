@@ -2955,6 +2955,11 @@ def _identity_selection_screen(store, global_name="Rowan"):
             fake_screen, session_id
         )
     )
+    fake_screen._build_console_provider_selection_from_settings = (
+        lambda *args, **kwargs: ChatScreen._build_console_provider_selection_from_settings(
+            fake_screen, *args, **kwargs
+        )
+    )
     return fake_screen
 
 
