@@ -752,6 +752,155 @@ async def test_manual_runtime_custody_reaches_the_existing_agent_bridge_once(tmp
 
 
 @pytest.mark.asyncio
+async def test_accepted_writable_selection_forwards_exact_live_worktree_authority(
+    tmp_path,
+):
+    """The accepted selected binding alone supplies the live mutation guard."""
+    store = ConsoleChatStore()
+    session = store.create_session(
+        title="Selected authority", workspace_id="workspace-a"
+    )
+    selected_root = tmp_path / "selected"
+    unrelated_root = tmp_path / "unrelated"
+    selected_root.mkdir()
+    unrelated_root.mkdir()
+
+    def binding(binding_id, root):
+        return SimpleNamespace(
+            binding_id=binding_id,
+            workspace_id=session.workspace_id,
+            display_name=binding_id,
+            binding_kind=SimpleNamespace(value="local-filesystem"),
+            status=SimpleNamespace(value="ready"),
+            locator=str(root),
+            metadata={"access": "rw"},
+        )
+
+    selected = binding("selected-binding", selected_root)
+    unrelated = binding("unrelated-binding", unrelated_root)
+    current_bindings = [selected, unrelated]
+
+    class Registry:
+        def list_runtime_bindings(self, _workspace_id):
+            return tuple(current_bindings)
+
+        def get_runtime_binding(self, binding_id):
+            return next(
+                item for item in current_bindings if item.binding_id == binding_id
+            )
+
+    class ToolService:
+        def __init__(self):
+            self.kill_switch = False
+            self.raise_on_read = False
+
+        def get_kill_switch(self):
+            if self.raise_on_read:
+                raise RuntimeError("kill switch unavailable")
+            return self.kill_switch
+
+        async def local_external_catalog(self):
+            return []
+
+        def gate_tool_test(self, *_args, **_kwargs):
+            return SimpleNamespace(state="allow", origin="test")
+
+        def is_session_approved(self, *_args, **_kwargs):
+            return False
+
+    store.set_session_project_instruction_state(
+        session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id=selected.binding_id,
+            working_folder_locator_fingerprint=fingerprint_canonical_locator(
+                selected.locator
+            ),
+            project_instruction_notice_key=None,
+        ),
+    )
+    gateway = _PausedGateway()
+    gateway.release_resolve.set()
+    bridge_calls: list[dict[str, object]] = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-selected", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="agent reply"
+        )
+
+    tool_service = ToolService()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=SimpleNamespace(run_reply=run_reply),
+        agent_runtime_enabled=True,
+        provider="openai",
+        model="frozen-model",
+    )
+    app = SimpleNamespace(
+        workspace_registry_service=Registry(),
+        unified_mcp_service=tool_service,
+    )
+    controller.app = app
+    runtime = ConsoleRuntime(app)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    configuration = controller.resolve_runtime_turn_configuration_snapshot(session.id)
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id=session.id,
+        provider_selection=configuration.provider_selection,
+        scratch_space=configuration.scratch_space,
+        session_settings=configuration.session_settings,
+        capabilities=configuration.capabilities,
+        tool_configuration={
+            **configuration.tool_configuration,
+            "agent_runtime_enabled": True,
+            "local_tools_enabled": True,
+        },
+        project_authority=capture_project_instruction_authority(
+            session, controller.app.workspace_registry_service
+        ),
+    )
+    assert configuration.project_authority.selected.binding_id == selected.binding_id
+    request = ConsoleTurnCustodyRequest(
+        turn_id="selected-authority-turn",
+        session_id=session.id,
+        draft="delegate this",
+        configuration=configuration,
+    )
+
+    turn_id = runtime.accept_turn(request)
+    result = await runtime.wait_for_turn(turn_id)
+    await asyncio.sleep(0)
+
+    assert result.accepted is True
+    authority = bridge_calls[0]["worktree_repo_authority"]
+    assert authority.binding_id == selected.binding_id
+    assert authority.root == selected_root.resolve()
+    assert authority.root_identity == _capture_project_root_identity(selected_root)
+    assert authority.guard(True) is True
+
+    current_bindings[:] = [unrelated]
+    assert authority.guard(True) is False
+    current_bindings[:] = [binding(selected.binding_id, unrelated_root), unrelated]
+    assert authority.guard(True) is False
+    current_bindings[:] = [selected, unrelated]
+    moved_root = tmp_path / "selected-old"
+    selected_root.rename(moved_root)
+    selected_root.mkdir()
+    assert authority.guard(True) is False
+    selected_root.rmdir()
+    moved_root.rename(selected_root)
+    assert authority.guard(True) is True
+    tool_service.kill_switch = True
+    assert authority.guard(True) is False
+    tool_service.kill_switch = False
+    tool_service.raise_on_read = True
+    assert authority.guard(True) is False
+
+
+@pytest.mark.asyncio
 async def test_durable_acceptance_survives_cancellation_for_terminal_callback():
     store = ConsoleChatStore()
     session = store.create_session(title="Cancellation", workspace_id="global")

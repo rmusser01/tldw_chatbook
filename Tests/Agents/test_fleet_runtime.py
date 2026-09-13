@@ -4236,6 +4236,109 @@ def test_post_create_authority_drift_retains_created_checkout(db, git_repo):
         agent_worktree.discard_agent_worktree(git_repo, created)
 
 
+def test_provider_admission_failure_retains_real_created_checkout(
+    db, git_repo, monkeypatch
+):
+    """A provider routing failure preserves the created checkout and branch."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="selected-fingerprint",
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    monkeypatch.setattr(
+        provider,
+        "admit_run_workspace_root",
+        lambda *_args: (_ for _ in ()).throw(ValueError("routing failed")),
+    )
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            "done",
+        ],
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == RUN_DONE
+        created = next(iter(service._agent_worktrees.values()))
+        assert created.worktree_path.is_dir()
+        assert _git(git_repo, "branch", "--list", created.branch).strip()
+        assert provider._agent_roots == {}
+    finally:
+        for created in service._agent_worktrees.values():
+            agent_worktree.discard_agent_worktree(git_repo, created)
+
+
+def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
+    db, git_repo, monkeypatch
+):
+    """A failed fleet thread start retains Git work while removing its route."""
+    from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
+
+    provider = _fs_local_provider(git_repo)
+    authority = RunAdmittedWorkspaceRoot(
+        workspace_id="workspace",
+        binding_id="selected",
+        alias="selected",
+        root=git_repo,
+        locator_fingerprint="selected-fingerprint",
+        root_identity=agent_worktree._worktree_root_identity(git_repo),
+        allow_write=True,
+        guard=lambda _write: True,
+    )
+    real_start = threading.Thread.start
+    failures = []
+
+    def fail_first_fleet_start(thread):
+        if thread.name.startswith("fleet-") and not failures:
+            failures.append(thread.name)
+            raise RuntimeError("cannot start fleet thread")
+        return real_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_first_fleet_start)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        parent_replies=[
+            fence(SPAWN_TOOL_NAME, {"task": "iso task", "isolation": "worktree"}),
+            "done",
+        ],
+        providers=(provider,),
+        worktree_repo_authority=authority,
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=ISO_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert failures
+        assert outcome.status == RUN_DONE
+        created = next(iter(service._agent_worktrees.values()))
+        assert created.worktree_path.is_dir()
+        assert _git(git_repo, "branch", "--list", created.branch).strip()
+        assert provider._agent_roots == {}
+        assert coordinator.all_finished()
+    finally:
+        for created in service._agent_worktrees.values():
+            agent_worktree.discard_agent_worktree(git_repo, created)
+
+
 @pytest.mark.parametrize("confirmation", [None, "allow", "deny"])
 def test_worktree_tools_refuse_before_preview_confirmation_or_mutation(
     db, git_repo, monkeypatch, confirmation
