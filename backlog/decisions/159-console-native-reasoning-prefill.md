@@ -1,9 +1,10 @@
 # ADR-159: Native reasoning prefill has explicit provider and turn ownership
 
-Status: Proposed — behavior approved in conversation; written spec awaiting review
+Status: Accepted — written spec approved by the user
 Date: 2026-09-12
 Task: [TASK-32521](../tasks/task-32521%20-%20Design-native-reasoning-prefill-for-Console.md)
 Spec: [Console native reasoning prefill](../../Docs/superpowers/specs/2026-09-12-console-native-reasoning-prefill-design.md)
+Plan: [Implementation tasks and verification](../../Docs/superpowers/plans/2026-09-12-console-native-reasoning-prefill.md)
 Extends: ADR-063, ADR-064, ADR-090, ADR-092, ADR-095
 
 ## Context

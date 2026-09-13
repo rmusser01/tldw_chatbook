@@ -1,16 +1,17 @@
 ---
 id: TASK-32521
 title: Design native reasoning prefill for Console
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-13 02:53'
-updated_date: '2026-09-13 02:59'
+updated_date: '2026-09-13 03:34'
 labels: []
 dependencies: []
 documentation:
   - Docs/superpowers/specs/2026-09-12-console-native-reasoning-prefill-design.md
   - backlog/decisions/159-console-native-reasoning-prefill.md
+  - Docs/superpowers/plans/2026-09-12-console-native-reasoning-prefill.md
 ---
 
 ## Description
@@ -25,7 +26,7 @@ Define a reviewable Console design for native reasoning continuation across qual
 - [x] #2 The design resolves retry, queue, cancellation, tool replay, storage, and provider compatibility risks from review.
 - [x] #3 A canonical ADR records provider and data-ownership decisions and is linked from the design and task.
 - [x] #4 The written design passes self-review and is presented to the user before implementation planning.
-- [ ] #5 The user approves the written spec before implementation planning begins.
+- [x] #5 The user approves the written spec before implementation planning begins.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,9 +45,9 @@ Reason: Native provider continuation contracts, per-turn ownership, and conversa
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Wrote the native-only Console reasoning-prefill design and proposed ADR-159, and added the ADR index entry. The design includes both lifetimes, enable/disable, exclusive queued-turn reservations, revision-safe failure/retry handling, native qualification, tool replay, precise whitespace, and versioned pin portability. Used-seed retention follows existing protected continuation/capture rules; next-send configuration remains ephemeral.
+Completed the native-only Console reasoning-prefill design and ADR-159. The user approved the written spec; ADR-159 is now Accepted. The design covers both lifetimes, enable/disable, exclusive queued-turn reservations, revision-safe retry/recovery, native qualification, tool replay, exact whitespace, and versioned pin portability. Updated the ADR index and linked the implementation plan.
 
-Self-review checked lifecycle consistency, ownership, replay attribution, recovery, and scope. Three document checks passed, including 16 relative links and placeholder/conflict-marker/whitespace checks. The repository-wide Backlog ID guard reports existing duplicate tasks unrelated to TASK-32521; the new ID was swept against 210 refs and 41 worktrees and is absent from the guard failures. The CLI initially offered 32516, below the swept maximum 32520, so this newly created task was immediately renumbered to 32521 before linking it.
+Wrote Docs/superpowers/plans/2026-09-12-console-native-reasoning-prefill.md with eight atomic tasks, explicit interfaces, red/green examples, exact integration paths, targeted checks, and live qualification gates. Created TASK-32523 through TASK-32530 as To Do using Backlog CLI; each links the spec, plan, and ADR and depends only on earlier tasks. Plan review accounted for the message-only Sync handler with a scoped encrypted pin record and a content-free versioned thinking replay-eligibility field.
 
-No runtime code, full test suite, or live provider calls were part of this documentation task. The written spec and ADR remain proposed pending user review; implementation planning has not started.
+Verification: 16 embedded Python examples parse; 34 local links resolved before adding the two final cross-links; all eight task files pass the scoped Backlog guard and have earlier-only dependencies. The repository-wide Backlog guard has existing unrelated duplicate IDs and the CLI emits hydration warnings for malformed task YAML on another branch; these do not involve the new task records. Task/ADR IDs were scanned against all local refs and worktrees. No application implementation, full test suite, or live provider qualification was performed. Execution remains a separate step from this completed design and planning work.
 <!-- SECTION:NOTES:END -->

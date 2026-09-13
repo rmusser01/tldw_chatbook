@@ -1,9 +1,10 @@
 # Console native reasoning prefill
 
 Date: 2026-09-12
-Status: Written design awaiting user review; behavior and review refinements approved in conversation
+Status: User approved; implementation planning authorized
 Task: [TASK-32521](../../../backlog/tasks/task-32521%20-%20Design-native-reasoning-prefill-for-Console.md)
 ADR: [ADR-159](../../../backlog/decisions/159-console-native-reasoning-prefill.md)
+Implementation plan: [Eight-task implementation plan](../plans/2026-09-12-console-native-reasoning-prefill.md)
 Source feature: [SillyTavern PR 6001](https://github.com/SillyTavern/SillyTavern/pull/6001)
 
 ## Purpose and scope
@@ -303,7 +304,7 @@ honest recovery when an ephemeral seed has been lost.
 
 Self-review completed for placeholders, contradictory lifetimes, unsupported
 fallbacks, stale-owner mutations, tool replay, storage scope, and qualification
-claims. User approval of this written version remains pending.
+claims. The user approved this written version and authorized implementation planning.
 
 ## References
 

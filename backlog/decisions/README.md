@@ -115,7 +115,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-148](148-mcp-hub-rail-ia-and-responsive-triad.md) | Accepted | Split the agent tool catalog out of the built-in server rail row into its own Agent tools section, and stack the inspector as a bounded band below 120 columns. |
 | [ADR-150](150-mcp-hub-bulk-permission-actions.md) | Accepted | Add filter-scoped shift+space/C bulk permission actions executed as N ordinary profile-scoped set_tool_state writes. |
 | [ADR-149](149-offer-first-canvas-guide-and-inline-skill.md) | Accepted | Offer Canvas before proactive authoring; load bounded packaged guidance in the owning Console run and provide an optional trusted inline skill. |
-| [ADR-159](159-console-native-reasoning-prefill.md) | Proposed | Keep native reasoning prefill adapter-qualified, with exclusive per-turn seed ownership, conversation-owned pins, and exact tool/recovery semantics. |
+| [ADR-159](159-console-native-reasoning-prefill.md) | Accepted | Keep native reasoning prefill adapter-qualified, with exclusive per-turn seed ownership, conversation-owned pins, and exact tool/recovery semantics. |
 
 ## Historical Decision Material
 
