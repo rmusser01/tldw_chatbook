@@ -112,9 +112,14 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
                 id="library-note-folder-target-title",
                 classes="destination-section",
             )
+            # TASK-32533 (critique #3 P0): the blank sentinel is `Select.NULL`.
+            # `Select.BLANK` is not a Select attribute on this Textual version
+            # -- it silently resolves to `Widget.BLANK` (`False`), which is not
+            # one of the options, so opening Add to folder / Move note raised
+            # InvalidSelectValueError at mount and exited the whole app.
             yield Select(
                 options,
-                value="" if self._include_root else Select.BLANK,
+                value="" if self._include_root else Select.NULL,
                 allow_blank=not self._include_root,
                 id="library-note-folder-target",
             )
@@ -126,7 +131,10 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
 
     def _submit(self) -> None:
         value = self.query_one("#library-note-folder-target", Select).value
-        if value is not Select.BLANK:
+        # Same sentinel bug: the old `is not Select.BLANK` compared against
+        # `False`, so Choose with nothing picked dismissed with the literal
+        # folder id "Select.NULL". "" is a real choice here (Top level).
+        if value is not Select.NULL:
             self.dismiss(str(value))
 
     @on(Button.Pressed, "#library-note-folder-target-cancel")
