@@ -129,7 +129,7 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
         with reopened.connection() as conn:
             assert (
                 conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-                == 18
+                == AgentRunsDB._CURRENT_SCHEMA_VERSION
             )
             assert (
                 conn.execute(
