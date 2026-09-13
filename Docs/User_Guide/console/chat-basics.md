@@ -574,22 +574,18 @@ hover, and the tooltip content above was read off a live 400-message session).*
 TASK-23088's production-shaped provider-free journey on 2026-08-27.*
 
 *Verified against fix/library-notes-w3-capture-console — 2026-09-11
-(task-32146: **Capture as note** walked live at 235x52 and 100x30 on a seeded
-profile — More… ▸ Capture as note ▸ "Saved to Notes" ▸ **Open note** landing
-in the Library note editor; the saved note's keywords were read back from the
-database as `console`, `conversation:<id>`, `message:<id>`. The More… menu
-contents above were read off that same walk. This stamp was "Save as… ▸ Note
-was ALSO saving under an owner id nothing sets, so its notes never appeared in
-Library ▸ Notes; both routes now write under the configured notes identity" —
-superseded by task-32146 fix round 1 below.)*
-
-*Verified against fix/library-notes-w3-capture-console — 2026-09-11
-(task-32146 fix round 1: the owner-id sentence in the stamp above was wrong
-and is withdrawn — notes have no owner column and Library ▸ Notes lists every
+(task-32146 and its fix round 1: **Capture as note** walked live at 235x52 and
+100x30 on a seeded profile — More… ▸ Capture as note ▸ "Saved to Notes" ▸
+**Open note** landing in the Library note editor; the saved note's keywords
+were read back from the database as `console`, `conversation:<id>`,
+`message:<id>`. The More… menu contents above were read off that same walk.
+Fix round 1 withdrew this stamp's first-draft sentence "Save as… ▸ Note was
+ALSO saving under an owner id nothing sets, so its notes never appeared in
+Library ▸ Notes" — notes have no owner column and Library ▸ Notes lists every
 note whatever identity wrote it, so nothing saved by Save as… ▸ Note was ever
-missing. What changed is only which identity a note records as its author:
-the configured notes identity instead of a literal nothing sets. Both routes
-write under it. Also: a captured reply that opens with a code fence or a
-heading is now titled by its first line of text, and Capture as note refuses
-at dispatch in a temporary chat as well as being offered disabled. Copy-only
-correction checked against the notes schema and list query; no live walk.)*
+missing; what changed is only which identity a note records as its author,
+the configured notes identity instead of a literal nothing sets, and both
+routes write under it. Also from fix round 1: a captured reply that opens with
+a code fence or a heading is titled by its first line of text, and Capture as
+note refuses at dispatch in a temporary chat as well as being offered
+disabled — copy-only, checked against the notes schema and list query.)*
