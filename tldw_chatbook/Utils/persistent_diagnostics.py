@@ -56,6 +56,28 @@ _TOKEN_FIELDS = frozenset(
         "app_version",
         "python_version",
         "sqlite_version",
+        # TASK-32533: the DOM id of the message pump whose handler raised an
+        # `unhandled_exception`. A Textual widget that fails while mounting
+        # leaves no Chatbook frame on the stack (the compose that created it
+        # has already returned), so the id is what makes the site greppable.
+        # Hyphenated, like every other id in this app's CSS -- a token, not an
+        # identifier.
+        "widget_id",
+    }
+)
+# TASK-32533: the raising frame of an `unhandled_exception` record -- module
+# and function name of the frame that raised (`raise_*`) and of the deepest
+# Chatbook frame on the stack (`site_*`), plus the class name of the pump that
+# was dispatching. Dotted Python identifiers, which the token regex cannot
+# hold: most handlers in this codebase are `_private`, and a leading underscore
+# is not a token start. Never the message, never a path.
+_IDENTIFIER_FIELDS = frozenset(
+    {
+        "raise_module",
+        "raise_function",
+        "site_module",
+        "site_function",
+        "widget_type",
     }
 )
 _INTEGER_FIELDS = frozenset(
@@ -85,6 +107,9 @@ _INTEGER_FIELDS = frozenset(
         "native_invalid_timing",
         "native_capture_occupancy",
         "native_render_occupancy",
+        # TASK-32533: line numbers of the `raise_*` / `site_*` frames.
+        "raise_line",
+        "site_line",
     }
 )
 _BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_enabled"})
@@ -99,7 +124,9 @@ _LIST_FIELDS = frozenset(
         "active_workers",
     }
 )
-_ALLOWED_FIELDS = _TOKEN_FIELDS | _INTEGER_FIELDS | _BOOLEAN_FIELDS | _LIST_FIELDS
+_ALLOWED_FIELDS = (
+    _TOKEN_FIELDS | _IDENTIFIER_FIELDS | _INTEGER_FIELDS | _BOOLEAN_FIELDS | _LIST_FIELDS
+)
 
 
 def _is_chatbook_record(record: logging.LogRecord) -> bool:
@@ -136,6 +163,23 @@ def safe_metadata_token(value: Any) -> str:
     return _safe_token(value)
 
 
+def _safe_identifier(value: Any) -> str:
+    """Serialize a dotted ASCII Python identifier (a module or function name)."""
+
+    if isinstance(value, str):
+        normalized = value.strip()
+        if (
+            0 < len(normalized) <= 128
+            and normalized.isascii()
+            and all(part.isidentifier() for part in normalized.split("."))
+            and not any(
+                marker in normalized.casefold() for marker in _PRIVATE_TOKEN_MARKERS
+            )
+        ):
+            return normalized
+    return "invalid"
+
+
 def _safe_integer(value: Any) -> str:
     if isinstance(value, bool):
         return "invalid"
@@ -158,6 +202,8 @@ def _safe_list(value: Any) -> str:
 def _format_metadata_value(field: str, value: Any) -> str:
     if field in _TOKEN_FIELDS:
         return _safe_token(value)
+    if field in _IDENTIFIER_FIELDS:
+        return _safe_identifier(value)
     if field in _INTEGER_FIELDS:
         return _safe_integer(value)
     if field in _BOOLEAN_FIELDS:
