@@ -113,9 +113,15 @@ async def main():
         screen.query_one("#backup-safety-confirm", Input).value = "test-only-later-safety-password"
         screen.query_one("#backup-later-confirm", Checkbox).value = True
         await pilot.pause()
+        previous_operation = app.recovery_service.current()["operation_id"]
         screen.query_one("#backup-later-start", Button).focus()
         await pilot.press("enter")
-        state = await asyncio.to_thread(app.recovery_service.wait, app.recovery_service.current()["operation_id"], timeout=300 if sys.platform == "win32" else 65)
+        async with asyncio.timeout(300 if sys.platform == "win32" else 65):
+            await pilot.pause()
+            await asyncio.gather(*(worker.wait() for worker in list(app.workers) if worker.group == "backup-later-start"))
+            current = app.recovery_service.current()
+            assert current["kind"] == "later_rollback" and current["operation_id"] != previous_operation, dict(current)
+            state = await asyncio.to_thread(app.recovery_service.wait, current["operation_id"], timeout=300 if sys.platform == "win32" else 65)
         retain("later_rollback_terminal",
                state={key: state[key] for key in ("state", "phase", "issues", "review_issues")}, result=dict(state["result"]))
         assert state['state']=='recovery_required',dict(state)

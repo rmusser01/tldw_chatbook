@@ -7,7 +7,7 @@ labels:
 - backup-recovery
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2642
-updated_date: 2026-09-13 01:03
+updated_date: 2026-09-13 01:18
 ---
 
 ## Description
@@ -107,6 +107,10 @@ Native Windows full run34727849451 exact ae901141df253ba8705589b4bb85ec1d3790031
 7a83 Windows diagnostic34728494889 native42pass/product1fail221.863s;16hashes verified. Original error is ValueError target_unverified at restore_plan:676: a target item has no path with blocking status. Inventory discovery intentionally catches underlying discovery errors. Next bounded test observer records exceptions reaching discover plus anonymous owner/status summary, without exception text, paths or local values.
 8bf native diagnostic identifies many core databases missing_required, corresponding unknown existing children, agents.history unavailable and persona dependent unsupported. Code confirms recovery default sentinel uses str(Path('~/.local/share/tldw_cli')/leaf), yielding backslashes on Windows, whereas normal app compares literal forward-slash defaults from CONFIG_TOML_CONTENT. Saved defaults thus select wrong recovery paths after normal app writes config. Correct only two sentinel comparisons in profile_paths.database_path and DB.recovery_operations optional-default classification; add cross-flavor regressions and native support parity test.
 Two exact-literal default sentinel corrections implemented. RED11Windowsflavor failures/11POSIXpasses; GREEN23 new spelling/runtime parity checks plus existing actual lazy-owner required-missing test =24passed1.14s. Independent native review no findings; production Bandit0, Ruff baseline3+1/current3+1/new0, tests/runner clean. Existing legacy resolver test still fails known raw_source_selection_changed fixture before comparisons; unchanged. Starting actual macOS combined; full nativeWindows and Linux exact revision next.
+9ec5955105179a25223397e1e8f5b154d64db573 full Windows34729579468 active. Actual Linux source SHA25626e074f9e41d0352ebb0efc4c35a0a35e73ed1c95a844143809b326393d7c137; readers110passed17.76s, combinedrunning; artifact artifacts-platform-private-9ec5955105179a25223397e1e8f5b154d64db573-20260912-180500. macOS combined process exited0; reading final log before recording elapsed.
+9ec actual macOS combinedPASS180.27s; Linux readers110PASS17.76s and combinedPASS282.4s. Windows replacement inventory blocking[] and reaches35explicit builtin selections plus FRESH_REPLACEMENT_REVIEWED. Test immediately reads current after threaded UIstart handler dispatch, sees old inspection and exits mounted context; on_unmount closes service before worker starts (trace recovery_service_closed). Correct test synchronization by awaiting matching real Textual worker before reading current, inside existing service-wait time budget; apply same start-worker observation to second replacement and later rollback start. No production change.
+Root independently downloaded all9ec fullWindows34729579468 artifacts:124/124hashes verified exactclean9ec,9854files/sourcearchivee786f0301b3911edaa05bd3d9c41822a53acd197f498ba074461ef4093af1434. Product98pass2fail, native294; support94/F9three/twoprofilepass. Both targets have valid inventory, safety35 andreview; error atstartworker _start173 after testprematureexit. Driver correction awaits dispatchedgroupworker andassertsnewID/expectedkind within originalbudget. Existing actualmacOScombinedwithworkerwait running.
+Actual macOS combined replacement/laterrollback withstartworker waits passes195.89s. Finaldriver additionally drainsdispatch and asserts newID/kind; independent review accepted; Ruffand embeddedcompile pass. No production changes in this revision. Full nativeWindows rerun next.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

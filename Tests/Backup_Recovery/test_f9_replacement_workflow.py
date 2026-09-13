@@ -189,14 +189,18 @@ def headless(app,*args,**kwargs):
      await asyncio.sleep(.03)
    assert set(screen._restore_plan.safety_scope)==safety_keys
    print('FRESH_REPLACEMENT_REVIEWED',flush=True)
+   previous_operation=app.recovery_service.current()['operation_id']
    screen.query_one('#backup-start-restore',Button).focus();await pilot.press('enter')
-   current=app.recovery_service.current()
-   if current['kind']!='restore':
-    text=str(screen.query_one('#backup-message',Static).render())
-    print('CONCRETE_UI_START_BLOCKER',text,flush=True)
-    (Path.home()/'probe-result.json').write_text(json.dumps({'checkpoint':'start','refusal':text}))
-    return
-   state=await asyncio.to_thread(app.recovery_service.wait,current['operation_id'],timeout=300 if sys.platform=='win32' else 55)
+   async with asyncio.timeout(300 if sys.platform=='win32' else 55):
+    await pilot.pause()
+    await asyncio.gather(*(worker.wait() for worker in list(app.workers) if worker.group=='backup-restore-start'))
+    current=app.recovery_service.current()
+    if current['kind']!='restore' or current['operation_id']==previous_operation:
+     text=str(screen.query_one('#backup-message',Static).render())
+     print('CONCRETE_UI_START_BLOCKER',text,flush=True)
+     (Path.home()/'probe-result.json').write_text(json.dumps({'checkpoint':'start','refusal':text}))
+     return
+    state=await asyncio.to_thread(app.recovery_service.wait,current['operation_id'],timeout=300 if sys.platform=='win32' else 55)
    print('FRESH_REPLACEMENT_TERMINAL',dict(state),flush=True)
    assert state['state']=='recovery_required',dict(state)
    expected=tuple(state['review_issues'])
@@ -230,8 +234,14 @@ def headless(app,*args,**kwargs):
    assert set(screen._restore_plan.acknowledged_credential_issues)==set(expected)
    assert set(screen._restore_plan.safety_scope)==safety_keys
    print('ACTUAL_SECOND_REVIEW_ACKNOWLEDGED',flush=True)
+   previous_operation=app.recovery_service.current()['operation_id']
    screen.query_one('#backup-start-restore',Button).focus();await pilot.press('enter')
-   state=await asyncio.to_thread(app.recovery_service.wait,app.recovery_service.current()['operation_id'],timeout=360 if sys.platform=='win32' else 90)
+   async with asyncio.timeout(360 if sys.platform=='win32' else 90):
+    await pilot.pause()
+    await asyncio.gather(*(worker.wait() for worker in list(app.workers) if worker.group=='backup-restore-start'))
+    current=app.recovery_service.current()
+    assert current['kind']=='restore' and current['operation_id']!=previous_operation,dict(current)
+    state=await asyncio.to_thread(app.recovery_service.wait,current['operation_id'],timeout=360 if sys.platform=='win32' else 90)
    print('SECOND_REPLACEMENT_TERMINAL',dict(state),flush=True)
    result={'state':state['state'],'phase':state['phase'],'issues':list(state['issues']),'review_issues':list(state['review_issues']),'result':dict(state['result'])}
    (Path.home()/'probe-result.json').write_text(json.dumps(result,default=str))

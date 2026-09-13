@@ -4,6 +4,21 @@ TASK-32496; PR2642 targets dev. This record supersedes the platform limitation i
 the earlier Python encryption verification. Work remains in progress until the
 Windows installed product cases pass.
 
+Revision `9ec5955105179a25223397e1e8f5b154d64db573` confirms the database
+default correction on [Windows34729579468](https://github.com/rmusser01/tldw_chatbook/actions/runs/34729579468):
+fresh target inventory has no blocking items, and replacement reaches explicit
+35-member builtin safety selection and completed review. Native294 and product98
+pass; replacement and rollback fail because the test reads the old operation
+immediately after dispatching the threaded UI start worker, then exits the app.
+Unmount closes the service before that worker starts (`recovery_service_closed`).
+The driver now drains button dispatch, awaits the matching Textual start worker,
+and requires a new operation with the expected kind before waiting on its result.
+The existing elapsed budgets include that wait. All124 artifact hashes verify;
+support94, plain, encrypted, encrypted-credentials and two-profile groups pass.
+Actual macOS combined passes180.27 seconds; Linux reader110 passes17.76 seconds
+and combined replacement/later rollback passes282.4 seconds. Linux source SHA256:
+`26e074f9e41d0352ebb0efc4c35a0a35e73ed1c95a844143809b326393d7c137`.
+
 The Windows inventory diagnostic at `8bf43d0630b80b5882ed278d0df320785aa56c7b`
 shows core databases missing at selected paths while their actual files appear
 as unknown children. Recovery constructed its default-setting sentinel with native
