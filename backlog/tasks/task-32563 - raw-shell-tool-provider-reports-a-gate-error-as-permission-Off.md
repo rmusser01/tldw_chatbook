@@ -1,5 +1,5 @@
 ---
-id: TASK-32509
+id: TASK-32563
 title: raw_shell_tool_provider reports a gate error as permission Off
 status: To Do
 assignee: []

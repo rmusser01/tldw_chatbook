@@ -1,5 +1,5 @@
 ---
-id: TASK-32510
+id: TASK-32564
 title: Two defaults for [mcp] approval_timeout_seconds: controller 0.0 vs service 120.0
 status: To Do
 assignee: []
