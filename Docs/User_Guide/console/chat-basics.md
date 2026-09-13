@@ -557,6 +557,7 @@ prior exports, or backups. See [Context, RAG, and exchange capture](context-and-
   message.
 
 —
+
 *Verified against dev @ ff435772c — 2026-07-31. Verified against
 9f90e17b8 — 2026-08-06 (PR-T3, docs pass against shipped code/tests).
 Composer geometry, history recall, and ghost text re-verified against
@@ -579,16 +580,18 @@ TASK-23088's production-shaped provider-free journey on 2026-08-27.*
 **Open note** landing in the Library note editor; the saved note's keywords
 were read back from the database as `console`, `conversation:<id>`,
 `message:<id>`. The More… menu contents above were read off that same walk.
-Fix round 1 withdrew this stamp's first-draft sentence "Save as… ▸ Note was
-ALSO saving under an owner id nothing sets, so its notes never appeared in
-Library ▸ Notes" — notes have no owner column and Library ▸ Notes lists every
-note whatever identity wrote it, so nothing saved by Save as… ▸ Note was ever
-missing; what changed is only which identity a note records as its author,
-the configured notes identity instead of a literal nothing sets, and both
-routes write under it. Also from fix round 1: a captured reply that opens with
-a code fence or a heading is titled by its first line of text, and Capture as
-note refuses at dispatch in a temporary chat as well as being offered
-disabled — copy-only, checked against the notes schema and list query.)*
+Fix round 1: the owner-id sentence this stamp first carried — "Save as… ▸
+Note was ALSO saving under an owner id nothing sets, so its notes never
+appeared in Library ▸ Notes; both routes now write under the configured notes
+identity" — was wrong and is withdrawn — notes have no owner column and
+Library ▸ Notes lists every note whatever identity wrote it, so nothing saved
+by Save as… ▸ Note was ever missing. What changed is only which identity a
+note records as its author: the configured notes identity instead of a
+literal nothing sets. Both routes write under it. Also: a captured reply that
+opens with a code fence or a heading is now titled by its first line of text,
+and Capture as note refuses at dispatch in a temporary chat as well as being
+offered disabled. Copy-only correction checked against the notes schema and
+list query; no live walk.)*
 
 *Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271:
 **Capture as note** re-walked on dev 7159fc0b99 at 235x52 and 100x30 on a

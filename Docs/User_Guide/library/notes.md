@@ -528,7 +528,7 @@ because Enter there goes back rather than creating anything.
 **Add from files…** first asks what relationship you want. Until you choose,
 the header names neither relationship — it reads "Add files to Library notes."
 over "Choose how files should relate to Library notes.", and its next action is
-to pick one. (Was "it reads "Add from files"" — superseded by task-32271 below:
+to pick one. (Was "reads **Add from files**" — superseded by task-32271 below:
 that was the toolbar button's label, never the heading's.)
 
 - **Import once** copies supported files into Library notes and ends after its
@@ -610,8 +610,14 @@ legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root — though today **Resume** does not bring a paused root back at
 all, whether or not anything changed while it was paused: its row reads
 "✕ Failed · Next: Review changes", **Check changes** answers "Manual check
-failed", and **Review** says the folder is still paused, so pause only when
-you can live with a restart (task-32519). **Retarget** and **Disconnect**
+failed", and **Review** says the folder is still paused. A restart does not
+recover it either: the row comes back as "Ⅱ Paused · Next: Resume", Check
+changes fails while it is paused, Resume fails the same way, and a file
+edited on disk after the restart never syncs — so pause only if you can live
+with the root staying paused; nothing in this release resumes it
+(task-32519). (Was "so pause only when you can live with a restart" —
+superseded by task-32271 below: the restart was asserted, then walked.)
+**Retarget** and **Disconnect**
 remain visibly disabled with an unavailable-in-this-release reason; no files
 or notes change.
 
@@ -831,10 +837,14 @@ stayed as text and are not counted.
    cutover release.
 2. In the notes list, click **Add from files…** and choose **Keep a folder
    synced**.
-3. Click **Choose folder…**; type into the **Folder path** field and either
-   press Enter (browses into it) or click **Select folder** (uses it right
-   away). Choose a direction and local destination. Server sync remains
-   unavailable until its separate capability is installed.
+3. Click **Choose folder…**; type a path into the **File name** field ("File
+   name or path") and either press Enter (browses into it) or click **Select
+   folder** (uses the folder being browsed, or the folder row you last
+   clicked). (Was "type into the **Folder path** field" — superseded by
+   task-32271 below: this is the files-or-one-folder dialog, whose field is
+   "File name" and starts empty.) Choose a direction and local destination.
+   Server sync remains unavailable until its separate capability is
+   installed.
 4. Choose **Check changes** and review the exact safe, attention, skipped, and
    deletion-like effects. If the folder cannot be used, the status line under
    the pane's "Add files to Library notes" heading says which rule it broke
@@ -1106,7 +1116,8 @@ superseded by task-32173 below; see [File notes](file-notes.md).)*
 Import once and Keep-synced folder pickers used to commit the directory
 being browsed and silently ignore a typed-but-unsubmitted path when
 **Select folder** was pressed. Both now resolve the **Folder path** field
-first — Enter still browses into it, and Select/Select folder use it
+(on the dialog both flows open today that field is **File name** — task-32271
+below) first — Enter still browses into it, and Select/Select folder use it
 immediately, with an inline error and the dialog left open for an invalid
 path. The confirmation line shows the full picked path, not just its
 basename. Pinned in `Tests/UI/test_file_open_select_folder.py`,

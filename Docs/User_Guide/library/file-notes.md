@@ -482,6 +482,7 @@ save shortcut. File edits save automatically.
 *Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Folder files mode
 stays inside the Library rail/canvas frame instead of replacing the whole
 shell; Escape returns to Library notes)*
+
 *Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
 Folder files mode's canvas states in-app that it edits the folder directly,
 unlike a managed Library relationship).*
