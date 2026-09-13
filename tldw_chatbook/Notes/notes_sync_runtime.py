@@ -11,7 +11,7 @@ from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Protocol, cast
 from uuid import uuid4
@@ -103,6 +103,7 @@ _EXECUTABLE_ACTIONS = NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS
 _SYNC_FILE_EXTENSIONS = frozenset({".md", ".markdown", ".txt"})
 _OBSERVATION_BUNDLE_LIMIT = 8
 _DISPLAY_LABEL_MAX_CHARS = 160
+_DESTINATION_LABEL_MAX_CHARS = 1024
 _DURABLE_BLOCKED_STATUS = MappingProxyType(
     {
         "activation_recovery_required": ("needs_attention", "review_settings"),
@@ -279,6 +280,55 @@ class RuntimeConflictLabel:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RuntimeBindingLabel:
+    """Bounded identity label for one reviewed binding: its path and folder.
+
+    task-32535: the review used to render one generic line per planned
+    effect ("Create a Library note") because a plan carries only opaque ids.
+    This is the path-bearing seam the review rows are named from.
+    """
+
+    binding_id: str
+    relative_path: str
+    note_title: str
+    destination_folder: str
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.binding_id, field_name="binding_id")
+        for name, limit in (
+            ("note_title", _DISPLAY_LABEL_MAX_CHARS),
+            ("destination_folder", _DESTINATION_LABEL_MAX_CHARS),
+        ):
+            value = getattr(self, name)
+            if (
+                type(value) is not str
+                or not value
+                or len(value) > limit
+                or "\n" in value
+                or "\r" in value
+            ):
+                raise ValueError(f"{name} must be bounded single-line text")
+        object.__setattr__(
+            self,
+            "relative_path",
+            normalize_notes_sync_relative_path(self.relative_path),
+        )
+
+    def __repr__(self) -> str:
+        return "RuntimeBindingLabel(<private>)"
+
+
+def _destination_folder(root_name: str, relative_path: str) -> str:
+    """Return "<root> / <dir> / <sub>" for a file, or the root name alone."""
+
+    return " / ".join((root_name, *PurePosixPath(relative_path).parent.parts))
+
+
+def _bounded_label(value: str) -> str:
+    return (" ".join(value.split()) or "Untitled")[:_DISPLAY_LABEL_MAX_CHARS]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RuntimeConflictHistoryRow:
     """Fresh, bounded display projection for one durable history row."""
 
@@ -420,6 +470,15 @@ class _RuntimeAdapter(Protocol):
         plan: ReconciliationPlan,
         binding_ids: tuple[str, ...],
     ) -> tuple[RuntimeConflictLabel, ...]: ...
+
+    async def build_binding_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+        *,
+        root_name: str | None = None,
+    ) -> tuple[RuntimeBindingLabel, ...]: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1045,6 +1104,58 @@ class _ProductionRuntimeAdapter:
                     binding_id,
                     " ".join(binding.note.title.split())[:_DISPLAY_LABEL_MAX_CHARS],
                     binding.file.observation.relative_path,
+                )
+            )
+        return tuple(labels)
+
+    async def build_binding_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+        *,
+        root_name: str | None = None,
+    ) -> tuple[RuntimeBindingLabel, ...]:
+        """Name reviewed bindings by path, resulting title and Library folder.
+
+        A setup review passes the display name (its root folder does not
+        exist yet); an active root's name is read from its logical folder.
+        """
+
+        bundle = self._bundles.get(plan.observation_token, {})
+        if root_name is None:
+            if root.logical_folder_id is None:
+                raise RuntimeError("folder_owner_missing")
+            folder = await self._service.get_note_folder_by_id_for_sync(
+                scope=ScopeType.LOCAL_NOTE,
+                folder_id=root.logical_folder_id,
+                include_deleted=True,
+                user_id=self._user_id,
+            )
+            if folder is None or folder.deleted:
+                raise RuntimeError("folder_owner_missing")
+            root_name = folder.name
+        labels: list[RuntimeBindingLabel] = []
+        for binding_id in binding_ids:
+            binding = bundle.get(binding_id)
+            if binding is None or binding.record.root_id != root.root_id:
+                raise RuntimeError("private_label_authority_missing")
+            relative_path = (
+                binding.file.observation.relative_path
+                if binding.file is not None
+                else binding.record.normalized_relative_path
+            )
+            title = (
+                binding.note.title
+                if binding.note is not None
+                else Path(relative_path).stem
+            )
+            labels.append(
+                RuntimeBindingLabel(
+                    binding_id,
+                    relative_path,
+                    _bounded_label(title),
+                    _destination_folder(root_name, relative_path),
                 )
             )
         return tuple(labels)
@@ -2012,6 +2123,83 @@ class NotesSyncRuntimeOwner:
                 or tuple(label.binding_id for label in labels) != binding_ids
             ):
                 raise RuntimeError("invalid_conflict_label_projection")
+            return labels
+        finally:
+            if observed_token is not None:
+                release = getattr(self._adapter, "release_observation", None)
+                if callable(release):
+                    release(observed_token)
+            self._finish_task(root_id, task)
+
+    async def binding_labels(
+        self,
+        root_id: str,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[RuntimeBindingLabel, ...]:
+        """Name reviewed bindings by path and folder under current review authority.
+
+        Like :meth:`conflict_labels`, the folder is re-observed and the plan
+        must still equal the reviewed one -- a label for a file that changed
+        since the check is refused as ``stale_review``, never guessed.
+        """
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(binding_ids) is not tuple:
+            raise TypeError("binding_ids must be a tuple")
+        for binding_id in binding_ids:
+            validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        task = self._admit_task(root_id)
+        observed_token: str | None = None
+        try:
+            setup_review = self._setup_reviews.get(root_id)
+            reviewed = (
+                setup_review.plan
+                if setup_review is not None
+                else self._reviews.get(root_id)
+            )
+            if reviewed is None:
+                raise ValueError("stale_review")
+            root_name: str | None = None
+            if setup_review is not None:
+                setup = setup_review.setup
+                root = NotesSyncRootRecord(
+                    root_id=root_id,
+                    note_scope_id=setup.note_scope_id,
+                    logical_folder_id=None,
+                    canonical_path=setup.canonical_path,
+                    direction=setup.direction,
+                    state=NotesSyncRootState.PENDING,
+                )
+                root_name = setup.display_name
+            else:
+                root = await asyncio.to_thread(self._store.get_root, root_id)
+                if root.state is not NotesSyncRootState.ACTIVE and not (
+                    root.state is NotesSyncRootState.PAUSED
+                    and root.last_status_code == "migration_review_required"
+                ):
+                    raise RuntimeError("sync_root_not_active")
+            if root.root_id != root_id:
+                raise RuntimeError("root_authority_mismatch")
+            self._require_authority(root_id, "plan")
+            observations = await self._adapter.observe_root(root)
+            observed_token = _observation_token(observations)
+            plan = plan_reconciliation(observations)
+            self._require_authority(root_id, "plan")
+            if observations.root_id != root_id or plan.root_id != root_id:
+                raise RuntimeError("root_observation_mismatch")
+            if observations.direction is not root.direction:
+                raise RuntimeError("root_direction_changed")
+            if plan != reviewed:
+                raise ValueError("stale_review")
+            labels = await self._adapter.build_binding_labels(
+                root, plan, binding_ids, root_name=root_name
+            )
+            if (
+                type(labels) is not tuple
+                or any(type(label) is not RuntimeBindingLabel for label in labels)
+                or tuple(label.binding_id for label in labels) != binding_ids
+            ):
+                raise RuntimeError("invalid_binding_label_projection")
             return labels
         finally:
             if observed_token is not None:
@@ -3157,6 +3345,7 @@ __all__ = [
     "NotesSyncControlResult",
     "NotesSyncRootRuntimeSnapshot",
     "NotesSyncRootSetup",
+    "RuntimeBindingLabel",
     "RuntimeConflictHistoryRow",
     "RuntimeConflictLabel",
     "RuntimeConflictReceipt",

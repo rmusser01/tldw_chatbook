@@ -187,6 +187,32 @@ class ReconciliationSkip:
         validate_notes_sync_reason_code(self.reason_code)
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ReconciliationItemSkip:
+    """One discovered file the plan leaves alone, and why (task-32535).
+
+    Unlike :class:`ReconciliationSkip` this is per file, never blocks the
+    rest of the plan, and carries the root-relative path so the review can
+    name it.
+    """
+
+    relative_path: str
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "relative_path",
+            normalize_notes_sync_relative_path(self.relative_path),
+        )
+        if self.reason_code is None:
+            raise ValueError("reason_code is required.")
+        validate_notes_sync_reason_code(self.reason_code)
+
+    def __repr__(self) -> str:
+        return "ReconciliationItemSkip(<private>)"
+
+
 @dataclass(frozen=True, slots=True)
 class ManagedPlacementEffect:
     kind: ManagedPlacementEffectKind
@@ -232,6 +258,7 @@ class ReconciliationPlan:
     managed_placement_effects: tuple[ManagedPlacementEffect, ...]
     deletion_groups: tuple[DeletionGroup, ...]
     page_size: int = RECONCILIATION_PAGE_SIZE
+    item_skips: tuple[ReconciliationItemSkip, ...] = ()
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -245,6 +272,7 @@ class ReconciliationPlan:
             ("skips", ReconciliationSkip),
             ("managed_placement_effects", ManagedPlacementEffect),
             ("deletion_groups", DeletionGroup),
+            ("item_skips", ReconciliationItemSkip),
         ):
             values = getattr(self, name)
             if type(values) is not tuple or any(
@@ -260,7 +288,8 @@ class ReconciliationPlan:
         return (
             "ReconciliationPlan("
             f"safe={len(self.safe_actions)}, attention={len(self.attention)}, "
-            f"skips={len(self.skips)}, deletion_groups={len(self.deletion_groups)})"
+            f"skips={len(self.skips)}, item_skips={len(self.item_skips)}, "
+            f"deletion_groups={len(self.deletion_groups)})"
         )
 
 
@@ -682,6 +711,7 @@ __all__ = [
     "ReconciliationAttention",
     "ReconciliationAttentionKind",
     "ReconciliationInput",
+    "ReconciliationItemSkip",
     "ReconciliationPlan",
     "ReconciliationSkip",
     "ReconciliationSkipKind",

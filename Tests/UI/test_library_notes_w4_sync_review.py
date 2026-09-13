@@ -17,13 +17,20 @@ from pathlib import Path
 import pytest
 from textual.widgets import Checkbox, Collapsible, Static
 
-from Tests.Widgets.Library.test_library_notes_add_from_files_canvas import _Host
+from Tests.Widgets.Library.test_library_notes_add_from_files_canvas import (
+    _Host,
+    _frame,
+)
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncReview,
     LastingSyncReviewRow,
     LastingSyncSetup,
     initial_lasting_sync_snapshot,
+)
+from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncAction,
+    NotesSyncActionKind,
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationPlan
 from tldw_chatbook.Notes.notes_sync_runtime import (
@@ -89,7 +96,7 @@ async def test_review_row_reads_path_effect_and_where() -> None:
         )
         heading = app.query_one(".notes-sync-review-group-heading", Static)
         assert str(heading.renderable) == "Create a Library note (1)"
-        assert "Safe item 1" not in app.export_screenshot(simplify=True)
+        assert "Safe item 1" not in _frame(app)
 
 
 async def test_sixty_creates_collapse_to_one_summary_row_with_a_disclosure() -> None:
@@ -157,14 +164,63 @@ async def test_skipped_rows_group_under_a_skipped_heading_with_the_reason() -> N
         ]
         assert ".trash/Old idea.md · Obsidian trash — skipped" in lines
         assert "Inbox/Untitled.md · Empty file — nothing to import" in lines
-        assert "1 safe · 0 need attention · 2 skipped" in app.export_screenshot(
-            simplify=True
-        )
+        assert "1 safe · 0 need attention · 2 skipped" in _frame(app)
 
 
 class _Importer:
     def begin_selection(self) -> None:
         raise AssertionError("setup must not enter import")
+
+
+async def test_unnamed_rows_never_cost_the_user_the_review() -> None:
+    """A name is decoration: a refused label projection must not eat the review.
+
+    Regression pin: naming rows made `binding_labels` part of loading a
+    review, and a runtime that refused it (a stale folder, an older port)
+    left the review empty -- which also disarmed Activate, because the
+    replacement review carried no observation token.
+    """
+
+    class _Refusing:
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot("active", "sync_now", ())
+
+        async def review_setup(self, setup: NotesSyncRootSetup) -> ReconciliationPlan:
+            return ReconciliationPlan(
+                root_id="setup-root",
+                observation_token=TOKEN,
+                safe_actions=(
+                    NotesSyncAction("act-1", NotesSyncActionKind.CREATE_NOTE, "bind-1"),
+                ),
+                attention=(),
+                skips=(),
+                managed_placement_effects=(),
+                deletion_groups=(),
+            )
+
+        async def binding_labels(
+            self, root_id: str, binding_ids: tuple[str, ...]
+        ) -> tuple[RuntimeBindingLabel, ...]:
+            raise ValueError("stale_review")
+
+        async def abandon_setup(self, root_id: str) -> None:
+            return None
+
+    controller = LibraryNotesSyncController(
+        runtime=_Refusing(), import_controller=_Importer()
+    )
+    controller.choose_relationship("keep_synced")
+    controller.set_setup("display_name", "Vault")
+    controller.set_setup("folder", str(Path.home()))
+    await controller.check_setup()
+
+    review = controller.snapshot.review
+    assert controller.snapshot.phase == "review"
+    assert review.observation_token == TOKEN
+    assert review.safe_count == 1
+    assert review.rows[0].effect == "Create a Library note"
+    # Unnamed, never wrongly named.
+    assert (review.rows[0].relative_path, review.rows[0].destination) == ("", "")
 
 
 class _SetupRuntime:

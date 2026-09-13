@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from math import ceil
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
@@ -23,6 +24,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
     normalize_notes_sync_relative_path,
     validate_notes_sync_digest,
     validate_notes_sync_opaque_id,
+    validate_notes_sync_reason_code,
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     ManagedPlacementEffectKind,
@@ -30,6 +32,18 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationPlan,
     ReconciliationSkipKind,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_sync_runtime import RuntimeBindingLabel
+
+#: task-32535: the Import once reason copy, shortened to the row grammar.
+_ITEM_SKIP_EFFECTS = {
+    "obsidian_config": "Obsidian configuration — skipped",
+    "obsidian_trash": "Obsidian trash — skipped",
+    "obsidian_template": "Obsidian template — skipped",
+    "empty_file": "Empty file — nothing to import",
+}
+_DESTINATION_MAX_CHARS = 1024
 
 LastingSyncReviewSource = Literal["setup", "root", "migration"]
 LastingSyncPhase = Literal[
@@ -158,7 +172,12 @@ class LastingSyncSetup:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class LastingSyncReviewRow:
-    """One path-free, bounded reviewed effect row."""
+    """One bounded reviewed effect row: what file, what happens, where.
+
+    task-32535: ``relative_path`` and ``destination`` name the file and the
+    Library folder it lands in (Import once's row grammar); ``reason`` is the
+    machine reason code behind a skipped row. Absolute paths never appear.
+    """
 
     item_id: str
     category: str
@@ -170,6 +189,9 @@ class LastingSyncReviewRow:
     selected_label: str = ""
     conflict_title: str = ""
     conflict_relative_path: str = ""
+    relative_path: str = ""
+    destination: str = ""
+    reason: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -177,6 +199,20 @@ class LastingSyncReviewRow:
             or type(self.conflict_relative_path) is not str
         ):
             raise TypeError("conflict labels must be strings")
+        if any(
+            type(value) is not str
+            for value in (self.relative_path, self.destination, self.reason)
+        ):
+            raise TypeError("row labels must be strings")
+        if self.relative_path:
+            object.__setattr__(
+                self,
+                "relative_path",
+                normalize_notes_sync_relative_path(self.relative_path),
+            )
+        if len(self.destination) > _DESTINATION_MAX_CHARS or "\n" in self.destination:
+            raise ValueError("destination must be bounded single-line text")
+        validate_notes_sync_reason_code(self.reason or None)
         if type(self.choices) is not tuple:
             raise TypeError("choices must be a tuple")
         validate_notes_sync_opaque_id(self.item_id, field_name="item_id")
@@ -613,11 +649,28 @@ def build_reconciliation_review(
     selections: tuple[ConflictSelection, ...] = (),
     stale: bool = False,
     activation: bool = False,
+    labels: Mapping[str, RuntimeBindingLabel] | None = None,
 ) -> LastingSyncReview:
-    """Translate a public reconciliation plan into bounded, path-free rows."""
+    """Translate a public reconciliation plan into bounded rows.
+
+    Args:
+        labels: Binding labels keyed by binding id (``NotesSyncRuntime
+            .binding_labels``). A labelled row names its file and destination
+            folder; an unlabelled one degrades to the effect alone.
+    """
 
     if type(plan) is not ReconciliationPlan:
         raise TypeError("plan must be a ReconciliationPlan")
+    labels = {} if labels is None else dict(labels)
+
+    def named(binding_id: str | None) -> dict[str, str]:
+        label = labels.get(binding_id) if binding_id is not None else None
+        if label is None:
+            return {}
+        return {
+            "relative_path": label.relative_path,
+            "destination": label.destination_folder,
+        }
     if type(selections) is not tuple or any(
         type(selection) is not ConflictSelection for selection in selections
     ):
@@ -643,6 +696,7 @@ def build_reconciliation_review(
                 category="safe",
                 effect=action_effects.get(action.kind, "Review this change"),
                 action_id=action.action_id,
+                **named(action.binding_id),
             )
         )
     managed_binding_ids = frozenset(
@@ -691,6 +745,7 @@ def build_reconciliation_review(
                     if conflict_eligible and attention.binding_id in selected_by_id
                     else ""
                 ),
+                **named(attention.binding_id),
             )
         )
     for group in plan.deletion_groups:
@@ -719,6 +774,16 @@ def build_reconciliation_review(
                 effect=skip_effects[skip.kind],
             )
         )
+    for index, item_skip in enumerate(plan.item_skips):
+        rows.append(
+            LastingSyncReviewRow(
+                item_id=f"item-skip-{index}",
+                category="skipped",
+                effect=_ITEM_SKIP_EFFECTS.get(item_skip.reason_code, "Skipped"),
+                relative_path=item_skip.relative_path,
+                reason=item_skip.reason_code,
+            )
+        )
     for effect in plan.managed_placement_effects:
         label = (
             "Preview explicit filesystem move"
@@ -731,6 +796,7 @@ def build_reconciliation_review(
                 category="managed placement",
                 effect=label,
                 choices=("Apply once", "Leave unchanged"),
+                **named(effect.binding_id),
             )
         )
 
@@ -753,7 +819,7 @@ def build_reconciliation_review(
         safe_count=len(plan.safe_actions),
         attention_count=len(plan.attention)
         + sum(len(group.items) for group in plan.deletion_groups),
-        skip_count=len(plan.skips),
+        skip_count=len(plan.skips) + len(plan.item_skips),
         managed_count=len(plan.managed_placement_effects),
         rows=tuple(rows[start : start + page_size]),
         page=bounded_page,

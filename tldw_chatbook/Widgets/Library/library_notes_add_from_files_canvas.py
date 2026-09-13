@@ -6,6 +6,7 @@ scroll body so a 60x20 terminal never hides what the user is about to do.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any
 
 from textual import on
@@ -14,8 +15,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
+from tldw_chatbook.Library.library_note_import_state import UNIFORM_RUN_MIN
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
@@ -29,6 +31,12 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
 )
 from tldw_chatbook.Notes.notes_sync_models import validate_notes_sync_opaque_id
 from tldw_chatbook.Utils.Utils import elide_path_middle
+from tldw_chatbook.Widgets.Library.library_note_import_canvas import (
+    bounded_row_name,
+    group_heading,
+    run_disclosure,
+    uniform_runs,
+)
 
 
 _CHOICE_SLUGS = {
@@ -433,18 +441,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     classes="library-disabled-reason",
                     markup=False,
                 )
-            for index, row in enumerate(review.rows):
-                with Vertical(
-                    id=f"notes-sync-review-row-{index}",
-                    classes="library-notes-sync-review-row",
-                ):
-                    yield Static(
-                        f"{row.category.title()} item {index + 1}",
-                        classes="destination-section",
-                        markup=False,
-                    )
-                    yield Static(row.effect, markup=False)
-                    yield from self._compose_review_row_body(index, row)
+            yield from self._compose_review_rows(review.rows)
             if review.page_count > 1:
                 yield Static(
                     f"Page {review.page} of {review.page_count}",
@@ -484,6 +481,79 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             return
         if phase == "history":
             yield from self._compose_history()
+
+    # task-32535: the review used to read "Safe item N / Create a Library
+    # note" sixty times over. Rows now follow Import once's grammar (path ·
+    # what happens · where), sit under a heading per effect with its count,
+    # and a uniform run collapses to one summary row with a disclosure.
+    def _compose_review_rows(
+        self, rows: tuple[LastingSyncReviewRow, ...]
+    ) -> ComposeResult:
+        groups: dict[tuple[str, str], list[tuple[int, LastingSyncReviewRow]]] = {}
+        for index, row in enumerate(rows):
+            key = (row.category, "" if row.category == "skipped" else row.effect)
+            groups.setdefault(key, []).append((index, row))
+        for (category, effect), members in groups.items():
+            yield Static(
+                group_heading(
+                    "Skipped" if category == "skipped" else effect,
+                    rendered=len(members),
+                    total=len(members),
+                ),
+                classes="notes-sync-review-group-heading destination-section",
+                markup=False,
+            )
+            for run in uniform_runs(tuple(members), key=self._run_key):
+                if len(run) < UNIFORM_RUN_MIN or category not in {"safe", "skipped"}:
+                    for index, row in run:
+                        yield from self._compose_review_row(index, row)
+                    continue
+                with run_disclosure(
+                    self._run_summary(run),
+                    dom_token=str(run[0][0]),
+                    id_prefix="notes-sync-run",
+                    classes="notes-sync-run",
+                ):
+                    for index, row in run:
+                        yield from self._compose_review_row(index, row)
+
+    @staticmethod
+    def _run_key(member: tuple[int, LastingSyncReviewRow]) -> tuple[str, ...]:
+        _, row = member
+        return (
+            PurePosixPath(row.relative_path).parent.as_posix(),
+            row.category,
+            row.effect,
+            row.destination,
+        )
+
+    @staticmethod
+    def _run_summary(run: tuple[tuple[int, LastingSyncReviewRow], ...]) -> str:
+        _, first = run[0]
+        folder = PurePosixPath(first.relative_path).parent.as_posix()
+        where = bounded_row_name(folder) if folder != "." else "top level"
+        parts = (where, f"{len(run)} files", first.effect, first.destination)
+        return " · ".join(part for part in parts if part)
+
+    @staticmethod
+    def _review_row_line(row: LastingSyncReviewRow) -> str:
+        path = row.relative_path or row.conflict_relative_path
+        parts = (bounded_row_name(path) if path else "", row.effect, row.destination)
+        return " · ".join(part for part in parts if part)
+
+    def _compose_review_row(
+        self, index: int, row: LastingSyncReviewRow
+    ) -> ComposeResult:
+        with Vertical(
+            id=f"notes-sync-review-row-{index}",
+            classes="library-notes-sync-review-row",
+        ):
+            yield Static(
+                self._review_row_line(row),
+                classes="notes-sync-review-line",
+                markup=False,
+            )
+            yield from self._compose_review_row_body(index, row)
 
     def _compose_review_row_body(
         self, index: int, row: LastingSyncReviewRow
