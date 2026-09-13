@@ -17,6 +17,8 @@ Keep automatic cleanup and failed-start deletion disabled. Creation does not dep
 
 Current spec: [Worktree restoration](../../Docs/superpowers/specs/2026-09-12-agent-worktree-restoration-design.md). First implementation slice: [Creation restoration](../../Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md). Previous execution experiments and results remain historical evidence; they do not override this decision.
 
+Implementation clarification: opening another AgentRunsDB handle never rewrites held or in-flight records. A held writer has no positive completion proof and remains unavailable; this does not require guessing whether a previous process crashed. Exact operation completion may release a claim back to unresolved only after positively proving no destination effect, for example a pre-apply conflict or an oversized patch after a disclosed child-only capture commit. Ambiguous Git effects or failed completion persistence remain in-flight/uncertain and are never replayed. Preview remains capped at8192characters and patch spooling at32MiB. Logical discard initially uses POSIX descriptor-relative no-follow cleanup and retains the baseline checkout; missing discard primitives refuse that action without disabling creation or other supported actions.
+
 ## Historical design before the scope correction
 
 ## Decision
