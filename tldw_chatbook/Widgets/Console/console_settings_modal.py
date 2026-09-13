@@ -3786,13 +3786,21 @@ class ConsoleSettingsModal(
         hint.display = overflow
 
     def _sync_responsive_layout(self) -> None:
-        """Derive compact layout from the measured modal-container width."""
+        """Derive the compact and wide layout tiers from measured widths."""
         try:
             container = self.query_one("#console-settings-modal", Vertical)
         except NoMatches:
             return
         compact = container.size.width < 100
         self.set_class(compact, "-conversation-settings-compact")
+        # The wide tier keys off the app viewport, never the container's own
+        # width: sizing the container from the container would oscillate.
+        # A >= 150-column viewport implies a >= 120-column container, so the
+        # compact tier (container < 100) can never co-occur with wide.
+        container.set_class(
+            self.app.size.width >= 150,
+            "-conversation-settings-wide",
+        )
         label_width = 16 if compact else MODAL_LABEL_WIDTH
         for label in self.query(".console-settings-modal-label"):
             label.styles.width = label_width

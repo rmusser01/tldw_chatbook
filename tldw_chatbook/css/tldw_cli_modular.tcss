@@ -2565,6 +2565,19 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     min-height: 1;
 }
 
+/* Wide-terminal tier (viewport >= 150 columns): the fixed 120-column
+   Conversation settings dialog reads as cramped next to the full-screen
+   F9 Settings on wide terminals, so grow the container to 85% of the
+   viewport, capped at 196 columns. The class is toggled by Python from
+   the app viewport width -- the container's own width cannot drive this
+   without a chicken-and-egg loop. Everything else (height, padding,
+   borders) is unchanged; the compact tier below 100 container columns
+   cannot co-occur (150 viewport columns implies a >= 120 container). */
+#console-settings-modal.-conversation-settings-wide {
+    width: 85%;
+    max-width: 196;
+}
+
 ConsolePromptPickerModal {
     align: center middle;
 }
