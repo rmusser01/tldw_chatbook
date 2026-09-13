@@ -1,6 +1,6 @@
 # Agent worktree restoration review record
 
-Status: implementation continues. Creation, durable-record prerequisites and actual ownership call sites are reviewed; confirmed operations and the Console flow are not yet complete. This supplements the earlier agent-orchestration-remaining review rather than replacing its historical findings or rulings.
+Status: implementation continues. Creation, durable-record prerequisites, actual ownership call sites and confirmed operations are reviewed; the Console flow is not yet complete. This supplements the earlier agent-orchestration-remaining review rather than replacing its historical findings or rulings.
 
 ## Completed review gates
 
@@ -265,3 +265,199 @@ None.
 Ruling: Include callback connection-ownership proof before review — the last tool callback can open a DB connection on a thread that then exits — cost is small callback wrapper bookkeeping; tests require newly opened connections close and borrowed ones remain usable.
 Ruling: Start confirmed-operation implementation while read-only re-review finishes the committed minor test fixes — no production blocker or source-writing overlap remains — cost is possible focused test rework if the small fix has a defect.
 Ruling: Let disjoint engine work continue while the small failed-start test-only correction is made — no production overlap and the shared test file has one explicit owner — cost is serialization of that file's later operation tests.
+
+
+## Confirmed-operation implementation gate
+
+Commit720bc15f92; independent review pending. Root inspected the final 91-case combined gate, four additional CAS/hooks cases and three final bounded administrative-read cases, plus zero added scoped diagnostics and passing edited formatting. These overlapping selections are not summed.
+
+# Task 1 implementation report
+
+Status: implemented and ready for independent review. Source left unstaged. TASK-31210 and TASK-31211 are not Done: the visible Console card, call-site parity, retained recovery list and manual operation lifetime remain the next slice.
+
+Initial source base: c8e1d119b8. Static/review comparison base: eed41ac5d2 (excludes the separately reviewed exact-owner fixture assertion follow-up). Current root commits during this work were governance-only. No Git/Backlog/governance mutations performed by this worker.
+
+## Delivered interface
+
+`tldw_chatbook/Agents/agent_worktree_recovery.py` exports the requested unchanged interface:
+
+```python
+@dataclass(frozen=True)
+class WorktreeRecoveryOutcome:
+    action: str
+    message: str
+    state: str
+    commit_sha: str | None = None
+
+def recover_agent_worktree(db, *, authority, conversation_id, run_id, action,
+                          request_confirmation, should_cancel): ...
+```
+
+The caller retains and activates its ExecutionOwner and invokes the synchronous function on its worker thread. The function borrows AgentRunsDB and never closes the caller connection. Exact `allow is True` is required. Payload includes run_id/action/branch/worktree/source/destination/diffstat; discard adds retains_checkout=True and retained_baseline text. Same-turn adapters add handle_id.
+
+Metadata eligibility precedes confirmation: exact conversation, terminal status, durable positive writer drain, unresolved claim state, selected writable authority, workspace/binding/fingerprint/root and complete identity chains, common Git directory, standard linked checkout and exact original branch/base ancestry. A second snapshot after Allow refuses observed drift. A generated transactional operation ID prevents competing mutation claims.
+
+Apply captures dirty/new source work using a fixed agent identity, streams a binary original-base patch to a capped owned temporary file, checks it before applying, and lands unstaged changes without replacing unrelated parent index state. Merge requires a clean destination with no existing merge/rebase/cherry-pick operation, disables hooks, makes an explicit no-ff commit, and aborts only a MERGE_HEAD demonstrably belonging to its source. Positive HEAD/status/operation restoration permits a no-effect refusal. Clean work refuses instead of issuing a false merge receipt.
+
+Logical discard inventories special/nested entries before mutation, deletes descendants through no-follow directory handles, restores a detached original-base checkout, and deletes only the exact recorded branch with expected-old-SHA CAS. Root and administrative link remain. CAS failure after cleanup leaves uncertain state and preserves the changed ref. No forced root removal is used in confirmed recovery.
+
+Known-no-destination-effect failures can release the exact claim to unresolved; uncertain effects and failed receipt persistence remain protected. A disclosed source-only capture commit may survive an oversized-patch refusal. Source/destination identities and live authority are checked at operation boundaries. Ordinary local Git retains the ADR-155 documented external replacement/config/filter limitations.
+
+## Files and implementation choices
+
+- New `Agents/agent_worktree_recovery.py`: shared validation, snapshots, consent, claims, actions and receipts.
+- New private `Agents/agent_worktree_git.py`: bounded Git stdout/stderr, fixed host environment, disabled generated hooks/signing, timeout and owned process-group retirement; unproven cleanup marks the active ExecutionOwner before returning.
+- `Agents/agent_service.py`: exact current-turn handle/run mapping, frozen selected authority, real confirmation callback, and identical fleet/primary/callable runtime/schema gate.
+- `Agents/tool_catalog.py`: current-turn handles, older Console recovery and retained baseline descriptions.
+- `DB/agent_worktrees.py`: exact-owner unresolved completion with caller-proven no-destination-effect contract.
+- New real Git/SQLite engine tests; actual run_turn apply/discard tests that join physical children and assert durable writer drain; updated Console disclosure and missing-card/authority assertions.
+- Existing lifecycle tests now place created children under their own temporary fixture directory.
+
+Deviation: existing legacy helpers in `agent_worktree.py` remain unchanged. Confirmed production operations exclusively use the new shared engine/private bounded helper; legacy helper deletion is still used by older fixture cleanup and remains unreachable from restored service operations. No automatic cleanup was enabled.
+
+## Limits
+
+- Preview text: 8192 characters. Git output and streamed binary patch: 32 MiB each. Changed/untracked snapshot content: 32 MiB per inspected tree; entry inventory: 10,000. Oversized or special entries refuse explicitly rather than silently truncating the fingerprint.
+- Unchanged baseline file bytes are not scanned into snapshot content limits. Tracked HEAD/index/diff evidence plus no-follow changed/untracked bytes and discard ignored entries detect content drift. Ignored discard entries appear in preview.
+- Read snapshots require actual no-follow descriptor read primitives. Discard separately requires POSIX descriptor unlink/rmdir. A missing discard-only primitive does not disable apply (tested); platforms without safe snapshot reads refuse recovery. Creation is untouched. Evidence is macOS POSIX, not a Windows qualification claim.
+- Process limits are 30 seconds plus bounded cleanup waits. A residual background filter process is killed even after its Git leader and pipes complete. If process-group retirement cannot be proven, the owner is marked cleanup-unproven and recovery refuses conservatively.
+- No public read-only Git allowlist, dependency, network/provider path, live config, or user repository was changed.
+
+## Evidence
+
+All runs used the supplied unique-label runner and existing integration interpreter. Exact commands, isolated basetemp paths, stdout/stderr and exit status are in `final-evidence/<label>/`.
+
+- `engine-red-1`: 19 expected failures before engine/DB implementation.
+- `engine-green-1`: 19 passed, establishing real apply/merge/discard.
+- `adapters-red-1`: 5 expected failures for disclosure/missing authority and large unchanged baseline.
+- `service-integration-1`: 2 passed; actual run_turn, real child fs_write and durable physical-drain assertions.
+- `engine-neighbors-2`: 60 passed across engine, runtime, Console and DB.
+- `hardening-red-1`: three expected failures (clean merge receipt, ignored discard preview, administrative symlink), one oversized-patch behavior pass.
+- `hardening-green-1`: 27 passed.
+- `process-capabilities-red`: capability failure plus a test harness `ps` permission error. The process check was corrected to a temporary child heartbeat; no permission escalation or process census was attempted.
+- `process-red-corrected`: expected failure proving the old helper returned while a filter descendant was still writing its owned heartbeat.
+- `final-targeted-1`: **91 passed, 1 inherited warning, 37.52s**. Includes new engine, existing lifecycle, dispatch, Console confirmation, selected actual service nodes and all directly affected DB recovery tests.
+- `final-cas-hooks`: **4 passed, 1 inherited warning, 3.97s**. Exact-ref mutation race, pre-existing merge preservation, and actual apply/merge with refusing repository hooks prove hooks are disabled.
+- `bounded-admin-final`: **3 passed, 1 inherited warning, 2.88s**; final focused recheck for capped no-follow administrative link reads and unaffected apply/capability behavior.
+
+The inherited warning is RequestsDependencyWarning for urllib3/chardet/charset_normalizer versions in the existing interpreter. No new dependencies were installed and no full suite was run.
+
+`static-final.json` records the supplied scoped utility comparison: no added Ruff diagnostic identities and all edited hunk/new-file formatting passes. Existing diagnostic counts remain unchanged (agent_service 51, tool_catalog 9, lifecycle test 1, fleet test 13, Console confirmation test 5; new files and DB recovery repository zero). `git diff --check` passes.
+
+## Review priorities and next integration
+
+Review guarded mutation/no-effect classifications, no-follow discard and exact-ref CAS, process cleanup owner marking, same-turn handle ownership, and capability separation. Console should call the public function with a freshly admitted selected authority and its independently retained/activated manual ExecutionOwner, preserving the exact confirmation payload and cancellation signal. Do not reuse a finished primary turn's cancellation lifetime or revive old fleet handles. Return the retained baseline message unchanged enough for the user to understand cleanup residue.
+
+Final-source evidence note: final-targeted-1 covers the complete runtime implementation before only the bounded administrative-link read and its early read-capability gate were tightened. bounded-admin-final covers that last source change. final-cas-hooks covers the four subsequently added requirement cases; the only following test edit was explicit check=False and formatting. static-final.json was regenerated after all final source/test edits. No pending test processes remain.
+
+
+### Additional rulings: 2026-09-12-agent-worktree-confirmed-operations
+
+Ruling: Keep the confirmed lifecycle implementation in the new recovery and private Git modules, leaving the legacy agent_worktree.py merge/preview/discard helpers unchanged — a focused caller search found no confirmed production caller of those legacy functions; existing fixture cleanup and legacy helper tests still use them — cost is retaining unused legacy product helpers until a separately justified cleanup. The planned strengthening applies to the confirmed production path rather than requiring a mechanical edit to every listed file.
+
+Ruling: Separate read-snapshot and discard-delete capability checks — missing unlink/rmdir must not disable apply/merge — cost is explicit refusal on platforms lacking the actual no-follow read primitives, with ordinary creation still available. This is a narrow supported-operation check, not renewed backend qualification.
+
+
+### Additional rulings: 2026-09-12-agent-worktree-console-recovery
+
+Ruling: Stamp each decision control with its immutable round ID and test an old queued button press — a mutable card field alone can relabel the old press as a new approval — cost is rebuilding small action controls when the round changes.
+
+
+## Diagnostic inventory review before Console integration
+
+Read-only inventory comparison at720bc15f92 against the last pin commit7852cf47ba identified exactly five added calls: execution_capacity1, agent_service3 and local_tool_provider1. The statement-level command showed only fixed messages plus exception type names; no exception bodies, paths, locators, provider content or secrets were added. No sink topology changed. Root inspected every statement. The pin is intentionally not regenerated yet; repeat the delta check after the Console slice and write the combined reviewed inventory once.
+
+
+### Confirmed-operation independent review at720bc15f92
+
+### Spec Compliance
+
+- ❌ Issues found: `tldw_chatbook/Agents/agent_worktree_recovery.py:517-519` can persist a successful explicit-merge receipt when Git created no commit. The original-base change guard at lines 391-406 does not exclude a child already contained in destination history.
+- ✅ The requested public outcome and worker interface are present (`agent_worktree_recovery.py:27-34,302-311`); exact consent and post-consent snapshot comparison precede claim (`:373-415`). Ownership, terminal state, positive drain and unresolved state are checked before confirmation (`:42-68,326-338`).
+- ✅ The legacy-helper deviation and read/delete capability split comply with the explicit progress rulings. The Console card/manual lifetime remain the later slice and are not missing requirements of this engine review.
+- ⚠️ Physical ownership activation by every future Console caller cannot be established from this engine diff; that integration must retain its independently activated ExecutionOwner as specified. This is a later-slice check, not a blocker here.
+
+### Strengths
+
+- `agent_worktree_recovery.py:458-475` streams an original-base binary patch to an owned capped spool, checks it first, then applies without replacing the destination index. The real Git test `Tests/Agents/test_agent_worktree_confirmed_recovery.py:116` covers advanced parent history, unrelated staged content and binary/newline-name child additions.
+- `agent_worktree_recovery.py:500-515` limits merge abort to a matching source MERGE_HEAD and requires restored HEAD, clean status and no remaining operation before releasing a conflict claim. `:535-564` preserves uncertainty or in-flight protection when effect/persistence cannot be established.
+- `agent_worktree_recovery.py:141-222,427-440` uses descriptor-relative no-follow deletion, retains root and administrative link, restores a detached baseline and deletes the exact ref with expected-old-SHA CAS. The new tests exercise external symlink target preservation and CAS failure after cleanup.
+- `agent_worktree_git.py:91-145` checks the process group even after leader/pipes finish and marks cleanup-unproven when retirement cannot be established. The new heartbeat test measures a real filter descendant rather than equating logical completion with physical drain.
+- `agent_service.py:6160-6206` requires current-turn handle membership and agreement with its created run, passes the conversation and selected authority into the shared engine, and preserves refusal codes. `:4816-4820,7675-7681` aligns callback exposure with the real-confirmation/fleet/primary predicate.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None identified.
+
+#### Important (Should Fix)
+
+- **Incorrect successful merge receipt for an already incorporated child** — `tldw_chatbook/Agents/agent_worktree_recovery.py:517-519` (triggering guard at `:391-406`). A child can have a real commit beyond its recorded base while that commit is already an ancestor of the destination HEAD, for example after the user manually merges or fast-forwards the retained branch. The original-base diff is nonempty, so recovery proceeds. `git merge --no-ff <child-head>` then exits successfully with “Already up to date”; it does not create a commit. The engine nevertheless stores `merged`, returns the unchanged destination SHA and claims an explicit merge commit. This violates the requested honest receipt and explicit merge behavior. Detect this ancestry/no-op before mutation and return a specific no-effect refusal, and positively verify the successful merge actually produced the expected new two-parent commit before persisting `merged`. Add a real Git regression with a child commit already included in the destination, asserting unchanged destination HEAD and no false merged receipt.
+
+#### Minor (Nice to Have)
+
+- None identified.
+
+### Assessment
+
+**Task quality:** Needs fixes.
+
+**Reasoning:** The authority, consent, claim, discard and physical-cleanup boundaries are thoughtfully implemented and backed by focused real Git/SQLite evidence. The remaining merge no-op path can issue a durable receipt for an operation that never happened and needs correction before approving this task.
+
+### Review checks and scope
+
+- Reviewed immutable package `review-d358eb3de8..720bc15f92.diff`, base `d358eb3de8`, head `720bc15f92`; the initial tool output truncated its middle, so the omitted ranges were retrieved before completing the review. Line references were derived from that package; changed source files were not independently reread and no Git commands were rerun.
+- Read task brief, implementation report, progress rulings, restoration spec and amended ADR-155. No outside-diff product-code checks were necessary; no broader codebase crawl occurred.
+- No suites or tests were rerun. Controller-inspected evidence is 91 + 4 + 3 passing targeted cases, no added static diagnostic identities and passing edited formatting/diff checks. The disclosed inherited RequestsDependencyWarning is nonblocking under the controller's ruling; no dependency change is requested.
+- Source, index and branch remain unchanged. Only this requested review report was written.
+
+
+### Confirmed-operation fix and approval
+
+ — explicit merge receipt (base 720bc15f92)
+
+Addressed the Important finding in task-1-review.md. A committed child already included in destination history previously passed the original-base difference check, and Git's successful “Already up to date” response was incorrectly persisted as a new explicit merge.
+
+Changes are limited to `Agents/agent_worktree_recovery.py` and `Tests/Agents/test_agent_worktree_confirmed_recovery.py`:
+
+- A clean child whose HEAD is already the destination's ancestor now returns `already_merged` before the mutation claim. The destination and source commits remain unchanged and the record stays unresolved.
+- An additional ancestry check immediately before destination mutation handles the post-source-capture path. Its confirmed no-destination-effect refusal can release the exact claim to unresolved.
+- A successful Git command must now produce a new commit with exactly the previous destination SHA as first parent and the confirmed child SHA as second parent. Unchanged HEAD, wrong parents, or failed verification cannot persist `merged`; after possible effects these outcomes stay uncertain and cannot replay after reopen.
+- Dirty new work on an already incorporated child remains mergeable and gets the expected two-parent commit.
+
+Evidence, using the same isolated runner/interpreter:
+
+- `final-evidence/fix1-merge-red`: **5 expected failures**, 6.49s, before production edits. Real Git cases cover equal destination/child HEAD and an advanced destination ancestor; injected command-boundary cases reproduce an unchanged successful Git response, actual post-merge external advancement and unavailable verification.
+- `final-evidence/fix1-merge-green`: **14 passed**, 15.75s. Covers all new cases plus ordinary explicit merge, dirty incorporated child, clean no-change refusal, apply/merge conflicts, pre-existing merge preservation, disabled hooks and failed-persistence protection. This evidence covers the final fix source/tests; no code edits followed it.
+- `static-fix1.json`: comparison against **720bc15f92**, zero added Ruff identities and passing edited-range formatting for both scoped files.
+- `git diff --check`: passes.
+
+Both pytest runs retain the same single RequestsDependencyWarning; stderr is empty. No whole-suite run, dependencies, live configuration, network/provider use, Git mutation or Backlog/governance edit. Source remains unstaged for re-review. The broader initial 91-test gate was not repeated because the fix is confined to merge ancestry/receipt classification and directly affected focused cases passed.
+
+
+### Finding Verdicts
+
+- **Incorrect successful merge receipt for an already incorporated child** — ADDRESSED. `tldw_chatbook/Agents/agent_worktree_recovery.py:407-416` refuses a clean child already contained by destination history before a mutation claim, and `:500-508` repeats the ancestry check after source capture at the destination boundary. `:530-545` requires a changed HEAD whose exact parents are the previous destination and confirmed child commits before `merged` can be persisted. `Tests/Agents/test_agent_worktree_confirmed_recovery.py:464-548` covers equal/advanced incorporated history, unchanged successful Git output, wrong parents, unavailable verification, reopen protection, and dirty work on an incorporated child.
+
+### New Breakage in the Fix Diff
+
+None.
+
+### Out-of-Scope Observations
+
+None.
+
+### Review Checks
+
+- Reviewed immutable package `review-720bc15f92..fc9c01473e.diff` once, base `720bc15f92`, head `fc9c01473e`; no Git commands or source rereads were needed.
+- The fix report records 14 passing focused cases, zero added scoped static diagnostic identities, passing edited-range formatting, and passing `git diff --check`. The inherited Requests dependency warning remains nonblocking under the controller ruling. No tests were rerun.
+
+### Verdict
+
+**Fix round:** All findings addressed, no new Critical/Important breakage.
+
+
+### Additional rulings: 2026-09-12-agent-worktree-console-recovery
+
+Ruling: Begin Console implementation while the committed narrow merge-receipt fix receives read-only rereview — the recovery API is unchanged, no other source writer remains, and the two file scopes are separate — cost is possible focused caller adjustment if rereview finds a contract defect.

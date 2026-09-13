@@ -50,17 +50,20 @@ supersedes its pending-integration and remaining-work labels.
   [the current plan](../../Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md).
   Automatic deletion remains disabled. Schema20 ownership records and positive
   physical completion callbacks (`4756f88793`, review fix `94f7110db1`) also passed
-  targeted SQLite/lifetime tests and independent review. Their actual creation
-  call-site integration is in progress; confirmed operations and Console recovery
-  remain unfinished.
+  targeted SQLite/lifetime tests and independent review. Actual creation now
+  records ownership before child execution and persists completion only after
+  physical drain (`8efca6ee05`, test fixes `c8e1d119b8`, `eed41ac5d2`); that
+  integration passed independent review. Confirmed operations
+  (`720bc15f92`, merge-receipt correction `fc9c01473e`) now share the durable
+  apply/merge/discard engine and passed independent review. Console card and
+  manual recovery integration remain unfinished.
 - **Final integration review complete:** all four identified integration defects
   are fixed and independently re-reviewed in `7852cf47ba`, including replacement
   of obsolete worktree-positive continuation tests and the required diagnostic
   inventory refresh. No new Critical/Important finding remains in that correction.
   The [complete review, evidence and 50-ruling record](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
   preserves historical failures, decisions and process qualifications.
-- **Remaining functional work:** Connect durable records to actual child execution
-  and cleanup completion; finish confirmed operations; wire the Console
+- **Remaining functional work:** Wire the Console
   confirmation card and prior-turn recovery list. TASK-31210, TASK-31211 and
   parent TASK-13154 remain In Progress. Earlier work is committed locally;
   this restoration is ongoing. No new PR, push or merge was performed.
