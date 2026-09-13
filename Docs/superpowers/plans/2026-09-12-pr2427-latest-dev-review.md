@@ -476,3 +476,13 @@ attribution; do not describe all retention as unchanged merely because assertion
 failures predate rebase. Reviewer classifies 14 failures as concrete stale
 fixture/contract mismatches and one as a real successor-screen attachment defect;
 none is fixed by this checkpoint. No test process remains active before replay.
+
+Final docs-only replay completed cleanly: all 287 commits replayed onto
+`4cba44e6124a107cfb3210bf0985b84d514a96da`, ending at
+`d117442564713478cb8c2fef4b15bf9bbb2980fc`. Recovery ref:
+`codex/pr2427-pre-4cba44e612-20260913` (`c702a09ec1`). Ancestry passes;
+production, tests, scripts, workflow and project configuration content is
+byte-identical to the qualified checkpoint. Every range-diff patch is unchanged.
+Immediately before publication, remote dev is still4cba and the PR branch is
+still2a02; use that exact lease. Only the unrelated untracked reader plan is
+outside committed work, and it remains untouched.
