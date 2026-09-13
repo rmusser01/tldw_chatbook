@@ -12,7 +12,7 @@ re-reading config from disk.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
@@ -29,6 +29,7 @@ from textual.widgets.option_list import Option
 from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
 from tldw_chatbook.Chat.console_session_settings import (
     DEFAULT_LLAMACPP_BASE_URL,
+    MODEL_OPTION_PLACEHOLDER_VALUES,
     build_console_provider_options,
     normalize_llamacpp_base_url,
 )
@@ -176,6 +177,26 @@ def _provider_settings(
     return {}
 
 
+def _filtered_models(candidates: Iterable[str]) -> tuple[str, ...]:
+    """Return non-blank model ids without the app's placeholder sentinels.
+
+    CE-004: configured model lists may carry the app's placeholder model
+    spellings (``None``/``null``, case-insensitive -- they mean "no model
+    configured", not a model id). Neither a template prefill nor the parsed
+    Models input may persist one as a real model.
+    """
+    filtered: list[str] = []
+    for candidate in candidates:
+        model_id = candidate.strip() if isinstance(candidate, str) else ""
+        if (
+            model_id
+            and model_id.lower() not in MODEL_OPTION_PLACEHOLDER_VALUES
+            and model_id not in filtered
+        ):
+            filtered.append(model_id)
+    return tuple(filtered)
+
+
 def _configured_models_for(
     providers_models: Mapping[str, list[str]], provider: str
 ) -> tuple[str, ...]:
@@ -184,11 +205,7 @@ def _configured_models_for(
     for configured_provider, configured_models in providers_models.items():
         if provider_config_key(configured_provider) != provider_key:
             continue
-        return tuple(
-            model.strip()
-            for model in configured_models
-            if isinstance(model, str) and model.strip()
-        )
+        return _filtered_models(configured_models)
     return ()
 
 
@@ -739,12 +756,7 @@ class ConsoleEndpointTemplateModal(
     def _parsed_models(self) -> tuple[str, ...]:
         """Parse the comma-separated models input, dropping blanks/dupes."""
         raw = self.query_one(f"#{MODELS_INPUT_ID}", Input).value
-        parsed: list[str] = []
-        for part in raw.split(","):
-            model_id = part.strip()
-            if model_id and model_id not in parsed:
-                parsed.append(model_id)
-        return tuple(parsed)
+        return _filtered_models(raw.split(","))
 
     def _sync_validation(self) -> None:
         """Show inline errors and gate Create on ``validate_entry``."""
