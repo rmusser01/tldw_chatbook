@@ -4650,6 +4650,14 @@ def test_provider_admission_failure_retains_real_created_checkout(
         providers=(provider,),
         worktree_repo_authority=authority,
     )
+    admitted_owners = []
+    real_admit = service._admit_agent_worktree
+
+    def capture_admit(handle, child_run_id, execution_owner):
+        admitted_owners.append(execution_owner)
+        return real_admit(handle, child_run_id, execution_owner)
+
+    monkeypatch.setattr(service, "_admit_agent_worktree", capture_admit)
     try:
         _run_id, outcome = service.run_turn(
             conversation_id="c",
@@ -4668,9 +4676,10 @@ def test_provider_admission_failure_retains_real_created_checkout(
             child["id"], "c"
         )
         assert record is not None
+        assert len(admitted_owners) == 1
         assert record["base_sha"] == created.base_sha
         assert record["binding_id"] == "selected"
-        assert record["execution_id"]
+        assert record["execution_id"] == admitted_owners[0].execution_id
         assert record["writer_state"] == "drained"
     finally:
         for created in service._agent_worktrees.values():
@@ -4713,6 +4722,14 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
         providers=(provider,),
         worktree_repo_authority=authority,
     )
+    admitted_owners = []
+    real_admit = service._admit_agent_worktree
+
+    def capture_admit(handle, child_run_id, execution_owner):
+        admitted_owners.append(execution_owner)
+        return real_admit(handle, child_run_id, execution_owner)
+
+    monkeypatch.setattr(service, "_admit_agent_worktree", capture_admit)
     try:
         _run_id, outcome = service.run_turn(
             conversation_id="c",
@@ -4733,9 +4750,10 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
             child["id"], "c"
         )
         assert record is not None
+        assert len(admitted_owners) == 1
         assert record["base_sha"] == created.base_sha
         assert record["binding_id"] == "selected"
-        assert record["execution_id"]
+        assert record["execution_id"] == admitted_owners[0].execution_id
         assert record["writer_state"] == "drained"
     finally:
         for created in service._agent_worktrees.values():
