@@ -78,3 +78,19 @@ The same comparison also exposed an available virtual CLI provider omitted from 
 Task review completion: c5edf2741b plus fix7faf6d2742 passed the independent scoped re-review. All original findings and actual full-schema parity gaps are addressed. The reviewer identified a stale planner docstring for correction before final integration review; it is documentation only. Backlog closure waits for the broad restoration review. Exact tests, non-pristine output qualifications and rulings are in Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md.
 
 Chronology qualification: the complete controller→child→Git flow passed after wiring was implemented; its six earlier failures were harness prerequisites, not a valid whole-flow pre-implementation RED. The card/hook/independent-owner missing-feature REDs and later reproduced regressions remain valid as recorded. The checkbox above records the delivered full-flow proof without claiming a cleaner TDD sequence.
+
+## Final integration correction
+
+The broad review at256507e387 found two failed-start ownership gaps across the shared Git runner and retained manual helper. Address them in one final fix dispatch, followed by one scoped re-review.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/155-agent-worktree-recovery.md
+Reason: complete the existing positive physical-lifetime and failed-start cleanup contract; no new runtime boundary or Git backend.
+
+- [x] Put Git process and reader startup under the owned cleanup boundary so first/second reader Thread.start failure cannot leave a live process behind an apparently finished owner. Preserve cleanup-unproven state if physical retirement cannot be established.
+- [x] Retire a manual operation's owner when background submission definitively fails before its worker can take ownership, while preserving ownership for admitted or ambiguous physical work and for cancelled waiters. Cover the actual executor-submission failure boundary.
+- [x] Add targeted failing regressions before the corrections, verify the amended failure and successful lifetime paths, compare scoped static diagnostics to256507e387 and inspect exact output. Preserve the approved ordinary-Git scope and all earlier evidence.
+
+Root owns final Git, documentation, diagnostic maintenance and task status; the fix worker leaves source/tests unstaged. No whole-suite reruns or unrelated inherited guard cleanup.
+
+Final integration completion: both failed-start findings were fixed in e135a085f2 and the single scoped re-review approved both with no new issues. The final affected/capacity selection passed88tests and the actual Apply/Discard caller selection passed2. Root inspected exact outputs and scoped static results. TASK31210 and TASK31211 are Done via CLI with9/9and8/8criteria; parentTASK13154 is Done. Source and the durable review retain every earlier qualification.

@@ -1,85 +1,57 @@
 # Agent orchestration remaining work — 2026-09-12
 
-## Current continuation status
+## Current completion status
 
-PR #2641 merged the five earlier reliability/verification follow-ups at
-`d66908a69ef03066fed77a92edf77a326f44bd89`. Work now continues locally on
-`codex/agent-orchestration-remaining` in the isolated orchestration worktree.
-The earlier investigation below is retained as historical evidence; this status
-supersedes its pending-integration and remaining-work labels.
+PR #2641 merged the earlier five reliability/verification follow-ups at
+`d66908a69ef03066fed77a92edf77a326f44bd89`. The remaining approved work is now
+complete locally on `codex/agent-orchestration-remaining`. This section
+supersedes the historical pending-work labels retained below.
 
-- **Done and independently reviewed:** TASK-13154.4 approval verification,
-  TASK-18601 bounded segment-log paging, TASK-31511 bounded reusable webhook
-  delivery. Their task notes contain scoped test results and evidence
-  qualifications.
-- **Done after final integration repair and review:** TASK-18929 denial breaker.
-  The final correction (`7852cf47ba`) preserves the established ordinary budget
-  and cancellation continuation boundary while retaining complete settled
-  denial batches. The formerly failing continuation module now passes all 45
-  tests with no teardown errors; six denial/cancellation neighbors also pass.
-- **Done after final integration repair and review:** TASK-18923 live per-run
-  usage. Primary and child labels use the existing timers and distinguish
-  provider counts from local estimates. Per-chunk telemetry extraction faults
-  are now isolated from valid streams; actual attributed text regressions and
-  the final 13-case accounting/provider-error selection pass. Genuine provider
-  failures and final accounting retain their established behavior. Earlier UI,
-  lifecycle and descriptor evidence remains qualified in the task notes.
-- **Settings ownership and feedback done:** TASK-13154.5 closes only panel-owned
-  connections and explains filtered runtime tools after Save (`97c3bce2e0`,
-  `1b9cff9776`). Independent review, real held-connection tests and wide/narrow
-  painted checks passed.
-- **Starter presets done:** TASK-13154.6 adds researcher, critic and ingest runner
-  beside bulk reader through unsaved editable forms (`6f05d7399a`). Independent
-  review approved; actual child tool containment and complete wide/narrow form
-  checks passed. The task notes disclose the earlier probe isolation error and
-  the final isolated verification.
-- **Definition wall caps done:** TASK-13154.7 adds validated nullable schema19
-  storage, frozen spawn minimums, retained continuation ceilings and the canonical
-  Settings field (`b46807d547`, `be709a648f`, `bbfc233aad`, `c0d419d420`).
-  All three slices passed independent review; task notes separate successful
-  targeted gates from the earlier continuation integration failures and
-  historical test-isolation qualifications. The partial parent reconciliation
-  and combined branch review are now complete; parent closure remains open.
-- **Worktree creation restored and reviewed:** The user approved correcting the blanket
-  restriction in `93ee16a144`/`534ad2c890`. ADR-155 now selects ordinary local Git
-  with exact selected writable repository authority and fresh identity checks.
-  The copied-metadata replacement experiment remains evidence of a concurrent
-  replacement limit; no external backend is missing. Creation restoration
-  (`a11db916ff`, regression fix `d63d4f2a19`) passed targeted real-Git/controller
-  tests and independent review under
-  [the current plan](../../Docs/superpowers/plans/2026-09-12-agent-worktree-creation-restoration.md).
-  Automatic deletion remains disabled. Schema20 ownership records and positive
-  physical completion callbacks (`4756f88793`, review fix `94f7110db1`) also passed
-  targeted SQLite/lifetime tests and independent review. Actual creation now
-  records ownership before child execution and persists completion only after
-  physical drain (`8efca6ee05`, test fixes `c8e1d119b8`, `eed41ac5d2`); that
-  integration passed independent review. Confirmed operations
-  (`720bc15f92`, merge-receipt correction `fc9c01473e`) now share the durable
-  apply/merge/discard engine and passed independent review. Console card and
-  retained manual recovery are implemented atc5edf2741b. Fix7faf6d2742 closes
-  late recovery admission during accepted session close, restores actual picker
-  routing and aligns both previews with live progress/virtual CLI/raw shell
-  disclosure. The scoped re-review approved all findings; final restoration integration review remains.
-- **Earlier-wave final integration review complete:** all four identified integration defects
-  are fixed and independently re-reviewed in `7852cf47ba`, including replacement
-  of obsolete worktree-positive continuation tests and the required diagnostic
-  inventory refresh. No new Critical/Important finding remains in that correction.
-  The [complete review, evidence and 50-ruling record](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
-  preserves historical failures, decisions and process qualifications.
-- **Remaining closeout:** finish the broad restoration integration review, then check TASK-31210/TASK-31211 acceptance and close
-  parent TASK-13154. All three remain In Progress until those gates finish.
-  Source is committed locally; no new PR, push or merge was performed.
-- **Verification limits:** targeted Console fix selections pass25mounted UI,
-  23preview/raw-shell and60lifetime cases, with zero added scoped static
-  diagnostics. Current diagnostic inventory/sink verification passes. The
-  inherited ChatScreen size guards and eight stale historical diagnostic-label
-  expectations remain failures; the latter are absent at the pre-restoration
-  baseline too. UI-ready passes at973/973 with no headroom. Exact qualifications
-  and restoration rulings are in the
-  [restoration review record](../../Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md).
+- **Done and reviewed:** approval verification TASK-13154.4, bounded segment-log
+  paging TASK-18601, denial breaker TASK-18929, live per-run usage TASK-18923,
+  bounded reusable webhook delivery TASK-31511, and the Settings/presets/caps
+  children TASK-13154.5/.6/.7. Earlier integration corrections remain recorded
+  at `7852cf47ba`.
+- **Done and reviewed:** TASK-31210 visible worktree confirmation and TASK-31211
+  earlier-turn recovery. Ordinary selected-authority Git creation, schema 20
+  ownership, positive physical completion, shared confirmed Apply/Merge/Discard
+  and the actual Console picker/card path are delivered. Preview/live schemas
+  now agree for tested progress and virtual CLI/raw-shell availability.
+- **Final integration complete:** `e135a085f2` fixes partial Git-reader startup
+  cleanup and manual executor-submission ownership. The single scoped re-review
+  approved both findings with no new issues. Final verification passed 88
+  affected/capacity cases and 2 actual reopened card/Git flows after 11 RED
+  failures. Earlier 25-case mounted UI, 23-case preview/raw-shell and 60-case
+  lifetime selections overlap and are not summed.
+- **Parent closed:** TASK-13154 is Done. All seven actual children have checked
+  acceptance criteria and implementation notes; both recovery tasks are Done
+  with all 9 and 8 criteria checked. No approved functional task remains open
+  in this workstream.
 
+The [complete restoration review, evidence and decisions](../../Docs/superpowers/reviews/2026-09-12-agent-worktree-restoration.md)
+retains every finding, correction and qualification. The
+[earlier remaining-wave review](../../Docs/superpowers/reviews/2026-09-12-agent-orchestration-remaining.md)
+remains the record for the preceding changes. All current work is local; no new
+PR, push or merge was performed during this completion.
 
+Verification limits remain: inherited Requests dependency warning; UI-ready at
+973/973 with zero headroom and its intentional drift warning; existing
+ChatScreen size/no-growth failures, including the disclosed 21-line/3-method
+addition; and eight stale historical diagnostic-label expectations already
+absent at the pre-restoration baseline. The current production diagnostic
+inventory/sink guard passes, and changed-file static checks add no diagnostic
+identities with edited-range formatting passing. No full-suite, Windows or
+live-provider result is claimed.
 
+Ordinary Git retains the documented concurrent external metadata-replacement
+limit. Automatic worktree deletion stays disabled; discard leaves a disclosed
+baseline checkout, and held/uncertain or legacy work remains protected.
+Communication remains bounded process-local steering/progress, explicit
+supervisor relay and continuation, and versioned session tasks. Durable inboxes,
+arbitrary direct peer routing and progress-triggered wakes are optional designs
+outside ADR-136 and this completed scope.
+
+## Historical investigation and delivery notes
 
 Baseline: `origin/dev` at `8ab21ecaf372ad0b5cc8bca98dd12c427f4aef87`.
 [PR #2631](https://github.com/rmusser01/tldw_chatbook/pull/2631) merged the

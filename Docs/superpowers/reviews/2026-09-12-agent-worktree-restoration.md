@@ -1,6 +1,12 @@
 # Agent worktree restoration review record
 
-Status: all five restoration slices are implemented. Creation, durable records, actual ownership and confirmed operations passed task review. Console fix7faf6d2742 passed scoped re-review; final restoration integration review remains. This supplements the earlier agent-orchestration-remaining review; its historical findings and rulings remain preserved.
+Status: complete. TASK-31210 (9/9 criteria), TASK-31211 (8/8), and parent TASK-13154 (1/1) are Done. All five restoration slices passed task review; the broad integration review's two startup-lifetime findings were fixed in `e135a085f2` and independently re-reviewed with no new issues. The work is committed locally on `codex/agent-orchestration-remaining`.
+
+The delivered path uses ordinary selected-authority Git worktrees, durable original-base/ownership records, positive physical completion, exact visible confirmation, and earlier-turn Console recovery. Discard retains its disclosed detached baseline checkout. Communication remains bounded process-local steering/progress and explicit supervisor relay; durable inboxes, arbitrary peer routing and progress-triggered wakes are outside the approved scope.
+
+Final correction verification: 88 affected/capacity cases and 2 actual reopened card/Git flows passed after 11 behavioral RED failures. Earlier reviewed selections and all raw-evidence pointers below remain applicable; overlapping counts are not summed. The current diagnostic inventory/sink check passes. Inherited ChatScreen size guards, eight stale historical diagnostic-label expectations, the Requests warning and startup at 973/973 with no headroom remain explicitly disclosed. This is not a full-suite, all-guards-green, Windows or live-provider claim.
+
+This record supplements the earlier agent-orchestration-remaining review; historical findings, failed attempts, chronology deviations and rulings remain preserved below.
 
 ## Completed review gates
 
@@ -837,3 +843,201 @@ The stale surface docstring identified by scoped re-review is corrected before t
 Ruling: Include the stale planner docstring correction in final documentation packaging — behavior and full schema equality are already reviewed, but the comment contradicts the new callable surface — cost is a tiny source-doc hunk for broad review, without redundant behavioral tests or another task-level review seat.
 
 Ruling: Qualify the completed full-flow checklist item as delivered behavioral proof, not an invented pre-implementation RED — the six original full-flow failures were harness prerequisites after wiring, while the missing card/hook/owner cases had real REDs — cost is explicitly retaining a full-flow TDD chronology deviation rather than reconstructing history.
+
+
+## Broad restoration integration review at256507e387
+
+# Final agent-worktree restoration integration review
+
+Review base: `9861170ff9` (before restoration). Immutable head: `256507e3875875f6d4d02614edceef8872a0e1df`. Package: `review-9861170ff9..256507e387.diff`, 10,266 lines, 19 commits.
+
+## Assessment
+
+**Needs fixes: two Important failed-start lifetime defects.** No Critical finding. The five slices otherwise form a coherent restoration under the current ADR-155 ordinary-local-Git contract. These findings concern application-owned process/thread startup, not the expressly accepted concurrent external repository-metadata replacement limit. They do not require another Git backend or a new architecture.
+
+Final task/plan checkbox and status reconciliation remains root-owned and should follow the narrow fixes and their scoped re-review. This review does not reopen the previously approved remaining-wave work through the base.
+
+## Strengths
+
+- **Selected authority reaches creation and recovery without fallback.** The controller captures the selected writable binding and adds a fail-closed kill-switch guard, the bridge forwards it unchanged, and the service refuses missing authority or a missing real local provider. Creation preserves the captured base and stores the known checkout before later admission can fail. Child filesystem routing uses the captured source guard and child identity. Automatic retirement remains routing-only. The accepted-turn test exercises removal, retargeting, root replacement and kill-switch failures; real service tests distinguish selected and unrelated fallback repositories.
+- **Durable ownership and physical drain are integrated.** Schema 20 records original base, exact run/execution/binding and complete identity chains before provider admission and child execution. The repository borrows the DB, performs parameterized metadata-only joins, uses transactional exact claims, and preserves held/uncertain/in-flight state on reopen. Completion callbacks detach outside the capacity lock; local cleanup uncertainty poisons the captured owner before the tool returns. Existing failed child-thread admission explicitly finishes the owner, and callbacks close only callback-created connections. Real delayed-worker and failed-start tests verify retained work and exact owner equality.
+- **Both action entry points consume one confirmed engine.** Current-turn handle membership is checked against the actual created run. Earlier-turn Console recovery recaptures current selected authority rather than reviving handles. Exact Allow, source/destination snapshot comparison, eligibility and a transactional claim precede mutation. Original-base apply preserves unrelated destination staging; merge verifies a new commit with exact expected parents, and already-incorporated work does not receive a false merged receipt. Ambiguous effects and failed persistence stay protected.
+- **Discard matches its disclosed contract.** Descriptor-relative no-follow cleanup retains the checkout root and administrative link, restores the original detached baseline, and removes only the recorded branch with expected-old-SHA CAS. Unsupported read and discard primitives are separate refusals. Nested repository/submodule refusals and symlink/CAS tests support the retained-work boundary; no automatic or forced root deletion is reintroduced in the confirmed path.
+- **Console presentation and ordinary operation lifetime connect correctly.** Immutable button-owned round IDs prevent queued old presses from approving a newer round. The payload is volatile and rendered without markup. Worktree remount runs independently of the unified-approval early return. The retained helper owns its own cancellation signal and worker DB handle; shielding preserves an already-running worker after waiter cancellation. Accepted close fences admission and then cancels only the owning operation; stale/refused/provisional close preserves it. The actual command → asynchronous list → real picker → confirmation → Git tests cover action routing, queued selection during close and owning-conversation receipt delivery.
+- **Both real previews match live planning for the tested capability matrix.** Complete active/runtime schemas and the actual project-preview request tool tuple are compared without filtering under hook present/absent, fleet size one/three, and unopened/empty/queued inbox conditions. Available virtual CLI and conditional raw-shell schemas use the existing composition path. Tests preserve inbox identity/content and prohibit shell execution during preview. The final planner docstring now describes that real surface gate accurately.
+- **The startup refinement is narrow.** The unchanged worktree DDL literal moves to its actual DB consumer and the existing run-log modal import moves into the opening handler. The retained evidence covers migration/reopen, paged-log opening and the unchanged startup ceiling. The diagnostic-pin change corresponds to six fixed-text/type-only statements, with no new sink.
+
+## Findings
+
+### Critical
+
+None identified.
+
+### Important
+
+1. **Git reader startup can bypass all process retirement.** `tldw_chatbook/Agents/agent_worktree_git.py:93-97`, specifically `reader.start()` at **line 94**. The subprocess already exists at line 51, but reader construction/start happens before the cleanup `try/finally` begins. If either reader fails to start (for example, `RuntimeError: can't start new thread`), `run_git` escapes without killing/waiting for Git, closing the remaining pipes, joining the reader that may already have started, or marking cleanup unproven. This applies to source capture and destination mutations as well as preview reads. The shared engine catches the exception, and the caller can finish its execution owner while that Git process or its descendants still run. An uncertain mutation row prevents replay but does not restore physical process ownership; a pre-claim failure leaves the row unresolved too. **Smallest remedy:** establish retirement protection immediately after successful `Popen`, include reader construction/start inside it, track which readers actually started, retire the process group and close/join owned resources on partial startup, and latch cleanup unproven whenever retirement cannot be established. Do not join an unstarted thread. Add deterministic first-reader and second-reader startup-failure cases, including a gated mutating command, proving no later Git effect/live worker remains after a proven completion and that an unproven retirement poisons the owner.
+
+2. **Manual recovery leaks its execution owner when worker submission fails before entry.** `tldw_chatbook/Chat/console_worktree_recovery.py:187-221`, specifically the `asyncio.to_thread` task creation at **line 221**. `begin_execution` registers the owner before executor submission, while the only `finish_root` is inside `worker` at line 219. A definite submission refusal before `worker` runs (for example, a shut-down default executor) completes the asyncio task exceptionally; `completed` removes the operation at line 225 and retains a failure receipt, but never releases that owner. `close()` can then finish with no registered operation although the capacity ledger permanently reports an active execution. `RuntimeCapacity.close()` only fences new admission; it does not repair leaked owners. Existing bridge capacity replacement/rebinding checks treat that phantom owner as active. **Smallest remedy:** explicitly own the pre-start-to-worker handoff and release the exact owner when execution is positively known not to have started; keep worker-finally ownership for admitted work and preserve shielding after entry. Account conservatively for a submission error whose work may already have been queued—do not blindly finish the owner while a worker might still start. Add a deterministic rejected-submission case asserting the engine is never entered, the operation registry is cleared, and the capacity snapshot contains no leaked execution; preserve the existing running-worker cancellation test.
+
+Both findings are established by control-flow inspection. No new runtime reproduction is claimed; the supplied tests do not inject these two startup failures. The existing child-thread failed-start handling is sound, but it does not cover these separate Git-reader and manual-executor startup boundaries.
+
+### Minor
+
+No additional actionable in-scope Minor finding. The qualifications below are retained limitations/debt, not requests for unrelated repair.
+
+## Evidence inspected and limits
+
+- Read the supplied immutable diff in bounded sequential passes, including all source, tests, five current plans, restoration design, retained slice reports/rulings, ADR amendments and documentation changes. Recovered every tool-truncated middle range from that same package; did not regenerate the diff. Read the current ADR-155 in full to distinguish incorporated ownership/consent policy from superseded execution qualification.
+- Focused outside-diff checks answered named integration concerns only: actual child launch/failed-launch owner finalization (`agent_service.py:5480-5556`); ordinary creation's existing Git runner (`Workspaces/git_workspace.py:198-252`); accepted session-close ordering (`console_runtime.py:3945-4060`); thread-local DB close (`DB/AgentRuns_DB.py:321-361`); capacity admission/close/snapshots and bridge active-owner replacement checks (`Agents/execution_capacity.py:82-204`, `console_agent_bridge.py:8033-8101`). No whole-repository repeat review occurred.
+- Consumed the retained implementation/re-review evidence and root's stated inspection of exact command/output/exit records: creation 260-case affected selection and scoped fixes; storage 31-case and 104-case neighbors; ownership 14-case final selection and exact-owner fixes; confirmed engine 91-case gate plus focused 4/3-case additions and 14-case merge fix; Console final 60 lifetime, 25 mounted UI and 23 preview/raw-shell neighbors, with the complete 12-case preview matrix. **These selections overlap and are not summed.** This final review independently read the test bodies and retained reports; it did not rerun those commands or claim to have freshly reproduced their counts.
+- Reused the documented two root visual inspections and independent inspection of six native wide/narrow captures. No new visual defect arose from source inspection. No additional visual session or new screenshot inspection was performed by this reviewer. Static captures do not establish every interaction; actual picker and old-button tests provide separate functional evidence.
+- Read `diagnostic-statements-final.txt` and `diagnostic-metadata-stale-labels.json`. All six added logger statements are fixed text with exception-type values. The saved AST comparison records zero matches both at the restoration baseline and current head for each of the eight historical labels. The refreshed current inventory/sink guard passes; the separate stale-label guard remains a disclosed failure. This is not a blanket green architecture-guard claim, and neither a rebaseline nor unrelated diagnostic repair is requested.
+- The inherited `RequestsDependencyWarning` remains. UI-ready passes at **973/973**, with **zero headroom** and the intentional **+16/-16 drift** warning. Historical ChatScreen size/no-growth guards remain failed: **24,410 lines/746 methods** versus the captured **24,389/743** baseline and unchanged **16,966/563** ceilings. The restoration adds **21 lines/3 thin methods**; those increments are not mislabeled inherited. Scoped static reports record zero added diagnostic identities and passing edited-range formatting; they do not establish whole-file lint cleanliness.
+- Creation's missing positive pre-implementation RED and the Console full-flow harness failures remain process qualifications. Passing final behavior was not reinterpreted as a cleaner TDD chronology. The earlier timed-out neighbor process and its qualified cleanup remain historical evidence, not an accepted passing run.
+- No tests/suites were rerun: inspection established the two unanswered startup boundaries and repeating passing selections would not test them. No product imports, live configuration/provider/network access, verification checkout, dependency changes, cleanup, source/index/HEAD/Backlog mutation or subagents occurred. Only this requested report was written.
+- Platform evidence remains owned temporary Git/SQLite on macOS/POSIX. No Windows certification, full-suite result or live-provider validation is claimed. Ordinary Git's accepted external metadata/config/filter limitations and retained manual-only uncertain/legacy work remain explicit.
+
+
+## Final startup-lifetime correction ate135a085f2
+
+Root inspected the exact command/output/exit and four-file static records before committing the correction. The report below preserves its unstaged-at-handoff wording.
+
+# Final failed-start lifetime fix report
+
+Base: `256507e3875875f6d4d02614edceef8872a0e1df`.
+Worktree: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/agent-orchestration-pr`.
+
+Both Important findings in `final-review.md` are addressed. This worker changed only the four authorized source/test files and this scratch evidence/report. Source/tests were left unstaged; no Git mutations, Backlog edits, documentation edits, dependency changes, provider/network work, live configuration reads, new checkouts, foreign cleanup or subagents were performed. The explicitly supplied scoped-static helper performs its authorized read-only Git comparisons.
+
+ADR required: no new ADR.
+ADR path: `backlog/decisions/155-agent-worktree-recovery.md`.
+Reason: these changes complete the accepted physical-lifetime and failed-start contract without changing the ordinary-local-Git boundary.
+
+## Changes and decisions
+
+- `tldw_chatbook/Agents/agent_worktree_git.py`: prepare pipe-reader state before process creation and establish `try/finally` immediately after successful `Popen`. Construct/start readers inside that protection, retain each reader/pipe pair, and separately track threads with a physical identity so an unstarted reader is never joined. Retire the owned process group and explicitly wait/reap even when signaling finds that the process disappeared. Join started readers, close pipes without a live reader, and retain cleanup-unproven state for unretired processes/readers or failed close. A live `BufferedReader` is never closed externally while its reader can hold the buffer lock; that branch remains bounded and poisons the active owner.
+- `tldw_chatbook/Chat/console_worktree_recovery.py`: a standard concurrent `Future` provides an atomic pending-to-worker admission gate and completion acknowledgment. On failed submission, cancellation of an unclaimed gate positively prevents engine/DB entry even when the executor already queued the wrapper; only then does the submitting path finish the exact owner. A claimed gate leaves finalization with the worker. If submission raises after entry, the retained operation awaits the worker acknowledgment before reporting the error/removing the operation. The external waiter remains shielded. Worker DB close is nested under finalization so a close exception cannot skip owner completion/acknowledgment. This is an admission handshake on the existing owner, not another capacity ledger.
+- `Tests/Agents/test_agent_worktree_confirmed_recovery.py`: eight startup regressions cover construction/start failure at reader one/two, with proven and deliberately denied retirement.
+- `Tests/Chat/test_console_worktree_recovery_lifetime.py`: three real executor-boundary regressions cover definite shutdown refusal, queue-then-raise, and engine-entry-then-raise, including cancellation while an admitted worker remains held.
+
+No logger statement changed; the diagnostic pin needs no regeneration for this fix.
+
+## Physical ownership and cleanup evidence
+
+The new Git fixture launches one real process/session using the supplied fixed Git argv behind a pipe-gated Python `execv`. It acknowledges reaching the gate before reader failure is injected, so opening the gate would otherwise permit the exact `update-ref` mutation. In proven cases, assertions occur before fallback test cleanup: the process has been reaped with `-SIGKILL`, its process group is absent, all constructed readers are stopped, both pipes are closed, and opening the gate cannot create the ref. A subsequent ordinary Git read also confirms the ref is absent.
+
+In denied-retirement cases the patched signal path actually refuses SIGKILL and leaves the real gated child alive. The test observes owner drain as `False` and the actual process still live before its unconditional finalizer uses the saved real `killpg` on the exact owned group, waits/reaps it, joins only started captured reader handles and closes its pipes. Patched helpers remain installed until those owned resources retire. The timeout in the production bounded `wait` is an intentional injected cleanup failure, not an abandoned test runner. The test never fabricates successful process retirement.
+
+The manual fixture routes `loop.run_in_executor` to a test-owned real `ThreadPoolExecutor`, retaining every accepted concurrent Future and shutting down that exact executor with `wait=True` before patched helpers are restored. Definite refusal uses an actually shut-down executor. Queue-then-raise is held behind an earlier job until the submitting side has revoked admission; after release, no engine entry or worker DB file exists. Entry-then-raise holds the real worker after observing its activated exact owner. The operation and capacity entry remain while held, including after cancelling the asyncio waiter; only worker completion releases them. All three cases end with no operation, no active capacity execution and a bounded failure receipt. The existing accepted-worker waiter-cancellation regression remains green.
+
+## Exact test evidence
+
+All commands ran from the worktree above using the supplied wrapper. It invokes the existing interpreter `.superpowers/sdd/2026-09-11-agent-orchestration-pr-integration/venv/bin/python` and creates a unique evidence directory/basetemp per label. Each directory under `final-evidence/` contains exact expanded `command.json`, complete `stdout.txt`, `stderr.txt` and `exit.txt`.
+
+1. **Pre-source RED** — `final-fix-red-startup`:
+   ```sh
+   python3 .superpowers/sdd/2026-09-12-agent-worktree-console-recovery/run_pytest.py final-fix-red-startup Tests/Agents/test_agent_worktree_confirmed_recovery.py Tests/Chat/test_console_worktree_recovery_lifetime.py -k 'partial_reader_startup or submission_failure' -q
+   ```
+   **11 failed, 54 deselected, 1 warning in 1.88s; normal runner exit 1.** Four proven-cleanup cases found a still-live gated process; four denied-cleanup cases found incorrectly proven owner drain; definite and queued submission cases found an unreleased owner; the admitted submission case found the operation removed while its worker was still held. These were behavioral failures, not fixture/import prerequisites. Source changes began only after inspecting these failures.
+
+2. **Initial targeted GREEN** — `final-fix-green-startup`:
+   ```sh
+   python3 .superpowers/sdd/2026-09-12-agent-worktree-console-recovery/run_pytest.py final-fix-green-startup Tests/Agents/test_agent_worktree_confirmed_recovery.py Tests/Chat/test_console_worktree_recovery_lifetime.py -k 'partial_reader_startup or submission_failure or physical_manual_worker_retains' -q
+   ```
+   **12 passed, 53 deselected, 1 warning in 27.68s; normal runner exit 0.** Includes the unchanged accepted-worker cancellation regression.
+
+3. **Final affected modules/capacity neighbors** — `final-fix-green-neighbors`:
+   ```sh
+   python3 .superpowers/sdd/2026-09-12-agent-worktree-console-recovery/run_pytest.py final-fix-green-neighbors Tests/Agents/test_agent_worktree_confirmed_recovery.py Tests/Chat/test_console_worktree_recovery_lifetime.py Tests/Agents/test_execution_capacity.py -q
+   ```
+   **88 passed, 1 warning in 79.69s; normal runner exit 0.** Runs the final test assertions, strengthened after initial GREEN to check exact `-SIGKILL`/absent group before test cleanup and no worker DB creation for revoked admission. It also covers the existing descendant-filter cleanup, successful and refused Git recovery, retained session lifecycle and capacity behavior.
+
+4. **Root-requested actual caller neighbors** — `final-fix-green-real-ui`:
+   ```sh
+   python3 .superpowers/sdd/2026-09-12-agent-worktree-console-recovery/run_pytest.py final-fix-green-real-ui 'Tests/UI/test_console_worktree_recovery.py::test_reopened_record_manual_action_uses_real_controller_card_and_git[apply-adapter]' 'Tests/UI/test_console_worktree_recovery.py::test_reopened_record_manual_action_uses_real_controller_card_and_git[discard-normal]' -q
+   ```
+   **2 passed, 1 warning in 4.97s; normal runner exit 0.** Actual reopened SQLite record → manual helper → real controller/card → Git apply/discard path. No whole-UI sweep or new visual inspection.
+
+These selections overlap and should not be summed as unique coverage. All four runner stderr files are empty. No test runner had an abnormal/signal/timeout exit. The only warning in each run is the inherited RequestsDependencyWarning; output is not pristine.
+
+## Scoped static and self-review
+
+The supplied CLI contract was read before use. Final command:
+
+```sh
+python3 .superpowers/sdd/2026-09-12-agent-orchestration-remaining/scoped_static.py 256507e3875875f6d4d02614edceef8872a0e1df .superpowers/sdd/2026-09-12-agent-worktree-console-recovery/final-fix-static.json tldw_chatbook/Agents/agent_worktree_git.py tldw_chatbook/Chat/console_worktree_recovery.py Tests/Agents/test_agent_worktree_confirmed_recovery.py Tests/Chat/test_console_worktree_recovery_lifetime.py
+```
+
+Helper exit 0. Each of the four files has base/current diagnostic counts **0/0**, zero added identities, and all edited-range format exits 0. The initial static report (`final-fix-static-initial.json`) found only appended test-range formatting failures; only those ranges were formatted. No whole-file debt cleanup occurred.
+
+Self-review traced successful process creation through each partial reader failure and both proven/unproven retirement branches, including pipe-lock behavior and reap ownership. It traced the manual gate's atomic cancellation/claim race, the queue-after-error no-entry guarantee, admitted-worker finalization/DB close, shielded external cancellation, retained operation cleanup and failure receipt. The deterministic tests reject removal of process retirement, cleanup poisoning, admission revocation or admitted-worker retention. Both Important findings are fully covered in scope; no further source changes remain.
+
+Limits: POSIX/macOS owned temporary processes/Git/SQLite only. The startup mutation fixture delays exec of Git rather than claiming a live Git filter is already running; the unchanged adjacent descendant-filter test separately exercises actual Git descendant cleanup. No Windows certification, new backend qualification, live provider test, full suite or additional screenshot review is claimed. Existing ordinary-Git external metadata/config/filter limitations remain as accepted in ADR155.
+
+
+## Final correction scoped re-review ate135a085f2
+
+# Final failed-start lifetime fix scoped re-review
+
+Review base: `256507e3875875f6d4d02614edceef8872a0e1df`.
+Immutable head: `e135a085f251795ea5379ddbfec5605dda862039`.
+Package: `review-256507e387..e135a085f2.diff` (four source/test files).
+
+## Assessment
+
+**All findings addressed; no new Critical or Important breakage.** The single fix wave closes both failed-start lifetime defects from `final-review.md` without changing the accepted ADR-155 boundary or adding another capacity ledger.
+
+## Original finding verdicts
+
+### 1. Git reader startup can bypass all process retirement — ADDRESSED
+
+Locations: `tldw_chatbook/Agents/agent_worktree_git.py:26-31`, `:71-165`; regression coverage at `Tests/Agents/test_agent_worktree_confirmed_recovery.py:554`.
+
+Reader collections and cleanup state now exist before process creation, and the cleanup `try/finally` begins immediately after the successful `Popen` at lines 74-92. Both reader construction and `start()` are inside that protection. Each constructed reader retains its pipe, while `started_readers` receives a reader only when it has a physical thread identity; cleanup therefore never joins an unstarted thread and can still close its pipe.
+
+Every partial construction/start failure reaches process-group retirement, a separate wait/reap attempt, descendant-group absence checking, started-reader joins, and pipe closure. A pipe held by a still-live buffered reader is deliberately not externally closed, avoiding a buffer-lock hang; the live reader instead makes cleanup unproven. Signal, wait, group-absence, close, or reader-join uncertainty calls `_cleanup_unproven()`, which resolves `current_execution_owner()` and poisons that actual owner before its eventual drain result. A disappearing process during signaling still proceeds through `wait()`, so the parent does not mistake signal lookup failure for reaping.
+
+The eight-case regression crosses construction versus start failure, first versus second reader, and proven versus deliberately denied retirement. Its gated mutating command establishes that proven completion leaves the owned process reaped, its group absent, readers stopped, pipes closed, and no later ref update; denied retirement leaves the real child observable and reports owner drain as unproven before fixture cleanup.
+
+### 2. Manual recovery leaks its execution owner when worker submission fails before entry — ADDRESSED
+
+Locations: `tldw_chatbook/Chat/console_worktree_recovery.py:188-262`; regression coverage at `Tests/Chat/test_console_worktree_recovery_lifetime.py:370`.
+
+The existing execution owner is now paired with one standard `concurrent.futures.Future` admission gate. The worker must atomically claim that gate with `set_running_or_notify_cancel()` before validation, DB construction, or engine entry. On a definite submission refusal, or a queued wrapper that has not claimed admission, `handoff.cancel()` proves non-entry; only that winning path releases the exact owner. A queued wrapper that later runs observes the cancelled gate and returns before any engine or DB effect, so release cannot be followed by late recovery work.
+
+If the wrapper claimed admission before submission raised, cancellation loses and the submitting task shield-waits for the handoff acknowledgment. The worker retains physical ownership while it validates, opens/closes its DB, and runs recovery; nested finalization closes the DB, finishes the owner even if DB close raises, and only then acknowledges completion. The original submission or worker exception is subsequently propagated, after which the existing callback removes the operation and stores the bounded failure receipt. The public waiter and `close()` continue to shield the actual operation task at lines 262 and 274-278, preserving the previously accepted running-worker cancellation behavior.
+
+The three-case regression covers definite refusal, queued-then-raise, and entered-then-raise. It checks exact owner identity, no engine entry or worker DB creation after revoked admission, retained registry/capacity ownership while entered work is held, final owner drain, registry cleanup, and the failure receipt.
+
+## New fix breakage
+
+None identified. No new Critical, Important, or Minor issue was found in the four-file fix diff. No logger statement changed, and the reviewed diagnostic pin remains unchanged.
+
+## Out-of-scope observations
+
+No new outside-diff issue was identified. Root's uncommitted documentation is outside this immutable fix and was not adjudicated here. The accepted ordinary-Git external metadata/config/filter limitations remain governed by ADR-155.
+
+## Evidence inspected and limits
+
+- Read the re-review brief, the two original Important findings verbatim, the implementation/evidence report, and the supplied immutable diff once in bounded chunks; recovered only the tool-truncated opening ranges from that same package. No Git diff was regenerated.
+- Inspected unchanged source only for the named owner poisoning, admission/cancellation, registry, result propagation, and physical shielding concerns: `ExecutionOwner.activate`, `mark_cleanup_unproven`, `finish_root`, and the manual helper's `start`/`close` paths.
+- Consumed root's reviewed command/output/exit record: pre-source RED had **11 intended failures**; the final affected/capacity-neighbor selection had **88 passed**; the two actual reopened card/Git paths had **2 passed**. The focused initial GREEN had **12 passed**. All runners exited normally, all stderr files were empty, and each run retained the inherited Requests warning.
+- Consumed the four-file scoped-static record: base/current diagnostic counts **0/0**, zero added identities, and all edited-range formatting exits **0**. No logger change or diagnostic-pin refresh occurred.
+- No suite or test was rerun. No product import outside Tests isolation, live configuration/provider/network access, dependency change, checkout, cleanup, source/index/HEAD/Backlog mutation, or subagent was used. This report is the only written artifact.
+- Evidence is limited to POSIX/macOS owned temporary process/Git/SQLite behavior. The mutation fixture gates execution before Git `exec`; the retained adjacent descendant test supplies the actual Git-descendant coverage. There is no Windows, full-suite, live-provider, or new visual claim.
+- The inherited Requests warning, zero startup headroom, inherited ChatScreen size guards, and eight absent historical diagnostic labels remain disclosed. Static edited-range results do not establish whole-file lint cleanliness or all architecture guards green.
+
+## Final verdict
+
+**All findings addressed; no new Critical or Important breakage.**
+
+
+## Final task and plan reconciliation
+
+Root used the Backlog CLI to check all 9 TASK-31210 criteria, all 8 TASK-31211 criteria and the parent criterion, add implementation notes and mark each Done. A fresh local file check verified each status and checklist. The seven actual parent children were separately verified Done with zero unchecked criteria and implementation notes. The Console plan and parent closeout plan are complete. No additional historical child or runtime evidence was created to force closure. The prior approved records review and earlier-wave final review remain preserved in their linked records.
+
+Ruling: Keep both failed-start lifetime corrections in one final fix dispatch under existing ADR155 — they complete already-approved physical ownership, without changing ordinary Git or provider boundaries — cost is focused process/executor failure injection plus their adjacent lifetime checks; ambiguous accepted work must remain protected.
+
+Ruling: Use a standard concurrent Future as the manual pre-entry admission gate — cancelling an unclaimed gate prevents even queued-after-error work from acquiring engine/DB authority, while a claimed worker retains physical-finally ownership — cost is one small operation-local handoff state, not a second capacity ledger; tests must cover definite refusal, queued-after-error and entered-before-error.
+
+Ruling: Finish as a verified local branch using the task's targeted checks — current authorization completes implementation and the repository requires opt-in for a full suite; no new PR or merge was requested for this remaining wave — cost is that remote integration and full-suite coverage are separate future actions. Preserve the worktree and evidence under the existing retention ruling.
